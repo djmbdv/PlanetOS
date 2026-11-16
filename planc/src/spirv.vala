@@ -10,18 +10,21 @@ namespace Planc {
         private const uint16 OP_ENTRY_POINT         = 15;
         private const uint16 OP_EXECUTION_MODE      = 16;
         private const uint16 OP_DECORATE            = 71;
+        private const uint16 OP_MEMBER_DECORATE     = 72;
         private const uint16 OP_TYPE_VOID           = 19;
         private const uint16 OP_TYPE_FLOAT          = 22;
         private const uint16 OP_TYPE_INT            = 21;
         private const uint16 OP_TYPE_VECTOR         = 23;
         private const uint16 OP_TYPE_POINTER        = 32;
         private const uint16 OP_TYPE_FUNCTION       = 33;
+        private const uint16 OP_TYPE_STRUCT         = 30;
         private const uint16 OP_CONSTANT            = 43;
         private const uint16 OP_FUNCTION            = 54;
         private const uint16 OP_FUNCTION_END        = 56;
         private const uint16 OP_VARIABLE            = 59;
         private const uint16 OP_LOAD                = 61;
         private const uint16 OP_STORE               = 62;
+        private const uint16 OP_ACCESS_CHAIN        = 65;
         private const uint16 OP_COMPOSITE_CONSTRUCT = 80;
         private const uint16 OP_COMPOSITE_EXTRACT   = 81;
         private const uint16 OP_CONVERT_S_TO_F      = 111;
@@ -62,6 +65,11 @@ namespace Planc {
         private uint32 ty_ptr_fn_v4 = 0;
         private uint32 out_color_id = 0;
         private uint32 in_coord_id = 0;
+        private uint32 ty_block = 0;
+        private uint32 ty_ptr_pc_block = 0;
+        private uint32 ty_ptr_pc_f32 = 0;
+        private uint32 pc_id = 0;
+        private bool pc_used = false;
         private uint32 main_fn_id = 0;
 
         private uint32 alloc_id () {
@@ -127,6 +135,31 @@ namespace Planc {
             uint32 id = alloc_id ();
             emit_op (fn_words, OP_CONVERT_S_TO_F, new uint32[] { ty_f32, id, val_id });
             return id;
+        }
+
+        private void emit_push_constants () {
+            if (pc_used)
+                return;
+            pc_used = true;
+            ty_block = alloc_id ();
+            ty_ptr_pc_block = alloc_id ();
+            ty_ptr_pc_f32 = alloc_id ();
+            pc_id = alloc_id ();
+            // struct { float time; float width; float height; float pad; }
+            emit_op (type_words, OP_TYPE_STRUCT, new uint32[] { ty_block, ty_f32, ty_f32, ty_f32, ty_f32 });
+            emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_pc_block, 9, ty_block }); // PushConstant=9
+            emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_pc_f32, 9, ty_f32 });
+            emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_pc_block, pc_id, 9 });
+        }
+
+        private uint32 gen_uniform_member (int member) {
+            emit_push_constants ();
+            uint32 idx = get_const (ty_i32, (uint32) member);
+            uint32 ptr = alloc_id ();
+            emit_op (fn_words, OP_ACCESS_CHAIN, new uint32[] { ty_ptr_pc_f32, ptr, pc_id, idx });
+            uint32 res = alloc_id ();
+            emit_op (fn_words, OP_LOAD, new uint32[] { ty_f32, res, ptr });
+            return res;
         }
 
         private uint32 gen_expr (Expr e, out uint32 out_ty) throws SemanticError {
@@ -208,6 +241,15 @@ namespace Planc {
                     emit_op (fn_words, OP_COMPOSITE_EXTRACT,
                         new uint32[] { ty_f32, res, loaded, (uint32) comp });
                     return res;
+                }
+                if ((ce.callee == "uniform_time" || ce.callee == "uniform_width"
+                     || ce.callee == "uniform_height")
+                    && ce.args.length == 0) {
+                    int member = 0;
+                    if (ce.callee == "uniform_width") member = 1;
+                    else if (ce.callee == "uniform_height") member = 2;
+                    out_ty = ty_f32;
+                    return gen_uniform_member (member);
                 }
                 if (ce.callee == "vec4" && ce.args.length == 4) {
                     var comps = new uint32[4];
@@ -391,6 +433,13 @@ namespace Planc {
             emit_op (words, OP_EXECUTION_MODE, new uint32[] { main_fn_id, 7 }); // OriginUpperLeft
             emit_op (words, OP_DECORATE, new uint32[] { out_color_id, 30, 0 }); // Location 0
             emit_op (words, OP_DECORATE, new uint32[] { in_coord_id, 11, 15 }); // BuiltIn FragCoord
+            if (pc_used) {
+                emit_op (words, OP_DECORATE, new uint32[] { ty_block, 2, 0 }); // Block
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 0, 35, 0 });  // Offset 0
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 1, 35, 4 });  // Offset 4
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 2, 35, 8 });  // Offset 8
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 3, 35, 12 }); // Offset 12
+            }
 
             for (int i = 0; i < type_words.length; i++)
                 words.add (type_words[i]);

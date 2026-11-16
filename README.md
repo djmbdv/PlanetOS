@@ -133,6 +133,7 @@ problems** and **creates six**:
 | [docs/planc/slice-37.md](docs/planc/slice-37.md) | **Implemented slice 37**: GLib main loop — `MainContext`, `idle_add`/`timeout_add`/`source_remove`, `MainLoop`, and a `Gio.Application.run()` that drives it while `hold()` is active |
 | [docs/planc/slice-38.md](docs/planc/slice-38.md) | **Implemented slice 38**: compositor — Openbox-style window model and Gala-style visuals in 100% Vala ([user/compositor.vala](user/compositor.vala)), SPIR-V accent through the shared [Spv.Module](stdlib/spirv_compat.vala), Vulkan backend seam, and the 1024-page framebuffer limit fix |
 | [docs/planc/slice-39.md](docs/planc/slice-39.md) | **Implemented slice 39**: Pango/PangoCairo text layout ([stdlib/pango_compat.vala](stdlib/pango_compat.vala)), damage tracking with rect blits in the compositor, keyboard modifiers (`SYS_KEY_MODS`) with Alt+Tab and Super+arrows tiling, and a per-pixel SPIR-V shader using `gl_FragCoord` ([user/frag_pattern.vala](user/frag_pattern.vala)) |
+| [docs/planc/slice-40.md](docs/planc/slice-40.md) | **Implemented slice 40**: SPIR-V push constants (`uniform_time/width/height`) with an animated background (`--animate`), damage-rect merging and occlusion culling in the compositor, and Pango colour attribute runs |
 
 ## 5. State of the measurements
 

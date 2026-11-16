@@ -22,9 +22,17 @@ namespace Spv {
         public double a = 1.0;
 
         private uint8[] code;
+        private int[] wcache;
         private int code_size = 0;
         private int input_id = 0;
         private bool input_ready = false;
+        private int pc_id = 0;
+        private bool pc_ready = false;
+        private double uni_time = 0.0;
+        private double uni_width = 800.0;
+        private double uni_height = 600.0;
+        private int[] pc_member;
+        private int[] ivals;
         private double[] fvals;
         private double[] vec_r;
         private double[] vec_g;
@@ -33,6 +41,17 @@ namespace Spv {
 
         // True when the module reads gl_FragCoord, i.e. it is a per-pixel shader.
         public bool has_input () { return input_ready; }
+
+        // True when the module reads push constants (time/width/height).
+        public bool has_uniforms () { return pc_ready; }
+
+        public void set_uniforms (double time, double width, double height) {
+            uni_time = time;
+            uni_width = width;
+            uni_height = height;
+        }
+
+        public double uniform_time_value () { return uni_time; }
 
         // Evaluates the fragment stage for one pixel (coordinates are the
         // FragmentCoord convention: pixel centre at x+0.5).
@@ -126,8 +145,20 @@ namespace Spv {
             words = size / 4;
             code = buf;
             code_size = size;
+            // Decode the module once: per-pixel evaluation then indexes words
+            // directly instead of doing four byte loads per operand.
+            wcache = new int[words];
+            for (int i = 0; i < words; i++) {
+                int off = i * 4;
+                wcache[i] = (int) ((uint32) buf[off]
+                    | ((uint32) buf[off + 1] << 8)
+                    | ((uint32) buf[off + 2] << 16)
+                    | ((uint32) buf[off + 3] << 24));
+            }
 
             int max_ids = bound + 4;
+            pc_member = new int[max_ids];
+            ivals = new int[max_ids];
             fvals = new double[max_ids];
             vec_r = new double[max_ids];
             vec_g = new double[max_ids];
@@ -141,6 +172,8 @@ namespace Spv {
         private void clear_scratch () {
             for (int i = 0; i < fvals.length; i++) {
                 fvals[i] = 0.0;
+                pc_member[i] = -1;
+                ivals[i] = 0;
                 vec_r[i] = 0.0;
                 vec_g[i] = 0.0;
                 vec_b[i] = 0.0;
@@ -149,8 +182,8 @@ namespace Spv {
         }
 
         private void run (int px, int py, bool per_pixel) {
-            uint8[] buf = code;
-            int total = code_size / 4;
+            int[] w = wcache;
+            int total = wcache.length;
             clear_scratch ();
             r = 0.0;
             g = 0.0;
@@ -161,47 +194,57 @@ namespace Spv {
 
             int wi = 5;
             while (wi < total) {
-                uint32 hdr = word_at (buf, wi);
-                int wc = (int) (hdr >> 16);
-                int opc = (int) (hdr & 0xFFFF);
+                int hdr = w[wi];
+                int wc = hdr >> 16;
+                int opc = hdr & 0xFFFF;
                 if (wc <= 0 || wi + wc > total)
                     break;
                 if (!per_pixel)
                     insns = insns + 1;
 
                 if (opc == 43 && wc >= 4) { // OpConstant
-                    int res = (int) word_at (buf, wi + 2);
-                    fvals[res] = f32_bits_to_double (word_at (buf, wi + 3));
+                    int res = (int) w[wi + 2];
+                    ivals[res] = w[wi + 3];
+                    fvals[res] = f32_bits_to_double ((uint32) w[wi + 3]);
                 } else if (opc == 59 && wc >= 4) { // OpVariable
-                    int var_id = (int) word_at (buf, wi + 2);
-                    int storage = (int) word_at (buf, wi + 3);
+                    int var_id = (int) w[wi + 2];
+                    int storage = (int) w[wi + 3];
                     if (storage == 1) { // Input
                         input_id = var_id;
                         input_ready = true;
+                    } else if (storage == 9) { // PushConstant
+                        pc_id = var_id;
+                        pc_ready = true;
                     }
+                } else if (opc == 65 && wc >= 5) { // OpAccessChain
+                    int res = (int) w[wi + 2];
+                    int src = (int) w[wi + 3];
+                    int index = (int) w[wi + 4];
+                    if (src == pc_id)
+                        pc_member[res] = ivals[index];
                 } else if (opc == 129 && wc >= 5) { // OpFAdd
-                    int res = (int) word_at (buf, wi + 2);
-                    fvals[res] = fvals[(int) word_at (buf, wi + 3)] + fvals[(int) word_at (buf, wi + 4)];
+                    int res = (int) w[wi + 2];
+                    fvals[res] = fvals[(int) w[wi + 3]] + fvals[(int) w[wi + 4]];
                 } else if (opc == 131 && wc >= 5) { // OpFSub
-                    int res = (int) word_at (buf, wi + 2);
-                    fvals[res] = fvals[(int) word_at (buf, wi + 3)] - fvals[(int) word_at (buf, wi + 4)];
+                    int res = (int) w[wi + 2];
+                    fvals[res] = fvals[(int) w[wi + 3]] - fvals[(int) w[wi + 4]];
                 } else if (opc == 133 && wc >= 5) { // OpFMul
-                    int res = (int) word_at (buf, wi + 2);
-                    fvals[res] = fvals[(int) word_at (buf, wi + 3)] * fvals[(int) word_at (buf, wi + 4)];
+                    int res = (int) w[wi + 2];
+                    fvals[res] = fvals[(int) w[wi + 3]] * fvals[(int) w[wi + 4]];
                 } else if (opc == 136 && wc >= 5) { // OpFDiv
-                    int res = (int) word_at (buf, wi + 2);
-                    double den = fvals[(int) word_at (buf, wi + 4)];
-                    fvals[res] = (den != 0.0) ? fvals[(int) word_at (buf, wi + 3)] / den : 0.0;
+                    int res = (int) w[wi + 2];
+                    double den = fvals[(int) w[wi + 4]];
+                    fvals[res] = (den != 0.0) ? fvals[(int) w[wi + 3]] / den : 0.0;
                 } else if (opc == 80 && wc >= 7) { // OpCompositeConstruct (vec4)
-                    int res = (int) word_at (buf, wi + 2);
-                    vec_r[res] = fvals[(int) word_at (buf, wi + 3)];
-                    vec_g[res] = fvals[(int) word_at (buf, wi + 4)];
-                    vec_b[res] = fvals[(int) word_at (buf, wi + 5)];
-                    vec_a[res] = fvals[(int) word_at (buf, wi + 6)];
+                    int res = (int) w[wi + 2];
+                    vec_r[res] = fvals[(int) w[wi + 3]];
+                    vec_g[res] = fvals[(int) w[wi + 4]];
+                    vec_b[res] = fvals[(int) w[wi + 5]];
+                    vec_a[res] = fvals[(int) w[wi + 6]];
                 } else if (opc == 81 && wc >= 5) { // OpCompositeExtract
-                    int res = (int) word_at (buf, wi + 2);
-                    int src = (int) word_at (buf, wi + 3);
-                    int comp = (int) word_at (buf, wi + 4);
+                    int res = (int) w[wi + 2];
+                    int src = (int) w[wi + 3];
+                    int comp = (int) w[wi + 4];
                     if (comp == 0)
                         fvals[res] = vec_r[src];
                     else if (comp == 1)
@@ -211,22 +254,33 @@ namespace Spv {
                     else
                         fvals[res] = vec_a[src];
                 } else if (opc == 62 && wc >= 3) { // OpStore
-                    int ptr = (int) word_at (buf, wi + 1);
-                    int obj = (int) word_at (buf, wi + 2);
+                    int ptr = (int) w[wi + 1];
+                    int obj = (int) w[wi + 2];
                     fvals[ptr] = fvals[obj];
                     r = vec_r[obj];
                     g = vec_g[obj];
                     b = vec_b[obj];
                     a = vec_a[obj];
                 } else if (opc == 61 && wc >= 4) { // OpLoad
-                    int res = (int) word_at (buf, wi + 2);
-                    int ptr = (int) word_at (buf, wi + 3);
+                    int res = (int) w[wi + 2];
+                    int ptr = (int) w[wi + 3];
                     if (per_pixel && ptr == input_id) {
                         // gl_FragCoord with OriginUpperLeft
                         vec_r[res] = (double) px + 0.5;
                         vec_g[res] = (double) py + 0.5;
                         vec_b[res] = 0.0;
                         vec_a[res] = 1.0;
+                    } else if (pc_member[ptr] >= 0) {
+                        // push constant member: 0 time, 1 width, 2 height, 3 pad
+                        int m = pc_member[ptr];
+                        if (m == 0)
+                            fvals[res] = uni_time;
+                        else if (m == 1)
+                            fvals[res] = uni_width;
+                        else if (m == 2)
+                            fvals[res] = uni_height;
+                        else
+                            fvals[res] = 0.0;
                     } else {
                         fvals[res] = fvals[ptr];
                     }

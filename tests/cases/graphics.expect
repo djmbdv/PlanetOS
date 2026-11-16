@@ -5,4 +5,6 @@
 ~compositor:summary checks=[0-9]+ failures=0
 ~compositor: backend=vulkan ok=0
 ~compositor:summary checks=[0-9]+ failures=0
+~compositor: animate=1 period_ms=400
+~compositor:summary checks=[0-9]+ failures=0
 !compositor: FAIL

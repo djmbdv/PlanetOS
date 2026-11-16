@@ -151,9 +151,16 @@ namespace Wm {
         private int[] pat;
         private int pat_w = 0;
         private int pat_h = 0;
+        private int pat_step = PAT_STEP;
+        private bool anim_on = false;
+        private int anim_period_ms = 400;
+        private int last_anim_tick = 0;
+        private int anim_count = 0;
+        private int occluded_skips = 0;
         private PangoContext pctx;
         private Layout title_lay;
         private Layout dock_lay;
+        private Layout notes_lay;
 
         public Compositor () {
             wins = new GenericArray<Win> ();
@@ -166,6 +173,12 @@ namespace Wm {
             dock_lay = new Layout (pctx);
             dock_lay.set_width (DOCK_BTN_W - 18);
             dock_lay.set_ellipsize (EllipsizeMode.END);
+            notes_lay = new Layout (pctx);
+            notes_lay.set_width (300);
+            notes_lay.set_spacing (4);
+            notes_lay.set_text ("notes\nopenbox interaction model\ngala style shadows + dock\n100% vala, no mutter\ngdk + cairo framebuffer\nspir-v accent pipeline");
+            // highlight the last line ("spir-v accent pipeline")
+            notes_lay.add_color_attribute (103, 125, 0.22, 0.74, 0.97);
             pat = new int[1];
         }
 
@@ -204,6 +217,13 @@ namespace Wm {
             }
             int mx = screen.pointer_x ();
             int my = screen.pointer_y ();
+            if (anim_on && pattern_ok) {
+                int now = Sys.ticks ();
+                if (now - last_anim_tick >= (anim_period_ms / 10)) {
+                    last_anim_tick = now;
+                    animate_pattern ((double) (now % 800) / 100.0);
+                }
+            }
             animate_damage (mx, my);
             bool was_full = dmg_full;
             last_n = ndmg;
@@ -247,6 +267,25 @@ namespace Wm {
                 h = SCREEN_H - y;
             if (w <= 0 || h <= 0)
                 return;
+            // Merge with a nearby rectangle: the cursor, the clock hands and its
+            // digital readout usually collapse into a single repaint.
+            for (int i = 0; i < ndmg; i++) {
+                int ex = dmg[i * 4 + 0];
+                int ey = dmg[i * 4 + 1];
+                int ew = dmg[i * 4 + 2];
+                int eh = dmg[i * 4 + 3];
+                if (x < ex + ew + 8 && x + w + 8 > ex && y < ey + eh + 8 && y + h + 8 > ey) {
+                    int nx = (x < ex) ? x : ex;
+                    int ny = (y < ey) ? y : ey;
+                    int nx1 = (x + w > ex + ew) ? x + w : ex + ew;
+                    int ny1 = (y + h > ey + eh) ? y + h : ey + eh;
+                    dmg[i * 4 + 0] = nx;
+                    dmg[i * 4 + 1] = ny;
+                    dmg[i * 4 + 2] = nx1 - nx;
+                    dmg[i * 4 + 3] = ny1 - ny;
+                    return;
+                }
+            }
             if (ndmg >= DMG_RECTS - 1) {
                 dmg_full = true;
                 ndmg = 0;
@@ -779,21 +818,55 @@ namespace Wm {
             pattern = Module.load (path);
             if (!pattern.valid || !pattern.has_input ())
                 return false;
-            pat_w = (SCREEN_W + PAT_STEP - 1) / PAT_STEP;
-            pat_h = (SCREEN_H + PAT_STEP - 1) / PAT_STEP;
+            pat_w = (SCREEN_W + pat_step - 1) / pat_step;
+            pat_h = (SCREEN_H + pat_step - 1) / pat_step;
             pat = new int[pat_w * pat_h];
+            pattern_ok = true;
+            bake_pattern (0.0);
+            damage_full ();
+            return true;
+        }
+
+        // Runs the fragment stage over every block sample with the current
+        // push-constant values.
+        public void bake_pattern (double time) {
+            if (!pattern_ok)
+                return;
+            pattern.set_uniforms (time, (double) SCREEN_W, (double) SCREEN_H);
             for (int by = 0; by < pat_h; by++) {
                 for (int bx = 0; bx < pat_w; bx++) {
-                    pattern.pixel (bx * PAT_STEP + PAT_STEP / 2, by * PAT_STEP + PAT_STEP / 2);
+                    pattern.pixel (bx * pat_step + pat_step / 2, by * pat_step + pat_step / 2);
                     int rr = pattern.ir ();
                     int gg = pattern.ig ();
                     int bb = pattern.ib ();
                     pat[by * pat_w + bx] = (rr << 16) | (gg << 8) | bb;
                 }
             }
-            pattern_ok = true;
+        }
+
+        // Re-bakes the background with a new time uniform. Only meaningful for
+        // modules that read push constants; the whole screen has to repaint.
+        public bool animate_pattern (double time) {
+            if (!pattern_ok || !pattern.has_uniforms ())
+                return false;
+            bake_pattern (time);
+            anim_count = anim_count + 1;
             damage_full ();
             return true;
+        }
+
+        public bool pattern_has_uniforms () { return pattern_ok && pattern.has_uniforms (); }
+        public int pattern_step () { return pat_step; }
+
+        // Coarser blocks trade detail for a cheaper bake (animated backgrounds).
+        public void set_pattern_step (int step) {
+            pat_step = (step < 2) ? 2 : ((step > 32) ? 32 : step);
+        }
+        public int animation_count () { return anim_count; }
+
+        public void set_animation (bool on, int period_ms) {
+            anim_on = on;
+            anim_period_ms = (period_ms < 40) ? 40 : period_ms;
         }
 
         public bool has_pattern () { return pattern_ok; }
@@ -802,8 +875,8 @@ namespace Wm {
         public int pattern_at (int x, int y) {
             if (!pattern_ok)
                 return 0;
-            int bx = x / PAT_STEP;
-            int by = y / PAT_STEP;
+            int bx = x / pat_step;
+            int by = y / pat_step;
             if (bx < 0 || by < 0 || bx >= pat_w || by >= pat_h)
                 return 0;
             return pat[by * pat_w + bx];
@@ -843,6 +916,7 @@ namespace Wm {
         }
 
         public void render (Context cr, int mx, int my) {
+            occluded_skips = 0;
             draw_background (cr);
             draw_windows (cr);
             draw_dock (cr);
@@ -878,17 +952,17 @@ namespace Wm {
             int y0 = cr.clip_top ();
             int x1 = cr.clip_right ();
             int y1 = cr.clip_bottom ();
-            int by = y0 / PAT_STEP;
-            while (by * PAT_STEP < y1) {
+            int by = y0 / pat_step;
+            while (by * pat_step < y1) {
                 if (by >= 0 && by < pat_h) {
-                    int bx = x0 / PAT_STEP;
-                    while (bx * PAT_STEP < x1) {
+                    int bx = x0 / pat_step;
+                    while (bx * pat_step < x1) {
                         if (bx >= 0 && bx < pat_w) {
                             int col = pat[by * pat_w + bx];
                             cr.set_source_rgb ((double) ((col >> 16) & 0xFF) / 255.0,
                                                (double) ((col >> 8) & 0xFF) / 255.0,
                                                (double) (col & 0xFF) / 255.0);
-                            cr.rectangle (bx * PAT_STEP, by * PAT_STEP, PAT_STEP, PAT_STEP);
+                            cr.rectangle (bx * pat_step, by * pat_step, pat_step, pat_step);
                             cr.fill ();
                         }
                         bx = bx + 1;
@@ -950,12 +1024,39 @@ namespace Wm {
                 }
                 if (pick == null)
                     break;
-                if (rect_hits (cr, pick.x - 1, pick.y - 1, pick.w + SHADOW + 2, pick.h + SHADOW + 2))
-                    draw_window (cr, pick);
+                if (!rect_hits (cr, pick.x - 1, pick.y - 1, pick.w + SHADOW + 2, pick.h + SHADOW + 2)) {
+                    lastz = pickz;
+                    drawn = drawn + 1;
+                    continue;
+                }
+                if (covered (pick)) {
+                    occluded_skips = occluded_skips + 1;
+                    lastz = pickz;
+                    drawn = drawn + 1;
+                    continue;
+                }
+                draw_window (cr, pick);
                 lastz = pickz;
                 drawn = drawn + 1;
             }
         }
+
+        // Occlusion culling: a lower window whose frame (shadow included) is
+        // completely inside a higher one is not painted at all.
+        private bool covered (Win w) {
+            for (int i = 0; i < wins.length; i++) {
+                var o = wins[i];
+                if (!o.alive || o.id == w.id || o.z <= w.z)
+                    continue;
+                if (o.x <= w.x && o.y <= w.y
+                    && o.x + o.w + SHADOW >= w.x + w.w + SHADOW
+                    && o.y + o.h + SHADOW >= w.y + w.h + SHADOW)
+                    return true;
+            }
+            return false;
+        }
+
+        public int occluded_count () { return occluded_skips; }
 
         private void draw_window (Context cr, Win w) {
             bool foc = (w.id == focused_id);
@@ -1154,22 +1255,9 @@ namespace Wm {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
-                cr.set_font_size (16);
-                cr.set_source_rgb (0.90, 0.93, 0.97);
-                cr.move_to (cx + 14, cy + 14);
-                cr.show_text ("notes");
+                // One Pango layout with a colour attribute run on the last line.
                 cr.set_source_rgb (0.62, 0.69, 0.78);
-                cr.move_to (cx + 14, cy + 38);
-                cr.show_text ("openbox interaction model");
-                cr.move_to (cx + 14, cy + 56);
-                cr.show_text ("gala style shadows + dock");
-                cr.move_to (cx + 14, cy + 74);
-                cr.show_text ("100% vala, no mutter");
-                cr.move_to (cx + 14, cy + 92);
-                cr.show_text ("gdk + cairo framebuffer");
-                cr.set_source_rgb (acc_r, acc_g, acc_b);
-                cr.move_to (cx + 14, cy + 116);
-                cr.show_text ("spir-v accent pipeline");
+                show_layout_at (cr, notes_lay, cx + 14, cy + 12);
             }
         }
 
@@ -1375,8 +1463,40 @@ private int self_test_run (Compositor comp) {
 
     // per-pixel SPIR-V background (gl_FragCoord) baked into PAT_STEP blocks
     check (comp.has_pattern (), "pattern-valid");
-    check (comp.pattern_samples () == (SCREEN_W / PAT_STEP) * (SCREEN_H / PAT_STEP), "pattern-samples");
+    int ps = comp.pattern_step ();
+    check (comp.pattern_samples () == ((SCREEN_W + ps - 1) / ps) * ((SCREEN_H + ps - 1) / ps), "pattern-samples");
     check (comp.pattern_at (100, 100) != comp.pattern_at (700, 500), "pattern-varies-per-pixel");
+    check (comp.pattern_has_uniforms (), "pattern-uniforms");
+    int col_before = comp.pattern_at (400, 100);
+    check (comp.animate_pattern (4.0), "pattern-animate-runs");
+    check (comp.pattern_at (400, 100) != col_before, "pattern-animates-with-time");
+    check (comp.animation_count () == 1, "animate-count");
+
+    // damage merging and occlusion culling
+    var mg = new Compositor ();
+    var surf4 = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    check (surf4.buf_addr != 0, "merge-surface-alloc");
+    var cr4 = new Context (surf4);
+    mg.flush (cr4, 0, 0);
+    mg.damage (10, 10, 20, 20);
+    mg.damage (25, 25, 20, 20);
+    check (mg.damage_count () == 1, "damage-merges");
+    check (mg.damage_pixels () == 35 * 35, "damage-merge-area");
+    mg.damage (500, 400, 20, 20);
+    check (mg.damage_count () == 2, "damage-keeps-distant");
+    mg.flush (cr4, 0, 0);
+    check (mg.damage_count () == 0, "merge-flush-clears");
+
+    var occ = new Compositor ();
+    occ.add ("low", 100, 100, 300, 200, Kind.TERMINAL);
+    occ.add ("high", 60, 60, 420, 320, Kind.NOTES);
+    var surv5 = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    var cr5 = new Context (surv5);
+    occ.flush (cr5, 0, 0);
+    check (occ.occluded_count () == 1, "occlusion-skips-covered");
+    occ.focus_nth (0);
+    occ.flush (cr5, 0, 0);
+    check (occ.occluded_count () == 0, "occlusion-none-when-raised");
 
     // damage tracking: only the dirty region is repainted
     var dmgc = new Compositor ();
@@ -1457,6 +1577,7 @@ int main (string[] args) {
     bool want_shader = true;
     bool want_vulkan = false;
     bool want_pattern = true;
+    bool want_animate = false;
     string shader_path = "frag.spv";
     string pattern_path = "frag_pattern.spv";
     for (int i = 1; i < args.length; i++) {
@@ -1466,6 +1587,8 @@ int main (string[] args) {
             want_shader = false;
         } else if (args[i] == "--no-pattern") {
             want_pattern = false;
+        } else if (args[i] == "--animate") {
+            want_animate = true;
         } else if (args[i] == "--vulkan") {
             want_vulkan = true;
         } else if (args[i] == "--pattern") {
@@ -1492,9 +1615,14 @@ int main (string[] args) {
         bool ok = comp.select_backend (BACKEND_VULKAN);
         print (@"compositor: backend=vulkan ok=$(ok ? 1 : 0) (no ICD yet, cairo fallback)\n");
     }
+    if (want_animate)
+        comp.set_pattern_step (16);
     if (want_pattern) {
         bool pok = comp.load_pattern (pattern_path);
-        print (@"compositor: pattern=$pattern_path ok=$(pok ? 1 : 0) samples=$(comp.pattern_samples ())\n");
+        print (@"compositor: pattern=$pattern_path ok=$(pok ? 1 : 0) samples=$(comp.pattern_samples ()) uniforms=$(comp.pattern_has_uniforms () ? 1 : 0)\n");
+        if (want_animate)
+            comp.set_animation (true, 400);
+        print (@"compositor: animate=$(want_animate ? 1 : 0) period_ms=400\n");
     }
     if (self_test)
         return self_test_run (comp);

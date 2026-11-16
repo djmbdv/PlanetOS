@@ -108,6 +108,18 @@ namespace Pango {
         }
     }
 
+    public class ColorAttribute : Object {
+        public int start_;
+        public int end_;
+        public int argb;
+
+        public ColorAttribute (int start_, int end_, int argb) {
+            this.start_ = start_;
+            this.end_ = end_;
+            this.argb = argb;
+        }
+    }
+
     public class Layout : Object {
         private PangoContext ctx;
         private FontDescription desc;
@@ -121,6 +133,7 @@ namespace Pango {
         private int[] fitting;
         private int[] trunc;
         private int nlines = 0;
+        private GenericArray<ColorAttribute> attrs;
 
         public Layout (PangoContext context) {
             ctx = context;
@@ -129,6 +142,41 @@ namespace Pango {
             lens = new int[1];
             fitting = new int[1];
             trunc = new int[1];
+            attrs = new GenericArray<ColorAttribute> ();
+        }
+
+        // --- attributes -------------------------------------------------
+
+        // Colour run over [start, end); the renderer paints those glyphs with
+        // the attribute colour instead of the caller's source colour.
+        public void add_color_attribute (int start_, int end_, double r, double g, double b) {
+            int ir = (int) (r * 255.0);
+            int ig = (int) (g * 255.0);
+            int ib = (int) (b * 255.0);
+            if (ir < 0) ir = 0;
+            if (ir > 255) ir = 255;
+            if (ig < 0) ig = 0;
+            if (ig > 255) ig = 255;
+            if (ib < 0) ib = 0;
+            if (ib > 255) ib = 255;
+            attrs.add (new ColorAttribute (start_, end_, (ir << 16) | (ig << 8) | ib));
+        }
+
+        public void clear_attributes () {
+            attrs = new GenericArray<ColorAttribute> ();
+        }
+
+        public int attribute_count () { return attrs.length; }
+        public bool has_attributes () { return attrs.length > 0; }
+
+        // 0xRRGGBB for the glyph at index, or -1 when no attribute covers it.
+        public int color_at (int index) {
+            for (int i = 0; i < attrs.length; i++) {
+                var a = attrs[i];
+                if (index >= a.start_ && index < a.end_)
+                    return a.argb;
+            }
+            return -1;
         }
 
         public int scale () { return ctx.glyph_scale (desc.size); }
@@ -281,15 +329,29 @@ namespace PangoCairo {
         int lh = layout.line_height ();
         int sp = layout.spacing_px ();
         int n = layout.line_count ();
+        int cw = layout.char_width ();
         for (int i = 0; i < n; i++) {
             int chars = layout.line_chars_of (i);
             int lx = x + layout.alignment_offset (chars);
             int ly = y + i * (lh + sp);
             cr.set_font_size ((double) (layout.scale () * 8));
-            cr.move_to (lx, ly);
-            cr.show_text_range (layout.text_body (), layout.line_start_of (i), chars);
+            if (!layout.has_attributes ()) {
+                cr.move_to (lx, ly);
+                cr.show_text_range (layout.text_body (), layout.line_start_of (i), chars);
+            } else {
+                for (int k = 0; k < chars; k++) {
+                    int idx = layout.line_start_of (i) + k;
+                    int col = layout.color_at (idx);
+                    if (col >= 0)
+                        cr.set_source_rgb ((double) ((col >> 16) & 0xFF) / 255.0,
+                                           (double) ((col >> 8) & 0xFF) / 255.0,
+                                           (double) (col & 0xFF) / 255.0);
+                    cr.move_to (lx + k * cw, ly);
+                    cr.show_text_range (layout.text_body (), idx, 1);
+                }
+            }
             if (layout.line_truncated (i)) {
-                cr.move_to (lx + chars * layout.char_width (), ly);
+                cr.move_to (lx + chars * cw, ly);
                 cr.show_text ("..");
             }
         }

@@ -3,3 +3,4 @@ cairo_demo --once
 spv_demo --once
 compositor --self-test
 compositor --vulkan --self-test
+compositor --animate --self-test

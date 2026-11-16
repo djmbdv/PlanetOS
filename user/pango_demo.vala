@@ -15,6 +15,28 @@ private void check (bool ok, string name) {
     print (@"pango: FAIL $name\n");
 }
 
+private bool has_red (Context cr, int x0, int y0, int w, int h) {
+    for (int y = y0; y < y0 + h; y++) {
+        for (int x = x0; x < x0 + w; x++) {
+            int c = cr.pixel_at (x, y);
+            if (((c >> 16) & 0xFF) > 120 && ((c >> 8) & 0xFF) < 70 && (c & 0xFF) < 70)
+                return true;
+        }
+    }
+    return false;
+}
+
+private bool has_blue (Context cr, int x0, int y0, int w, int h) {
+    for (int y = y0; y < y0 + h; y++) {
+        for (int x = x0; x < x0 + w; x++) {
+            int c = cr.pixel_at (x, y);
+            if ((c & 0xFF) > 120 && ((c >> 16) & 0xFF) < 70 && ((c >> 8) & 0xFF) < 70)
+                return true;
+        }
+    }
+    return false;
+}
+
 int main (string[] args) {
     var ctx = new PangoContext ();
     ctx.font_description.size = 16;
@@ -128,6 +150,27 @@ int main (string[] args) {
     check (cr.pixel_at (2, 2) == ((255 << 24) | (0 << 16) | (255 << 8) | 0), "clip-fills-inside");
     check (cr.pixel_at (100, 2) == (255 << 24), "clip-skips-outside");
     cr.reset_clip ();
+
+    // colour attribute runs
+    lay.set_width (-1);
+    lay.set_text ("redblue");
+    check (!lay.has_attributes () && lay.color_at (0) == -1, "no-attributes");
+    lay.add_color_attribute (0, 3, 1.0, 0.0, 0.0);
+    lay.add_color_attribute (3, 7, 0.0, 0.0, 1.0);
+    check (lay.attribute_count () == 2, "attribute-count");
+    check (lay.color_at (0) == 0xFF0000, "attribute-red");
+    check (lay.color_at (3) == 0x0000FF, "attribute-blue");
+    check (lay.color_at (9) == -1, "attribute-outside");
+
+    var surf6 = new ImageSurface (Format.ARGB32, 200, 40);
+    var cr6 = new Context (surf6);
+    cr6.set_source_rgb (0.0, 0.0, 0.0);
+    cr6.paint ();
+    show_layout_at (cr6, lay, 4, 4);
+    check (has_red (cr6, 4, 4, 12, 14), "attribute-draws-red");
+    check (has_blue (cr6, 40, 4, 12, 14), "attribute-draws-blue");
+    lay.clear_attributes ();
+    check (!lay.has_attributes (), "attributes-cleared");
 
     print (@"pango:summary checks=$pd_checks failures=$pd_fails\n");
     return (pd_fails == 0) ? 0 : 1;

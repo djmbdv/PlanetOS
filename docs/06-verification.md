@@ -115,8 +115,8 @@ serial output against `<case>.expect`.
 | `compiler` | `planc.elf` compiles and runs programs inside the guest |
 | `objects` | `gobject_demo` and `gmodule_demo` report 19/19 and 14/14 |
 | `mainloop` | `mainloop_demo` reports 17/17 (idle before timeouts, source removal, `Application.run`) |
-| `graphics` | `cairo_demo`/`spv_demo` draw an 800×600 framebuffer (the 469-page surface proves the raised allocation limit), the shared SPIR-V module reports `words=169 insns=44 rgb=(56,188,247)`, the compositor self-test passes 62/62 (damage tracking, modifiers, per-pixel pattern), and the Vulkan refusal is reported |
-| `pango` | `pango_demo` reports 36/36: metrics, wrapping, ellipsize, alignment, `clip()` and text drawing |
+| `graphics` | `cairo_demo`/`spv_demo` draw an 800×600 framebuffer (the 469-page surface proves the raised allocation limit), the shared SPIR-V module reports `words=169 insns=44 rgb=(56,188,247)`, the compositor self-test passes 73/73 in three modes (static, --vulkan, --animate: damage merge, occlusion, modifiers, per-pixel pattern, push constants) and the Vulkan refusal is reported |
+| `pango` | `pango_demo` reports 44/44: metrics, wrapping, ellipsize, alignment, colour attribute runs, `clip()` and text drawing |
 
 Assertions: `text` (substring, in order), `=text` (whole line), `!text`
 (absent) and `~regex`.
