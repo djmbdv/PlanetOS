@@ -54,6 +54,7 @@ echo "Building PlanetOS kernel and userland..."
     "$ROOT/kernel/mouse.vala" \
     "$ROOT/kernel/ata.vala" \
     "$ROOT/kernel/xfs.vala" \
+    "$ROOT/kernel/vfs.vala" \
     "$ROOT/kernel/syscall.vala" \
     "$ROOT/kernel/elf_loader.vala" \
     "$ROOT/kernel/sched.vala" \

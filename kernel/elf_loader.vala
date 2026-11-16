@@ -114,18 +114,18 @@ namespace Planet.Kernel {
                                             out int out_stack_base, out int out_arg_sp) {
             out_stack_base = 0;
             out_arg_sp = 0;
-            int rslot = Ramfs.find (name_ptr, name_len);
-            int ino = (rslot >= 0) ? 0 : Xfs.lookup_root (name_ptr, name_len);
-            if (rslot < 0 && ino <= 0)
+            int id = -1;
+            int kind = Vfs.resolve (name_ptr, name_len, out id);
+            if (kind != Vfs.KIND_FILE && kind != Vfs.KIND_XFS)
                 return 0;
-            int esz = (rslot >= 0) ? Ramfs.file_size (rslot) : Xfs.file_size (ino);
+            int esz = (kind == Vfs.KIND_FILE) ? Ramfs.file_size (id) : Xfs.file_size (id);
             if (esz < 64)
                 return 0;
             int pages = (esz + 4095) / 4096;
             int ebuf = Pmm.alloc_contiguous (pages);
             if (ebuf == 0)
                 return 0;
-            int got = (rslot >= 0) ? Ramfs.read (rslot, 0, ebuf, esz) : Xfs.read_file (ino, 0, ebuf, esz);
+            int got = (kind == Vfs.KIND_FILE) ? Ramfs.read (id, 0, ebuf, esz) : Xfs.read_file (id, 0, ebuf, esz);
             int entry = (got == esz) ? load_image (ebuf, esz) : 0;
             for (int p = 0; p < pages; p++) {
                 Pmm.free_frame (ebuf + p * 4096);

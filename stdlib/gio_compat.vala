@@ -57,16 +57,6 @@ namespace Gio {
     private extern int __gio_write (int fd, uint8[] buf, int count);
 
     [AsmBody(@"
-        # __gio_readdir(buf in rdi, max_bytes in rsi) -> bytes escritos
-        add $16, %rdi
-        mov $12, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_readdir (uint8[] buf, int max_bytes);
-
-    [AsmBody(@"
         # __gio_unlink(path in rdi) -> 0 o -1
         mov 8(%rdi), %rsi
         add $16, %rdi
@@ -90,6 +80,41 @@ namespace Gio {
         ret
     ")]
     private extern int __gio_rename (string old_path, string new_path);
+
+    [AsmBody(@"
+        # __gio_mkdir(path in rdi) -> 0 o -1
+        mov 8(%rdi), %rsi
+        add $16, %rdi
+        mov $30, %rax
+        xor %edx, %edx
+        int $0x80
+        ret
+    ")]
+    private extern int __gio_mkdir (string path);
+
+    [AsmBody(@"
+        # __gio_stat(path in rdi) -> 0 none, 1 file, 2 dir
+        mov 8(%rdi), %rsi
+        add $16, %rdi
+        mov $32, %rax
+        xor %edx, %edx
+        int $0x80
+        ret
+    ")]
+    private extern int __gio_stat (string path);
+
+    [AsmBody(@"
+        # __gio_readdir_path(path in rdi, buf in rsi, max in rdx) -> bytes
+        mov %rdx, %r8
+        mov 8(%rdi), %rcx
+        add $16, %rdi
+        lea 16(%rsi), %rdx
+        mov %rcx, %rsi
+        mov $31, %rax
+        int $0x80
+        ret
+    ")]
+    private extern int __gio_readdir_path (string path, uint8[] buf, int max_bytes);
 
     public errordomain IOError {
         FAILED,
@@ -597,11 +622,13 @@ namespace Gio {
     }
 
     public class FileEnumerator : Object {
+        private string base_path;
         private GenericArray<string> names;
         private int idx = 0;
         private bool closed = false;
 
-        public FileEnumerator (GenericArray<string> names) {
+        public FileEnumerator (string base_path, GenericArray<string> names) {
+            this.base_path = base_path;
             this.names = names;
         }
 
@@ -612,15 +639,19 @@ namespace Gio {
                 return null;
             string name = names[idx];
             idx = idx + 1;
+            string full = (base_path.length == 0 || base_path == "/") ? name : base_path + "/" + name;
+            int kind = __gio_stat (full);
             int sz = 0;
-            int fd = __gio_open (name);
-            if (fd >= 0) {
-                sz = __gio_sys (9, fd, 0, 0);
-                if (sz < 0)
-                    sz = 0;
-                __gio_sys (8, fd, 0, 0);
+            if (kind == 1) {
+                int fd = __gio_open (full);
+                if (fd >= 0) {
+                    sz = __gio_sys (9, fd, 0, 0);
+                    if (sz < 0)
+                        sz = 0;
+                    __gio_sys (8, fd, 0, 0);
+                }
             }
-            return new FileInfo (name, sz, FileType.REGULAR);
+            return new FileInfo (name, sz, (kind == 2) ? FileType.DIRECTORY : FileType.REGULAR);
         }
 
         public bool close (Cancellable? cancellable = null) throws IOError {
@@ -707,11 +738,14 @@ namespace Gio {
                 return false;
             if (path_str == "/" || path_str == "." || path_str.length == 0)
                 return true;
-            string p = normalize_fs_path ();
-            int fd = __gio_open (p);
-            if (fd < 0)
-                return false;
-            __gio_sys (8, fd, 0, 0);
+            return __gio_stat (normalize_fs_path ()) != 0;
+        }
+
+        public bool make_directory (Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            if (__gio_mkdir (normalize_fs_path ()) < 0)
+                throw new IOError.FAILED ("Failed to create directory");
             return true;
         }
 
@@ -748,14 +782,20 @@ namespace Gio {
             if (path_str == "/" || path_str == "." || path_str.length == 0)
                 return new FileInfo (get_basename (), 0, FileType.DIRECTORY);
             string p = normalize_fs_path ();
-            int fd = __gio_open (p);
-            if (fd < 0)
+            int kind = __gio_stat (p);
+            if (kind == 0)
                 throw new IOError.NOT_FOUND ("No such file");
-            int sz = __gio_sys (9, fd, 0, 0);
-            if (sz < 0)
-                sz = 0;
-            __gio_sys (8, fd, 0, 0);
-            return new FileInfo (get_basename (), sz, FileType.REGULAR);
+            int sz = 0;
+            if (kind == 1) {
+                int fd = __gio_open (p);
+                if (fd >= 0) {
+                    sz = __gio_sys (9, fd, 0, 0);
+                    if (sz < 0)
+                        sz = 0;
+                    __gio_sys (8, fd, 0, 0);
+                }
+            }
+            return new FileInfo (get_basename (), sz, (kind == 2) ? FileType.DIRECTORY : FileType.REGULAR);
         }
 
         public FileInputStream read (Cancellable? cancellable = null) throws IOError {
@@ -860,7 +900,9 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             var buf = new uint8[4096];
-            int n = __gio_readdir (buf, 4096);
+            int n = __gio_readdir_path (normalize_fs_path (), buf, 4096);
+            if (n < 0)
+                throw new IOError.NOT_FOUND ("Not a directory");
             var list = new GenericArray<string> ();
             if (n > 0) {
                 int start = 0;
@@ -882,7 +924,7 @@ namespace Gio {
                     list.add (__planc_host_bytes_to_str (slice, n - start));
                 }
             }
-            return new FileEnumerator (list);
+            return new FileEnumerator (normalize_fs_path (), list);
         }
     }
 

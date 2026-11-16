@@ -192,6 +192,7 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'mouse.vala'),
         (Join-Path $KernelDir 'ata.vala'),
         (Join-Path $KernelDir 'xfs.vala'),
+        (Join-Path $KernelDir 'vfs.vala'),
         (Join-Path $KernelDir 'syscall.vala'),
         (Join-Path $KernelDir 'elf_loader.vala'),
         (Join-Path $KernelDir 'sched.vala'),

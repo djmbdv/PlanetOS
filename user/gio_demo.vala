@@ -246,6 +246,69 @@ namespace GioDemo {
         }
     }
 
+    private void demo_directories () {
+        try {
+            var dir = File.new_for_path ("gio_dir");
+            if (dir.query_exists ())
+                dir.delete ();
+            check ("mkdir", dir.make_directory (null));
+            check ("mkdir-exists", dir.query_exists ());
+            var dir_info = dir.query_info ();
+            check ("mkdir-type", dir_info.get_file_type () == FileType.DIRECTORY);
+
+            var file = dir.get_child ("note.txt");
+            var out_stream = file.replace ();
+            var dout = new DataOutputStream (out_stream);
+            dout.put_string ("inside\n");
+            dout.close ();
+            check ("dir-child-write", file.query_exists ());
+
+            var en = dir.enumerate_children ();
+            int count = 0;
+            while (true) {
+                var info = en.next_file ();
+                if (info == null)
+                    break;
+                count = count + 1;
+            }
+            en.close ();
+            check ("dir-list", count == 1);
+
+            string text = "";
+            if (FileUtils.get_contents ("gio_dir/note.txt", out text)) {
+                check ("dir-child-read", text == "inside\n");
+            } else {
+                check ("dir-child-read", false);
+            }
+
+            var moved = File.new_for_path ("gio_dir/moved.txt");
+            check ("dir-move", file.move (moved, FileCopyFlags.NONE, null));
+            check ("dir-move-gone", !file.query_exists () && moved.query_exists ());
+            check ("dir-rm-file", moved.delete ());
+            check ("dir-rm", dir.delete ());
+            check ("dir-gone", !dir.query_exists ());
+
+            var blocked = File.new_for_path ("gio_dir2");
+            if (blocked.query_exists ())
+                blocked.delete ();
+            blocked.make_directory (null);
+            var keep = blocked.get_child ("keep.txt");
+            var ks = keep.replace ();
+            ks.close ();
+            try {
+                blocked.delete ();
+                check ("dir-rm-nonempty", false);
+            } catch (IOError e) {
+                check ("dir-rm-nonempty", true);
+            }
+            keep.delete ();
+            blocked.delete ();
+            check ("dir2-gone", !blocked.query_exists ());
+        } catch (IOError e) {
+            report ("dirs", e);
+        }
+    }
+
     private void demo_enumerate () {
         try {
             var root = File.new_for_path ("/");
@@ -304,6 +367,7 @@ namespace GioDemo {
         demo_memory ();
         demo_write ("gio_demo.tmp");
         demo_contents ("gio_demo2.tmp");
+        demo_directories ();
         demo_enumerate ();
         demo_application (args);
 

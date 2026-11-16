@@ -72,26 +72,23 @@ namespace Planet.Kernel {
             return serial_try_read ();
         }
         if (num == 6) { // SYS_OPEN(name_ptr, name_len)
-            int rslot = Ramfs.find (a0, a1);
-            int kind = 0;
-            int id = 0;
+            int id = -1;
+            int kind = Vfs.resolve (a0, a1, out id);
+            int fd_kind = 0;
             int fsz = 0;
-            if (rslot >= 0) {
-                kind = 2;
-                id = rslot;
-                fsz = Ramfs.file_size (rslot);
+            if (kind == Vfs.KIND_XFS) {
+                fd_kind = 1;
+                fsz = Xfs.file_size (id);
+            } else if (kind == Vfs.KIND_FILE) {
+                fd_kind = 2;
+                fsz = Ramfs.file_size (id);
             } else {
-                int ino = Xfs.lookup_root (a0, a1);
-                if (ino <= 0)
-                    return -1;
-                kind = 1;
-                id = ino;
-                fsz = Xfs.file_size (ino);
+                return -1;
             }
             for (int fd = 3; fd < MAX_FDS; fd++) {
                 int slot = FD_TABLE_ADDR + fd * 32;
                 if (mmio_read64 (slot) == 0) {
-                    mmio_write64 (slot + 0, kind);
+                    mmio_write64 (slot + 0, fd_kind);
                     mmio_write64 (slot + 8, id);
                     mmio_write64 (slot + 16, fsz);
                     mmio_write64 (slot + 24, 0);
@@ -158,8 +155,13 @@ namespace Planet.Kernel {
         if (num == 13) { // SYS_EXEC(name_ptr, name_len, cmdline_ptr)
             return ElfLoader.exec_from_xfs (a0, a1, a2);
         }
-        if (num == 14) { // SYS_CREATE(name_ptr, name_len) -> fd
-            int rslot = Ramfs.create (a0, a1);
+        if (num == 14) { // SYS_CREATE(path_ptr, path_len) -> fd
+            int base_ptr = 0;
+            int base_len = 0;
+            int parent = Vfs.resolve_parent (a0, a1, out base_ptr, out base_len);
+            if (parent < -1 || Vfs.reserved_name (base_ptr, base_len))
+                return -1;
+            int rslot = Ramfs.create_in (parent, base_ptr, base_len, 1);
             if (rslot < 0)
                 return -1;
             for (int fd = 3; fd < MAX_FDS; fd++) {
@@ -248,11 +250,65 @@ namespace Planet.Kernel {
         if (num == 27) { // SYS_THREAD_SPAWN(entry_fn, arg) -> tid
             return Sched.spawn_thread (a0, a1);
         }
-        if (num == 28) { // SYS_UNLINK(name_ptr, name_len)
-            return Ramfs.unlink (a0, a1);
+        if (num == 28) { // SYS_UNLINK(path_ptr, path_len)
+            int id = -1;
+            int kind = Vfs.resolve (a0, a1, out id);
+            if (kind == Vfs.KIND_FILE)
+                return Ramfs.unlink_slot (id);
+            if (kind == Vfs.KIND_DIR && id >= 0)
+                return Ramfs.has_children (id) ? -1 : Ramfs.unlink_slot (id);
+            return -1;
         }
         if (num == 29) { // SYS_RENAME(old_ptr, old_len, new_ptr, new_len)
-            return Ramfs.rename (a0, a1, a2, a3);
+            int id = -1;
+            int kind = Vfs.resolve (a0, a1, out id);
+            if (kind != Vfs.KIND_FILE && kind != Vfs.KIND_DIR)
+                return -1;
+            if (id < 0)
+                return -1; // the root cannot be renamed
+            int base_ptr = 0;
+            int base_len = 0;
+            int parent = Vfs.resolve_parent (a2, a3, out base_ptr, out base_len);
+            if (parent < -1 || Vfs.reserved_name (base_ptr, base_len))
+                return -1;
+            if (kind == Vfs.KIND_DIR && Vfs.is_descendant (parent, id))
+                return -1;
+            return Ramfs.rename_to (id, parent, base_ptr, base_len);
+        }
+        if (num == 30) { // SYS_MKDIR(path_ptr, path_len)
+            int base_ptr = 0;
+            int base_len = 0;
+            int parent = Vfs.resolve_parent (a0, a1, out base_ptr, out base_len);
+            if (parent < -1 || Vfs.reserved_name (base_ptr, base_len))
+                return -1;
+            if (parent == -1 && Xfs.lookup_root (base_ptr, base_len) > 0)
+                return -1;
+            int rslot = Ramfs.create_in (parent, base_ptr, base_len, 2);
+            return (rslot < 0) ? -1 : 0;
+        }
+        if (num == 31) { // SYS_READDIR(path_ptr, path_len, buf, max_bytes)
+            int id = -1;
+            int kind = Vfs.resolve (a0, a1, out id);
+            if (kind != Vfs.KIND_DIR)
+                return -1;
+            int n1 = Ramfs.list_children (id, a2, a3);
+            if (n1 < 0)
+                n1 = 0;
+            int n2 = 0;
+            if (id == -1 && a3 > n1)
+                n2 = Xfs.list_root (a2 + n1, a3 - n1);
+            if (n2 < 0)
+                n2 = 0;
+            return n1 + n2;
+        }
+        if (num == 32) { // SYS_STAT(path_ptr, path_len) -> 0 none, 1 file, 2 dir
+            int id = -1;
+            int kind = Vfs.resolve (a0, a1, out id);
+            if (kind == Vfs.KIND_DIR)
+                return 2;
+            if (kind == Vfs.KIND_FILE || kind == Vfs.KIND_XFS)
+                return 1;
+            return 0;
         }
         return -1;
     }

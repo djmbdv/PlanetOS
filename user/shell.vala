@@ -67,6 +67,19 @@ namespace PlanetShell {
     ")]
     public extern int sys_rename_str (int num, string old_name, string new_name);
 
+    [AsmBody(@"
+        # sys_readdir_path(num in rdi, path in rsi, buf in rdx, max in rcx)
+        mov %rdi, %rax
+        mov %rcx, %r8
+        mov 8(%rsi), %rcx
+        add $16, %rsi
+        mov %rsi, %rdi
+        mov %rcx, %rsi
+        int $0x80
+        ret
+    ")]
+    public extern int sys_readdir_path (int num, string path, int buf, int max);
+
     private class Tok : Object {
         public string text;
         public bool is_op;
@@ -84,6 +97,52 @@ namespace PlanetShell {
 
     private string int_to_s (int v) {
         return @"$v";
+    }
+
+    private string abs_path (string name) {
+        if (name.length == 0)
+            return cwd;
+        if (name[0] == '/')
+            return name;
+        if (cwd == "/")
+            return "/" + name;
+        return cwd + "/" + name;
+    }
+
+    private string canonical_path (string path) {
+        var parts = new GenericArray<string> ();
+        int depth = 0;
+        int i = 0;
+        while (i < path.length) {
+            while (i < path.length && path[i] == '/')
+                i = i + 1;
+            if (i >= path.length)
+                break;
+            int start = i;
+            while (i < path.length && path[i] != '/')
+                i = i + 1;
+            string comp = path.substring (start, i - start);
+            if (comp == ".")
+                continue;
+            if (comp == "..") {
+                if (depth > 0)
+                    depth = depth - 1;
+                continue;
+            }
+            if (depth < parts.length)
+                parts[depth] = comp;
+            else
+                parts.add (comp);
+            depth = depth + 1;
+        }
+        if (depth == 0)
+            return "/";
+        var sb = new StringBuilder ();
+        for (int k = 0; k < depth; k++) {
+            sb.append ("/");
+            sb.append (parts[k]);
+        }
+        return sb.str;
     }
 
     private string get_var (string name) {
@@ -267,7 +326,9 @@ namespace PlanetShell {
             string val = args[2];
             if (op == "-z") return (val.length == 0) ? 0 : 1;
             if (op == "-n") return (val.length > 0) ? 0 : 1;
-            if (op == "-f" || op == "-e") return FileUtils.test (val, FileTest.EXISTS) ? 0 : 1;
+            if (op == "-e") return (sys_str (32, canonical_path (abs_path (val))) != 0) ? 0 : 1;
+            if (op == "-f") return (sys_str (32, canonical_path (abs_path (val))) == 1) ? 0 : 1;
+            if (op == "-d") return (sys_str (32, canonical_path (abs_path (val))) == 2) ? 0 : 1;
             if (op == "!") return (val.length == 0) ? 0 : 1;
             return 1;
         }
@@ -348,6 +409,7 @@ namespace PlanetShell {
         int in_fd = -1;
         int out_fd = -1;
         if (redir_in.length > 0) {
+            redir_in = canonical_path (abs_path (redir_in));
             in_fd = sys_str (6, redir_in);
             if (in_fd < 0) {
                 print (@"sh: cannot open '$redir_in'\n");
@@ -355,6 +417,7 @@ namespace PlanetShell {
             }
         }
         if (redir_out.length > 0) {
+            redir_out = canonical_path (abs_path (redir_out));
             if (append_out && FileUtils.test (redir_out, FileTest.EXISTS)) {
                 out_fd = sys_str (6, redir_out);
                 if (out_fd >= 3)
@@ -417,9 +480,9 @@ namespace PlanetShell {
         return sb.str;
     }
 
-    private string find_root_ci (string want, bool any_name) {
+    private string find_in_dir_ci (string dir, string want, bool any_name) {
         int buf = scratch_page + 512;
-        int n = sys (12, buf, 3584, 0);
+        int n = sys_readdir_path (31, dir, buf, 3584);
         if (n <= 0)
             return "";
         string want_elf = want + ".elf";
@@ -440,25 +503,49 @@ namespace PlanetShell {
         return "";
     }
 
-    // Resolves the name typed at the prompt to an existing file. With
-    // `any_name` (used by `exec`) an exact non-.elf file is accepted as before.
+    // Resolves the name typed at the prompt to an existing file, relative to
+    // the shell's working directory. With `any_name` (used by `exec`) an exact
+    // non-.elf file is accepted as before.
     private string resolve_command (string typed, bool any_name) {
         string name = strip_cmd_prefix (typed);
         if (name.length == 0)
             return "";
-        if (any_name && FileUtils.test (name, FileTest.EXISTS))
-            return name;
-        if (ends_with_elf_ci (name) && FileUtils.test (name, FileTest.EXISTS))
-            return name;
-        if (!ends_with_elf_ci (name) && FileUtils.test (name + ".elf", FileTest.EXISTS))
-            return name + ".elf";
-        return find_root_ci (name, any_name);
+        string full = canonical_path (abs_path (name));
+        if (any_name && FileUtils.test (full, FileTest.EXISTS))
+            return full;
+        if (ends_with_elf_ci (full) && FileUtils.test (full, FileTest.EXISTS))
+            return full;
+        if (!ends_with_elf_ci (full) && FileUtils.test (full + ".elf", FileTest.EXISTS))
+            return full + ".elf";
+        int slash = -1;
+        for (int i = full.length - 1; i >= 0; i--) {
+            if (full[i] == '/') {
+                slash = i;
+                break;
+            }
+        }
+        string dir = "/";
+        string leaf = full;
+        if (slash > 0) {
+            dir = full.substring (0, slash);
+            leaf = full.substring (slash + 1);
+        } else if (slash == 0) {
+            leaf = full.substring (1);
+        }
+        string found = find_in_dir_ci (dir, leaf, any_name);
+        if (found.length == 0)
+            return "";
+        return (dir == "/") ? "/" + found : dir + "/" + found;
     }
 
-    private int ls_long () {
+    private int ls_long (string dir) {
         int buf = scratch_page + 512;
-        int n = sys (12, buf, 3584, 0);
-        if (n <= 0)
+        int n = sys_readdir_path (31, dir, buf, 3584);
+        if (n < 0) {
+            print (@"ls: not a directory: '$dir'\n");
+            return 1;
+        }
+        if (n == 0)
             return 0;
         int start = 0;
         for (int i = 0; i <= n; i++) {
@@ -466,13 +553,20 @@ namespace PlanetShell {
                 int len = i - start;
                 if (len > 0) {
                     string name = root_entry_str (buf + start, len);
-                    int fd = sys_str (6, name);
+                    string full = (dir == "/") ? "/" + name : dir + "/" + name;
+                    int kind = sys_str (32, full);
                     int sz = -1;
-                    if (fd >= 0) {
-                        sz = sys (9, fd, 0, 0);
-                        sys (8, fd, 0, 0);
+                    if (kind == 1) {
+                        int fd = sys_str (6, full);
+                        if (fd >= 0) {
+                            sz = sys (9, fd, 0, 0);
+                            sys (8, fd, 0, 0);
+                        }
                     }
-                    print (@"$sz $name\n");
+                    if (kind == 2)
+                        print (@"dir $name\n");
+                    else
+                        print (@"$sz $name\n");
                 }
                 start = i + 1;
             }
@@ -533,15 +627,21 @@ namespace PlanetShell {
             return 0;
         }
         if (cmd == "cd") {
-            cwd = (args.length > 1) ? args[1] : "/";
+            string target = (args.length > 1) ? canonical_path (abs_path (args[1])) : "/";
+            if (sys_str (32, target) != 2) {
+                print (@"cd: not a directory: '$target'\n");
+                return 1;
+            }
+            cwd = target;
             return 0;
         }
         if (cmd == "test" || cmd == "[")
             return eval_test (args);
         if (cmd == "help") {
             print ("PlanetOS dash (100% Vala POSIX shell)\n");
-            print ("commands: help, banner, ls [-l], ps, cat <file>, write <file> <text>,\n");
-            print ("          rm <file>, cp <src> <dst>, mv <src> <dst>, touch <file>, echo, test/[],\n");
+            print ("commands: help, banner, cd <dir>, pwd, mkdir <dir>, ls [-l] [dir], ps,\n");
+            print ("          cat <file>, write <file> <text>, rm <file>, cp <src> <dst>,\n");
+            print ("          mv <src> <dst>, touch <file>, echo, test/[],\n");
             print ("          export, unset, env, sh <script>, exec <file> [args] [&], wait <tid>,\n");
             print ("          ticks, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
             print ("          <prog> [args] runs <prog>.elf directly (case-insensitive, no exec needed)\n");
@@ -550,11 +650,31 @@ namespace PlanetShell {
         if (cmd == "banner") {
             return sys_exec_str (13, "banner.elf", "banner.elf");
         }
+        if (cmd == "mkdir") {
+            if (args.length < 2) {
+                print ("usage: mkdir <dir>...\n");
+                return 1;
+            }
+            int rc = 0;
+            for (int i = 1; i < args.length; i++) {
+                string target = canonical_path (abs_path (args[i]));
+                if (sys_str (30, target) < 0) {
+                    print (@"mkdir: cannot create '$target'\n");
+                    rc = 1;
+                }
+            }
+            return rc;
+        }
         if (cmd == "ls") {
             if (args.length > 1 && args[1] == "-l")
-                return ls_long ();
+                return ls_long ((args.length > 2) ? canonical_path (abs_path (args[2])) : cwd);
+            string where = (args.length > 1) ? canonical_path (abs_path (args[1])) : cwd;
             int io_buf = scratch_page + 512;
-            int n = sys (12, io_buf, 3584, 0);
+            int n = sys_readdir_path (31, where, io_buf, 3584);
+            if (n < 0) {
+                print (@"ls: not a directory: '$where'\n");
+                return 1;
+            }
             if (n > 0)
                 sys (1, io_buf, n, 0);
             return 0;
@@ -579,7 +699,7 @@ namespace PlanetShell {
                 return 0;
             }
             string contents = "";
-            if (!FileUtils.get_contents (args[1], out contents)) {
+            if (!FileUtils.get_contents (canonical_path (abs_path (args[1])), out contents)) {
                 print ("cat: not found\n");
                 return 1;
             }
@@ -597,7 +717,7 @@ namespace PlanetShell {
                 sb.append (args[i]);
             }
             sb.append ("\n");
-            return FileUtils.set_contents (args[1], sb.str) ? 0 : 1;
+            return FileUtils.set_contents (canonical_path (abs_path (args[1])), sb.str) ? 0 : 1;
         }
         if (cmd == "rm") {
             if (args.length < 2) {
@@ -606,8 +726,9 @@ namespace PlanetShell {
             }
             int rc = 0;
             for (int i = 1; i < args.length; i++) {
-                if (sys_str (28, args[i]) < 0) {
-                    print (@"rm: cannot remove '$(args[i])'\n");
+                string target = canonical_path (abs_path (args[i]));
+                if (sys_str (28, target) < 0) {
+                    print (@"rm: cannot remove '$target'\n");
                     rc = 1;
                 }
             }
@@ -618,8 +739,10 @@ namespace PlanetShell {
                 print ("usage: mv <src> <dst>\n");
                 return 1;
             }
-            if (sys_rename_str (29, args[1], args[2]) < 0) {
-                print (@"mv: cannot move '$(args[1])' to '$(args[2])'\n");
+            string from = canonical_path (abs_path (args[1]));
+            string to = canonical_path (abs_path (args[2]));
+            if (sys_rename_str (29, from, to) < 0) {
+                print (@"mv: cannot move '$from' to '$to'\n");
                 return 1;
             }
             return 0;
@@ -629,13 +752,15 @@ namespace PlanetShell {
                 print ("usage: cp <src> <dst>\n");
                 return 1;
             }
+            string from = canonical_path (abs_path (args[1]));
+            string to = canonical_path (abs_path (args[2]));
             string contents = "";
-            if (!FileUtils.get_contents (args[1], out contents)) {
-                print (@"cp: cannot read '$(args[1])'\n");
+            if (!FileUtils.get_contents (from, out contents)) {
+                print (@"cp: cannot read '$from'\n");
                 return 1;
             }
-            if (!FileUtils.set_contents (args[2], contents)) {
-                print (@"cp: cannot write '$(args[2])' (only RAMFS is writable)\n");
+            if (!FileUtils.set_contents (to, contents)) {
+                print (@"cp: cannot write '$to' (only RAMFS is writable)\n");
                 return 1;
             }
             return 0;
@@ -646,11 +771,12 @@ namespace PlanetShell {
                 return 1;
             }
             for (int i = 1; i < args.length; i++) {
-                if (FileUtils.test (args[i], FileTest.EXISTS))
+                string target = canonical_path (abs_path (args[i]));
+                if (FileUtils.test (target, FileTest.EXISTS))
                     continue;
-                int fd = sys_str (14, args[i]);
+                int fd = sys_str (14, target);
                 if (fd < 0) {
-                    print (@"touch: cannot create '$(args[i])'\n");
+                    print (@"touch: cannot create '$target'\n");
                     return 1;
                 }
                 sys (8, fd, 0, 0);
@@ -682,7 +808,7 @@ namespace PlanetShell {
                 print ("usage: sh <script>\n");
                 return 1;
             }
-            return run_script (args[1]);
+            return run_script (canonical_path (abs_path (args[1])));
         }
 
         // External execution: `exec <file> [args...]` or a bare command name.
@@ -934,7 +1060,7 @@ namespace PlanetShell {
         set_var ("PS1", "planet> ");
 
         if (args.length > 1)
-            return run_script (args[1]);
+            return run_script (canonical_path (abs_path (args[1])));
 
         sys_exec_str (13, "banner.elf", "banner.elf");
         print ("PlanetOS Shell v0.2 (dash-compatible 100% Vala, type 'help')\n");

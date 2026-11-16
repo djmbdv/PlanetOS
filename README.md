@@ -127,6 +127,7 @@ problems** and **creates six**:
 | [docs/planc/slice-31.md](docs/planc/slice-31.md) | **Implemented slice 31**: pure-Vala `Gio` layer in userland ([stdlib/gio_compat.vala](stdlib/gio_compat.vala), [user/gio_demo.vala](user/gio_demo.vala)) with streaming XFS reads and non-truncating append |
 | [docs/planc/slice-32.md](docs/planc/slice-32.md) | **Implemented slice 32**: Windows-style shell command resolution ([user/shell.vala](user/shell.vala)) — `gio_demo`, `GIO_DEMO.ELF`, `.\gio_demo` all run `gio_demo.elf`, with `.elf` implied and case-insensitive matching |
 | [docs/planc/slice-33.md](docs/planc/slice-33.md) | **Implemented slice 33**: file management — `SYS_UNLINK` (28) and `SYS_RENAME` (29) on RAMFS, `File.delete`/`File.move` in Gio, and `rm`, `cp`, `mv`, `touch`, `ls -l` in the shell |
+| [docs/planc/slice-34.md](docs/planc/slice-34.md) | **Implemented slice 34**: directories — kernel path resolution ([kernel/vfs.vala](kernel/vfs.vala)), RAMFS directory entries, `SYS_MKDIR`/`SYS_READDIR(path)`/`SYS_STAT`, `mkdir`/`cd`/`ls [dir]` and Gio `make_directory`/per-directory enumeration |
 
 ## 5. State of the measurements
 
