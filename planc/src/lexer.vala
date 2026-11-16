@@ -25,6 +25,7 @@ namespace Planc {
         DOT,         // .
         COLON,       // :
         QUESTION,    // ?
+        QUESTION_QUESTION, // ??
         ASSIGN,      // =
         PLUS,        // +
         MINUS,       // -
@@ -106,6 +107,102 @@ namespace Planc {
             return c >= '0' && c <= '9';
         }
 
+        private static bool is_hex_digit (uint8 c) {
+            return is_digit (c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        }
+
+        private static uint64 hex_val (uint8 c) {
+            if (c >= '0' && c <= '9') return (uint64) (c - '0');
+            if (c >= 'a' && c <= 'f') return (uint64) (10 + c - 'a');
+            return (uint64) (10 + c - 'A');
+        }
+
+        private Token scan_char_literal (int l, int c) throws LexError {
+            advance (); // skip opening '\''
+            if (pos >= source.length)
+                throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
+            uint8 val = current ();
+            if (val == '\'')
+                throw new LexError.UNEXPECTED_CHARACTER (@"empty character literal at $l:$c");
+            if (val == '\\') {
+                advance ();
+                if (pos >= source.length)
+                    throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
+                var e = current ();
+                switch (e) {
+                    case 'n':  val = '\n'; break;
+                    case 't':  val = '\t'; break;
+                    case 'r':  val = '\r'; break;
+                    case '\\': val = '\\'; break;
+                    case '\'': val = '\''; break;
+                    case '"':  val = '"'; break;
+                    case '0':  val = '\0'; break;
+                    default:
+                        throw new LexError.UNKNOWN_ESCAPE (@"unknown escape at $l:$c");
+                }
+            }
+            advance ();
+            if (pos >= source.length || current () != '\'')
+                throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
+            advance ();
+            return Token () {
+                kind = TokenKind.INTEGER,
+                text = ((int) val).to_string (),
+                line = l, column = c
+            };
+        }
+
+        private Token scan_int_literal (int l, int c) throws LexError {
+            uint64 val = 0;
+            if (current () == '0' && (peek (1) == 'x' || peek (1) == 'X')) {
+                advance ();
+                advance ();
+                int digits = 0;
+                while (pos < source.length) {
+                    var cur = current ();
+                    if (cur == '_') { advance (); continue; }
+                    if (!is_hex_digit (cur)) break;
+                    val = val * 16 + hex_val (cur);
+                    digits++;
+                    advance ();
+                }
+                if (digits == 0)
+                    throw new LexError.UNEXPECTED_CHARACTER (@"invalid hexadecimal literal at $l:$c");
+            } else if (current () == '0' && (peek (1) == 'b' || peek (1) == 'B')) {
+                advance ();
+                advance ();
+                int digits = 0;
+                while (pos < source.length) {
+                    var cur = current ();
+                    if (cur == '_') { advance (); continue; }
+                    if (cur != '0' && cur != '1') break;
+                    val = val * 2 + (uint64) (cur - '0');
+                    digits++;
+                    advance ();
+                }
+                if (digits == 0)
+                    throw new LexError.UNEXPECTED_CHARACTER (@"invalid binary literal at $l:$c");
+            } else {
+                while (pos < source.length) {
+                    var cur = current ();
+                    if (cur == '_') { advance (); continue; }
+                    if (!is_digit (cur)) break;
+                    val = val * 10 + (uint64) (cur - '0');
+                    advance ();
+                }
+            }
+            while (pos < source.length
+                   && (current () == 'u' || current () == 'U'
+                       || current () == 'l' || current () == 'L')) {
+                advance ();
+            }
+            return Token () {
+                kind = TokenKind.INTEGER,
+                text = ((int64) val).to_string (),
+                line = l, column = c
+            };
+        }
+
         public Token next () throws LexError {
             skip_whitespace ();
 
@@ -128,15 +225,16 @@ namespace Planc {
                 };
             }
 
-            if (is_digit (ch)) {
-                var start = pos;
-                while (pos < source.length && is_digit (current ()))
-                    advance ();
-                return Token () {
-                    kind = TokenKind.INTEGER,
-                    text = source[start:pos],
-                    line = l, column = c
-                };
+            if (is_digit (ch))
+                return scan_int_literal (l, c);
+
+            if (ch == '\'')
+                return scan_char_literal (l, c);
+
+            if (ch == '?' && peek (1) == '?') {
+                advance ();
+                advance ();
+                return two_char (TokenKind.QUESTION_QUESTION, l, c);
             }
 
             if (ch == '"') {

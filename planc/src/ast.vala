@@ -1,8 +1,8 @@
 // AST nodes for the Planc dialect.
 //
-// Slice 6 adds: classes (`class`), inheritance, virtual/override/abstract,
-// constructors/destructors, nullable references (`T?`), `null`, `this`, `base`,
-// `is`, `as`, and class casts `(Sub) x`.
+// Slice 7 adds: `foreach`, `switch`/`case`/`default`, string slicing `s[start:end]`,
+// ternary `?:`, null-coalescing `??`, integer width aliases (`uint8`..`uint64`,
+// `size_t`, `char`), hex/binary/char literals, `const`, `static`, and `struct`/`enum` methods.
 
 namespace Planc {
 
@@ -158,6 +158,23 @@ namespace Planc {
         public string target_type_name { get; set; default = ""; }
     }
 
+    public class SliceExpr : Expr {
+        public Expr target { get; set; }
+        public Expr start { get; set; }
+        public Expr end { get; set; }
+    }
+
+    public class TernaryExpr : Expr {
+        public Expr condition { get; set; }
+        public Expr then_expr { get; set; }
+        public Expr else_expr { get; set; }
+    }
+
+    public class CoalesceExpr : Expr {
+        public Expr left { get; set; }
+        public Expr right { get; set; }
+    }
+
     // ------------------------------------------------------------------
     // Statements.
     // ------------------------------------------------------------------
@@ -243,6 +260,39 @@ namespace Planc {
     public class ContinueStatement : Statement {
     }
 
+    public class ForeachStatement : Statement {
+        public ValaType elem_type { get; set; default = ValaType.INT; }
+        public string elem_type_name { get; set; default = ""; }
+        public bool infer_type { get; set; default = false; }
+        public string var_name { get; set; }
+        public Expr collection { get; set; }
+        public Statement body { get; set; }
+    }
+
+    public class SwitchCase : Object {
+        public GenericArray<Expr> values { get; private set; }
+        public GenericArray<Statement> body { get; private set; }
+        public int line { get; set; }
+        public int column { get; set; }
+
+        public SwitchCase () {
+            values = new GenericArray<Expr> ();
+            body = new GenericArray<Statement> ();
+        }
+    }
+
+    public class SwitchStatement : Statement {
+        public Expr target { get; set; }
+        public GenericArray<SwitchCase> cases { get; private set; }
+        public GenericArray<Statement> default_body { get; private set; }
+        public bool has_default { get; set; default = false; }
+
+        public SwitchStatement () {
+            cases = new GenericArray<SwitchCase> ();
+            default_body = new GenericArray<Statement> ();
+        }
+    }
+
     // ------------------------------------------------------------------
     // Type declarations, functions and program.
     // ------------------------------------------------------------------
@@ -255,16 +305,26 @@ namespace Planc {
     public class EnumDecl : Object {
         public string name { get; set; }
         public GenericArray<EnumMember> members { get; private set; }
+        public GenericArray<Function> methods { get; private set; }
         public int line { get; set; }
         public int column { get; set; }
 
         public EnumDecl () {
             members = new GenericArray<EnumMember> ();
+            methods = new GenericArray<Function> ();
         }
 
         public unowned EnumMember? find_member (string mname) {
             foreach (unowned var m in members) {
                 if (m.name == mname)
+                    return m;
+            }
+            return null;
+        }
+
+        public unowned Function? find_method (string mname) {
+            foreach (unowned var m in methods) {
+                if (m.name == mname || m.method_name == mname)
                     return m;
             }
             return null;
@@ -282,17 +342,27 @@ namespace Planc {
     public class StructDecl : Object {
         public string name { get; set; }
         public GenericArray<StructField> fields { get; private set; }
+        public GenericArray<Function> methods { get; private set; }
         public int line { get; set; }
         public int column { get; set; }
 
         public StructDecl () {
             fields = new GenericArray<StructField> ();
+            methods = new GenericArray<Function> ();
         }
 
         public unowned StructField? find_field (string fname) {
             foreach (unowned var f in fields) {
                 if (f.name == fname)
                     return f;
+            }
+            return null;
+        }
+
+        public unowned Function? find_method (string mname) {
+            foreach (unowned var m in methods) {
+                if (m.name == mname || m.method_name == mname)
+                    return m;
             }
             return null;
         }
@@ -318,6 +388,7 @@ namespace Planc {
         public bool is_virtual { get; set; default = false; }
         public bool is_override { get; set; default = false; }
         public bool is_abstract { get; set; default = false; }
+        public bool is_static { get; set; default = false; }
         public bool is_ctor { get; set; default = false; }
         public bool is_dtor { get; set; default = false; }
         public bool has_base_call { get; set; default = false; }
@@ -384,9 +455,21 @@ namespace Planc {
         }
     }
 
+    public class ConstDecl : Object {
+        public ValaType const_type { get; set; default = ValaType.INT; }
+        public string type_name { get; set; default = ""; }
+        public string name { get; set; }
+        public string owner_type { get; set; default = ""; }
+        public int64 int_value { get; set; }
+        public string str_value { get; set; default = ""; }
+        public int line { get; set; }
+        public int column { get; set; }
+    }
+
     public class Program : Object {
         public GenericArray<Function> functions { get; private set; }
         public GenericArray<GlobalVar> globals { get; private set; }
+        public GenericArray<ConstDecl> consts { get; private set; }
         public GenericArray<EnumDecl> enums { get; private set; }
         public GenericArray<StructDecl> structs { get; private set; }
         public GenericArray<ClassDecl> classes { get; private set; }
@@ -394,9 +477,18 @@ namespace Planc {
         public Program () {
             functions = new GenericArray<Function> ();
             globals = new GenericArray<GlobalVar> ();
+            consts = new GenericArray<ConstDecl> ();
             enums = new GenericArray<EnumDecl> ();
             structs = new GenericArray<StructDecl> ();
             classes = new GenericArray<ClassDecl> ();
+        }
+
+        public unowned ConstDecl? find_const (string owner, string cname) {
+            foreach (unowned var c in consts) {
+                if (c.owner_type == owner && c.name == cname)
+                    return c;
+            }
+            return null;
         }
 
         public unowned Function? find (string name) {

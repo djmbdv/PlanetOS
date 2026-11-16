@@ -1448,5 +1448,66 @@ namespace Planc {
             bind (l_done);
             ret ();
         }
+
+        // string* __planc_str_slice(string* rdi, int64 rsi_start, int64 rdx_end)
+        public void emit_rt_str_slice (int empty_str_off, bool bounds_check, Label bounds_panic_lbl) {
+            var l_empty = new_label ();
+            if (bounds_check) {
+                // cmp rdx, [rdi + 8]          48 3B 57 08
+                code.u8 (0x48); code.u8 (0x3B); code.u8 (0x57); code.u8 (0x08);
+                branch (BranchKind.JA, bounds_panic_lbl);
+                // cmp rsi, rdx                48 39 D6
+                code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6);
+                branch (BranchKind.JA, bounds_panic_lbl);
+            }
+            // mov rax, rdx; sub rax, rsi      48 89 D0 | 48 29 F0
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD0);
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xF0);
+            // test rax, rax; jle l_empty
+            test_rax_rax ();
+            branch (BranchKind.JLE, l_empty);
+
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14  (stack 16-byte aligned)
+
+            // r12 = src (rdi), r13 = start (rsi), rbx = slice_len (rax)
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF5);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC3);
+
+            // rdi = rbx + 1; xor esi, esi; call __planc_alloc
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xDF);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+
+            // [rax + 8] = rbx
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x58); code.u8 (0x08);
+            // Copy rbx bytes from (r12 + 16 + r13) to (rax + 16)
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7); // mov rdi, rax
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10); // add rdi, 16
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE6); // mov rsi, r12
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x10); // add rsi, 16
+            code.u8 (0x4C); code.u8 (0x01); code.u8 (0xEE); // add rsi, r13
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD9); // mov rcx, rbx
+            code.u8 (0xF3); code.u8 (0xA4);                 // rep movsb
+            // Trailing NUL: mov byte ptr [rdi], 0
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00);
+
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+
+            bind (l_empty);
+            lea_rax_rip (empty_str_off);
+            ret ();
+        }
     }
 }
