@@ -157,6 +157,12 @@ namespace PlanetShell {
         return get_var (src.substring (start, i - start));
     }
 
+    private bool is_escapable (uint8 c) {
+        return c == '\\' || c == ' ' || c == '\t' || c == '\r' || c == '\n'
+            || c == '\'' || c == '"' || c == '$' || c == '|' || c == '>'
+            || c == '<' || c == ';' || c == '&' || c == '#';
+    }
+
     private GenericArray<Tok> tokenize (string line) {
         var toks = new GenericArray<Tok> ();
         int n = line.length;
@@ -216,7 +222,7 @@ namespace PlanetShell {
                     }
                     if (i < n && line[i] == '"')
                         i = i + 1;
-                } else if (w == '\\' && i + 1 < n) {
+                } else if (w == '\\' && i + 1 < n && is_escapable (line[i + 1])) {
                     i = i + 1;
                     sb.append_c ((char) line[i]);
                     i = i + 1;
@@ -360,6 +366,81 @@ namespace PlanetShell {
         return rc;
     }
 
+    // Windows-style command resolution: a bare name gets the .elf extension and
+    // matching is case-insensitive against the flat root (XFS + RAMFS).
+    private uint8 ascii_fold (uint8 c) {
+        return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+    }
+
+    private bool ends_with_elf_ci (string s) {
+        if (s.length < 4)
+            return false;
+        int off = s.length - 4;
+        return ascii_fold (s[off]) == '.' && ascii_fold (s[off + 1]) == 'e'
+            && ascii_fold (s[off + 2]) == 'l' && ascii_fold (s[off + 3]) == 'f';
+    }
+
+    private string strip_cmd_prefix (string s) {
+        if (s.length > 2 && s[0] == '.' && (s[1] == '/' || s[1] == '\\'))
+            return s.substring (2);
+        return s;
+    }
+
+    private bool root_entry_equals_ci (int addr, int len, string want) {
+        if (len != want.length)
+            return false;
+        for (int i = 0; i < len; i++) {
+            if (ascii_fold ((uint8) peek8 (addr + i)) != ascii_fold (want[i]))
+                return false;
+        }
+        return true;
+    }
+
+    private string root_entry_str (int addr, int len) {
+        var sb = new StringBuilder ();
+        for (int i = 0; i < len; i++)
+            sb.append_c ((char) (uint8) peek8 (addr + i));
+        return sb.str;
+    }
+
+    private string find_root_ci (string want, bool any_name) {
+        int buf = scratch_page + 512;
+        int n = sys (12, buf, 3584, 0);
+        if (n <= 0)
+            return "";
+        string want_elf = want + ".elf";
+        int start = 0;
+        for (int i = 0; i <= n; i++) {
+            if (i == n || peek8 (buf + i) == '\n') {
+                int len = i - start;
+                if (len > 0) {
+                    bool match = root_entry_equals_ci (buf + start, len, want_elf);
+                    if (!match && (any_name || ends_with_elf_ci (want)))
+                        match = root_entry_equals_ci (buf + start, len, want);
+                    if (match)
+                        return root_entry_str (buf + start, len);
+                }
+                start = i + 1;
+            }
+        }
+        return "";
+    }
+
+    // Resolves the name typed at the prompt to an existing file. With
+    // `any_name` (used by `exec`) an exact non-.elf file is accepted as before.
+    private string resolve_command (string typed, bool any_name) {
+        string name = strip_cmd_prefix (typed);
+        if (name.length == 0)
+            return "";
+        if (any_name && FileUtils.test (name, FileTest.EXISTS))
+            return name;
+        if (ends_with_elf_ci (name) && FileUtils.test (name, FileTest.EXISTS))
+            return name;
+        if (!ends_with_elf_ci (name) && FileUtils.test (name + ".elf", FileTest.EXISTS))
+            return name + ".elf";
+        return find_root_ci (name, any_name);
+    }
+
     private int exec_command (GenericArray<string> args, bool bg, out bool should_exit) {
         should_exit = false;
         string cmd = args[0];
@@ -421,8 +502,9 @@ namespace PlanetShell {
         if (cmd == "help") {
             print ("PlanetOS dash (100% Vala POSIX shell)\n");
             print ("commands: help, banner, ls, ps, cat <file>, write <file> <text>, echo, test/[],\n");
-            print ("          export, unset, env, sh <script>, exec <elf> [args] [&], wait <tid>,\n");
+            print ("          export, unset, env, sh <script>, exec <file> [args] [&], wait <tid>,\n");
             print ("          ticks, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
+            print ("          <prog> [args] runs <prog>.elf directly (case-insensitive, no exec needed)\n");
             return 0;
         }
         if (cmd == "banner") {
@@ -504,33 +586,39 @@ namespace PlanetShell {
             return run_script (args[1]);
         }
 
-        // External ELF execution: either `exec <elf> [args...]` or direct `<elf> [args...]`
+        // External execution: `exec <file> [args...]` or a bare command name.
+        // `gio_demo`, `GIO_DEMO.ELF` and `.\gio_demo` all run `gio_demo.elf`.
         bool explicit_exec = (cmd == "exec");
         int elf_idx = explicit_exec ? 1 : 0;
         if (elf_idx >= args.length) {
             print ("usage: exec <file> [args...] [&]\n");
             return 1;
         }
-        string target = args[elf_idx];
+        string typed = args[elf_idx];
+        string target = resolve_command (typed, explicit_exec);
+        if (target.length == 0) {
+            print (@"$typed: command not found\n");
+            return 127;
+        }
         var cmdline = new StringBuilder ();
         for (int i = elf_idx; i < args.length; i++) {
             if (i > elf_idx) cmdline.append (" ");
-            cmdline.append (args[i]);
+            cmdline.append (i == elf_idx ? target : args[i]);
         }
         if (bg) {
             int tid = sys_exec_str (16, target, cmdline.str);
             if (tid < 0) {
-                print (@"$target: not found\n");
+                print (@"$target: cannot execute\n");
                 return 127;
             }
             print (@"spawn: tid=$tid\n");
             return 0;
         }
         int code = sys_exec_str (13, target, cmdline.str);
-        if (explicit_exec)
+        if (code < 0)
+            print (@"$target: cannot execute\n");
+        else if (explicit_exec)
             print (@"exec: exit=$code\n");
-        else if (code < 0)
-            print (@"$target: command not found\n");
         return (code < 0) ? 127 : code;
     }
 

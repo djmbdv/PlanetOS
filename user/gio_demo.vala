@@ -171,8 +171,10 @@ namespace GioDemo {
     private void demo_contents (string path) {
         try {
             var f = File.new_for_path (path);
-            var created = f.create (FileCreateFlags.NONE, null);
-            created.close ();
+            if (!f.query_exists ()) {
+                var created = f.create (FileCreateFlags.NONE, null);
+                created.close ();
+            }
             check ("create-new", f.query_exists ());
             try {
                 var again = f.create (FileCreateFlags.NONE, null);

@@ -138,3 +138,6 @@ planet> exec gio_demo.elf hello.txt
   slots, so writes to XFS-backed files are rejected by the kernel as before.
 - `Application` does not dispatch an event loop; `run()` emits `activate` and
   returns 0, which is enough for userland tools that use it as a lifetime hook.
+- `gio_demo` is idempotent: the files it creates (`gio_demo.tmp`,
+  `gio_demo2.tmp`, `gio_append.tmp`) are reused on a second run, because there
+  is no `unlink` syscall yet.
