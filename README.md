@@ -112,6 +112,7 @@ problems** and **creates six**:
 | [docs/planc/slice-16.md](docs/planc/slice-16.md) | **Implemented slice 16**: DWARF v4 debug info (`.debug_line`, `.debug_abbrev`, `.debug_info`) for `gdb` and self-hosted `plandbg` |
 | [docs/planc/slice-17.md](docs/planc/slice-17.md) | **Implemented slice 17**: `--freestanding` mode, `planetrt` (Multiboot1 + COM1 serial + static `.bss` heap), and `kernel/main.vala` booting x86-64 Long Mode in QEMU |
 | [docs/planc/slice-18.md](docs/planc/slice-18.md) | **Implemented slice 18**: kernel 64-bit IDT, PIC 8259, PIT 100 Hz `IRQ0` timer, and in-kernel `async` + `Channel<T>` over hardware interrupts |
+| [docs/planc/slice-19.md](docs/planc/slice-19.md) | **Implemented slice 19**: kernel 4 KiB bitmap PMM (`Pmm`) and `int 0x80` (`DPL=3`) syscall dispatcher (`Syscalls`) |
 
 ## 5. State of the measurements
 

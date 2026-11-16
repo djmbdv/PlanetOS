@@ -16,6 +16,9 @@
 
     # _mb_entry32 at 0x400110:
     cli
+    # Save Multiboot1 info pointer (EBX) to 0x106040
+    .byte 0x89, 0x1D
+    .long 0x00106040
     # Set 32-bit stack pointer ESP = 0x200000
     .byte 0xBC
     .long 0x00200000

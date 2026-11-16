@@ -47,12 +47,25 @@ int main () {
     b.announce ();
     Hal.print_cpu_vendor ();
     Hal.init_interrupts ();
+    Pmm.init ();
+    Syscalls.init ();
+
+    int f0 = Pmm.free_frames ();
+    int p1 = invoke_syscall (3, 0, 0);
+    int p2 = invoke_syscall (3, 0, 0);
+    print (@"pmm:free=$f0 p1=$p1 p2=$p2\n");
+    invoke_syscall (4, p1, 0);
+    invoke_syscall (4, p2, 0);
+    int f1 = Pmm.free_frames ();
+    print (@"pmm:restored=$(f1 == f0 ? 1 : 0)\n");
 
     var ch = new Channel<int> ();
     ticker_task.begin (ch, 3);
     logger_task.begin (ch, 3);
     Async.run ();
 
+    int sc_ticks = invoke_syscall (2, 0, 0);
+    print (@"sys:ticks=$sc_ticks\n");
     print ("kernel:ok\n");
     qemu_debug_exit (0);
     return 0;

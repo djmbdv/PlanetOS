@@ -131,14 +131,18 @@ namespace Planet.Kernel {
         private const int TICK_ADDR = 0x106000;
         private const int IDTR_ADDR = 0x106010;
 
-        private static void set_idt_gate (int vec, int handler_addr) {
+        public static void set_idt_gate_dpl (int vec, int handler_addr, int dpl3) {
             int entry = IDT_BASE + vec * 16;
             mmio_write16 (entry + 0, handler_addr & 0xFFFF);
             mmio_write16 (entry + 2, 0x08);
             mmio_write8 (entry + 4, 0);
-            mmio_write8 (entry + 5, 0x8E);
+            mmio_write8 (entry + 5, (dpl3 != 0) ? 0xEE : 0x8E);
             mmio_write16 (entry + 6, (handler_addr >> 16) & 0xFFFF);
             mmio_write64 (entry + 8, (handler_addr >> 32) & 0xFFFFFFFF);
+        }
+
+        private static void set_idt_gate (int vec, int handler_addr) {
+            set_idt_gate_dpl (vec, handler_addr, 0);
         }
 
         public static void init_interrupts () {
