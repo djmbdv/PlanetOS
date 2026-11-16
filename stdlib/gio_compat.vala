@@ -66,6 +66,31 @@ namespace Gio {
     ")]
     private extern int __gio_readdir (uint8[] buf, int max_bytes);
 
+    [AsmBody(@"
+        # __gio_unlink(path in rdi) -> 0 o -1
+        mov 8(%rdi), %rsi
+        add $16, %rdi
+        mov $28, %rax
+        xor %edx, %edx
+        int $0x80
+        ret
+    ")]
+    private extern int __gio_unlink (string path);
+
+    [AsmBody(@"
+        # __gio_rename(old in rdi, new in rsi) -> 0 o -1
+        mov %rdi, %r9
+        mov %rsi, %r10
+        mov 8(%r9), %rsi
+        mov 8(%r10), %r8
+        lea 16(%r9), %rdi
+        lea 16(%r10), %rdx
+        mov $29, %rax
+        int $0x80
+        ret
+    ")]
+    private extern int __gio_rename (string old_path, string new_path);
+
     public errordomain IOError {
         FAILED,
         NOT_FOUND,
@@ -95,6 +120,13 @@ namespace Gio {
         NONE,
         PRIVATE,
         REPLACE_DESTINATION
+    }
+
+    public enum FileCopyFlags {
+        NONE,
+        OVERWRITE,
+        BACKUP,
+        ALL_METADATA
     }
 
     public enum SeekType {
@@ -680,6 +712,33 @@ namespace Gio {
             if (fd < 0)
                 return false;
             __gio_sys (8, fd, 0, 0);
+            return true;
+        }
+
+        public bool delete (Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            string p = normalize_fs_path ();
+            if (__gio_unlink (p) < 0)
+                throw new IOError.FAILED ("Failed to delete file");
+            return true;
+        }
+
+        public bool move (File destination, FileCopyFlags flags = FileCopyFlags.NONE, Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            string src = normalize_fs_path ();
+            string dst = destination.normalize_fs_path ();
+            if (src == dst)
+                return true;
+            if (destination.query_exists ()) {
+                if (flags != FileCopyFlags.OVERWRITE)
+                    throw new IOError.EXISTS ("Target file exists");
+                if (__gio_unlink (dst) < 0)
+                    throw new IOError.FAILED ("Failed to replace target");
+            }
+            if (__gio_rename (src, dst) < 0)
+                throw new IOError.FAILED ("Failed to move file");
             return true;
         }
 

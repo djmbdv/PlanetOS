@@ -12,7 +12,7 @@ namespace Planet.Kernel {
     private int stdio_in_fd = -1;
     private int stdio_out_fd = -1;
 
-    public int syscall_dispatch (int num, int a0, int a1, int a2) {
+    public int syscall_dispatch (int num, int a0, int a1, int a2, int a3) {
         if (num == 1) { // SYS_CONSOLE_WRITE(buf, len)
             if (stdio_out_fd >= 3 && stdio_out_fd < MAX_FDS) {
                 int slot = FD_TABLE_ADDR + stdio_out_fd * 32;
@@ -248,11 +248,17 @@ namespace Planet.Kernel {
         if (num == 27) { // SYS_THREAD_SPAWN(entry_fn, arg) -> tid
             return Sched.spawn_thread (a0, a1);
         }
+        if (num == 28) { // SYS_UNLINK(name_ptr, name_len)
+            return Ramfs.unlink (a0, a1);
+        }
+        if (num == 29) { // SYS_RENAME(old_ptr, old_len, new_ptr, new_len)
+            return Ramfs.rename (a0, a1, a2, a3);
+        }
         return -1;
     }
 
     [AsmBody(@"
-        # int 0x80 entry: rax=num, rdi=a0, rsi=a1, rdx=a2 -> returns in rax
+        # int 0x80 entry: rax=num, rdi=a0, rsi=a1, rdx=a2, r8=a3 -> returns in rax
         push %rcx
         push %rdx
         push %rsi

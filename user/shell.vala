@@ -53,6 +53,20 @@ namespace PlanetShell {
     ")]
     public extern int sys_exec_str (int num, string name, string cmdline);
 
+    [AsmBody(@"
+        # sys_rename_str(num in rdi, old in rsi, new in rdx) -> 0 o -1
+        mov %rdi, %rax
+        mov %rsi, %r9
+        mov %rdx, %r10
+        mov 8(%r9), %rsi
+        mov 8(%r10), %r8
+        lea 16(%r9), %rdi
+        lea 16(%r10), %rdx
+        int $0x80
+        ret
+    ")]
+    public extern int sys_rename_str (int num, string old_name, string new_name);
+
     private class Tok : Object {
         public string text;
         public bool is_op;
@@ -441,6 +455,31 @@ namespace PlanetShell {
         return find_root_ci (name, any_name);
     }
 
+    private int ls_long () {
+        int buf = scratch_page + 512;
+        int n = sys (12, buf, 3584, 0);
+        if (n <= 0)
+            return 0;
+        int start = 0;
+        for (int i = 0; i <= n; i++) {
+            if (i == n || peek8 (buf + i) == '\n') {
+                int len = i - start;
+                if (len > 0) {
+                    string name = root_entry_str (buf + start, len);
+                    int fd = sys_str (6, name);
+                    int sz = -1;
+                    if (fd >= 0) {
+                        sz = sys (9, fd, 0, 0);
+                        sys (8, fd, 0, 0);
+                    }
+                    print (@"$sz $name\n");
+                }
+                start = i + 1;
+            }
+        }
+        return 0;
+    }
+
     private int exec_command (GenericArray<string> args, bool bg, out bool should_exit) {
         should_exit = false;
         string cmd = args[0];
@@ -501,7 +540,8 @@ namespace PlanetShell {
             return eval_test (args);
         if (cmd == "help") {
             print ("PlanetOS dash (100% Vala POSIX shell)\n");
-            print ("commands: help, banner, ls, ps, cat <file>, write <file> <text>, echo, test/[],\n");
+            print ("commands: help, banner, ls [-l], ps, cat <file>, write <file> <text>,\n");
+            print ("          rm <file>, cp <src> <dst>, mv <src> <dst>, touch <file>, echo, test/[],\n");
             print ("          export, unset, env, sh <script>, exec <file> [args] [&], wait <tid>,\n");
             print ("          ticks, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
             print ("          <prog> [args] runs <prog>.elf directly (case-insensitive, no exec needed)\n");
@@ -511,6 +551,8 @@ namespace PlanetShell {
             return sys_exec_str (13, "banner.elf", "banner.elf");
         }
         if (cmd == "ls") {
+            if (args.length > 1 && args[1] == "-l")
+                return ls_long ();
             int io_buf = scratch_page + 512;
             int n = sys (12, io_buf, 3584, 0);
             if (n > 0)
@@ -557,8 +599,65 @@ namespace PlanetShell {
             sb.append ("\n");
             return FileUtils.set_contents (args[1], sb.str) ? 0 : 1;
         }
-        if (cmd == "ticks") {
-            int t = sys (2, 0, 0, 0);
+        if (cmd == "rm") {
+            if (args.length < 2) {
+                print ("usage: rm <file>...\n");
+                return 1;
+            }
+            int rc = 0;
+            for (int i = 1; i < args.length; i++) {
+                if (sys_str (28, args[i]) < 0) {
+                    print (@"rm: cannot remove '$(args[i])'\n");
+                    rc = 1;
+                }
+            }
+            return rc;
+        }
+        if (cmd == "mv") {
+            if (args.length < 3) {
+                print ("usage: mv <src> <dst>\n");
+                return 1;
+            }
+            if (sys_rename_str (29, args[1], args[2]) < 0) {
+                print (@"mv: cannot move '$(args[1])' to '$(args[2])'\n");
+                return 1;
+            }
+            return 0;
+        }
+        if (cmd == "cp") {
+            if (args.length < 3) {
+                print ("usage: cp <src> <dst>\n");
+                return 1;
+            }
+            string contents = "";
+            if (!FileUtils.get_contents (args[1], out contents)) {
+                print (@"cp: cannot read '$(args[1])'\n");
+                return 1;
+            }
+            if (!FileUtils.set_contents (args[2], contents)) {
+                print (@"cp: cannot write '$(args[2])' (only RAMFS is writable)\n");
+                return 1;
+            }
+            return 0;
+        }
+        if (cmd == "touch") {
+            if (args.length < 2) {
+                print ("usage: touch <file>...\n");
+                return 1;
+            }
+            for (int i = 1; i < args.length; i++) {
+                if (FileUtils.test (args[i], FileTest.EXISTS))
+                    continue;
+                int fd = sys_str (14, args[i]);
+                if (fd < 0) {
+                    print (@"touch: cannot create '$(args[i])'\n");
+                    return 1;
+                }
+                sys (8, fd, 0, 0);
+            }
+            return 0;
+        }
+        if (cmd == "ticks") {            int t = sys (2, 0, 0, 0);
             print (@"ticks: $t\n");
             return 0;
         }

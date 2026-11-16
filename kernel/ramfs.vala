@@ -84,6 +84,44 @@ namespace Planet.Kernel {
             return -1;
         }
 
+        public static int unlink (int name_ptr, int name_len) {
+            int s = find (name_ptr, name_len);
+            if (s < 0)
+                return -1;
+            int slot = TABLE_ADDR + s * SLOT_SIZE;
+            for (int p = 0; p < MAX_PAGES; p++) {
+                int pa = mmio_read64 (slot + 88 + p * 8);
+                if (pa != 0) {
+                    Pmm.free_frame (pa);
+                    mmio_write64 (slot + 88 + p * 8, 0);
+                }
+            }
+            mmio_write64 (slot + 0, 0);
+            mmio_write64 (slot + 8, 0);
+            mmio_write64 (slot + 16, 0);
+            return 0;
+        }
+
+        public static int rename (int old_ptr, int old_len, int new_ptr, int new_len) {
+            if (old_len <= 0 || old_len > MAX_NAME || new_len <= 0 || new_len > MAX_NAME)
+                return -1;
+            int s = find (old_ptr, old_len);
+            if (s < 0)
+                return -1;
+            int existing = find (new_ptr, new_len);
+            if (existing >= 0 && existing != s)
+                return -1;
+            int slot = TABLE_ADDR + s * SLOT_SIZE;
+            for (int i = 0; i < new_len; i++) {
+                mmio_write8 (slot + 24 + i, read_u8 (new_ptr + i));
+            }
+            for (int i = new_len; i < old_len; i++) {
+                mmio_write8 (slot + 24 + i, 0);
+            }
+            mmio_write64 (slot + 16, new_len);
+            return 0;
+        }
+
         public static int file_size (int s) {
             if (s < 0 || s >= MAX_FILES)
                 return -1;

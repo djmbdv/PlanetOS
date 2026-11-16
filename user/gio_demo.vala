@@ -163,6 +163,8 @@ namespace GioDemo {
             }
             din.close ();
             check ("append-lines", lines == 2);
+            check ("write-delete", f.delete ());
+            check ("write-deleted", !f.query_exists ());
         } catch (IOError e) {
             report ("write", e);
         }
@@ -213,6 +215,32 @@ namespace GioDemo {
             ad.put_string ("fresh\n");
             ad.close ();
             check ("append-create", af.query_exists ());
+
+            check ("append-delete", af.delete ());
+            check ("append-gone", !af.query_exists ());
+
+            var moved = File.new_for_path ("gio_move.tmp");
+            if (moved.query_exists ())
+                moved.delete ();
+            check ("move", f.move (moved, FileCopyFlags.NONE, null));
+            check ("move-gone", !f.query_exists () && moved.query_exists ());
+
+            var target = File.new_for_path ("gio_target.tmp");
+            if (!target.query_exists ()) {
+                var t = target.create (FileCreateFlags.NONE, null);
+                t.close ();
+            }
+            try {
+                moved.move (target, FileCopyFlags.NONE, null);
+                check ("move-exists", false);
+            } catch (IOError e) {
+                check ("move-exists", true);
+            }
+            check ("move-overwrite", moved.move (target, FileCopyFlags.OVERWRITE, null));
+            check ("move-overwrite-gone", !moved.query_exists () && target.query_exists ());
+
+            check ("target-delete", target.delete ());
+            check ("target-gone", !target.query_exists ());
         } catch (IOError e) {
             report ("contents", e);
         }
