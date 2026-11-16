@@ -1,0 +1,5 @@
+c2vala report: 2 function(s)
+  ok       square
+  refused  sum_ints
+varargs are not supported
+1 translated, 1 refused

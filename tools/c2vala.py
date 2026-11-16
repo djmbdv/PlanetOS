@@ -186,6 +186,10 @@ class Translator:
         self.array_params = set()
         self.ret_type = None
         self.flags = []
+        self.report = []
+        self.refused = {}
+        self.order = {}
+        self.continue_on_error = False
 
     # ------------------------------------------------------------- types
 
@@ -295,20 +299,35 @@ class Translator:
                     self.register_struct(ext.type.name, ext.type)
         for ext in decls:
             if isinstance(ext, c_ast.FuncDef):
-                ret = self.from_type(ext.decl.type.type)
-                params = []
-                args = ext.decl.type.args
-                if args is not None:
-                    for p in args.params:
-                        if p.name is None:
-                            # `int f(void)` declares no parameters
-                            if len(args.params) == 1 and is_scalar(self.from_type(p.type), "void"):
-                                continue
-                            raise Refuse(p, "unnamed parameter")
-                        params.append((p.name, self.from_type(p.type)))
-                self.signatures[ext.decl.name] = (ret, params)
-                self.func_bodies[ext.decl.name] = ext
+                fname = ext.decl.name
+                self.order.setdefault(fname, len(self.order))
+                try:
+                    ret = self.from_type(ext.decl.type.type)
+                    params = []
+                    args = ext.decl.type.args
+                    if args is not None:
+                        for p in args.params:
+                            if isinstance(p, c_ast.EllipsisParam):
+                                raise Refuse(p, "varargs are not supported")
+                            if p.name is None:
+                                # `int f(void)` declares no parameters
+                                if len(args.params) == 1 and is_scalar(self.from_type(p.type), "void"):
+                                    continue
+                                raise Refuse(p, "unnamed parameter")
+                            params.append((p.name, self.from_type(p.type)))
+                    self.signatures[fname] = (ret, params)
+                    self.func_bodies[fname] = ext
+                except Refuse as exc:
+                    if not self.continue_on_error:
+                        raise
+                    self.refused[fname] = str(exc)
+                    self.report.append((fname, "refused", str(exc)))
         self.solve_array_params()
+        for name, body in self.func_bodies.items():
+            elem = self.alloc_return(body)
+            if elem is not None:
+                _ret, params = self.signatures[name]
+                self.signatures[name] = (("array", elem, None), params)
 
     def solve_array_params(self):
         """Decides, program-wide, which pointer parameters are arrays.
@@ -423,7 +442,18 @@ class Translator:
                 if text:
                     chunks.append(text)
             elif isinstance(ext, c_ast.FuncDef):
-                chunks.append(self.emit_function(ext))
+                fname = ext.decl.name
+                if fname in self.refused:
+                    chunks.append("// c2vala refused %s: %s\n" % (fname, self.refused[fname]))
+                    continue
+                try:
+                    chunks.append(self.emit_function(ext))
+                    self.report.append((fname, "ok", ""))
+                except Refuse as exc:
+                    if not self.continue_on_error:
+                        raise
+                    self.report.append((fname, "refused", str(exc)))
+                    chunks.append("// c2vala refused %s: %s\n" % (fname, exc))
             elif isinstance(ext, c_ast.Decl):
                 if isinstance(ext.type, c_ast.FuncDecl):
                     continue
@@ -472,6 +502,7 @@ class Translator:
         for idx, (pname, pct) in enumerate(params):
             if (name, idx) in self.array_params:
                 self.arrays.add(pname)
+        self.alloc_vars = self.alloc_assigned_vars(node, params)
         self.scope = dict(params)
         self.ret_type = ret
         self.flags = self.goto_flags(node)
@@ -487,6 +518,161 @@ class Translator:
         if self.flags:
             head = "".join("    bool %s = false;\n" % f for f in self.flags)
         return "%s {\n%s%s}\n" % (sig, head, body)
+
+    # ----------------------------------------------------- memory model
+
+    def sizeof_expr(self, node):
+        """`n * sizeof(T)` -> (T ctype, "n"); anything else -> (None, text)."""
+        if isinstance(node, c_ast.BinaryOp) and node.op in ("*", "/"):
+            for a, b in ((node.left, node.right), (node.right, node.left)):
+                if isinstance(a, c_ast.UnaryOp) and a.op == "sizeof":
+                    inner = None
+                    if hasattr(a.expr, "type"):
+                        inner = self.from_type(a.expr.type)
+                    if inner is not None:
+                        if node.op == "/":
+                            return inner, "1"
+                        text, _ = self.emit_expr(b, ("scalar", "int"))
+                        return inner, text
+        if isinstance(node, c_ast.UnaryOp) and node.op == "sizeof":
+            if hasattr(node.expr, "type"):
+                return self.from_type(node.expr.type), "1"
+        text, _ = self.emit_expr(node, ("scalar", "int"))
+        return None, text
+
+    def malloc_info(self, node):
+        """(element ctype, count) for the malloc/calloc idioms, else None.
+
+        The memory model is deliberately not a C heap: a typed allocation becomes
+        a Vala array owned by the GC, so `free` is a no-op and pointer arithmetic
+        over the buffer stays out of scope.
+        """
+        if isinstance(node, c_ast.Cast):
+            target = self.from_type(node.to_type.type)
+            info = self.malloc_info(node.expr)
+            if info is None:
+                return None
+            elem, count = info
+            if is_ptr(target):
+                return target[1], count
+            return elem, count
+        if isinstance(node, c_ast.FuncCall) and isinstance(node.name, c_ast.ID):
+            name = node.name.name
+            args = self.call_args(node)
+            if name == "malloc" and len(args) == 1:
+                return self.sizeof_expr(args[0])
+            if name == "calloc" and len(args) == 2:
+                elem, _ = self.sizeof_expr(args[1])
+                count, _ = self.emit_expr(args[0], ("scalar", "int"))
+                return elem, count
+        return None
+
+    def sizeof_elem(self, node):
+        """Element type of a `sizeof(T)`-based allocation, without emitting."""
+        if isinstance(node, c_ast.BinaryOp) and node.op in ("*", "/"):
+            for a in (node.left, node.right):
+                if isinstance(a, c_ast.UnaryOp) and a.op == "sizeof" and hasattr(a.expr, "type"):
+                    return self.from_type(a.expr.type)
+        if isinstance(node, c_ast.UnaryOp) and node.op == "sizeof" and hasattr(node.expr, "type"):
+            return self.from_type(node.expr.type)
+        return None
+
+    def alloc_elem(self, node):
+        """Element type of a malloc/calloc expression, without emitting."""
+        if isinstance(node, c_ast.Cast):
+            inner = self.alloc_elem(node.expr)
+            if inner is None:
+                return None
+            target = self.from_type(node.to_type.type)
+            return target[1] if is_ptr(target) else inner
+        if isinstance(node, c_ast.FuncCall) and isinstance(node.name, c_ast.ID):
+            name = node.name.name
+            args = self.call_args(node)
+            if name == "malloc" and len(args) == 1:
+                return self.sizeof_elem(args[0])
+            if name == "calloc" and len(args) == 2:
+                return self.sizeof_elem(args[1])
+        return None
+
+    def alloc_return(self, fnode):
+        """Element type when the function returns a malloc'd buffer."""
+        local_init = {}
+        for decl in self.iter_nodes(fnode.body, c_ast.Decl):
+            if decl.name and decl.init is not None:
+                elem = self.alloc_elem(decl.init)
+                if elem is not None:
+                    local_init[decl.name] = elem
+        found = []
+
+        class V(c_ast.NodeVisitor):
+            def visit_Return(self, node):
+                if node.expr is not None:
+                    found.append(node.expr)
+                self.generic_visit(node)
+
+        V().visit(fnode.body)
+        for expr in found:
+            elem = self.alloc_elem(expr)
+            if elem is not None:
+                return elem
+            if isinstance(expr, c_ast.ID) and expr.name in local_init:
+                return local_init[expr.name]
+        return None
+
+    @staticmethod
+    def iter_nodes(node, cls):
+        found = []
+
+        class V(c_ast.NodeVisitor):
+            def visit(self, n):
+                if isinstance(n, cls):
+                    found.append(n)
+                self.generic_visit(n)
+
+        V().visit(node)
+        return found
+
+    def alloc_assigned_vars(self, fnode, params):
+        """Variables that receive a malloc'd buffer in an assignment.
+
+        `char *buf; buf = malloc(8);` cannot stay a `string`: the declaration is
+        emitted before the count is known, so the variable is typed as an array
+        and the assignment becomes `new T[n]`.
+        """
+        declared = {}
+        for pname, pct in params:
+            declared[pname] = pct
+        for decl in self.iter_nodes(fnode.body, c_ast.Decl):
+            if decl.name and decl.name not in declared:
+                declared[decl.name] = self.from_type(decl.type)
+        result = {}
+        for asg in self.iter_nodes(fnode.body, c_ast.Assignment):
+            if not isinstance(asg.lvalue, c_ast.ID) or asg.op != "=":
+                continue
+            name = asg.lvalue.name
+            elem = self.alloc_elem(asg.rvalue)
+            if elem is None and isinstance(asg.rvalue, c_ast.FuncCall) \
+                    and isinstance(asg.rvalue.name, c_ast.ID):
+                callee = asg.rvalue.name.name
+                if callee in self.signatures and self.signatures[callee][0][0] == "array":
+                    elem = self.signatures[callee][0][1]
+            if elem is None:
+                ct = declared.get(name)
+                if ct is None or not (is_ptr(ct) or ct[0] == "array"):
+                    continue
+                if not isinstance(asg.rvalue, c_ast.FuncCall):
+                    continue
+                if not isinstance(asg.rvalue.name, c_ast.ID):
+                    continue
+                if asg.rvalue.name.name not in ("malloc", "calloc"):
+                    continue
+                elem = ct[1]
+            if is_scalar(elem, "char"):
+                elem = ("scalar", "uchar")
+            if elem[0] == "class":
+                continue
+            result[name] = elem
+        return result
 
     def names_used_as_array(self, fnode):
         found = set()
@@ -575,6 +761,11 @@ class Translator:
             return self.emit_stmt(node.stmt) if node.stmt is not None else ""
         if isinstance(node, c_ast.Goto):
             return "%s = true;\nbreak;\n" % ("c2v_goto_" + node.name)
+        if isinstance(node, c_ast.FuncCall) and isinstance(node.name, c_ast.ID) \
+                and node.name.name == "free":
+            args = self.call_args(node)
+            text, _ = self.emit_expr(args[0], None) if args else ("?", None)
+            return "// free (%s): the GC owns the array\n" % text
         if isinstance(node, c_ast.Assignment):
             return "".join("%s = %s;\n" % pair for pair in self.flatten_assignment(node))
         if isinstance(node, (c_ast.FuncCall, c_ast.UnaryOp, c_ast.BinaryOp,
@@ -593,6 +784,17 @@ class Translator:
             outer_lhs, _ = self.emit_expr(node.lvalue, None)
             return pairs + [(outer_lhs, pairs[-1][1])]
         lhs, lct = self.emit_expr(node.lvalue, None)
+        info = self.malloc_info(node.rvalue)
+        if info is not None and node.op == "=":
+            elem, count = info
+            if elem is None and isinstance(node.lvalue, c_ast.ID):
+                declared = self.scope.get(node.lvalue.name)
+                if declared is not None and declared[0] == "array":
+                    elem = declared[1]
+            if elem is not None:
+                if is_scalar(elem, "char"):
+                    elem = ("scalar", "uchar")
+                return [(lhs, "new %s[%s]" % (vala_of(elem), count))]
         rhs, _ = self.emit_expr(node.rvalue, lct)
         if node.op == "=":
             return [(lhs, rhs)]
@@ -670,14 +872,43 @@ class Translator:
     def emit_decl(self, node, inline=False):
         name = node.name
         ct = self.from_type(node.type)
-        if is_ptr(ct) and name in self.arrays:
-            ct = ("array", ct[1], None)
-        target = vala_of(ct, as_array=name in self.arrays)
+        if name in self.arrays:
+            if is_ptr(ct):
+                ct = ("array", ct[1], None)
+            elif ct[0] == "array" and ct[2] is None:
+                ct = ct
         init = node.init
         if isinstance(init, c_ast.InitList):
             raise Refuse(node, "initializer lists are not supported")
+        info = None if init is None else self.malloc_info(init)
+        if info is None and init is None and name in self.alloc_vars:
+            elem = self.alloc_vars[name]
+            text = "%s[] %s = new %s[0]" % (vala_of(elem), name, vala_of(elem))
+            self.scope[name] = ("array", elem, None)
+            return text if inline else text + ";"
+        if info is not None:
+            elem, count = info
+            if elem is None:
+                if not is_ptr(ct):
+                    raise Refuse(node, "malloc whose size does not imply an element type")
+                elem = ct[1]
+            if is_scalar(elem, "char"):
+                elem = ("scalar", "uchar")
+            if elem[0] == "class":
+                raise Refuse(node, "malloc of structs is not supported")
+            target = "%s[]" % vala_of(elem)
+            text = "%s %s = new %s[%s]" % (target, name, vala_of(elem), count)
+            self.scope[name] = ("array", elem, None)
+            if inline:
+                return text
+            return text + ";"
+        target = vala_of(ct, as_array=name in self.arrays)
         if init is not None:
-            value, _ = self.emit_expr(init, ct)
+            value, ict = self.emit_expr(init, None)
+            if ict is not None and ict[0] == "array" and is_ptr(ct):
+                ct = ict
+                target = vala_of(ct)
+            value = self.cast(value, ict, ct)
             text = "%s %s = %s" % (target, name, value)
         elif is_ptr(ct):
             text = "%s %s = %s" % (target, name, '""' if is_char_ptr(ct) else "null")
@@ -869,6 +1100,8 @@ class Translator:
             raise Refuse(node, "indirect calls are not supported")
         callee = node.name.name
         args = self.call_args(node)
+        if callee in ("malloc", "calloc", "realloc"):
+            raise Refuse(node, "%s is only supported in a local declaration" % callee)
         if callee == "printf":
             text = ", ".join(self.emit_expr(a, None)[0] for a in args)
             return "stdout.printf (%s)" % text, ("scalar", "int")
@@ -880,8 +1113,9 @@ class Translator:
             return "%s.printf (%s)" % (stream, text), ("scalar", "int")
         runtime = {
             "strlen": "c_strlen", "strcmp": "c_strcmp", "strncmp": "c_strncmp",
-            "memcpy": "c_memcpy", "memset": "c_memset",
         }
+        if callee in ("memcpy", "memmove", "memset", "strcpy", "strncpy", "strcat"):
+            raise Refuse(node, "%s on buffers is not supported yet" % callee)
         if callee in runtime:
             text = ", ".join(self.emit_expr(a, None)[0] for a in args)
             return "%s (%s)" % (runtime[callee], text), ("scalar", "int")
@@ -897,7 +1131,7 @@ class Translator:
         return "%s (%s)" % (callee, ", ".join(parts)), ret
 
 
-def translate(paths, includes, defines, cc_bin, out_path):
+def translate(paths, includes, defines, cc_bin, out_path, continue_on_error=False):
     workdir = tempfile.mkdtemp(prefix="c2vala-")
     fake, stubs = cc.prepare_includes(workdir)
     parts = []
@@ -915,10 +1149,25 @@ def translate(paths, includes, defines, cc_bin, out_path):
             raise Refuse(None, "%s: cannot parse: %s" % (path, str(exc).splitlines()[0]))
         parts.append((ast, lines))
     tr = Translator(None)
+    tr.continue_on_error = continue_on_error
     source = tr.translate(parts, ", ".join(os.path.basename(p) for p in paths))
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(source)
-    return source
+    return tr, source
+
+
+def print_report(tr):
+    ok = [r for r in tr.report if r[1] == "ok"]
+    bad = [r for r in tr.report if r[1] != "ok"]
+    ordered = sorted(tr.report, key=lambda r: tr.order.get(r[0], 0))
+    print("c2vala report: %d function(s)" % len(tr.report))
+    for fname, status, why in ordered:
+        if status == "ok":
+            print("  ok       %s" % fname)
+        else:
+            print("  refused  %s  %s" % (fname, why))
+    print("  %d translated, %d refused" % (len(ok), len(bad)))
+    return len(bad)
 
 
 def main(argv):
@@ -928,14 +1177,21 @@ def main(argv):
     ap.add_argument("-I", "--include", action="append", default=[])
     ap.add_argument("-D", "--define", action="append", default=[])
     ap.add_argument("--cc", default="gcc")
+    ap.add_argument("-r", "--report", action="store_true",
+                    help="translate what is supported, refuse the rest and print a per-function report")
     args = ap.parse_args(argv)
     try:
-        source = translate(args.inputs, args.include, args.define, args.cc, args.output)
+        tr, source = translate(args.inputs, args.include, args.define, args.cc, args.output,
+                               continue_on_error=args.report)
     except Refuse as exc:
         sys.stderr.write("c2vala: refused: %s\n" % exc)
         return 2
     lines = source.count("\n")
     print("c2vala: wrote %s (%d lines)" % (args.output, lines))
+    if args.report:
+        refused = print_report(tr)
+        if refused:
+            return 3
     return 0
 
 

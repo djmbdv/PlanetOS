@@ -136,6 +136,7 @@ problems** and **creates six**:
 | [docs/planc/slice-40.md](docs/planc/slice-40.md) | **Implemented slice 40**: SPIR-V push constants (`uniform_time/width/height`) with an animated background (`--animate`), damage-rect merging and occlusion culling in the compositor, and Pango colour attribute runs |
 | [docs/planc/slice-41.md](docs/planc/slice-41.md) | **Implemented slice 41**: C -> Vala feasibility probe ([tools/c_coverage.py](tools/c_coverage.py)) — preprocesses with a fake libc, classifies tier-0/1/2 constructs and reports clean functions plus the libc shim list; 95.4% of 329 library functions have no structural blocker, kernel drivers do not parse without their headers |
 | [docs/planc/slice-42.md](docs/planc/slice-42.md) | **Implemented slice 42**: C -> Vala translator for the tier-0/1 subset ([tools/c2vala.py](tools/c2vala.py)) with a differential harness against gcc ([tools/c2vala_tests/run.py](tools/c2vala_tests/run.py)); `jsmn` translates and prints identical tokens |
+| [docs/planc/slice-43.md](docs/planc/slice-43.md) | **Implemented slice 43**: a memory model for the C -> Vala translator (`malloc`/`calloc` -> GC-owned Vala arrays, `free` -> documented no-op, `realloc`/pointer arithmetic/allocated aggregates still refused) and `--report`, which translates what is in scope, stubs the rest and prints a per-function verdict (exit 3 on partial) |
 
 ## 5. State of the measurements
 

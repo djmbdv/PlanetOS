@@ -128,6 +128,24 @@ def main(argv):
                 + ["-I", case_dir, "-o", vala_out],
                 capture_output=True, text=True)
 
+            if os.path.isfile(os.path.join(case_dir, "report.txt")):
+                expected = [l.strip() for l in
+                            open(os.path.join(case_dir, "report.txt"), encoding="utf-8").readlines()
+                            if l.strip()]
+                proc = subprocess.run(
+                    [sys.executable, TRANSLATOR] + [os.path.join(case_dir, s) for s in sources + headers]
+                    + ["-I", case_dir, "--report", "-o", vala_out],
+                    capture_output=True, text=True)
+                missing = [e for e in expected if e not in proc.stdout]
+                if missing:
+                    print("   FAIL: report is missing %r" % missing)
+                    print(proc.stdout[-2000:])
+                    failures += 1
+                    continue
+                print("   PASS (report matches %d expectations)" % len(expected))
+                passed += 1
+                continue
+
             if os.path.isfile(os.path.join(case_dir, "refuse.txt")):
                 expected = open(os.path.join(case_dir, "refuse.txt"), encoding="utf-8").read().strip()
                 if translate.returncode != 2:

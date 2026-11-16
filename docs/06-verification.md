@@ -127,7 +127,11 @@ python tests/qemu.py --no-build     # reuse the last build
 python tests/qemu.py --case gio     # one case
 ```
 
-Host-side differential tests for the C -> Vala translator live in 	ools/c2vala_tests/run.py (gcc vs valac on the same source; needs MSYS2, not QEMU).
+Host-side differential tests for the C -> Vala translator live in [tools/c2vala_tests/run.py](tools/c2vala_tests/run.py) (gcc vs valac on the same source; needs MSYS2, not QEMU). A case directory with `refuse.txt` must be refused with that message and one with `report.txt` must print those lines under `--report`:
+
+```sh
+python tools/c2vala_tests/run.py    # 6 passed, 0 failed
+```
 
 Tests that require QEMU, and only those:
 
