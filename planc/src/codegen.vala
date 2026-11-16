@@ -125,6 +125,7 @@ namespace Planc {
         private bool need_utf8_char_count = false;
         private bool need_utf8_get_char = false;
         private bool need_utf8_validate = false;
+        private bool need_str_index_of = false;
         private bool need_async = false;
         private bool need_signal = false;
         private bool need_sync = false;
@@ -1329,6 +1330,11 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_utf8_validate ();
                 symbols.add (new Symbol ("__planc_utf8_validate", start, emitter.here () - start));
+            }
+            if (need_str_index_of) {
+                var start = emitter.here ();
+                emitter.emit_rt_str_index_of ();
+                symbols.add (new Symbol ("__planc_str_index_of", start, emitter.here () - start));
             }
             if (need_str_to_int) {
                 var start = emitter.here ();
@@ -3270,6 +3276,8 @@ namespace Planc {
                         need_utf8_get_char = true;
                     else if (bi_kind == "str_validate")
                         need_utf8_validate = true;
+                    else if (bi_kind == "str_index_of" || bi_kind == "str_contains")
+                        need_str_index_of = true;
                     else if (bi_kind == "int_parse")
                         need_str_to_int = true;
                     else if (bi_kind == "float_parse" || bi_kind == "double_parse")
@@ -4470,6 +4478,16 @@ namespace Planc {
                     ret_t = ValaType.BOOL;
                     return true;
                 }
+                if (mc.method_name == "index_of") {
+                    kind = "str_index_of";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "contains") {
+                    kind = "str_contains";
+                    ret_t = ValaType.BOOL;
+                    return true;
+                }
             }
             return false;
         }
@@ -5003,6 +5021,31 @@ namespace Planc {
                 if (!type_compatible (ValaType.STRING, "", at, an))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument 1 of '$(mc.method_name)' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+            } else if (kind == "str_contains") {
+                if (mc.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"contains expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!type_compatible (ValaType.STRING, "", at, an))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of 'contains' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+            } else if (kind == "str_index_of") {
+                if (mc.args.length != 1 && mc.args.length != 2)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"index_of expects 1 or 2 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!type_compatible (ValaType.STRING, "", at, an))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of 'index_of' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                if (mc.args.length == 2) {
+                    string sn2 = "";
+                    var st2 = expr_type_full (mc.args[1], out sn2);
+                    if (!is_int_like (st2))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument 2 of 'index_of' expects int, got $(type_label (st2, sn2)) at $(mc.args[1].line):$(mc.args[1].column)");
+                }
             } else if (kind == "str_char_count" || kind == "str_validate") {
                 if (mc.args.length != 0)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -9087,6 +9130,43 @@ namespace Planc {
                 }
                 need_utf8_get_char = true;
                 call_aligned ("__planc_utf8_get_char");
+                return;
+            }
+            if (kind == "str_index_of" || kind == "str_contains") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'$(mc.method_name)()' requires a string receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.STRING, tn);
+                emitter.push_rax ();
+                push_depth++;
+                string an = "";
+                expr_type_full (mc.args[0], out an);
+                gen_expr (mc.args[0]);
+                emit_null_check_if_nullable (ValaType.STRING, an);
+                if (mc.args.length == 2) {
+                    emitter.push_rax ();
+                    push_depth++;
+                    gen_expr (mc.args[1]);
+                    emitter.mov_rdx_rax ();
+                    emitter.pop_reg (Reg.RSI);
+                    push_depth--;
+                } else {
+                    emitter.mov_rsi_rax ();
+                    emitter.xor_edx ();
+                }
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                need_str_index_of = true;
+                call_aligned ("__planc_str_index_of");
+                if (kind == "str_contains") {
+                    // rax >= 0 -> 1 else 0
+                    emitter.code.u8 (0x48); emitter.code.u8 (0x85); emitter.code.u8 (0xC0); // test rax, rax
+                    emitter.code.u8 (0x0F); emitter.code.u8 (0x99); emitter.code.u8 (0xC0); // setns al
+                    emitter.code.u8 (0x0F); emitter.code.u8 (0xB6); emitter.code.u8 (0xC0); // movzx eax, al
+                }
                 return;
             }
             // str_substring
