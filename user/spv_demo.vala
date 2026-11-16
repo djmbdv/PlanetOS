@@ -176,66 +176,101 @@ int main (string[] args) {
     if (win == null)
         return 1;
     var cr = win.create_cairo_context ();
-    cr.set_source_rgb (0.04, 0.06, 0.10);
-    cr.paint ();
 
-    cr.set_source_rgb (0.09, 0.13, 0.20);
-    cr.rectangle (0, 0, 800, 36);
-    cr.fill ();
-    cr.set_source_rgb (0.22, 0.74, 0.97);
-    cr.set_font_size (16);
-    cr.move_to (16, 12);
-    cr.show_text ("PLANETOS SPIR-V 1.0 SHADER RUNNER");
+    int frame = 0;
+    int last_tick = -1;
+    while (true) {
+        int ticks = __spv_sys (2, 0, 0, 0);
+        if (ticks != last_tick) {
+            last_tick = ticks;
+            frame = frame + 1;
 
-    // Outer card
-    cr.set_source_rgb (0.08, 0.11, 0.17);
-    cr.rectangle (70, 80, 660, 440);
-    cr.fill ();
-    cr.set_line_width (2);
-    cr.set_source_rgba (out_r, out_g, out_b, 1.0);
-    cr.rectangle (70, 80, 660, 440);
-    cr.stroke ();
+            // Smooth triangle-wave pulse (0.65 .. 1.0) and orbiting satellite angle
+            int phase = (ticks * 3) % 120;
+            int tri = (phase < 60) ? phase : (120 - phase);
+            double pulse = 0.65 + 0.35 * ((double) tri / 60.0);
 
-    // Shaded planet using the exact RGBA evaluated from frag.spv
-    cr.set_source_rgba (out_r, out_g, out_b, out_a);
-    cr.arc (540, 300, 96, 0, 6.28);
-    cr.fill ();
-    cr.set_line_width (3);
-    cr.set_source_rgb (0.96, 0.62, 0.04);
-    cr.arc (540, 300, 124, 0, 6.28);
-    cr.stroke ();
+            // Approximate sin/cos on 64-step circle using quadratic parabola wave
+            int ang = (ticks * 2) & 63;
+            int qx = (ang + 16) & 63;
+            int sx = (ang < 32) ? ang : (64 - ang);
+            int cx = (qx < 32) ? qx : (64 - qx);
+            double sin_v = (ang < 32 ? 1.0 : -1.0) * (1.0 - ((double) (sx - 16) * (double) (sx - 16)) / 256.0);
+            double cos_v = (qx < 32 ? 1.0 : -1.0) * (1.0 - ((double) (cx - 16) * (double) (cx - 16)) / 256.0);
+            int sat_x = 540 + (int) (cos_v * 124.0);
+            int sat_y = 300 + (int) (sin_v * 124.0);
 
-    cr.set_source_rgb (0.97, 0.98, 0.99);
-    cr.set_font_size (24);
-    cr.move_to (108, 130);
-    cr.show_text ("SPIR-V SHADER");
+            double pr = out_r * pulse;
+            double pg = out_g * pulse;
+            double pb = out_b * pulse;
 
-    cr.set_source_rgb (0.60, 0.66, 0.74);
-    cr.set_font_size (16);
-    cr.move_to (108, 195);
-    cr.show_text (@"FILE: $spv_name");
-    cr.move_to (108, 230);
-    cr.show_text (@"WORDS: $total_words  INSNS: $insn_count");
-    cr.move_to (108, 265);
-    cr.show_text (@"SSA BOUND: $bound");
-    cr.move_to (108, 305);
-    cr.set_source_rgba (out_r, out_g, out_b, 1.0);
-    cr.show_text (@"FRAG COLOR: ($ir, $ig, $ib)");
-    cr.move_to (108, 460);
-    cr.set_source_rgb (0.22, 0.74, 0.97);
-    cr.show_text ("PRESS Q TO RETURN TO SHELL");
+            cr.set_source_rgb (0.04, 0.06, 0.10);
+            cr.paint ();
 
-    win.present ();
+            cr.set_source_rgb (0.09, 0.13, 0.20);
+            cr.rectangle (0, 0, 800, 36);
+            cr.fill ();
+            cr.set_source_rgb (0.22, 0.74, 0.97);
+            cr.set_font_size (16);
+            cr.move_to (16, 12);
+            cr.show_text ("PLANETOS SPIR-V 1.0 SHADER RUNNER");
 
-    if (!once) {
-        while (true) {
-            var ev = win.poll_event ();
-            if (ev.type == EventType.KEY_PRESS) {
-                if (ev.keyval == 'q' || ev.keyval == 'Q' || ev.keyval == 'x' || ev.keyval == 'X' || ev.keyval == 27)
-                    break;
-            } else {
-                __spv_sys (10, 0, 0, 0);
-            }
+            cr.set_source_rgb (0.08, 0.11, 0.17);
+            cr.rectangle (70, 80, 660, 440);
+            cr.fill ();
+            cr.set_line_width (2);
+            cr.set_source_rgba (pr, pg, pb, 1.0);
+            cr.rectangle (70, 80, 660, 440);
+            cr.stroke ();
+
+            // Pulsing shaded planet using the exact RGBA evaluated from frag.spv
+            cr.set_source_rgba (pr, pg, pb, out_a);
+            cr.arc (540, 300, 92, 0, 6.28);
+            cr.fill ();
+            cr.set_line_width (3);
+            cr.set_source_rgb (0.96, 0.62, 0.04);
+            cr.arc (540, 300, 124, 0, 6.28);
+            cr.stroke ();
+
+            // Orbiting moon
+            cr.set_source_rgb (0.98, 0.80, 0.20);
+            cr.arc (sat_x, sat_y, 10, 0, 6.28);
+            cr.fill ();
+
+            cr.set_source_rgb (0.97, 0.98, 0.99);
+            cr.set_font_size (24);
+            cr.move_to (108, 130);
+            cr.show_text ("SPIR-V SHADER");
+
+            cr.set_source_rgb (0.60, 0.66, 0.74);
+            cr.set_font_size (16);
+            cr.move_to (108, 195);
+            cr.show_text (@"FILE: $spv_name");
+            cr.move_to (108, 230);
+            cr.show_text (@"WORDS: $total_words  INSNS: $insn_count");
+            cr.move_to (108, 265);
+            cr.show_text (@"SSA BOUND: $bound");
+            cr.move_to (108, 305);
+            cr.set_source_rgba (pr, pg, pb, 1.0);
+            cr.show_text (@"FRAG COLOR: ($ir, $ig, $ib)");
+            cr.move_to (108, 345);
+            cr.set_source_rgb (0.96, 0.62, 0.04);
+            cr.show_text (@"FRAME: $frame  TICKS: $ticks");
+            cr.move_to (108, 460);
+            cr.set_source_rgb (0.22, 0.74, 0.97);
+            cr.show_text ("PRESS Q TO RETURN TO SHELL");
+
+            win.present ();
+            if (once)
+                break;
+        }
+
+        var ev = win.poll_event ();
+        if (ev.type == EventType.KEY_PRESS) {
+            if (ev.keyval == 'q' || ev.keyval == 'Q' || ev.keyval == 'x' || ev.keyval == 'X' || ev.keyval == 27)
+                break;
+        } else {
+            __spv_sys (10, 0, 0, 0);
         }
     }
 
