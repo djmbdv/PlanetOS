@@ -2,6 +2,25 @@
 
 namespace Planet.Kernel {
 
+    [AsmBody(@"
+        # vga_hw_cursor(pos in rdi)
+        mov %rdi, %rcx
+        mov $0x3D4, %dx
+        mov $0x0F, %al
+        out %al, %dx
+        mov $0x3D5, %dx
+        mov %cl, %al
+        out %al, %dx
+        mov $0x3D4, %dx
+        mov $0x0E, %al
+        out %al, %dx
+        mov $0x3D5, %dx
+        mov %ch, %al
+        out %al, %dx
+        ret
+    ")]
+    public extern void vga_hw_cursor (int pos);
+
     private int vga_row = 0;
     private int vga_col = 0;
     private int vga_ready = 0;
@@ -14,6 +33,10 @@ namespace Planet.Kernel {
         private const int ROWS = 25;
         private const int ATTR = 0x07; // light gray on black
 
+        private static void update_cursor () {
+            vga_hw_cursor (vga_row * COLS + vga_col);
+        }
+
         private static void clear () {
             int blank = (ATTR << 8) | ' ';
             for (int i = 0; i < ROWS * COLS; i++) {
@@ -21,6 +44,7 @@ namespace Planet.Kernel {
             }
             vga_row = 0;
             vga_col = 0;
+            update_cursor ();
         }
 
         public static void init () {
@@ -71,6 +95,7 @@ namespace Planet.Kernel {
             }
             if (vga_row >= ROWS)
                 scroll_up ();
+            update_cursor ();
         }
 
         public static void write_byte (int ch) {
@@ -95,6 +120,7 @@ namespace Planet.Kernel {
                 }
                 if (vga_row >= ROWS)
                     scroll_up ();
+                update_cursor ();
                 return;
             }
             if ((b & 0xE0) == 0xC0) {
