@@ -82,6 +82,21 @@ namespace Gdk {
             Sys.sys (22, surface.buf_addr, width, height);
         }
 
+        public int pointer_x () {
+            Sys.sys (24, mouse_buf, 0, 0);
+            return __g_peek64 (mouse_buf + 0);
+        }
+
+        public int pointer_y () {
+            Sys.sys (24, mouse_buf, 0, 0);
+            return __g_peek64 (mouse_buf + 8);
+        }
+
+        public int pointer_mask () {
+            Sys.sys (24, mouse_buf, 0, 0);
+            return __g_peek64 (mouse_buf + 16);
+        }
+
         public Event poll_event () {
             var ev = new Event ();
             int key = Sys.read_key ();

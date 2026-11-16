@@ -44,6 +44,7 @@ namespace Planet.Kernel {
     public extern void ps2_drain ();
 
     private int kb_shift = 0;
+    private int kb_ext = 0;
 
     public class Keyboard : Object {
         private const int KB_BUF = 0x106100;
@@ -70,6 +71,20 @@ namespace Planet.Kernel {
         }
 
         public static int scancode_to_ascii (int sc) {
+            if (sc == 0xE0) { kb_ext = 1; return 0; }
+            if (kb_ext != 0) {
+                kb_ext = 0;
+                if ((sc & 0x80) != 0)
+                    return 0;
+                // Extended keys are reported as KEY_UP/DOWN/LEFT/RIGHT (0x81..0x84)
+                if (sc == 0x48) return 0x81;
+                if (sc == 0x50) return 0x82;
+                if (sc == 0x4B) return 0x83;
+                if (sc == 0x4D) return 0x84;
+                if (sc == 0x47) return 0x85;
+                if (sc == 0x4F) return 0x86;
+                return 0;
+            }
             if (sc == 0x2A || sc == 0x36) { kb_shift = 1; return 0; }
             if (sc == 0xAA || sc == 0xB6) { kb_shift = 0; return 0; }
             if ((sc & 0x80) != 0) return 0;

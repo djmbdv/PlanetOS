@@ -312,10 +312,16 @@ namespace Cairo {
         }
 
         public void show_text (string text) {
+            show_text_n (text, text.length);
+        }
+
+        // Draws at most max_chars glyphs, for text that must stay inside a widget.
+        public void show_text_n (string text, int max_chars) {
             int cx = cur_x;
             int cy = cur_y;
             int s = font_scale;
-            for (int i = 0; i < text.length; i++) {
+            int n = (text.length < max_chars) ? text.length : max_chars;
+            for (int i = 0; i < n; i++) {
                 int ch = (int) text[i];
                 if (ch < 0x80) {
                     for (int r = 0; r < 7; r++) {

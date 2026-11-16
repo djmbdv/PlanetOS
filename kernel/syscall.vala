@@ -63,7 +63,7 @@ namespace Planet.Kernel {
             return Hal.ticks ();
         }
         if (num == 3) { // SYS_ALLOC_PAGE(num_pages)
-            if (a0 < 0 || a0 > 256)
+            if (a0 < 0 || a0 > 1024)
                 return -1;
             if (a0 > 1)
                 return Pmm.alloc_contiguous (a0);

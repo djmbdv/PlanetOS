@@ -131,6 +131,7 @@ problems** and **creates six**:
 | [docs/planc/slice-35.md](docs/planc/slice-35.md) | **Implemented slice 35**: asm audit — 35 duplicated `int 0x80` trampolines replaced by [stdlib/planet_sys.vala](stdlib/planet_sys.vala) (3 primitives + typed wrappers), shell without raw memory, and kernel validation of every syscall pointer (`sysguard:ok=1`) |
 | [docs/planc/slice-36.md](docs/planc/slice-36.md) | **Implemented slice 36**: Cairo/Gdk split ([stdlib/cairo_compat.vala](stdlib/cairo_compat.vala), [stdlib/gdk_compat.vala](stdlib/gdk_compat.vala)), [GObject](stdlib/gobject_compat.vala) `Type`/`Value` layer and [GModule](stdlib/gmodule_compat.vala) with a static module registry |
 | [docs/planc/slice-37.md](docs/planc/slice-37.md) | **Implemented slice 37**: GLib main loop — `MainContext`, `idle_add`/`timeout_add`/`source_remove`, `MainLoop`, and a `Gio.Application.run()` that drives it while `hold()` is active |
+| [docs/planc/slice-38.md](docs/planc/slice-38.md) | **Implemented slice 38**: compositor — Openbox-style window model and Gala-style visuals in 100% Vala ([user/compositor.vala](user/compositor.vala)), SPIR-V accent through the shared [Spv.Module](stdlib/spirv_compat.vala), Vulkan backend seam, and the 1024-page framebuffer limit fix |
 
 ## 5. State of the measurements
 

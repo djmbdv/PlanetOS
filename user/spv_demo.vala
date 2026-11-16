@@ -1,34 +1,9 @@
 // SPIR-V 1.0 Shader Loader, Pure-Vala VM Evaluator, and Framebuffer Demo on PlanetOS.
 
 using Planet;
+using Spv;
 using Cairo;
 using Gdk;
-
-private double f32_bits_to_double (uint32 bits) {
-    if ((bits & 0x7FFFFFFFu) == 0)
-        return 0.0;
-    double sign = ((bits & 0x80000000u) != 0) ? -1.0 : 1.0;
-    int exp = (int) ((bits >> 23) & 0xFF) - 127;
-    uint32 mant = bits & 0x7FFFFFu;
-    double val = 1.0 + (double) mant / 8388608.0;
-    while (exp > 0) {
-        val = val * 2.0;
-        exp = exp - 1;
-    }
-    while (exp < 0) {
-        val = val * 0.5;
-        exp = exp + 1;
-    }
-    return sign * val;
-}
-
-private uint32 read_u32_le (uint8[] buf, int word_idx) {
-    int off = word_idx * 4;
-    return (uint32) buf[off + 0]
-        | ((uint32) buf[off + 1] << 8)
-        | ((uint32) buf[off + 2] << 16)
-        | ((uint32) buf[off + 3] << 24);
-}
 
 private int th_running = 1;
 private int th_sat_x = 664;
@@ -79,107 +54,18 @@ int main (string[] args) {
             once = true;
     }
 
-    int fd = Sys.open (spv_name);
-    if (fd < 0) {
-        print (@"spv_demo: cannot open '$spv_name'\n");
+    var mod = Module.load (spv_name);
+    if (!mod.valid) {
+        print (@"spv_demo: $(mod.error)\n");
         return 1;
     }
-    int sz = Sys.file_size (fd);
-    if (sz < 20 || (sz % 4) != 0) {
-        Sys.close (fd);
-        print ("spv_demo: invalid .spv size\n");
-        return 1;
-    }
-    var buf = new uint8[sz];
-    int got = 0;
-    while (got < sz) {
-        var chunk = new uint8[sz - got];
-        int r = Sys.read (fd, chunk, sz - got);
-        if (r <= 0) break;
-        for (int i = 0; i < r; i++)
-            buf[got + i] = chunk[i];
-        got = got + r;
-    }
-    Sys.close (fd);
-
-    uint32 magic = read_u32_le (buf, 0);
-    uint32 ver   = read_u32_le (buf, 1);
-    uint32 bound = read_u32_le (buf, 3);
-    if (magic != 0x07230203u) {
-        print ("spv_demo: bad SPIR-V magic\n");
-        return 1;
-    }
-
-    // Minimal pure-Vala SPIR-V 1.0 SSA evaluator
-    int max_ids = (int) bound + 4;
-    var fvals = new double[max_ids];
-    var vec_r = new double[max_ids];
-    var vec_g = new double[max_ids];
-    var vec_b = new double[max_ids];
-    var vec_a = new double[max_ids];
-    var var_val = new int[max_ids];
-    double out_r = 0.0;
-    double out_g = 0.0;
-    double out_b = 0.0;
-    double out_a = 1.0;
-
-    int total_words = sz / 4;
-    int wi = 5;
-    int insn_count = 0;
-    while (wi < total_words) {
-        uint32 hdr = read_u32_le (buf, wi);
-        int wc = (int) (hdr >> 16);
-        int opc = (int) (hdr & 0xFFFF);
-        if (wc <= 0 || wi + wc > total_words)
-            break;
-        insn_count = insn_count + 1;
-
-        if (opc == 43 && wc >= 4) { // OpConstant (f32 or i32)
-            uint32 res = read_u32_le (buf, wi + 2);
-            uint32 raw = read_u32_le (buf, wi + 3);
-            fvals[(int) res] = f32_bits_to_double (raw);
-        } else if (opc == 129 && wc >= 5) { // OpFAdd
-            int res = (int) read_u32_le (buf, wi + 2);
-            int a = (int) read_u32_le (buf, wi + 3);
-            int b = (int) read_u32_le (buf, wi + 4);
-            fvals[res] = fvals[a] + fvals[b];
-        } else if (opc == 131 && wc >= 5) { // OpFSub
-            int res = (int) read_u32_le (buf, wi + 2);
-            int a = (int) read_u32_le (buf, wi + 3);
-            int b = (int) read_u32_le (buf, wi + 4);
-            fvals[res] = fvals[a] - fvals[b];
-        } else if (opc == 133 && wc >= 5) { // OpFMul
-            int res = (int) read_u32_le (buf, wi + 2);
-            int a = (int) read_u32_le (buf, wi + 3);
-            int b = (int) read_u32_le (buf, wi + 4);
-            fvals[res] = fvals[a] * fvals[b];
-        } else if (opc == 136 && wc >= 5) { // OpFDiv
-            int res = (int) read_u32_le (buf, wi + 2);
-            int a = (int) read_u32_le (buf, wi + 3);
-            int b = (int) read_u32_le (buf, wi + 4);
-            fvals[res] = (fvals[b] != 0.0) ? (fvals[a] / fvals[b]) : 0.0;
-        } else if (opc == 80 && wc >= 7) { // OpCompositeConstruct vec4
-            int res = (int) read_u32_le (buf, wi + 2);
-            vec_r[res] = fvals[(int) read_u32_le (buf, wi + 3)];
-            vec_g[res] = fvals[(int) read_u32_le (buf, wi + 4)];
-            vec_b[res] = fvals[(int) read_u32_le (buf, wi + 5)];
-            vec_a[res] = fvals[(int) read_u32_le (buf, wi + 6)];
-        } else if (opc == 62 && wc >= 3) { // OpStore ptr, obj
-            int ptr = (int) read_u32_le (buf, wi + 1);
-            int obj = (int) read_u32_le (buf, wi + 2);
-            var_val[ptr] = obj;
-            fvals[ptr] = fvals[obj];
-            out_r = vec_r[obj];
-            out_g = vec_g[obj];
-            out_b = vec_b[obj];
-            out_a = vec_a[obj];
-        } else if (opc == 61 && wc >= 4) { // OpLoad ty, res, ptr
-            int res = (int) read_u32_le (buf, wi + 2);
-            int ptr = (int) read_u32_le (buf, wi + 3);
-            fvals[res] = fvals[ptr];
-        }
-        wi = wi + wc;
-    }
+    int total_words = mod.words;
+    int insn_count = mod.insns;
+    int bound = mod.bound;
+    double out_r = mod.r;
+    double out_g = mod.g;
+    double out_b = mod.b;
+    double out_a = mod.a;
 
     int ir = (int) (out_r * 255.0);
     int ig = (int) (out_g * 255.0);

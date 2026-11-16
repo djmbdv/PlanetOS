@@ -85,7 +85,8 @@ namespace Planet {
         // --- memory --------------------------------------------------------
 
         public static int alloc_pages (int pages) {
-            if (pages <= 0 || pages > 256)
+            // 1024 pages = 4 MiB, enough for an 800x600x4 framebuffer (469 pages).
+            if (pages <= 0 || pages > 1024)
                 return -1;
             return __sys4 (3, pages, 0, 0, 0);
         }
