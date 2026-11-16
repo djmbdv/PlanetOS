@@ -238,6 +238,13 @@ namespace Planet.Kernel {
             Mouse.poll_state (a0);
             return 0;
         }
+        if (num == 25) { // SYS_FB_INFO(out_buf) -> (w<<16)|h
+            return Fb.info (a0);
+        }
+        if (num == 26) { // SYS_FB_BLIT_RECT(src_buf, (x<<16)|y, (w<<16)|h)
+            Fb.blit_rect (a0, a1, a2);
+            return 0;
+        }
         return -1;
     }
 

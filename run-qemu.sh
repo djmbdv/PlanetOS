@@ -27,6 +27,7 @@ echo "Building PlanetOS kernel and userland..."
     "$ROOT/planc/src/emitter.vala" \
     "$ROOT/planc/src/elf.vala" \
     "$ROOT/planc/src/dwarf.vala" \
+    "$ROOT/planc/src/spirv.vala" \
     "$ROOT/planc/src/codegen.vala" \
     "$ROOT/planc/src/main.vala" \
     -o "$OUT/planc.elf"

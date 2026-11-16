@@ -1,4 +1,7 @@
-// Bochs/QEMU VBE (BGA) linear framebuffer driver (800x600x32 ARGB).
+// Upgraded Bochs/QEMU VBE (BGA) linear framebuffer driver:
+// - Up to 16 MiB VRAM mapped in PD3 (supports 800x600, 1024x768, 1280x720 @ 32bpp)
+// - Hardware double-buffering via VBE_DISPI_INDEX_Y_OFFSET (page flipping)
+// - Dirty-rectangle partial blit support
 
 namespace Planet.Kernel {
 
@@ -15,8 +18,8 @@ namespace Planet.Kernel {
     public extern int pci_cfg_read32 (int addr);
 
     [AsmBody(@"
-        # bga_write(reg in rdi, val in rsi) -> escribe registro en Bochs VBE (BGA)
-        # Puerto 0x01CE = selector de indice VBE, puerto 0x01CF = dato de 16 bits
+        # bga_write(reg in rdi, val in rsi) -> escribe registro de 16 bits en Bochs VBE (BGA)
+        # Puerto 0x01CE = indice VBE, puerto 0x01CF = dato
         mov %di, %ax
         mov $0x01CE, %dx
         out %ax, %dx
@@ -40,7 +43,7 @@ namespace Planet.Kernel {
     public extern int bga_read (int reg);
 
     [AsmBody(@"
-        # Invalida toda la TLB recargando CR3 tras mapear el framebuffer en PD3
+        # Invalida la TLB recargando CR3 tras actualizar las entradas de pagina del LFB
         mov %cr3, %rax
         mov %rax, %cr3
         ret
@@ -49,7 +52,7 @@ namespace Planet.Kernel {
 
     [AsmBody(@"
         # fb_copy_dwords(dst in rdi, src in rsi, count in rdx)
-        # Copia 'count' pixeles de 32 bits (ARGB) desde el backbuffer al framebuffer LFB
+        # Copia 'count' pixeles de 32 bits (ARGB) desde el backbuffer hacia el LFB
         mov %rdx, %rcx
         test %rcx, %rcx
         jz _fb_cp_done
@@ -68,6 +71,7 @@ namespace Planet.Kernel {
     private int fb_phys_addr = 0;
     private int fb_width = 0;
     private int fb_height = 0;
+    private int fb_page = 0;
 
     public class Fb : Object {
         private const int PD3_ADDR = 0x103000;
@@ -92,12 +96,12 @@ namespace Planet.Kernel {
         private static void map_lfb (int phys) {
             int pdpt_idx = (phys >> 30) & 0x1FF;
             if (pdpt_idx == 0)
-                return; // already identity-mapped in PD0
+                return;
             for (int i = 0; i < 512; i++) {
                 mmio_write64 (PD3_ADDR + i * 8, 0);
             }
             int base_2m = phys & ~0x1FFFFF;
-            for (int k = 0; k < 4; k++) { // map 8 MiB
+            for (int k = 0; k < 8; k++) { // map 16 MiB (supports double-buffered 1280x720x32 / 1024x768x32)
                 int pa = base_2m + k * 0x200000;
                 int pd_idx = (pa >> 21) & 0x1FF;
                 mmio_write64 (PD3_ADDR + pd_idx * 8, pa | 0x83);
@@ -114,28 +118,68 @@ namespace Planet.Kernel {
             if (bar0 == 0)
                 return 0;
             map_lfb (bar0);
-            bga_write (4, 0);
-            bga_write (1, w);
-            bga_write (2, h);
-            bga_write (3, 32);
-            bga_write (4, 0x41);
+            bga_write (4, 0);       // VBE_DISPI_INDEX_ENABLE = 0
+            bga_write (1, w);       // XRES
+            bga_write (2, h);       // YRES
+            bga_write (3, 32);      // BPP = 32 ARGB
+            bga_write (6, w);       // VIRT_WIDTH = w
+            bga_write (7, h * 2);   // VIRT_HEIGHT = 2*h (hardware double-buffering)
+            bga_write (8, 0);       // X_OFFSET = 0
+            bga_write (9, 0);       // Y_OFFSET = 0
+            bga_write (4, 0x41);    // ENABLED | LFB_ENABLED
             fb_phys_addr = bar0;
             fb_width = w;
             fb_height = h;
+            fb_page = 0;
             return bar0;
+        }
+
+        public static int info (int out_buf) {
+            if (out_buf != 0) {
+                mmio_write64 (out_buf + 0, fb_width);
+                mmio_write64 (out_buf + 8, fb_height);
+                mmio_write64 (out_buf + 16, 32);
+                mmio_write64 (out_buf + 24, fb_width * 4);
+                mmio_write64 (out_buf + 32, fb_phys_addr);
+            }
+            return (fb_width << 16) | fb_height;
         }
 
         public static void blit (int src_buf, int w, int h) {
             if (fb_phys_addr == 0 || src_buf == 0)
                 return;
+            int back = 1 - fb_page;
+            int dst_base = fb_phys_addr + back * fb_width * fb_height * 4;
             int cw = (w < fb_width) ? w : fb_width;
             int ch = (h < fb_height) ? h : fb_height;
             if (cw == fb_width) {
-                fb_copy_dwords (fb_phys_addr, src_buf, cw * ch);
+                fb_copy_dwords (dst_base, src_buf, cw * ch);
             } else {
                 for (int y = 0; y < ch; y++) {
-                    fb_copy_dwords (fb_phys_addr + y * fb_width * 4, src_buf + y * w * 4, cw);
+                    fb_copy_dwords (dst_base + y * fb_width * 4, src_buf + y * w * 4, cw);
                 }
+            }
+            fb_page = back;
+            bga_write (9, back * fb_height); // Page flip via Y_OFFSET
+        }
+
+        public static void blit_rect (int src_buf, int xy_packed, int wh_packed) {
+            if (fb_phys_addr == 0 || src_buf == 0)
+                return;
+            int rx = (xy_packed >> 16) & 0xFFFF;
+            int ry = xy_packed & 0xFFFF;
+            int rw = (wh_packed >> 16) & 0xFFFF;
+            int rh = wh_packed & 0xFFFF;
+            if (rx < 0) rx = 0;
+            if (ry < 0) ry = 0;
+            if (rx + rw > fb_width) rw = fb_width - rx;
+            if (ry + rh > fb_height) rh = fb_height - ry;
+            if (rw <= 0 || rh <= 0)
+                return;
+            int dst_base = fb_phys_addr + fb_page * fb_width * fb_height * 4;
+            for (int row = 0; row < rh; row++) {
+                int off = ((ry + row) * fb_width + rx) * 4;
+                fb_copy_dwords (dst_base + off, src_buf + off, rw);
             }
         }
 
@@ -143,6 +187,8 @@ namespace Planet.Kernel {
             if (fb_phys_addr != 0) {
                 bga_write (4, 0);
                 fb_phys_addr = 0;
+                fb_width = 0;
+                fb_height = 0;
             }
         }
     }

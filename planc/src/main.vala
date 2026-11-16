@@ -22,6 +22,7 @@ namespace Planc {
         var check_leaks = false;
         var freestanding = false;
         var target_planetos = false;
+        var target_spirv = false;
         uint64 image_base = 0;
 
         for (int i = 1; i < args.length; i++) {
@@ -44,6 +45,8 @@ namespace Planc {
                 freestanding = true;
             } else if (a == "--target=planetos") {
                 target_planetos = true;
+            } else if (a == "--target=spirv") {
+                target_spirv = true;
             } else if (a.has_prefix ("--image-base=")) {
                 var val_str = a.substring (13);
                 uint64 parsed = 0;
@@ -110,6 +113,21 @@ namespace Planc {
         } catch (ParseError e) {
             Host.eprintln (@"planc: syntax error: $(e.message)");
             return 1;
+        }
+
+        if (target_spirv) {
+            try {
+                var spv = new SpirvBackend ();
+                var spv_bytes = spv.generate (program);
+                Host.write_file (output_path, spv_bytes);
+            } catch (SemanticError e) {
+                Host.eprintln (@"planc: semantic error: $(e.message)");
+                return 1;
+            } catch (FileError e) {
+                Host.eprintln (@"planc: $(e.message)");
+                return 1;
+            }
+            return 0;
         }
 
         var codegen = new Codegen ();
