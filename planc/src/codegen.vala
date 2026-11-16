@@ -99,6 +99,11 @@ namespace Planc {
         private bool need_null_panic = false;
         private bool need_cast_panic = false;
         private bool need_leak_panic = false;
+        private bool need_iface_lookup = false;
+        private bool need_build_args = false;
+        private bool main_takes_args = false;
+        private int lambda_counter = 0;
+        private GenericArray<LambdaExpr> pending_lambdas;
 
         private Label bounds_panic_label;
         private Label mem_panic_label;
@@ -124,6 +129,9 @@ namespace Planc {
             global_type_names = new GenericArray<string> ();
             global_offsets = new GenericArray<int> ();
             global_spaces = new GenericArray<PatchSpace> ();
+            pending_lambdas = new GenericArray<LambdaExpr> ();
+            del_thunk_keys = new GenericArray<string> ();
+            del_thunk_syms = new GenericArray<string> ();
             bounds_panic_label = emitter.new_label ();
             mem_panic_label = emitter.new_label ();
             null_panic_label = emitter.new_label ();
@@ -140,14 +148,23 @@ namespace Planc {
 
             check_struct_cycles ();
             prepare_value_methods ();
+            prepare_interfaces ();
             prepare_classes ();
 
             var main = program.find ("main");
             if (main == null)
                 error ("no main function");
-            if (main.params.length != 0)
+            if (main.params.length == 0) {
+                main_takes_args = false;
+            } else if (main.params.length == 1
+                       && main.params[0].param_type == ValaType.ARRAY
+                       && main.params[0].type_name == "string"
+                       && !main.params[0].is_ref && !main.params[0].is_out) {
+                main_takes_args = true;
+            } else {
                 throw new SemanticError.BAD_MAIN (
-                    @"main takes no parameters at $(main.line):$(main.column)");
+                    @"main takes no parameters or (string[] args) at $(main.line):$(main.column)");
+            }
             if (main.return_type != ValaType.INT
                 && main.return_type != ValaType.VOID
                 && main.return_type != ValaType.BOOL) {
@@ -159,7 +176,9 @@ namespace Planc {
                     @"main cannot declare 'throws' at $(main.line):$(main.column)");
             }
 
-            program_uses_heap = check_leaks || scan_program_heap ();
+            program_uses_heap = check_leaks || main_takes_args || scan_program_heap ();
+            if (main_takes_args)
+                need_build_args = true;
             if (program_uses_heap) {
                 alloc_bss_offset = emitter.add_bss_bytes (96);
                 need_alloc = true;
@@ -181,15 +200,15 @@ namespace Planc {
 
             register_globals ();
 
-            foreach (var f in program.functions)
-                generate_function (f);
+            for (int fi = 0; fi < program.functions.length; fi++)
+                generate_function (program.functions[fi]);
 
             emit_start ();
             emit_runtime ();
         }
 
         private bool scan_program_heap () {
-            if (program.classes.length > 0)
+            if (program.classes.length > 0 || program.delegates.length > 0)
                 return true;
             foreach (var g in program.globals) {
                 if (g.var_type == ValaType.ARRAY || g.var_type == ValaType.CLASS || g.var_type == ValaType.ERROR)
@@ -316,7 +335,7 @@ namespace Planc {
         }
 
         private bool scan_expr_heap (Expr e) {
-            if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr)
+            if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is LambdaExpr)
                 return true;
             if (e is NullLiteral)
                 return false;
@@ -403,8 +422,11 @@ namespace Planc {
         private void check_struct_cycles () throws SemanticError {
             var visiting = new GenericArray<string> ();
             var visited = new GenericArray<string> ();
-            foreach (var sd in program.structs)
+            foreach (var sd in program.structs) {
+                if (sd.is_generic_template)
+                    continue;
                 visit_struct_cycle (sd, visiting, visited);
+            }
         }
 
         private static bool list_contains (GenericArray<string> list, string name) {
@@ -489,6 +511,8 @@ namespace Planc {
                 }
             }
             foreach (var sd in program.structs) {
+                if (sd.is_generic_template || sd.is_delegate)
+                    continue;
                 foreach (var m in sd.methods) {
                     m.method_name = m.name;
                     m.name = @"$(sd.name)__$(m.name)";
@@ -499,6 +523,136 @@ namespace Planc {
             }
         }
 
+        private void visit_iface_order (InterfaceDecl itf,
+                                        GenericArray<string> visiting,
+                                        GenericArray<string> visited,
+                                        GenericArray<InterfaceDecl> ordered) throws SemanticError {
+            if (list_contains (visited, itf.name))
+                return;
+            if (list_contains (visiting, itf.name))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"cyclic interface inheritance involving '$(itf.name)' at $(itf.line):$(itf.column)");
+            visiting.add (itf.name);
+            foreach (var pname in itf.prereq_names) {
+                unowned var p = program.find_interface (pname);
+                if (p == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"unknown prerequisite interface '$pname' for '$(itf.name)' at $(itf.line):$(itf.column)");
+                visit_iface_order (p, visiting, visited, ordered);
+            }
+            visited.add (itf.name);
+            ordered.add (itf);
+        }
+
+        private void prepare_interfaces () throws SemanticError {
+            var ordered = new GenericArray<InterfaceDecl> ();
+            var visiting = new GenericArray<string> ();
+            var visited = new GenericArray<string> ();
+            foreach (var itf in program.interfaces)
+                visit_iface_order (itf, visiting, visited, ordered);
+
+            foreach (var itf in ordered) {
+                for (int mi = 0; mi < itf.methods.length; mi++) {
+                    var m = itf.methods[mi];
+                    m.iface_id = itf.iface_id;
+                    m.iface_slot = mi;
+                    m.method_name = m.name;
+                    prepend_this_param_typed (m, ValaType.INTERFACE, itf.name, false);
+                    if (m.has_body) {
+                        m.name = @"$(itf.name)__$(m.method_name)";
+                        program.functions.add (m);
+                    }
+                }
+            }
+        }
+
+        private void collect_iface_closure (string iname, GenericArray<string> dst) {
+            if (list_contains (dst, iname))
+                return;
+            unowned var itf = program.find_interface (iname);
+            if (itf == null)
+                return;
+            foreach (var pn in itf.prereq_names)
+                collect_iface_closure (pn, dst);
+            dst.add (iname);
+        }
+
+        private void collect_class_interfaces (ClassDecl cd, GenericArray<string> dst) {
+            if (cd.base_name != "") {
+                unowned var b = program.find_class (cd.base_name);
+                if (b != null)
+                    collect_class_interfaces (b, dst);
+            }
+            foreach (var iname in cd.iface_names)
+                collect_iface_closure (iname, dst);
+        }
+
+        private unowned Function? find_interface_method (InterfaceDecl itf, string mname) {
+            unowned var own = itf.find_own_method (mname);
+            if (own != null)
+                return own;
+            foreach (var pn in itf.prereq_names) {
+                unowned var p = program.find_interface (pn);
+                if (p != null) {
+                    unowned var res = find_interface_method (p, mname);
+                    if (res != null)
+                        return res;
+                }
+            }
+            return null;
+        }
+
+        private bool class_implements_iface (ClassDecl cd, string iface_name) {
+            var all = new GenericArray<string> ();
+            collect_class_interfaces (cd, all);
+            return list_contains (all, iface_name);
+        }
+
+        private bool iface_inherits_from (InterfaceDecl sub, string target_iface) {
+            if (sub.name == target_iface)
+                return true;
+            foreach (var pn in sub.prereq_names) {
+                unowned var p = program.find_interface (pn);
+                if (p != null && iface_inherits_from (p, target_iface))
+                    return true;
+            }
+            return false;
+        }
+
+        private void check_iface_impl_signature (ClassDecl cd, Function impl, Function iface_m)
+                throws SemanticError {
+            if (impl.is_static)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"static method '$(cd.name).$(impl.method_name)' cannot implement interface method at $(impl.line):$(impl.column)");
+            if (impl.params.length != iface_m.params.length)
+                throw new SemanticError.WRONG_ARG_COUNT (
+                    @"method '$(cd.name).$(impl.method_name)' parameter count does not match interface '$(iface_m.owner_class).$(iface_m.method_name)' at $(impl.line):$(impl.column)");
+            if (impl.return_type != iface_m.return_type || impl.return_type_name != iface_m.return_type_name)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"method '$(cd.name).$(impl.method_name)' return type does not match interface '$(iface_m.owner_class).$(iface_m.method_name)' at $(impl.line):$(impl.column)");
+            for (int i = 1; i < impl.params.length; i++) {
+                var ip = impl.params[i];
+                var fp = iface_m.params[i];
+                if (ip.param_type != fp.param_type || ip.type_name != fp.type_name
+                    || ip.is_ref != fp.is_ref || ip.is_out != fp.is_out) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"method '$(cd.name).$(impl.method_name)' parameter $i does not match interface at $(ip.line):$(ip.column)");
+                }
+            }
+            foreach (var ddom in impl.throws_domains) {
+                bool found = false;
+                foreach (var bdom in iface_m.throws_domains) {
+                    if (ddom == bdom || bdom == "Error") {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"method '$(cd.name).$(impl.method_name)' throws '$(ddom)' not declared on interface method at $(impl.line):$(impl.column)");
+            }
+        }
+
         private void prepare_classes () throws SemanticError {
             if (program.classes.length == 0)
                 return;
@@ -506,8 +660,11 @@ namespace Planc {
             var ordered = new GenericArray<ClassDecl> ();
             var visiting = new GenericArray<string> ();
             var visited = new GenericArray<string> ();
-            foreach (var cd in program.classes)
+            foreach (var cd in program.classes) {
+                if (cd.is_generic_template)
+                    continue;
                 visit_class_order (cd, visiting, visited, ordered);
+            }
 
             foreach (var cd in ordered) {
                 unowned ClassDecl? base_cd = (cd.base_name != "") ? program.find_class (cd.base_name) : null;
@@ -610,7 +767,7 @@ namespace Planc {
                         }
                     }
                 } else {
-                    if (anc_ctor != null) {
+                    if (anc_ctor != null && !cd.ctor.has_this_call) {
                         int anc_user_params = anc_ctor.params.length - 1;
                         if (!cd.ctor.has_base_call) {
                             if (anc_user_params == 0)
@@ -619,7 +776,7 @@ namespace Planc {
                                 throw new SemanticError.WRONG_ARG_COUNT (
                                     @"constructor '$(cd.name)' must call ': base(...)' with $(anc_user_params) argument(s) at $(cd.ctor.line):$(cd.ctor.column)");
                         }
-                    } else if (cd.ctor.has_base_call && cd.ctor.base_args.length > 0) {
+                    } else if (!cd.ctor.has_this_call && cd.ctor.has_base_call && cd.ctor.base_args.length > 0) {
                         throw new SemanticError.WRONG_ARG_COUNT (
                             @"base class of '$(cd.name)' has no constructor taking $(cd.ctor.base_args.length) argument(s) at $(cd.ctor.line):$(cd.ctor.column)");
                     }
@@ -628,7 +785,80 @@ namespace Planc {
                     program.functions.add (cd.ctor);
                 }
 
-                // Emit .rodata vtable: [ +0 finalizer, +8 parent_vtable, +16+8k methods ].
+                foreach (var nc in cd.named_ctors) {
+                    if (anc_ctor != null && !nc.has_this_call) {
+                        int anc_user_params = anc_ctor.params.length - 1;
+                        if (!nc.has_base_call) {
+                            if (anc_user_params == 0)
+                                nc.has_base_call = true;
+                            else
+                                throw new SemanticError.WRONG_ARG_COUNT (
+                                    @"constructor '$(cd.name).$(nc.ctor_subname)' must call ': base(...)' with $(anc_user_params) argument(s) at $(nc.line):$(nc.column)");
+                        }
+                    } else if (!nc.has_this_call && nc.has_base_call && nc.base_args.length > 0) {
+                        throw new SemanticError.WRONG_ARG_COUNT (
+                            @"base class of '$(cd.name)' has no constructor taking $(nc.base_args.length) argument(s) at $(nc.line):$(nc.column)");
+                    }
+                    nc.name = @"$(cd.name)____ctor_$(nc.ctor_subname)";
+                    prepend_this_param (nc, cd.name, true);
+                    program.functions.add (nc);
+                }
+
+                // Interface method resolution and .rodata itable emission.
+                var all_ifaces = new GenericArray<string> ();
+                collect_class_interfaces (cd, all_ifaces);
+                if (all_ifaces.length > 0) {
+                    var iface_ids = new GenericArray<int> ();
+                    var mtable_offs = new GenericArray<int> ();
+                    foreach (var iname in all_ifaces) {
+                        unowned var itf = program.find_interface (iname);
+                        if (itf == null)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"unknown interface '$iname' on class '$(cd.name)' at $(cd.line):$(cd.column)");
+                        var impl_syms = new GenericArray<string> ();
+                        foreach (var im in itf.methods) {
+                            unowned var impl_m = find_class_method (cd, im.method_name);
+                            if (impl_m == null) {
+                                if (im.has_body) {
+                                    impl_syms.add (im.name);
+                                } else if (!cd.is_abstract) {
+                                    throw new SemanticError.TYPE_MISMATCH (
+                                        @"class '$(cd.name)' does not implement interface method '$(itf.name).$(im.method_name)' at $(cd.line):$(cd.column)");
+                                } else {
+                                    impl_syms.add ("");
+                                }
+                            } else if (impl_m.is_abstract) {
+                                if (!cd.is_abstract)
+                                    throw new SemanticError.TYPE_MISMATCH (
+                                        @"class '$(cd.name)' must implement abstract method '$(impl_m.method_name)' at $(cd.line):$(cd.column)");
+                                impl_syms.add ("");
+                            } else {
+                                check_iface_impl_signature (cd, impl_m, im);
+                                impl_syms.add (impl_m.name);
+                            }
+                        }
+                        int mt_off = emitter.align_rodata_8 ();
+                        for (int mi = 0; mi < impl_syms.length; mi++) {
+                            if (impl_syms[mi] != "")
+                                emitter.add_rodata_text_ptr (impl_syms[mi]);
+                            else
+                                emitter.add_rodata_u64 (0);
+                        }
+                        if (impl_syms.length == 0)
+                            emitter.add_rodata_u64 (0);
+                        iface_ids.add (itf.iface_id);
+                        mtable_offs.add (mt_off);
+                    }
+                    cd.itable_rodata_offset = emitter.align_rodata_8 ();
+                    for (int ii = 0; ii < iface_ids.length; ii++) {
+                        emitter.add_rodata_u64 ((uint64) iface_ids[ii]);
+                        emitter.add_rodata_rodata_ptr (mtable_offs[ii]);
+                    }
+                    emitter.add_rodata_u64 (0);
+                    emitter.add_rodata_u64 (0);
+                }
+
+                // Emit .rodata vtable: [ +0 finalizer, +8 parent_vtable, +16 itable, +24+8k methods ].
                 cd.vtable_rodata_offset = emitter.align_rodata_8 ();
                 if (cd.needs_finalizer)
                     emitter.add_rodata_text_ptr (@"__planc_dtor_$(cd.name)");
@@ -636,6 +866,10 @@ namespace Planc {
                     emitter.add_rodata_u64 (0);
                 if (base_cd != null)
                     emitter.add_rodata_rodata_ptr (base_cd.vtable_rodata_offset);
+                else
+                    emitter.add_rodata_u64 (0);
+                if (cd.itable_rodata_offset >= 0)
+                    emitter.add_rodata_rodata_ptr (cd.itable_rodata_offset);
                 else
                     emitter.add_rodata_u64 (0);
                 for (int s = 0; s < cd.vtable_impl_symbols.length; s++) {
@@ -989,6 +1223,16 @@ namespace Planc {
                 emitter.emit_rt_is_instance ();
                 symbols.add (new Symbol ("__planc_is_instance", start, emitter.here () - start));
             }
+            if (need_iface_lookup) {
+                var start = emitter.here ();
+                emitter.emit_rt_iface_lookup ();
+                symbols.add (new Symbol ("__planc_iface_lookup", start, emitter.here () - start));
+            }
+            if (need_build_args) {
+                var start = emitter.here ();
+                emitter.emit_rt_build_args ();
+                symbols.add (new Symbol ("__planc_build_args", start, emitter.here () - start));
+            }
             emit_panic_sym (need_bounds_panic, bounds_panic_label, "__planc_bounds_panic",
                             "planc: panic: index out of bounds\n");
             emit_panic_sym (need_mem_panic, mem_panic_label, "__planc_mem_panic",
@@ -1014,15 +1258,36 @@ namespace Planc {
         private void emit_start () {
             var start = emitter.here ();
 
+            if (main_takes_args) {
+                // Save argc ([rsp]) and argv (&[rsp + 8]) before aligning rsp.
+                // mov rdi, [rsp]              48 8B 3C 24
+                emitter.code.u8 (0x48); emitter.code.u8 (0x8B);
+                emitter.code.u8 (0x3C); emitter.code.u8 (0x24);
+                // lea rsi, [rsp + 8]          48 8D 74 24 08
+                emitter.code.u8 (0x48); emitter.code.u8 (0x8D);
+                emitter.code.u8 (0x74); emitter.code.u8 (0x24); emitter.code.u8 (0x08);
+            }
             // xor ebp, ebp                    31 ED
             emitter.code.u8 (0x31); emitter.code.u8 (0xED);
             // and rsp, -16                    48 83 E4 F0
             emitter.code.u8 (0x48); emitter.code.u8 (0x83);
             emitter.code.u8 (0xE4); emitter.code.u8 (0xF0);
+            if (main_takes_args) {
+                emitter.call_rel32 ("__planc_build_args");
+                // mov r13, rax                49 89 C5
+                emitter.code.u8 (0x49); emitter.code.u8 (0x89); emitter.code.u8 (0xC5);
+                // mov rdi, r13                4C 89 EF
+                emitter.code.u8 (0x4C); emitter.code.u8 (0x89); emitter.code.u8 (0xEF);
+            }
             emitter.call_rel32 ("main");
 
             if (program_uses_heap) {
                 emitter.mov_r12d_eax ();
+                if (main_takes_args) {
+                    // mov rdi, r13            4C 89 EF
+                    emitter.code.u8 (0x4C); emitter.code.u8 (0x89); emitter.code.u8 (0xEF);
+                    emitter.call_rel32 ("__planc_unref");
+                }
                 for (int gi = 0; gi < global_names.length; gi++) {
                     var gt = global_types[gi];
                     if (is_ref_type (gt)) {
@@ -1257,6 +1522,11 @@ namespace Planc {
                 unowned var gm = (cd != null) ? find_class_method (cd, @"get_$(prop)") : null;
                 if (gm != null && !gm.is_static && gm.params.length == 1)
                     return gm;
+            } else if (tt == ValaType.INTERFACE) {
+                unowned var itf = program.find_interface (strip_null (tt_name));
+                unowned var gm = (itf != null) ? find_interface_method (itf, @"get_$(prop)") : null;
+                if (gm != null && gm.params.length == 1)
+                    return gm;
             } else if (tt == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (tt_name);
                 unowned var gm = (sd != null) ? sd.find_method (@"get_$(prop)") : null;
@@ -1272,12 +1542,132 @@ namespace Planc {
                 unowned var sm = (cd != null) ? find_class_method (cd, @"set_$(prop)") : null;
                 if (sm != null && !sm.is_static && sm.params.length == 2)
                     return sm;
+            } else if (tt == ValaType.INTERFACE) {
+                unowned var itf = program.find_interface (strip_null (tt_name));
+                unowned var sm = (itf != null) ? find_interface_method (itf, @"set_$(prop)") : null;
+                if (sm != null && sm.params.length == 2)
+                    return sm;
             } else if (tt == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (tt_name);
                 unowned var sm = (sd != null) ? sd.find_method (@"set_$(prop)") : null;
                 if (sm != null && !sm.is_static && sm.params.length == 2)
                     return sm;
             }
+            return null;
+        }
+
+        private bool has_real_member (ValaType tt, string tt_name, string member) {
+            if (tt == ValaType.CLASS) {
+                unowned var cd = program.find_class (strip_null (tt_name));
+                unowned ClassField? cf = null;
+                if (cd != null && class_field_offset_slots (cd, member, out cf) >= 0)
+                    return true;
+            } else if (tt == ValaType.STRUCT) {
+                unowned var sd = program.find_struct (tt_name);
+                unowned StructField? sf = null;
+                if (sd != null && struct_field_offset_slots (sd, member, out sf) >= 0)
+                    return true;
+            } else if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
+                if (member == "length")
+                    return true;
+            } else if (tt == ValaType.ERROR) {
+                if (member == "message" || member == "domain" || member == "code")
+                    return true;
+            }
+            return find_prop_getter (tt, tt_name, member) != null;
+        }
+
+        private unowned Function? resolve_member_delegate_fn (ValaType tt, string tt_name, string member) {
+            if (tt == ValaType.CLASS) {
+                unowned var cd = program.find_class (strip_null (tt_name));
+                return (cd != null) ? find_class_method (cd, member) : null;
+            } else if (tt == ValaType.INTERFACE) {
+                unowned var itf = program.find_interface (strip_null (tt_name));
+                return (itf != null) ? find_interface_method (itf, member) : null;
+            } else if (tt == ValaType.STRUCT) {
+                unowned var sd = program.find_struct (tt_name);
+                return (sd != null) ? sd.find_method (member) : null;
+            } else if (tt == ValaType.ENUM) {
+                unowned var ed = program.find_enum (tt_name);
+                return (ed != null) ? ed.find_method (member) : null;
+            }
+            return null;
+        }
+
+        private bool find_generic_array_elem (string tt_name, out ValaType et, out string et_name) {
+            et = ValaType.INT;
+            et_name = "";
+            var cname = strip_null (tt_name);
+            if (!cname.has_prefix ("GenericArray__"))
+                return false;
+            unowned var cd = program.find_class (cname);
+            unowned ClassField? df = (cd != null) ? cd.find_own_field ("data") : null;
+            if (df == null)
+                return false;
+            parse_array_elem (df.type_name, out et, out et_name);
+            return true;
+        }
+
+        private unowned DelegateDecl? resolve_delegate_callee (string name) {
+            var slot = lookup (name);
+            if (slot >= 0) {
+                if (local_types[slot] == ValaType.STRUCT)
+                    return program.find_delegate (local_type_names[slot]);
+                return null;
+            }
+            var gi = lookup_global (name);
+            if (gi >= 0) {
+                if (global_types[gi] == ValaType.STRUCT)
+                    return program.find_delegate (global_type_names[gi]);
+                return null;
+            }
+            if (current_class != null && current != null && !current.is_static) {
+                unowned ClassField? cf = null;
+                if (class_field_offset_slots (current_class, name, out cf) >= 0 && cf != null) {
+                    if (cf.field_type == ValaType.STRUCT)
+                        return program.find_delegate (cf.type_name);
+                    return null;
+                }
+            }
+            if (current_struct != null && current != null && !current.is_static) {
+                unowned StructField? sf = null;
+                if (struct_field_offset_slots (current_struct, name, out sf) >= 0 && sf != null) {
+                    if (sf.field_type == ValaType.STRUCT)
+                        return program.find_delegate (sf.type_name);
+                    return null;
+                }
+            }
+            unowned var gm = find_this_prop_getter (name);
+            if (gm != null && gm.return_type == ValaType.STRUCT)
+                return program.find_delegate (gm.return_type_name);
+            return null;
+        }
+
+        private unowned DelegateDecl? resolve_member_delegate (Expr target, string member) throws SemanticError {
+            if (target is VarRef && is_type_name (((VarRef) target).name))
+                return null;
+            string tt_name = "";
+            var tt = expr_type_full (target, out tt_name);
+            if (tt == ValaType.CLASS) {
+                unowned var cd = program.find_class (strip_null (tt_name));
+                unowned ClassField? cf = null;
+                if (cd != null && class_field_offset_slots (cd, member, out cf) >= 0 && cf != null) {
+                    if (cf.field_type == ValaType.STRUCT)
+                        return program.find_delegate (cf.type_name);
+                    return null;
+                }
+            } else if (tt == ValaType.STRUCT) {
+                unowned var sd = program.find_struct (tt_name);
+                unowned StructField? sf = null;
+                if (sd != null && struct_field_offset_slots (sd, member, out sf) >= 0 && sf != null) {
+                    if (sf.field_type == ValaType.STRUCT)
+                        return program.find_delegate (sf.type_name);
+                    return null;
+                }
+            }
+            unowned var gm = find_prop_getter (tt, tt_name, member);
+            if (gm != null && gm.return_type == ValaType.STRUCT)
+                return program.find_delegate (gm.return_type_name);
             return null;
         }
 
@@ -1296,6 +1686,9 @@ namespace Planc {
                 return find_prop_setter (ValaType.STRUCT, current_struct.name, prop);
             return null;
         }
+
+        private GenericArray<string> del_thunk_keys;
+        private GenericArray<string> del_thunk_syms;
 
         private void emit_error_jump () {
             if (push_depth > 0)
@@ -1330,8 +1723,8 @@ namespace Planc {
             push_depth = saved_pd;
         }
 
-        private void emit_post_call_error_check (Function callee) {
-            if (!callee.can_throw)
+        private void emit_post_call_error_check_flag (bool can_throw) {
+            if (!can_throw)
                 return;
             emitter.test_rdx_rdx ();
             var l_ok = emitter.new_label ();
@@ -1339,6 +1732,356 @@ namespace Planc {
             emitter.store_local_reg (err_prop_slot, Reg.RDX);
             emit_error_jump ();
             emitter.bind (l_ok);
+        }
+
+        private void emit_post_call_error_check (Function callee) {
+            emit_post_call_error_check_flag (callee.can_throw);
+        }
+
+        private void load_this_slot () {
+            var ts = lookup ("this");
+            emitter.load_local (ts >= 0 ? ts : 0);
+        }
+
+        private static bool is_delegate_type (Program prog, ValaType t, string tname) {
+            return t == ValaType.STRUCT && prog.find_delegate (strip_null (tname)) != null;
+        }
+
+        private void fill_default_args (Function fn, int param_offset, GenericArray<Expr> args) {
+            int avail = fn.params.length - param_offset;
+            if (args.length >= avail)
+                return;
+            for (int i = param_offset + args.length; i < fn.params.length; i++) {
+                if (fn.params[i].default_value == null)
+                    return;
+            }
+            for (int i = param_offset + args.length; i < fn.params.length; i++)
+                args.add (program.clone_expr_plain (fn.params[i].default_value));
+        }
+
+        private void bind_delegate_target (Expr? e, ValaType expected_t, string expected_tname) {
+            if (e == null || !is_delegate_type (program, expected_t, expected_tname))
+                return;
+            var dname = strip_null (expected_tname);
+            if (e is LambdaExpr) {
+                ((LambdaExpr) e).delegate_type_name = dname;
+            } else if (e is VarRef) {
+                var vr = (VarRef) e;
+                if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0
+                    && resolve_call_target (vr.name) != null) {
+                    vr.target_del_type = dname;
+                }
+            } else if (e is MemberAccessExpr) {
+                ((MemberAccessExpr) e).target_del_type = dname;
+            } else if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                bind_delegate_target (te.then_expr, expected_t, expected_tname);
+                bind_delegate_target (te.else_expr, expected_t, expected_tname);
+            }
+        }
+
+        private void collect_stmt_free_vars (Statement s,
+                                             GenericArray<string> bound,
+                                             GenericArray<string> free_vars) {
+            if (s is PrintStatement) {
+                var p = (PrintStatement) s;
+                if (p.value is TemplateExpr) {
+                    foreach (var pt in ((TemplateExpr) p.value).parts)
+                        collect_expr_free_vars (pt, bound, free_vars);
+                } else {
+                    collect_expr_free_vars (p.value, bound, free_vars);
+                }
+            } else if (s is ExitStatement) {
+                collect_expr_free_vars (((ExitStatement) s).value, bound, free_vars);
+            } else if (s is ReturnStatement) {
+                var r = (ReturnStatement) s;
+                if (r.value != null)
+                    collect_expr_free_vars (r.value, bound, free_vars);
+            } else if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                if (d.init != null)
+                    collect_expr_free_vars (d.init, bound, free_vars);
+                bound.add (d.name);
+            } else if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                collect_expr_free_vars (a.value, bound, free_vars);
+                add_free_var_if_needed (a.name, bound, free_vars);
+            } else if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                collect_expr_free_vars (fa.target, bound, free_vars);
+                collect_expr_free_vars (fa.value, bound, free_vars);
+            } else if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                collect_expr_free_vars (ia.target, bound, free_vars);
+                collect_expr_free_vars (ia.index, bound, free_vars);
+                collect_expr_free_vars (ia.value, bound, free_vars);
+            } else if (s is ExprStatement) {
+                collect_expr_free_vars (((ExprStatement) s).expr, bound, free_vars);
+            } else if (s is BlockStatement) {
+                int saved = bound.length;
+                foreach (var inner in ((BlockStatement) s).statements)
+                    collect_stmt_free_vars (inner, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            } else if (s is IfStatement) {
+                var i = (IfStatement) s;
+                collect_expr_free_vars (i.condition, bound, free_vars);
+                int saved = bound.length;
+                collect_stmt_free_vars (i.then_body, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+                if (i.else_body != null) {
+                    collect_stmt_free_vars (i.else_body, bound, free_vars);
+                    while (bound.length > saved)
+                        bound.remove_index (bound.length - 1);
+                }
+            } else if (s is WhileStatement) {
+                var w = (WhileStatement) s;
+                collect_expr_free_vars (w.condition, bound, free_vars);
+                int saved = bound.length;
+                collect_stmt_free_vars (w.body, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            } else if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                int saved = bound.length;
+                if (fs.init != null)
+                    collect_stmt_free_vars (fs.init, bound, free_vars);
+                if (fs.condition != null)
+                    collect_expr_free_vars (fs.condition, bound, free_vars);
+                if (fs.step != null)
+                    collect_stmt_free_vars (fs.step, bound, free_vars);
+                collect_stmt_free_vars (fs.body, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            } else if (s is ForeachStatement) {
+                var fe = (ForeachStatement) s;
+                collect_expr_free_vars (fe.collection, bound, free_vars);
+                int saved = bound.length;
+                bound.add (fe.var_name);
+                collect_stmt_free_vars (fe.body, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            } else if (s is SwitchStatement) {
+                var sw = (SwitchStatement) s;
+                collect_expr_free_vars (sw.target, bound, free_vars);
+                foreach (var sc in sw.cases) {
+                    foreach (var v in sc.values)
+                        collect_expr_free_vars (v, bound, free_vars);
+                    int saved = bound.length;
+                    foreach (var bs in sc.body)
+                        collect_stmt_free_vars (bs, bound, free_vars);
+                    while (bound.length > saved)
+                        bound.remove_index (bound.length - 1);
+                }
+                int saved = bound.length;
+                foreach (var ds in sw.default_body)
+                    collect_stmt_free_vars (ds, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            } else if (s is ThrowStatement) {
+                collect_expr_free_vars (((ThrowStatement) s).message, bound, free_vars);
+            } else if (s is TryStatement) {
+                var tr = (TryStatement) s;
+                int saved = bound.length;
+                foreach (var st in tr.try_body)
+                    collect_stmt_free_vars (st, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+                foreach (var cc in tr.catches) {
+                    bound.add (cc.var_name);
+                    foreach (var bs in cc.body)
+                        collect_stmt_free_vars (bs, bound, free_vars);
+                    while (bound.length > saved)
+                        bound.remove_index (bound.length - 1);
+                }
+                foreach (var fs in tr.finally_body)
+                    collect_stmt_free_vars (fs, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            }
+        }
+
+        private void add_free_var_if_needed (string name,
+                                             GenericArray<string> bound,
+                                             GenericArray<string> free_vars) {
+            if (list_contains (bound, name))
+                return;
+            if (name == "this") {
+                if (current_class != null && current != null && !current.is_static
+                    && !list_contains (free_vars, "this")) {
+                    free_vars.add ("this");
+                }
+                return;
+            }
+            if (lookup (name) >= 0) {
+                if (!list_contains (free_vars, name))
+                    free_vars.add (name);
+                return;
+            }
+            if (lookup_global (name) < 0 && current_class != null && current != null && !current.is_static) {
+                unowned ClassField? cf = null;
+                if (class_field_offset_slots (current_class, name, out cf) >= 0
+                    || find_this_prop_getter (name) != null
+                    || find_this_prop_setter (name) != null) {
+                    if (!list_contains (free_vars, "this"))
+                        free_vars.add ("this");
+                }
+            }
+        }
+
+        private void collect_expr_free_vars (Expr e,
+                                             GenericArray<string> bound,
+                                             GenericArray<string> free_vars) {
+            if (e is VarRef) {
+                add_free_var_if_needed (((VarRef) e).name, bound, free_vars);
+            } else if (e is CallExpr) {
+                var ce = (CallExpr) e;
+                add_free_var_if_needed (ce.callee, bound, free_vars);
+                if (lookup (ce.callee) < 0 && current_class != null && current != null && !current.is_static) {
+                    unowned var m = find_class_method (current_class, ce.callee);
+                    if (m != null && !m.is_static && !list_contains (free_vars, "this"))
+                        free_vars.add ("this");
+                }
+                foreach (var a in ce.args)
+                    collect_expr_free_vars (a, bound, free_vars);
+            } else if (e is LambdaExpr) {
+                var inner = (LambdaExpr) e;
+                int saved = bound.length;
+                foreach (var pn in inner.param_names)
+                    bound.add (pn);
+                if (inner.expr_body != null)
+                    collect_expr_free_vars (inner.expr_body, bound, free_vars);
+                foreach (var st in inner.body)
+                    collect_stmt_free_vars (st, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+            } else {
+                walk_expr_children (e, (ch) => {
+                    collect_expr_free_vars (ch, bound, free_vars);
+                });
+            }
+        }
+
+        private string ensure_free_delegate_thunk (Function fn, DelegateDecl dd,
+                                                   bool has_env_receiver, int param_off)
+                throws SemanticError {
+            var key = @"$(fn.name)|$((has_env_receiver ? 1 : 0))|$(dd.name)";
+            for (int i = 0; i < del_thunk_keys.length; i++) {
+                if (del_thunk_keys[i] == key)
+                    return del_thunk_syms[i];
+            }
+            var sym = @"__planc_delthunk_$(lambda_counter++)";
+            del_thunk_keys.add (key);
+            del_thunk_syms.add (sym);
+
+            var th = new Function () {
+                name = sym,
+                return_type = dd.return_type,
+                return_type_name = dd.return_type_name,
+                line = fn.line,
+                column = fn.column
+            };
+            if (has_env_receiver) {
+                th.params.add (new Param () {
+                    param_type = (fn.iface_slot >= 0) ? ValaType.INTERFACE : ValaType.CLASS,
+                    type_name = fn.owner_class,
+                    name = "#env",
+                    unmanaged = true
+                });
+            } else {
+                th.params.add (new Param () {
+                    param_type = ValaType.STRING,
+                    type_name = "string?",
+                    name = "#env",
+                    unmanaged = true
+                });
+            }
+            var fwd_args = new GenericArray<Expr> ();
+            for (int i = 0; i < dd.params.length; i++) {
+                var dp = dd.params[i];
+                var pname = @"#p$i";
+                th.params.add (new Param () {
+                    param_type = dp.param_type,
+                    type_name = dp.type_name,
+                    name = pname,
+                    is_ref = dp.is_ref,
+                    is_out = dp.is_out
+                });
+                fwd_args.add (new VarRef () { name = pname, line = fn.line, column = fn.column });
+            }
+            foreach (var td in dd.throws_domains)
+                th.throws_domains.add (td);
+
+            Expr call_expr;
+            if (has_env_receiver) {
+                var mc = new MethodCallExpr () {
+                    target = new VarRef () { name = "#env", line = fn.line, column = fn.column },
+                    method_name = fn.method_name,
+                    line = fn.line,
+                    column = fn.column
+                };
+                foreach (var a in fwd_args)
+                    mc.args.add (a);
+                call_expr = mc;
+            } else if (fn.owner_class != "") {
+                var mc = new MethodCallExpr () {
+                    target = new VarRef () { name = fn.owner_class, line = fn.line, column = fn.column },
+                    method_name = fn.method_name,
+                    line = fn.line,
+                    column = fn.column
+                };
+                foreach (var a in fwd_args)
+                    mc.args.add (a);
+                call_expr = mc;
+            } else {
+                var ce = new CallExpr () { callee = fn.name, line = fn.line, column = fn.column };
+                foreach (var a in fwd_args)
+                    ce.args.add (a);
+                call_expr = ce;
+            }
+            if (dd.return_type == ValaType.VOID) {
+                th.body.add (new ExprStatement () { expr = call_expr, line = fn.line, column = fn.column });
+            } else {
+                th.body.add (new ReturnStatement () { value = call_expr, line = fn.line, column = fn.column });
+            }
+            program.functions.add (th);
+            return sym;
+        }
+
+        private void check_delegate_target_fn (DelegateDecl dd, Function fn, int param_off,
+                                               int line, int col) throws SemanticError {
+            int avail = fn.params.length - param_off;
+            if (avail != dd.params.length) {
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"delegate '$(dd.name)' expects $(dd.params.length) parameter(s), target '$(fn.name)' has $(avail) at $line:$col");
+            }
+            if (fn.return_type != dd.return_type || fn.return_type_name != dd.return_type_name) {
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"delegate '$(dd.name)' return type mismatch for '$(fn.name)' at $line:$col");
+            }
+            for (int i = 0; i < dd.params.length; i++) {
+                var dp = dd.params[i];
+                var fp = fn.params[param_off + i];
+                if (dp.param_type != fp.param_type || dp.type_name != fp.type_name
+                    || dp.is_ref != fp.is_ref || dp.is_out != fp.is_out) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"delegate '$(dd.name)' parameter $(i + 1) mismatch for '$(fn.name)' at $line:$col");
+                }
+            }
+            foreach (var fdom in fn.throws_domains) {
+                bool ok = false;
+                foreach (var ddom in dd.throws_domains) {
+                    if (fdom == ddom || ddom == "Error") {
+                        ok = true;
+                        break;
+                    }
+                }
+                if (!ok) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"target '$(fn.name)' throws '$(fdom)' not declared by delegate '$(dd.name)' at $line:$col");
+                }
+            }
         }
 
         private int prepare_function (Function f, out int ref_temp_start) throws SemanticError {
@@ -1368,11 +2111,34 @@ namespace Planc {
                 }
                 push_local (p.name, p.param_type, p.type_name, var_slot, p.unmanaged || by_ref, by_ref);
             }
+            if (f.from_lambda != null) {
+                var lam = f.from_lambda;
+                for (int ci = 0; ci < lam.captured_names.length; ci++) {
+                    var cslot = next_var_slot++;
+                    push_local (lam.captured_names[ci], lam.captured_types[ci],
+                                lam.captured_type_names[ci], cslot, false);
+                }
+            }
             err_prop_slot = next_var_slot++;
 
             int struct_temp_slots = 0;
             int ref_temp_slots = 0;
-            if (f.is_ctor && f.has_base_call) {
+            if (f.is_ctor && (f.has_base_call || f.has_this_call) && current_class != null) {
+                unowned Function? target_ctor = null;
+                if (f.has_this_call) {
+                    target_ctor = (f.this_ctor_subname == "")
+                        ? current_class.ctor
+                        : current_class.find_own_named_ctor (f.this_ctor_subname);
+                } else if (current_class.base_name != "") {
+                    target_ctor = find_class_ctor (program.find_class (current_class.base_name));
+                }
+                if (target_ctor != null) {
+                    fill_default_args (target_ctor, 1, f.base_args);
+                    for (int bi = 0; bi < f.base_args.length && (1 + bi) < target_ctor.params.length; bi++) {
+                        var bp = target_ctor.params[1 + bi];
+                        bind_delegate_target (f.base_args[bi], bp.param_type, bp.type_name);
+                    }
+                }
                 foreach (var ba in f.base_args)
                     prepare_expr (ba, ref struct_temp_slots, ref ref_temp_slots);
             }
@@ -1387,6 +2153,8 @@ namespace Planc {
                 else if (se is CallExpr) ((CallExpr) se).temp_slot = slot;
                 else if (se is MethodCallExpr) ((MethodCallExpr) se).temp_slot = slot;
                 else if (se is MemberAccessExpr) ((MemberAccessExpr) se).temp_slot = slot;
+                else if (se is VarRef) ((VarRef) se).temp_slot = slot;
+                else if (se is LambdaExpr) ((LambdaExpr) se).temp_slot = slot;
             }
 
             ref_temp_start = var_end + struct_temp_slots;
@@ -1410,13 +2178,17 @@ namespace Planc {
                 prepare_expr (((ExitStatement) s).value, ref struct_temps, ref ref_temps);
             } else if (s is ReturnStatement) {
                 var r = (ReturnStatement) s;
-                if (r.value != null)
+                if (r.value != null) {
+                    bind_delegate_target (r.value, current.return_type, current.return_type_name);
                     prepare_expr (r.value, ref struct_temps, ref ref_temps);
+                }
             } else if (s is VarDeclStatement) {
                 var d = (VarDeclStatement) s;
                 if (lookup (d.name) >= 0)
                     throw new SemanticError.DUPLICATE_VARIABLE (
                         @"duplicate variable: $(d.name) at $(d.line):$(d.column)");
+                if (!d.infer_type && d.init != null)
+                    bind_delegate_target (d.init, d.decl_type, d.decl_type_name);
                 if (d.init != null)
                     prepare_expr (d.init, ref struct_temps, ref ref_temps);
                 ValaType vt;
@@ -1435,7 +2207,8 @@ namespace Planc {
                         if (!type_compatible (vt, vtname, it, itname))
                             throw new SemanticError.TYPE_MISMATCH (
                                 @"cannot initialize $(type_label (vt, vtname)) variable '$(d.name)' with $(type_label (it, itname)) at $(d.init.line):$(d.init.column)");
-                    } else if ((vt == ValaType.CLASS || vt == ValaType.ERROR) && !is_nullable_type (vt, vtname)) {
+                    } else if ((vt == ValaType.CLASS || vt == ValaType.INTERFACE || vt == ValaType.ERROR)
+                               && !is_nullable_type (vt, vtname)) {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"non-nullable $(type_label (vt, vtname)) variable '$(d.name)' must be initialized at $(d.line):$(d.column)");
                     }
@@ -1446,6 +2219,36 @@ namespace Planc {
                 push_local (d.name, vt, vtname, slot, false);
             } else if (s is AssignStatement) {
                 var a = (AssignStatement) s;
+                var lslot = lookup (a.name);
+                if (lslot >= 0) {
+                    bind_delegate_target (a.value, local_types[lslot], local_type_names[lslot]);
+                } else {
+                    var gi = lookup_global (a.name);
+                    if (gi >= 0) {
+                        bind_delegate_target (a.value, global_types[gi], global_type_names[gi]);
+                    } else {
+                        bool bound = false;
+                        if (current_class != null && !current.is_static) {
+                            unowned ClassField? cf = null;
+                            if (class_field_offset_slots (current_class, a.name, out cf) >= 0 && cf != null) {
+                                bind_delegate_target (a.value, cf.field_type, cf.type_name);
+                                bound = true;
+                            }
+                        }
+                        if (!bound && current_struct != null && !current.is_static) {
+                            unowned StructField? sf = null;
+                            if (struct_field_offset_slots (current_struct, a.name, out sf) >= 0 && sf != null) {
+                                bind_delegate_target (a.value, sf.field_type, sf.type_name);
+                                bound = true;
+                            }
+                        }
+                        if (!bound) {
+                            unowned var sm = find_this_prop_setter (a.name);
+                            if (sm != null && sm.params.length >= 2)
+                                bind_delegate_target (a.value, sm.params[1].param_type, sm.params[1].type_name);
+                        }
+                    }
+                }
                 prepare_expr (a.value, ref struct_temps, ref ref_temps);
                 if (lookup (a.name) >= 0) {
                     string vtn = "";
@@ -1460,10 +2263,23 @@ namespace Planc {
             } else if (s is FieldAssignStatement) {
                 var fa = (FieldAssignStatement) s;
                 prepare_expr (fa.target, ref struct_temps, ref ref_temps);
-                prepare_expr (fa.value, ref struct_temps, ref ref_temps);
                 string tt_name = "";
                 var tt = expr_type_full (fa.target, out tt_name);
+                if (tt == ValaType.CLASS) {
+                    unowned var cd = program.find_class (strip_null (tt_name));
+                    unowned ClassField? cf = null;
+                    if (cd != null && class_field_offset_slots (cd, fa.field_name, out cf) >= 0 && cf != null)
+                        bind_delegate_target (fa.value, cf.field_type, cf.type_name);
+                } else if (tt == ValaType.STRUCT) {
+                    unowned var sd = program.find_struct (tt_name);
+                    unowned StructField? sf = null;
+                    if (sd != null && struct_field_offset_slots (sd, fa.field_name, out sf) >= 0 && sf != null)
+                        bind_delegate_target (fa.value, sf.field_type, sf.type_name);
+                }
                 unowned var sm = find_prop_setter (tt, tt_name, fa.field_name);
+                if (sm != null && sm.params.length >= 2)
+                    bind_delegate_target (fa.value, sm.params[1].param_type, sm.params[1].type_name);
+                prepare_expr (fa.value, ref struct_temps, ref ref_temps);
                 if (sm != null && sm.can_throw)
                     check_domains_handled (sm.throws_domains, fa.line, fa.column);
             } else if (s is IndexAssignStatement) {
@@ -1534,12 +2350,14 @@ namespace Planc {
                 prepare_expr (fe.collection, ref struct_temps, ref ref_temps);
                 string ct_name = "";
                 var ct = expr_type_full (fe.collection, out ct_name);
-                if (ct != ValaType.ARRAY)
+                ValaType et = ValaType.INT;
+                string et_name = "";
+                bool is_ga = (ct == ValaType.CLASS) && find_generic_array_elem (ct_name, out et, out et_name);
+                if (ct != ValaType.ARRAY && !is_ga)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"foreach requires an array collection, got $(type_label (ct, ct_name)) at $(fe.collection.line):$(fe.collection.column)");
-                ValaType et;
-                string et_name;
-                parse_array_elem (ct_name, out et, out et_name);
+                if (!is_ga)
+                    parse_array_elem (ct_name, out et, out et_name);
                 ValaType vtype = fe.infer_type ? et : fe.elem_type;
                 string vtname = fe.infer_type ? et_name : fe.elem_type_name;
                 if (!fe.infer_type && !type_compatible (vtype, vtname, et, et_name))
@@ -1550,7 +2368,7 @@ namespace Planc {
                         @"duplicate variable: $(fe.var_name) at $(fe.line):$(fe.column)");
                 var col_mark = locals.length;
                 var cslot = next_var_slot++;
-                push_local (@"#fe_col_$(col_mark)", ValaType.ARRAY, strip_null (ct_name), cslot, false);
+                push_local (@"#fe_col_$(col_mark)", is_ga ? ValaType.CLASS : ValaType.ARRAY, strip_null (ct_name), cslot, false);
 
                 var islot = next_var_slot++;
                 push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", islot, false);
@@ -1675,7 +2493,8 @@ namespace Planc {
             } else if (e is MemberAccessExpr) {
                 var ma = (MemberAccessExpr) e;
                 prepare_expr (ma.target, ref struct_temps, ref ref_temps);
-                if (!(ma.target is VarRef && is_type_name (((VarRef) ma.target).name))) {
+                bool is_type_t = (ma.target is VarRef && is_type_name (((VarRef) ma.target).name));
+                if (!is_type_t) {
                     string tt_name = "";
                     var tt = expr_type_full (ma.target, out tt_name);
                     unowned var gm = find_prop_getter (tt, tt_name, ma.member);
@@ -1686,12 +2505,50 @@ namespace Planc {
                             pending_struct_exprs.add (e);
                             pending_struct_rel_slots.add (struct_temps);
                             struct_temps += type_slots (ValaType.STRUCT, gm.return_type_name);
+                            if (program_uses_heap && is_delegate_type (program, gm.return_type, gm.return_type_name)) {
+                                pending_ref_exprs.add (e);
+                                ref_temps++;
+                            }
+                        }
+                    } else if (ma.target_del_type != "" && !has_real_member (tt, tt_name, ma.member)) {
+                        unowned Function? mf = resolve_member_delegate_fn (tt, tt_name, ma.member);
+                        if (mf != null) {
+                            pending_struct_exprs.add (e);
+                            pending_struct_rel_slots.add (struct_temps);
+                            struct_temps += 2;
+                            if (program_uses_heap && !mf.is_static) {
+                                pending_ref_exprs.add (e);
+                                ref_temps++;
+                            }
+                        }
+                    }
+                } else if (ma.target_del_type != "") {
+                    var vr = (VarRef) ma.target;
+                    if (program.find_const (vr.name, ma.member) == null
+                        && program.find_error_domain (vr.name) == null
+                        && program.find_enum (vr.name) == null) {
+                        unowned var mf = resolve_type_method (vr.name, ma.member);
+                        if (mf != null && mf.is_static) {
+                            pending_struct_exprs.add (e);
+                            pending_struct_rel_slots.add (struct_temps);
+                            struct_temps += 2;
                         }
                     }
                 }
             } else if (e is VarRef) {
                 var vr = (VarRef) e;
-                if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0) {
+                if (vr.target_del_type != "") {
+                    unowned var tf = resolve_call_target (vr.name);
+                    if (tf != null) {
+                        pending_struct_exprs.add (e);
+                        pending_struct_rel_slots.add (struct_temps);
+                        struct_temps += 2;
+                        if (program_uses_heap && tf.owner_class != "" && !tf.is_static) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
+                    }
+                } else if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0) {
                     unowned var gm = find_this_prop_getter (vr.name);
                     if (gm != null && gm.can_throw)
                         check_domains_handled (gm.throws_domains, vr.line, vr.column);
@@ -1707,25 +2564,54 @@ namespace Planc {
                     prepare_expr (el, ref struct_temps, ref ref_temps);
             } else if (e is ClassNewExpr) {
                 var cn = (ClassNewExpr) e;
+                unowned var cd = program.find_class (cn.class_name);
+                unowned Function? ctor_fn = (cd != null)
+                    ? (cn.ctor_name != "" ? cd.find_own_named_ctor (cn.ctor_name) : cd.ctor)
+                    : null;
+                if (ctor_fn != null) {
+                    fill_default_args (ctor_fn, 1, cn.args);
+                    for (int ai = 0; ai < cn.args.length && (1 + ai) < ctor_fn.params.length; ai++) {
+                        var p = ctor_fn.params[1 + ai];
+                        bind_delegate_target (cn.args[ai], p.param_type, p.type_name);
+                    }
+                    if (ctor_fn.can_throw)
+                        check_domains_handled (ctor_fn.throws_domains, cn.line, cn.column);
+                }
                 foreach (var a in cn.args)
                     prepare_expr (a, ref struct_temps, ref ref_temps);
-                foreach (var iv in cn.init_values)
-                    prepare_expr (iv, ref struct_temps, ref ref_temps);
-                unowned var cd = program.find_class (cn.class_name);
-                if (cd != null && cd.ctor != null && cd.ctor.can_throw)
-                    check_domains_handled (cd.ctor.throws_domains, cn.line, cn.column);
                 if (cd != null) {
+                    for (int ii = 0; ii < cn.init_names.length; ii++) {
+                        var iname = cn.init_names[ii];
+                        unowned ClassField? cf = null;
+                        if (class_field_offset_slots (cd, iname, out cf) >= 0 && cf != null) {
+                            bind_delegate_target (cn.init_values[ii], cf.field_type, cf.type_name);
+                        } else {
+                            unowned var sm = find_prop_setter (ValaType.CLASS, cd.name, iname);
+                            if (sm != null && sm.params.length >= 2)
+                                bind_delegate_target (cn.init_values[ii], sm.params[1].param_type, sm.params[1].type_name);
+                        }
+                    }
                     foreach (var iname in cn.init_names) {
                         unowned var sm = find_prop_setter (ValaType.CLASS, cd.name, iname);
                         if (sm != null && sm.can_throw)
                             check_domains_handled (sm.throws_domains, cn.line, cn.column);
                     }
                 }
+                foreach (var iv in cn.init_values)
+                    prepare_expr (iv, ref struct_temps, ref ref_temps);
             } else if (e is TemplateExpr) {
                 foreach (var part in ((TemplateExpr) e).parts)
                     prepare_expr (part, ref struct_temps, ref ref_temps);
             } else if (e is StructLiteral) {
                 var lit = (StructLiteral) e;
+                unowned var sd = program.find_struct (lit.struct_name);
+                if (sd != null) {
+                    for (int fi = 0; fi < lit.field_names.length; fi++) {
+                        unowned StructField? fld = null;
+                        if (struct_field_offset_slots (sd, lit.field_names[fi], out fld) >= 0 && fld != null)
+                            bind_delegate_target (lit.field_values[fi], fld.field_type, fld.type_name);
+                    }
+                }
                 foreach (var fv in lit.field_values)
                     prepare_expr (fv, ref struct_temps, ref ref_temps);
                 pending_struct_exprs.add (e);
@@ -1735,31 +2621,222 @@ namespace Planc {
                 var mc = (MethodCallExpr) e;
                 if (mc.target != null)
                     prepare_expr (mc.target, ref struct_temps, ref ref_temps);
-                foreach (var a in mc.args)
-                    prepare_expr (a, ref struct_temps, ref ref_temps);
-                unowned var m = resolve_method_call_fn (mc);
-                if (m != null) {
-                    if (m.can_throw)
-                        check_domains_handled (m.throws_domains, mc.line, mc.column);
-                    if (m.return_type == ValaType.STRUCT) {
+                unowned DelegateDecl? md = (mc.target != null && !mc.is_base_call)
+                    ? resolve_member_delegate (mc.target, mc.method_name)
+                    : null;
+                if (md != null) {
+                    for (int ai = 0; ai < mc.args.length && ai < md.params.length; ai++) {
+                        var p = md.params[ai];
+                        bind_delegate_target (mc.args[ai], p.param_type, p.type_name);
+                    }
+                    foreach (var a in mc.args)
+                        prepare_expr (a, ref struct_temps, ref ref_temps);
+                    if (md.throws_domains.length > 0)
+                        check_domains_handled (md.throws_domains, mc.line, mc.column);
+                    if (md.return_type == ValaType.STRUCT) {
                         pending_struct_exprs.add (e);
                         pending_struct_rel_slots.add (struct_temps);
-                        struct_temps += type_slots (ValaType.STRUCT, m.return_type_name);
+                        struct_temps += type_slots (ValaType.STRUCT, md.return_type_name);
+                        if (program_uses_heap && is_delegate_type (program, md.return_type, md.return_type_name)) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
                     }
+                } else {
+                    unowned var m = resolve_method_call_fn (mc);
+                    if (m != null) {
+                        int param_off = m.is_static ? 0 : 1;
+                        fill_default_args (m, param_off, mc.args);
+                        for (int ai = 0; ai < mc.args.length && (param_off + ai) < m.params.length; ai++) {
+                            var p = m.params[param_off + ai];
+                            bind_delegate_target (mc.args[ai], p.param_type, p.type_name);
+                        }
+                        if (m.can_throw)
+                            check_domains_handled (m.throws_domains, mc.line, mc.column);
+                        if (m.return_type == ValaType.STRUCT) {
+                            pending_struct_exprs.add (e);
+                            pending_struct_rel_slots.add (struct_temps);
+                            struct_temps += type_slots (ValaType.STRUCT, m.return_type_name);
+                            if (program_uses_heap && is_delegate_type (program, m.return_type, m.return_type_name)) {
+                                pending_ref_exprs.add (e);
+                                ref_temps++;
+                            }
+                        }
+                    }
+                    foreach (var a in mc.args)
+                        prepare_expr (a, ref struct_temps, ref ref_temps);
                 }
             } else if (e is CallExpr) {
                 var ce = (CallExpr) e;
-                foreach (var a in ce.args)
-                    prepare_expr (a, ref struct_temps, ref ref_temps);
-                unowned var f = resolve_call_target (ce.callee);
-                if (f != null) {
-                    if (f.can_throw)
-                        check_domains_handled (f.throws_domains, ce.line, ce.column);
-                    if (f.return_type == ValaType.STRUCT) {
+                unowned DelegateDecl? dd = resolve_delegate_callee (ce.callee);
+                if (dd != null) {
+                    for (int ai = 0; ai < ce.args.length && ai < dd.params.length; ai++) {
+                        var p = dd.params[ai];
+                        bind_delegate_target (ce.args[ai], p.param_type, p.type_name);
+                    }
+                    foreach (var a in ce.args)
+                        prepare_expr (a, ref struct_temps, ref ref_temps);
+                    if (dd.throws_domains.length > 0)
+                        check_domains_handled (dd.throws_domains, ce.line, ce.column);
+                    if (dd.return_type == ValaType.STRUCT) {
                         pending_struct_exprs.add (e);
                         pending_struct_rel_slots.add (struct_temps);
-                        struct_temps += type_slots (ValaType.STRUCT, f.return_type_name);
+                        struct_temps += type_slots (ValaType.STRUCT, dd.return_type_name);
+                        if (program_uses_heap && is_delegate_type (program, dd.return_type, dd.return_type_name)) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
                     }
+                } else {
+                    unowned var f = resolve_call_target (ce.callee);
+                    if (f != null) {
+                        bool is_synth_init = f.name.has_prefix ("__planc_init_");
+                        int param_off = (f.owner_class != "" && !is_synth_init && !f.is_static) ? 1 : 0;
+                        fill_default_args (f, param_off, ce.args);
+                        for (int ai = 0; ai < ce.args.length && (param_off + ai) < f.params.length; ai++) {
+                            var p = f.params[param_off + ai];
+                            bind_delegate_target (ce.args[ai], p.param_type, p.type_name);
+                        }
+                        if (f.can_throw)
+                            check_domains_handled (f.throws_domains, ce.line, ce.column);
+                        if (f.return_type == ValaType.STRUCT) {
+                            pending_struct_exprs.add (e);
+                            pending_struct_rel_slots.add (struct_temps);
+                            struct_temps += type_slots (ValaType.STRUCT, f.return_type_name);
+                            if (program_uses_heap && is_delegate_type (program, f.return_type, f.return_type_name)) {
+                                pending_ref_exprs.add (e);
+                                ref_temps++;
+                            }
+                        }
+                    }
+                    foreach (var a in ce.args)
+                        prepare_expr (a, ref struct_temps, ref ref_temps);
+                }
+            } else if (e is LambdaExpr) {
+                var lam = (LambdaExpr) e;
+                unowned var dd = (lam.delegate_type_name != "") ? program.find_delegate (lam.delegate_type_name) : null;
+                if (dd == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"lambda expression requires a known delegate target type at $(lam.line):$(lam.column)");
+                if (lam.param_names.length != dd.params.length)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"lambda expects $(dd.params.length) parameter(s) for delegate '$(dd.name)', got $(lam.param_names.length) at $(lam.line):$(lam.column)");
+                if (lam.synth_func_name == "") {
+                    var bound = new GenericArray<string> ();
+                    foreach (var pn in lam.param_names)
+                        bound.add (pn);
+                    var free_vars = new GenericArray<string> ();
+                    if (lam.expr_body != null)
+                        collect_expr_free_vars (lam.expr_body, bound, free_vars);
+                    foreach (var st in lam.body)
+                        collect_stmt_free_vars (st, bound, free_vars);
+
+                    var ref_names = new GenericArray<string> ();
+                    var ref_types = new GenericArray<ValaType> ();
+                    var ref_tnames = new GenericArray<string> ();
+                    var val_names = new GenericArray<string> ();
+                    var val_types = new GenericArray<ValaType> ();
+                    var val_tnames = new GenericArray<string> ();
+                    bool captures_this = false;
+                    foreach (var fv in free_vars) {
+                        if (fv == "this") {
+                            captures_this = true;
+                            ref_names.add ("this");
+                            ref_types.add (ValaType.CLASS);
+                            ref_tnames.add (current_class.name);
+                            continue;
+                        }
+                        var lslot = lookup (fv);
+                        if (lslot < 0)
+                            continue;
+                        if (local_by_ref[lslot])
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"lambda cannot capture 'ref'/'out' parameter '$(fv)' at $(lam.line):$(lam.column)");
+                        var ct = local_types[lslot];
+                        var ctn = local_type_names[lslot];
+                        if (ct == ValaType.STRUCT)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"lambda cannot capture value struct '$(fv)' at $(lam.line):$(lam.column)");
+                        if (is_ref_type (ct)) {
+                            ref_names.add (fv);
+                            ref_types.add (ct);
+                            ref_tnames.add (ctn);
+                        } else {
+                            val_names.add (fv);
+                            val_types.add (ct);
+                            val_tnames.add (ctn);
+                        }
+                    }
+                    lam.ref_cap_count = ref_names.length;
+                    for (int ri = 0; ri < ref_names.length; ri++) {
+                        lam.captured_names.add (ref_names[ri]);
+                        lam.captured_types.add (ref_types[ri]);
+                        lam.captured_type_names.add (ref_tnames[ri]);
+                    }
+                    for (int vi = 0; vi < val_names.length; vi++) {
+                        lam.captured_names.add (val_names[vi]);
+                        lam.captured_types.add (val_types[vi]);
+                        lam.captured_type_names.add (val_tnames[vi]);
+                    }
+
+                    lam.synth_func_name = @"__planc_lambda_$(lambda_counter++)";
+                    var synth = new Function () {
+                        name = lam.synth_func_name,
+                        return_type = dd.return_type,
+                        return_type_name = dd.return_type_name,
+                        owner_class = (captures_this && current_class != null) ? current_class.name : "",
+                        from_lambda = lam,
+                        line = lam.line,
+                        column = lam.column
+                    };
+                    synth.params.add (new Param () {
+                        param_type = ValaType.STRING,
+                        type_name = "string?",
+                        name = "#env",
+                        unmanaged = true,
+                        line = lam.line,
+                        column = lam.column
+                    });
+                    for (int pi = 0; pi < dd.params.length; pi++) {
+                        var dp = dd.params[pi];
+                        synth.params.add (new Param () {
+                            param_type = dp.param_type,
+                            type_name = dp.type_name,
+                            name = lam.param_names[pi],
+                            is_ref = dp.is_ref,
+                            is_out = dp.is_out,
+                            line = lam.line,
+                            column = lam.column
+                        });
+                    }
+                    foreach (var td in dd.throws_domains)
+                        synth.throws_domains.add (td);
+                    if (lam.expr_body != null) {
+                        if (dd.return_type == ValaType.VOID) {
+                            synth.body.add (new ExprStatement () {
+                                expr = lam.expr_body,
+                                line = lam.line,
+                                column = lam.column
+                            });
+                        } else {
+                            synth.body.add (new ReturnStatement () {
+                                value = lam.expr_body,
+                                line = lam.line,
+                                column = lam.column
+                            });
+                        }
+                    } else {
+                        foreach (var bs in lam.body)
+                            synth.body.add (bs);
+                    }
+                    program.functions.add (synth);
+                }
+                pending_struct_exprs.add (e);
+                pending_struct_rel_slots.add (struct_temps);
+                struct_temps += 2;
+                if (program_uses_heap && lam.captured_names.length > 0) {
+                    pending_ref_exprs.add (e);
+                    ref_temps++;
                 }
             }
             if (program_uses_heap && is_owned_expr (e)) {
@@ -1943,6 +3020,23 @@ namespace Planc {
                 push_local (p.name, p.param_type, p.type_name, param_final_slots[i], p.unmanaged || by_ref, by_ref);
             }
 
+            if (f.from_lambda != null) {
+                var lam = f.from_lambda;
+                for (int ci = 0; ci < lam.captured_names.length; ci++) {
+                    var ct = lam.captured_types[ci];
+                    var ctn = lam.captured_type_names[ci];
+                    var cslot = next_var_slot++;
+                    emitter.load_local (0); // #env
+                    emitter.load_rax_disp (16 + 8 * ci);
+                    emitter.store_local (cslot);
+                    if (program_uses_heap && is_ref_type (ct)) {
+                        emitter.mov_rdi_rax ();
+                        call_aligned ("__planc_ref");
+                    }
+                    push_local (lam.captured_names[ci], ct, ctn, cslot, false);
+                }
+            }
+
             if (f.is_dtor && f.name.has_prefix ("__planc_dtor_")) {
                 emit_class_finalizer_body ();
                 emitter.leave ();
@@ -1951,7 +3045,19 @@ namespace Planc {
                 return;
             }
 
-            if (f.is_ctor && f.has_base_call && current_class != null && current_class.base_name != "") {
+            if (f.is_ctor && f.has_this_call && current_class != null) {
+                unowned Function? target_ctor = (f.this_ctor_subname == "")
+                    ? current_class.ctor
+                    : current_class.find_own_named_ctor (f.this_ctor_subname);
+                if (target_ctor == null || target_ctor == f)
+                    throw new SemanticError.UNKNOWN_FUNCTION (
+                        @"invalid ': this' constructor delegation in '$(current_class.name)' at $(f.line):$(f.column)");
+                check_ctor_args (target_ctor, f.base_args, f.line, f.column);
+                var this_ref = new VarRef () { name = "this", line = f.line, column = f.column };
+                emit_instance_call (this_ref, false, true, target_ctor, f.base_args, -1, -1);
+                foreach (var ba in f.base_args)
+                    cleanup_expr_temps (ba);
+            } else if (f.is_ctor && f.has_base_call && current_class != null && current_class.base_name != "") {
                 unowned var base_cd = program.find_class (current_class.base_name);
                 unowned var base_ctor = find_class_ctor (base_cd);
                 if (base_ctor != null) {
@@ -1971,7 +3077,8 @@ namespace Planc {
                 unref_locals_from (0);
             if (f.return_type == ValaType.STRING) {
                 emitter.lea_rax_rip (emitter.add_string (""));
-            } else if (f.return_type == ValaType.ARRAY || f.return_type == ValaType.CLASS || f.return_type == ValaType.ERROR) {
+            } else if (f.return_type == ValaType.ARRAY || f.return_type == ValaType.CLASS
+                       || f.return_type == ValaType.INTERFACE || f.return_type == ValaType.ERROR) {
                 emitter.xor_eax ();
             } else if (f.return_type == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (f.return_type_name);
@@ -2075,7 +3182,8 @@ namespace Planc {
                 if (tname == "?") return "Error?";
                 return (tname != "") ? tname : "Error";
             }
-            if ((t == ValaType.ENUM || t == ValaType.STRUCT || t == ValaType.CLASS) && tname != "")
+            if ((t == ValaType.ENUM || t == ValaType.STRUCT || t == ValaType.CLASS
+                 || t == ValaType.INTERFACE) && tname != "")
                 return tname;
             return t.label ();
         }
@@ -2086,7 +3194,7 @@ namespace Planc {
 
         private static bool is_ref_type (ValaType t) {
             return t == ValaType.STRING || t == ValaType.ARRAY
-                || t == ValaType.CLASS || t == ValaType.ERROR;
+                || t == ValaType.CLASS || t == ValaType.INTERFACE || t == ValaType.ERROR;
         }
 
         private void parse_array_elem (string elem_name, out ValaType et, out string et_name) {
@@ -2099,19 +3207,30 @@ namespace Planc {
             else if (program.find_error_domain (raw) != null) {
                 et = ValaType.ERROR;
                 et_name = raw;
+            } else if (program.find_interface (raw) != null) {
+                et = ValaType.INTERFACE;
+                et_name = elem_name.has_suffix ("?") ? (raw + "?") : raw;
             } else if (program.find_class (raw) != null) {
                 et = ValaType.CLASS;
-                et_name = raw;
+                et_name = elem_name.has_suffix ("?") ? (raw + "?") : raw;
             } else {
                 et = ValaType.ENUM;
                 et_name = raw;
             }
+            if (et == ValaType.STRING && elem_name == "?")
+                et_name = "?";
         }
 
         private bool type_compatible (ValaType expected, string exp_name,
                                       ValaType actual, string act_name) {
             if (actual == ValaType.NULL)
                 return is_nullable_type (expected, exp_name);
+            if (expected == ValaType.INTERFACE && actual == ValaType.CLASS) {
+                if (is_nullable_type (actual, act_name) && !is_nullable_type (expected, exp_name))
+                    return false;
+                unowned var cd = program.find_class (strip_null (act_name));
+                return cd != null && class_implements_iface (cd, strip_null (exp_name));
+            }
             if (expected == actual) {
                 if (is_nullable_type (actual, act_name) && !is_nullable_type (expected, exp_name))
                     return false;
@@ -2121,6 +3240,12 @@ namespace Planc {
                     return en == an;
                 if (expected == ValaType.CLASS)
                     return en == an || is_subclass_of (an, en);
+                if (expected == ValaType.INTERFACE) {
+                    if (en == an)
+                        return true;
+                    unowned var sub_itf = program.find_interface (an);
+                    return sub_itf != null && iface_inherits_from (sub_itf, en);
+                }
                 if (expected == ValaType.ERROR)
                     return en == "" || en == an;
                 return true;
@@ -2167,6 +3292,7 @@ namespace Planc {
                 return false;
             }
             return program.find_class (name) != null
+                || program.find_interface (name) != null
                 || program.find_struct (name) != null
                 || program.find_enum (name) != null
                 || program.find_error_domain (name) != null;
@@ -2225,6 +3351,37 @@ namespace Planc {
                 out_name = any_null ? (common.name + "?") : common.name;
                 return;
             }
+            if (lt == ValaType.INTERFACE && rt == ValaType.INTERFACE) {
+                bool any_null = is_nullable_type (lt, lt_name) || is_nullable_type (rt, rt_name);
+                var ln = strip_null (lt_name);
+                var rn = strip_null (rt_name);
+                unowned var li = program.find_interface (ln);
+                unowned var ri = program.find_interface (rn);
+                if (li != null && iface_inherits_from (li, rn)) {
+                    out_t = ValaType.INTERFACE;
+                    out_name = any_null ? (rn + "?") : rn;
+                    return;
+                }
+                if (ri != null && iface_inherits_from (ri, ln)) {
+                    out_t = ValaType.INTERFACE;
+                    out_name = any_null ? (ln + "?") : ln;
+                    return;
+                }
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"incompatible interface types $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $line:$col");
+            }
+            if ((lt == ValaType.INTERFACE && rt == ValaType.CLASS)
+                || (lt == ValaType.CLASS && rt == ValaType.INTERFACE)) {
+                bool any_null = is_nullable_type (lt, lt_name) || is_nullable_type (rt, rt_name);
+                var iname = strip_null (lt == ValaType.INTERFACE ? lt_name : rt_name);
+                var cname = strip_null (lt == ValaType.CLASS ? lt_name : rt_name);
+                unowned var cd = program.find_class (cname);
+                if (cd != null && class_implements_iface (cd, iname)) {
+                    out_t = ValaType.INTERFACE;
+                    out_name = any_null ? (iname + "?") : iname;
+                    return;
+                }
+            }
             if (type_compatible (lt, lt_name, rt, rt_name)) {
                 out_t = (lt == ValaType.BOOL && rt == ValaType.INT) ? ValaType.INT : lt;
                 out_name = (lt == ValaType.BOOL && rt == ValaType.INT) ? "" : lt_name;
@@ -2251,11 +3408,21 @@ namespace Planc {
                 return b.op == "+" && expr_type (b.left) == ValaType.STRING;
             }
             if (e is MethodCallExpr) {
-                unowned var m = resolve_method_call_fn ((MethodCallExpr) e);
+                var mc = (MethodCallExpr) e;
+                if (mc.target != null && !mc.is_base_call) {
+                    unowned var md = resolve_member_delegate (mc.target, mc.method_name);
+                    if (md != null)
+                        return is_ref_type (md.return_type);
+                }
+                unowned var m = resolve_method_call_fn (mc);
                 return m != null && is_ref_type (m.return_type);
             }
             if (e is CallExpr) {
-                unowned var f = resolve_call_target (((CallExpr) e).callee);
+                var ce = (CallExpr) e;
+                unowned var dd = resolve_delegate_callee (ce.callee);
+                if (dd != null)
+                    return is_ref_type (dd.return_type);
+                unowned var f = resolve_call_target (ce.callee);
                 return f != null && is_ref_type (f.return_type);
             }
             if (e is MemberAccessExpr) {
@@ -2344,6 +3511,10 @@ namespace Planc {
                 var cname = strip_null (tt_name);
                 unowned var cd = program.find_class (cname);
                 m = (cd != null) ? find_class_method (cd, mc.method_name) : null;
+            } else if (tt == ValaType.INTERFACE) {
+                var iname = strip_null (tt_name);
+                unowned var itf = program.find_interface (iname);
+                m = (itf != null) ? find_interface_method (itf, mc.method_name) : null;
             } else if (tt == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (tt_name);
                 m = (sd != null) ? sd.find_method (mc.method_name) : null;
@@ -2363,15 +3534,15 @@ namespace Planc {
             return m;
         }
 
-        private void check_arg_list (string desc, Function fn, int param_offset,
-                                     GenericArray<Expr> args, int line, int col)
+        private void check_arg_param_list (string desc, GenericArray<Param> plist, int param_offset,
+                                             GenericArray<Expr> args, int line, int col)
                 throws SemanticError {
-            int expected_count = fn.params.length - param_offset;
+            int expected_count = plist.length - param_offset;
             if (expected_count != args.length)
                 throw new SemanticError.WRONG_ARG_COUNT (
                     @"$(desc) expects $(expected_count) argument(s), got $(args.length) at $(line):$(col)");
             for (int i = 0; i < args.length; i++) {
-                var p = fn.params[param_offset + i];
+                var p = plist[param_offset + i];
                 string at_name = "";
                 var at = expr_type_full (args[i], out at_name);
                 var pt = p.param_type;
@@ -2399,12 +3570,26 @@ namespace Planc {
             }
         }
 
+        private void check_arg_list (string desc, Function fn, int param_offset,
+                                     GenericArray<Expr> args, int line, int col)
+                throws SemanticError {
+            check_arg_param_list (desc, fn.params, param_offset, args, line, col);
+        }
+
         private void check_ctor_args (Function ctor, GenericArray<Expr> args, int line, int col)
                 throws SemanticError {
             check_arg_list (ctor.owner_class, ctor, 1, args, line, col);
         }
 
-        private unowned Function check_call (CallExpr c, bool want_value) throws SemanticError {
+        private unowned Function? check_call (CallExpr c, bool want_value) throws SemanticError {
+            unowned DelegateDecl? dd = resolve_delegate_callee (c.callee);
+            if (dd != null) {
+                if (want_value && dd.return_type == ValaType.VOID)
+                    throw new SemanticError.VOID_IN_EXPRESSION (
+                        @"void delegate '$(c.callee)' cannot be used as a value at $(c.line):$(c.column)");
+                check_arg_param_list (c.callee, dd.params, 0, c.args, c.line, c.column);
+                return null;
+            }
             unowned Function? f = resolve_call_target (c.callee);
             bool is_synth_init = (f != null && f.name.has_prefix ("__planc_init_"));
             if (f == null || (f.is_ctor && !is_synth_init) || f.is_dtor)
@@ -2423,7 +3608,17 @@ namespace Planc {
             return f;
         }
 
-        private unowned Function check_method_call (MethodCallExpr mc, bool want_value) throws SemanticError {
+        private unowned Function? check_method_call (MethodCallExpr mc, bool want_value) throws SemanticError {
+            if (mc.target != null && !mc.is_base_call) {
+                unowned DelegateDecl? md = resolve_member_delegate (mc.target, mc.method_name);
+                if (md != null) {
+                    if (want_value && md.return_type == ValaType.VOID)
+                        throw new SemanticError.VOID_IN_EXPRESSION (
+                            @"void delegate '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
+                    check_arg_param_list (mc.method_name, md.params, 0, mc.args, mc.line, mc.column);
+                    return null;
+                }
+            }
             unowned Function? m = resolve_method_call_fn (mc);
             if (m == null)
                 throw new SemanticError.UNKNOWN_FUNCTION (
@@ -2470,8 +3665,14 @@ namespace Planc {
                 if (!is_int_like (lt))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"array size must be int, got $(type_label (lt, lt_name)) at $(an.length_expr.line):$(an.length_expr.column)");
-                tname = (an.elem_type == ValaType.ENUM || an.elem_type == ValaType.CLASS)
-                    ? an.elem_type_name : an.elem_type.label ();
+                if (an.elem_type == ValaType.STRING && an.elem_type_name == "?")
+                    tname = "?";
+                else if (an.elem_type == ValaType.ENUM || an.elem_type == ValaType.CLASS
+                         || an.elem_type == ValaType.INTERFACE
+                         || (an.elem_type == ValaType.ERROR && an.elem_type_name != ""))
+                    tname = an.elem_type_name;
+                else
+                    tname = an.elem_type.label ();
                 return ValaType.ARRAY;
             }
             if (e is ArrayLiteralExpr) {
@@ -2481,7 +3682,7 @@ namespace Planc {
                 if (et == ValaType.VOID || et == ValaType.STRUCT || et == ValaType.ARRAY || et == ValaType.NULL)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"unsupported array literal element type $(type_label (et, et_name)) at $(arr.elements[0].line):$(arr.elements[0].column)");
-                if (et == ValaType.CLASS)
+                if (et == ValaType.CLASS || et == ValaType.INTERFACE)
                     et_name = strip_null (et_name);
                 for (int i = 1; i < arr.elements.length; i++) {
                     string cur_name = "";
@@ -2492,6 +3693,9 @@ namespace Planc {
                             throw new SemanticError.TYPE_MISMATCH (
                                 @"array element $(i + 1) class '$(strip_null (cur_name))' has no common base with '$(et_name)' at $(arr.elements[i].line):$(arr.elements[i].column)");
                         et_name = common.name;
+                    } else if (et == ValaType.INTERFACE || cur == ValaType.INTERFACE) {
+                        unify_branch_types (et, et_name, cur, cur_name, out et, out et_name, arr.elements[i].line, arr.elements[i].column);
+                        et_name = strip_null (et_name);
                     } else if (!type_compatible (et, et_name, cur, cur_name)) {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"array element $(i + 1) expects $(type_label (et, et_name)), got $(type_label (cur, cur_name)) at $(arr.elements[i].line):$(arr.elements[i].column)");
@@ -2501,7 +3705,7 @@ namespace Planc {
                 }
                 arr.elem_type = et;
                 arr.elem_type_name = et_name;
-                tname = (et == ValaType.ENUM || et == ValaType.CLASS) ? et_name : et.label ();
+                tname = (et == ValaType.ENUM || et == ValaType.CLASS || et == ValaType.INTERFACE) ? et_name : et.label ();
                 return ValaType.ARRAY;
             }
             if (e is ClassNewExpr) {
@@ -2510,11 +3714,21 @@ namespace Planc {
                 if (cd == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"unknown class '$(cn.class_name)' at $(cn.line):$(cn.column)");
+                if (cd.is_generic_template)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"generic class '$(cd.name)' requires type arguments at $(cn.line):$(cn.column)");
                 if (cd.is_abstract)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"cannot instantiate abstract class '$(cd.name)' at $(cn.line):$(cn.column)");
-                if (cd.ctor != null) {
-                    check_ctor_args (cd.ctor, cn.args, cn.line, cn.column);
+                unowned Function? ctor_fn = cd.ctor;
+                if (cn.ctor_name != "") {
+                    ctor_fn = cd.find_own_named_ctor (cn.ctor_name);
+                    if (ctor_fn == null)
+                        throw new SemanticError.UNKNOWN_FUNCTION (
+                            @"class '$(cd.name)' has no constructor '$(cd.name).$(cn.ctor_name)' at $(cn.line):$(cn.column)");
+                }
+                if (ctor_fn != null) {
+                    check_ctor_args (ctor_fn, cn.args, cn.line, cn.column);
                 } else if (cn.args.length != 0) {
                     throw new SemanticError.WRONG_ARG_COUNT (
                         @"'$(cd.name)' constructor expects 0 argument(s), got $(cn.args.length) at $(cn.line):$(cn.column)");
@@ -2549,26 +3763,44 @@ namespace Planc {
                 var tc = (TypeCheckExpr) e;
                 string ot_name = "";
                 var ot = expr_type_full (tc.operand, out ot_name);
+                if (tc.op == "cast" && tc.target_type == ValaType.INT) {
+                    if (!is_int_like (ot) && ot != ValaType.ENUM)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"cannot cast $(type_label (ot, ot_name)) to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
+                    return ValaType.INT;
+                }
                 if (tc.target_type == ValaType.ERROR) {
                     if (ot != ValaType.ERROR && ot != ValaType.NULL)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"'$(tc.op)' requires an Error value, got $(type_label (ot, ot_name)) at $(tc.line):$(tc.column)");
                     return ValaType.BOOL;
                 }
-                if (ot != ValaType.CLASS && ot != ValaType.NULL)
+                if (ot != ValaType.CLASS && ot != ValaType.INTERFACE && ot != ValaType.NULL)
                     throw new SemanticError.TYPE_MISMATCH (
-                        @"'$(tc.op)' requires a class instance, got $(type_label (ot, ot_name)) at $(tc.line):$(tc.column)");
+                        @"'$(tc.op)' requires a class or interface instance, got $(type_label (ot, ot_name)) at $(tc.line):$(tc.column)");
                 if (tc.op == "is")
                     return ValaType.BOOL;
                 if (tc.op == "as") {
                     tname = strip_null (tc.target_type_name) + "?";
-                    return ValaType.CLASS;
+                    return tc.target_type;
                 }
                 tname = tc.target_type_name;
-                return ValaType.CLASS;
+                return tc.target_type;
             }
             if (e is MethodCallExpr) {
-                unowned var m = check_method_call ((MethodCallExpr) e, true);
+                var mc = (MethodCallExpr) e;
+                if (mc.target != null && !mc.is_base_call) {
+                    unowned var md = resolve_member_delegate (mc.target, mc.method_name);
+                    if (md != null) {
+                        if (md.return_type == ValaType.VOID)
+                            throw new SemanticError.VOID_IN_EXPRESSION (
+                                @"void delegate '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
+                        check_arg_param_list (mc.method_name, md.params, 0, mc.args, mc.line, mc.column);
+                        tname = md.return_type_name;
+                        return md.return_type;
+                    }
+                }
+                unowned var m = check_method_call (mc, true);
                 tname = m.return_type_name;
                 return m.return_type;
             }
@@ -2596,6 +3828,15 @@ namespace Planc {
                                     @"enum '$(ed.name)' has no member '$(m.member)' at $(m.line):$(m.column)");
                             tname = ed.name;
                             return ValaType.ENUM;
+                        }
+                        if (m.target_del_type != "") {
+                            unowned var mf = resolve_type_method (vr.name, m.member);
+                            unowned var dd = program.find_delegate (m.target_del_type);
+                            if (mf != null && mf.is_static && dd != null) {
+                                check_delegate_target_fn (dd, mf, 0, m.line, m.column);
+                                tname = dd.name;
+                                return ValaType.STRUCT;
+                            }
                         }
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"type '$(vr.name)' has no constant or member '$(m.member)' at $(m.line):$(m.column)");
@@ -2630,8 +3871,35 @@ namespace Planc {
                         tname = gm.return_type_name;
                         return gm.return_type;
                     }
+                    if (m.target_del_type != "") {
+                        unowned var mf = resolve_member_delegate_fn (tt, tt_name, m.member);
+                        unowned var dd = program.find_delegate (m.target_del_type);
+                        if (mf != null && dd != null) {
+                            check_delegate_target_fn (dd, mf, mf.is_static ? 0 : 1, m.line, m.column);
+                            tname = dd.name;
+                            return ValaType.STRUCT;
+                        }
+                    }
                     throw new SemanticError.UNKNOWN_MEMBER (
                         @"class '$(cname)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
+                }
+                if (tt == ValaType.INTERFACE) {
+                    unowned var gm = find_prop_getter (tt, tt_name, m.member);
+                    if (gm != null) {
+                        tname = gm.return_type_name;
+                        return gm.return_type;
+                    }
+                    if (m.target_del_type != "") {
+                        unowned var mf = resolve_member_delegate_fn (tt, tt_name, m.member);
+                        unowned var dd = program.find_delegate (m.target_del_type);
+                        if (mf != null && dd != null) {
+                            check_delegate_target_fn (dd, mf, 1, m.line, m.column);
+                            tname = dd.name;
+                            return ValaType.STRUCT;
+                        }
+                    }
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"interface '$(strip_null (tt_name))' has no property '$(m.member)' at $(m.line):$(m.column)");
                 }
                 if (tt == ValaType.STRUCT) {
                     unowned var sd = program.find_struct (tt_name);
@@ -2645,6 +3913,15 @@ namespace Planc {
                         tname = gm.return_type_name;
                         return gm.return_type;
                     }
+                    if (m.target_del_type != "") {
+                        unowned var mf = resolve_member_delegate_fn (tt, tt_name, m.member);
+                        unowned var dd = program.find_delegate (m.target_del_type);
+                        if (mf != null && mf.is_static && dd != null) {
+                            check_delegate_target_fn (dd, mf, 0, m.line, m.column);
+                            tname = dd.name;
+                            return ValaType.STRUCT;
+                        }
+                    }
                     throw new SemanticError.UNKNOWN_MEMBER (
                         @"struct '$(tt_name)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
                 }
@@ -2655,7 +3932,10 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 string tt_name = "";
                 var tt = expr_type_full (ix.target, out tt_name);
-                if (tt != ValaType.STRING && tt != ValaType.ARRAY)
+                ValaType ga_et = ValaType.INT;
+                string ga_etn = "";
+                bool is_ga = (tt == ValaType.CLASS) && find_generic_array_elem (tt_name, out ga_et, out ga_etn);
+                if (tt != ValaType.STRING && tt != ValaType.ARRAY && !is_ga)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"indexing requires string or array, got $(type_label (tt, tt_name)) at $(ix.line):$(ix.column)");
                 string it_name = "";
@@ -2663,6 +3943,10 @@ namespace Planc {
                 if (!is_int_like (it))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"index must be int, got $(type_label (it, it_name)) at $(ix.index.line):$(ix.index.column)");
+                if (is_ga) {
+                    tname = ga_etn;
+                    return ga_et;
+                }
                 if (tt == ValaType.ARRAY) {
                     ValaType et;
                     string et_name;
@@ -2769,6 +4053,17 @@ namespace Planc {
             }
             if (e is VarRef) {
                 var v = (VarRef) e;
+                if (v.target_del_type != "") {
+                    unowned var dd = program.find_delegate (v.target_del_type);
+                    unowned var f = resolve_call_target (v.name);
+                    if (dd != null && f != null) {
+                        bool is_synth_init = f.name.has_prefix ("__planc_init_");
+                        int param_off = (f.owner_class != "" && !is_synth_init && !f.is_static) ? 1 : 0;
+                        check_delegate_target_fn (dd, f, param_off, v.line, v.column);
+                        tname = dd.name;
+                        return ValaType.STRUCT;
+                    }
+                }
                 var slot = lookup (v.name);
                 if (slot >= 0) {
                     tname = is_non_null_narrowed (v.name)
@@ -2869,9 +4164,28 @@ namespace Planc {
                 return ValaType.INT;
             }
             if (e is CallExpr) {
-                unowned var f = check_call ((CallExpr) e, true);
+                var ce = (CallExpr) e;
+                unowned DelegateDecl? dd = resolve_delegate_callee (ce.callee);
+                if (dd != null) {
+                    if (dd.return_type == ValaType.VOID)
+                        throw new SemanticError.VOID_IN_EXPRESSION (
+                            @"void delegate '$(ce.callee)' cannot be used as a value at $(ce.line):$(ce.column)");
+                    check_arg_param_list (ce.callee, dd.params, 0, ce.args, ce.line, ce.column);
+                    tname = dd.return_type_name;
+                    return dd.return_type;
+                }
+                unowned var f = check_call (ce, true);
                 tname = f.return_type_name;
                 return f.return_type;
+            }
+            if (e is LambdaExpr) {
+                var lam = (LambdaExpr) e;
+                unowned var dd = (lam.delegate_type_name != "") ? program.find_delegate (lam.delegate_type_name) : null;
+                if (dd == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"lambda expression requires a known delegate target type at $(lam.line):$(lam.column)");
+                tname = dd.name;
+                return ValaType.STRUCT;
             }
             error ("unknown expression node");
         }
@@ -3052,7 +4366,7 @@ namespace Planc {
                     unowned ClassField? cf = null;
                     var fslot = class_field_offset_slots (current_class, vr.name, out cf);
                     if (fslot >= 0 && cf != null) {
-                        emitter.load_local (0);
+                        load_this_slot ();
                         emitter.add_rax_imm (16 + 8 * fslot);
                         ltype = cf.field_type;
                         ltname = cf.type_name;
@@ -3114,7 +4428,10 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 string tt_name = "";
                 var tt = expr_type_full (ix.target, out tt_name);
-                if (tt != ValaType.ARRAY)
+                ValaType ga_et = ValaType.INT;
+                string ga_etn = "";
+                bool is_ga = (tt == ValaType.CLASS) && find_generic_array_elem (tt_name, out ga_et, out ga_etn);
+                if (tt != ValaType.ARRAY && !is_ga)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"indexed address requires an array, got $(type_label (tt, tt_name)) at $(ix.line):$(ix.column)");
                 string it_name = "";
@@ -3130,6 +4447,23 @@ namespace Planc {
                 emitter.mov_rcx_rax ();
                 emitter.pop_rax ();
                 push_depth--;
+                if (is_ga) {
+                    if (bounds_check) {
+                        need_bounds_panic = true;
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.load_rax_disp (24);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JBE, bounds_panic_label);
+                        emitter.pop_rax ();
+                        push_depth--;
+                    }
+                    emitter.load_rax_disp (16);
+                    emitter.lea_rax_rax_rcx_8_16 ();
+                    ltype = ga_et;
+                    ltname = ga_etn;
+                    return;
+                }
                 if (bounds_check) {
                     need_bounds_panic = true;
                     emitter.cmp_rcx_rax_len ();
@@ -3221,13 +4555,23 @@ namespace Planc {
                     unowned var sub = program.find_struct (ft_name);
                     var fslots = type_slots (ValaType.STRUCT, ft_name);
                     if (program_uses_heap && sub != null && struct_has_string (sub)) {
+                        // Ref source before unreffing destination so aliasing/self-assignment stays balanced.
+                        emitter.push_reg (Reg.RCX);
+                        push_depth++;
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.mov_rcx_rax ();
+                        ref_struct_at_rcx (sub, 0);
+                        emitter.pop_rax ();
+                        push_depth--;
+                        emitter.pop_reg (Reg.RCX);
+                        push_depth--;
                         emitter.push_rax ();
                         push_depth++;
                         unref_struct_at_rcx (sub, 0);
                         emitter.pop_rax ();
                         push_depth--;
                         copy_struct_rax_to_rcx (fslots);
-                        ref_struct_at_rcx (sub, 0);
                     } else {
                         copy_struct_rax_to_rcx (fslots);
                     }
@@ -3390,7 +4734,8 @@ namespace Planc {
                         if (!type_compatible (vtype, vtname, it, itname))
                             throw new SemanticError.TYPE_MISMATCH (
                                 @"cannot initialize $(type_label (vtype, vtname)) variable '$(d.name)' with $(type_label (it, itname)) at $(d.init.line):$(d.init.column)");
-                    } else if ((vtype == ValaType.CLASS || vtype == ValaType.ERROR) && !is_nullable_type (vtype, vtname)) {
+                    } else if ((vtype == ValaType.CLASS || vtype == ValaType.INTERFACE || vtype == ValaType.ERROR)
+                               && !is_nullable_type (vtype, vtname)) {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"non-nullable $(type_label (vtype, vtname)) variable '$(d.name)' must be initialized at $(d.line):$(d.column)");
                     }
@@ -3494,7 +4839,7 @@ namespace Planc {
                                 if (!type_compatible (cf.field_type, cf.type_name, vt, vt_name))
                                     throw new SemanticError.TYPE_MISMATCH (
                                         @"cannot assign $(type_label (vt, vt_name)) to field '$(current_class.name).$(a.name)' ($(type_label (cf.field_type, cf.type_name))) at $(a.line):$(a.column)");
-                                emitter.load_local (0);
+                                load_this_slot ();
                                 emitter.add_rax_imm (16 + 8 * fslot);
                                 emit_field_store (cf.field_type, cf.type_name, "=", a.value);
                                 cleanup_expr_temps (a.value);
@@ -3581,9 +4926,9 @@ namespace Planc {
                 string owner_label;
                 int byte_off;
 
-                if (peek_t == ValaType.CLASS) {
+                if (peek_t == ValaType.CLASS || peek_t == ValaType.INTERFACE) {
                     var cname = strip_null (peek_name);
-                    unowned var cd = program.find_class (cname);
+                    unowned ClassDecl? cd = (peek_t == ValaType.CLASS) ? program.find_class (cname) : null;
                     unowned ClassField? cf = null;
                     var fslot = (cd != null) ? class_field_offset_slots (cd, fa.field_name, out cf) : -1;
                     if (fslot < 0 || cf == null) {
@@ -3607,7 +4952,7 @@ namespace Planc {
                             throw new SemanticError.TYPE_MISMATCH (
                                 @"compound assignment '$(fa.op)=' is not supported on custom property '$(cname).$(fa.field_name)' at $(fa.line):$(fa.column)");
                         throw new SemanticError.UNKNOWN_MEMBER (
-                            @"class '$(cname)' has no field '$(fa.field_name)' at $(fa.line):$(fa.column)");
+                            @"$(type_label (peek_t, peek_name)) has no field '$(fa.field_name)' at $(fa.line):$(fa.column)");
                     }
                     ft = cf.field_type;
                     ft_name = cf.type_name;
@@ -3692,7 +5037,10 @@ namespace Planc {
                 if (tt == ValaType.STRING)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"strings are immutable and cannot be indexed for assignment at $(ia.line):$(ia.column)");
-                if (tt != ValaType.ARRAY)
+                ValaType et = ValaType.INT;
+                string et_name = "";
+                bool is_ga = (tt == ValaType.CLASS) && find_generic_array_elem (tt_name, out et, out et_name);
+                if (tt != ValaType.ARRAY && !is_ga)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"indexed assignment requires array, got $(type_label (tt, tt_name)) at $(ia.line):$(ia.column)");
                 string it_name = "";
@@ -3701,9 +5049,8 @@ namespace Planc {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"array index must be int, got $(type_label (it, it_name)) at $(ia.index.line):$(ia.index.column)");
 
-                ValaType et;
-                string et_name;
-                parse_array_elem (tt_name, out et, out et_name);
+                if (!is_ga)
+                    parse_array_elem (tt_name, out et, out et_name);
                 string vt_name = "";
                 var vt = expr_type_full (ia.value, out vt_name);
                 if (ia.op == "=") {
@@ -3724,7 +5071,19 @@ namespace Planc {
                 emitter.mov_rcx_rax ();
                 emitter.pop_rax ();
                 push_depth--;
-                if (bounds_check) {
+                if (is_ga) {
+                    if (bounds_check) {
+                        need_bounds_panic = true;
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.load_rax_disp (24);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JBE, bounds_panic_label);
+                        emitter.pop_rax ();
+                        push_depth--;
+                    }
+                    emitter.load_rax_disp (16);
+                } else if (bounds_check) {
                     need_bounds_panic = true;
                     emitter.cmp_rcx_rax_len ();
                     emitter.branch (BranchKind.JAE, bounds_panic_label);
@@ -3880,12 +5239,14 @@ namespace Planc {
                 var fe = (ForeachStatement) s;
                 string ct_name = "";
                 var ct = expr_type_full (fe.collection, out ct_name);
-                if (ct != ValaType.ARRAY)
+                ValaType et = ValaType.INT;
+                string et_name = "";
+                bool is_ga = (ct == ValaType.CLASS) && find_generic_array_elem (ct_name, out et, out et_name);
+                if (ct != ValaType.ARRAY && !is_ga)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"foreach requires an array collection, got $(type_label (ct, ct_name)) at $(fe.collection.line):$(fe.collection.column)");
-                ValaType et;
-                string et_name;
-                parse_array_elem (ct_name, out et, out et_name);
+                if (!is_ga)
+                    parse_array_elem (ct_name, out et, out et_name);
                 ValaType vtype = fe.infer_type ? et : fe.elem_type;
                 string vtname = fe.infer_type ? et_name : fe.elem_type_name;
                 if (!fe.infer_type && !type_compatible (vtype, vtname, et, et_name))
@@ -3905,7 +5266,7 @@ namespace Planc {
                 emitter.store_local (col_slot);
                 cleanup_expr_temps (fe.collection);
                 emitter.zero_local (idx_slot);
-                push_local (@"#fe_col_$(col_mark)", ValaType.ARRAY, strip_null (ct_name), col_slot, false);
+                push_local (@"#fe_col_$(col_mark)", is_ga ? ValaType.CLASS : ValaType.ARRAY, strip_null (ct_name), col_slot, false);
                 push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
 
                 var l_cond = emitter.new_label ();
@@ -3922,7 +5283,7 @@ namespace Planc {
 
                 emitter.bind (l_cond);
                 emitter.load_local (col_slot);
-                emitter.load_rax_disp (8);
+                emitter.load_rax_disp (is_ga ? 24 : 8);
                 emitter.mov_rcx_rax ();
                 emitter.load_local (idx_slot);
                 emitter.cmp_rax_rcx ();
@@ -3931,6 +5292,8 @@ namespace Planc {
                 emitter.load_local (idx_slot);
                 emitter.mov_rcx_rax ();
                 emitter.load_local (col_slot);
+                if (is_ga)
+                    emitter.load_rax_disp (16);
                 emitter.load_qword_rax_rcx_16 ();
                 if (program_uses_heap && is_ref_type (vtype)) {
                     emitter.mov_rdi_rax ();
@@ -4355,6 +5718,9 @@ namespace Planc {
             } else if (e is ClassNewExpr) {
                 var cn = (ClassNewExpr) e;
                 unowned var cd = program.find_class (cn.class_name);
+                unowned Function? ctor_fn = (cn.ctor_name != "")
+                    ? cd.find_own_named_ctor (cn.ctor_name)
+                    : cd.ctor;
                 int payload_bytes = 8 * class_total_field_slots (cd);
                 emitter.mov_rdi_imm (payload_bytes);
                 emitter.mov_esi_imm (2);
@@ -4366,8 +5732,8 @@ namespace Planc {
                 call_aligned (@"__planc_init_$(cd.name)");
                 if (program_uses_heap && cn.ref_temp_slot >= 0)
                     add_live_ref_slot (cn.ref_temp_slot);
-                if (cd.ctor != null)
-                    emit_instance_call_from_slot (cn.ref_temp_slot, cd.ctor, cn.args);
+                if (ctor_fn != null)
+                    emit_instance_call_from_slot (cn.ref_temp_slot, ctor_fn, cn.args);
                 for (int i = 0; i < cn.init_names.length; i++) {
                     var iname = cn.init_names[i];
                     var ival = cn.init_values[i];
@@ -4387,6 +5753,30 @@ namespace Planc {
                 emitter.load_local (cn.ref_temp_slot);
             } else if (e is TypeCheckExpr) {
                 var tc = (TypeCheckExpr) e;
+                if (tc.op == "cast" && tc.target_type == ValaType.INT) {
+                    gen_expr (tc.operand);
+                    var tn = tc.target_type_name;
+                    if (tn == "uint8" || tn == "uchar") {
+                        emitter.mov_rcx_rax ();
+                        emitter.mov_rax_imm (0xff);
+                        emitter.and_rax_rcx ();
+                    } else if (tn == "uint16") {
+                        emitter.mov_rcx_rax ();
+                        emitter.mov_rax_imm (0xffff);
+                        emitter.and_rax_rcx ();
+                    } else if (tn == "uint32") {
+                        emitter.mov_rcx_rax ();
+                        emitter.mov_rax_imm (0xffffffff);
+                        emitter.and_rax_rcx ();
+                    } else if (tn == "int8" || tn == "char") {
+                        emitter.sign_extend_rax (8);
+                    } else if (tn == "int16") {
+                        emitter.sign_extend_rax (16);
+                    } else if (tn == "int32") {
+                        emitter.sign_extend_rax (32);
+                    }
+                    return;
+                }
                 if (tc.target_type == ValaType.ERROR) {
                     unowned var ed = program.find_error_domain (tc.target_type_name);
                     gen_expr (tc.operand);
@@ -4403,6 +5793,53 @@ namespace Planc {
                     emitter.bind (l_false);
                     emitter.xor_eax ();
                     emitter.bind (l_done);
+                    return;
+                }
+                if (tc.target_type == ValaType.INTERFACE) {
+                    unowned var itf = program.find_interface (strip_null (tc.target_type_name));
+                    need_iface_lookup = true;
+                    gen_expr (tc.operand);
+                    if (tc.op == "is") {
+                        emitter.mov_rdi_rax ();
+                        emitter.mov_rax_imm (itf.iface_id);
+                        call_aligned ("__planc_iface_lookup");
+                        emitter.test_rax_rax ();
+                        setcc ("!=");
+                    } else if (tc.op == "as") {
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.mov_rdi_rax ();
+                        emitter.mov_rax_imm (itf.iface_id);
+                        call_aligned ("__planc_iface_lookup");
+                        emitter.test_rax_rax ();
+                        var l_ok = emitter.new_label ();
+                        emitter.branch (BranchKind.JNE, l_ok);
+                        emitter.pop_rax ();
+                        emitter.xor_eax ();
+                        var l_done = emitter.new_label ();
+                        emitter.branch (BranchKind.JMP, l_done);
+                        emitter.bind (l_ok);
+                        emitter.pop_rax ();
+                        emitter.bind (l_done);
+                        push_depth--;
+                    } else {
+                        var l_ok = emitter.new_label ();
+                        if (tc.target_type_name.has_suffix ("?")) {
+                            emitter.test_rax_rax ();
+                            emitter.branch (BranchKind.JE, l_ok);
+                        }
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.mov_rdi_rax ();
+                        emitter.mov_rax_imm (itf.iface_id);
+                        call_aligned ("__planc_iface_lookup");
+                        emitter.test_rax_rax ();
+                        need_cast_panic = true;
+                        emitter.branch (BranchKind.JE, cast_panic_label);
+                        emitter.pop_rax ();
+                        push_depth--;
+                        emitter.bind (l_ok);
+                    }
                     return;
                 }
                 unowned var tcd = program.find_class (strip_null (tc.target_type_name));
@@ -4528,7 +5965,7 @@ namespace Planc {
                 emitter.pop_reg (Reg.RCX);
                 push_depth--;
                 emitter.store_rax_8_rcx ();
-                if (an.elem_type == ValaType.STRING)
+                if (an.elem_type == ValaType.STRING && !is_nullable_type (an.elem_type, an.elem_type_name))
                     emitter.emit_fill_empty_strings (emitter.add_string (""));
                 if (e.ref_temp_slot >= 0)
                     emitter.store_local (e.ref_temp_slot);
@@ -4586,11 +6023,27 @@ namespace Planc {
                         unowned var ed = program.find_enum (vr.name);
                         if (ed != null) {
                             unowned var mem = ed.find_member (m.member);
-                            if (mem == null)
+                            if (mem != null) {
+                                emitter.mov_rax_imm (mem.value);
+                                return;
+                            }
+                            if (m.target_del_type == "")
                                 throw new SemanticError.UNKNOWN_MEMBER (
                                     @"enum '$(ed.name)' has no member '$(m.member)' at $(m.line):$(m.column)");
-                            emitter.mov_rax_imm (mem.value);
-                            return;
+                        }
+                        if (m.target_del_type != "") {
+                            unowned var mf = resolve_type_method (vr.name, m.member);
+                            unowned var dd = program.find_delegate (m.target_del_type);
+                            if (mf != null && mf.is_static && dd != null) {
+                                var base_disp = struct_base_disp (m.temp_slot, 2);
+                                var thunk_sym = ensure_free_delegate_thunk (mf, dd, false, 0);
+                                emitter.lea_rax_fn (thunk_sym);
+                                emitter.store_rbp_disp (base_disp);
+                                emitter.xor_eax ();
+                                emitter.store_rbp_disp (base_disp + 8);
+                                emitter.lea_rax_rbp_disp (base_disp);
+                                return;
+                            }
                         }
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"type '$(vr.name)' has no constant or member '$(m.member)' at $(m.line):$(m.column)");
@@ -4629,6 +6082,40 @@ namespace Planc {
                             emit_instance_call (m.target, false, false, gm, new GenericArray<Expr> (), m.temp_slot, m.ref_temp_slot);
                             return;
                         }
+                        if (m.target_del_type != "") {
+                            unowned var mf = resolve_member_delegate_fn (tt, tt_name, m.member);
+                            unowned var dd = program.find_delegate (m.target_del_type);
+                            if (mf != null && dd != null) {
+                                var base_disp = struct_base_disp (m.temp_slot, 2);
+                                if (mf.is_static) {
+                                    gen_expr (m.target);
+                                    var thunk_sym = ensure_free_delegate_thunk (mf, dd, false, 0);
+                                    emitter.lea_rax_fn (thunk_sym);
+                                    emitter.store_rbp_disp (base_disp);
+                                    emitter.xor_eax ();
+                                    emitter.store_rbp_disp (base_disp + 8);
+                                    emitter.lea_rax_rbp_disp (base_disp);
+                                    return;
+                                }
+                                gen_expr (m.target);
+                                emit_null_check_if_nullable (tt, tt_name);
+                                if (program_uses_heap) {
+                                    emitter.mov_rdi_rax ();
+                                    call_aligned ("__planc_ref");
+                                }
+                                if (m.ref_temp_slot >= 0)
+                                    emitter.store_local (m.ref_temp_slot);
+                                emitter.store_rbp_disp (base_disp + 8);
+                                bool need_thunk = (mf.is_virtual || mf.is_abstract || mf.iface_slot >= 0);
+                                string code_sym = need_thunk
+                                    ? ensure_free_delegate_thunk (mf, dd, true, 1)
+                                    : mf.name;
+                                emitter.lea_rax_fn (code_sym);
+                                emitter.store_rbp_disp (base_disp);
+                                emitter.lea_rax_rbp_disp (base_disp);
+                                return;
+                            }
+                        }
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"class '$(cname)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
                     }
@@ -4640,6 +6127,36 @@ namespace Planc {
                         emitter.load_rax_disp (16 + 8 * fslot);
                     return;
                 }
+                if (tt == ValaType.INTERFACE) {
+                    unowned var gm = find_prop_getter (tt, tt_name, m.member);
+                    if (gm != null) {
+                        emit_instance_call (m.target, false, false, gm, new GenericArray<Expr> (), m.temp_slot, m.ref_temp_slot);
+                        return;
+                    }
+                    if (m.target_del_type != "") {
+                        unowned var mf = resolve_member_delegate_fn (tt, tt_name, m.member);
+                        unowned var dd = program.find_delegate (m.target_del_type);
+                        if (mf != null && dd != null) {
+                            var base_disp = struct_base_disp (m.temp_slot, 2);
+                            gen_expr (m.target);
+                            emit_null_check_if_nullable (tt, tt_name);
+                            if (program_uses_heap) {
+                                emitter.mov_rdi_rax ();
+                                call_aligned ("__planc_ref");
+                            }
+                            if (m.ref_temp_slot >= 0)
+                                emitter.store_local (m.ref_temp_slot);
+                            emitter.store_rbp_disp (base_disp + 8);
+                            string code_sym = ensure_free_delegate_thunk (mf, dd, true, 1);
+                            emitter.lea_rax_fn (code_sym);
+                            emitter.store_rbp_disp (base_disp);
+                            emitter.lea_rax_rbp_disp (base_disp);
+                            return;
+                        }
+                    }
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"interface '$(strip_null (tt_name))' has no property '$(m.member)' at $(m.line):$(m.column)");
+                }
                 unowned var sd = program.find_struct (tt_name);
                 unowned StructField? fld = null;
                 var off_slots = (sd != null) ? struct_field_offset_slots (sd, m.member, out fld) : -1;
@@ -4648,6 +6165,20 @@ namespace Planc {
                     if (gm != null) {
                         emit_instance_call (m.target, false, false, gm, new GenericArray<Expr> (), m.temp_slot, m.ref_temp_slot);
                         return;
+                    }
+                    if (m.target_del_type != "") {
+                        unowned var mf = resolve_member_delegate_fn (tt, tt_name, m.member);
+                        unowned var dd = program.find_delegate (m.target_del_type);
+                        if (mf != null && mf.is_static && dd != null) {
+                            var base_disp = struct_base_disp (m.temp_slot, 2);
+                            var thunk_sym = ensure_free_delegate_thunk (mf, dd, false, 0);
+                            emitter.lea_rax_fn (thunk_sym);
+                            emitter.store_rbp_disp (base_disp);
+                            emitter.xor_eax ();
+                            emitter.store_rbp_disp (base_disp + 8);
+                            emitter.lea_rax_rbp_disp (base_disp);
+                            return;
+                        }
                     }
                     throw new SemanticError.UNKNOWN_MEMBER (
                         @"struct '$(tt_name)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
@@ -4661,6 +6192,9 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 string tt_name = "";
                 var tt = expr_type_full (ix.target, out tt_name);
+                ValaType ga_et = ValaType.INT;
+                string ga_etn = "";
+                bool is_ga = (tt == ValaType.CLASS) && find_generic_array_elem (tt_name, out ga_et, out ga_etn);
                 gen_expr (ix.target);
                 emit_null_check_if_nullable (tt, tt_name);
                 emitter.push_rax ();
@@ -4669,15 +6203,30 @@ namespace Planc {
                 emitter.mov_rcx_rax ();
                 emitter.pop_rax ();
                 push_depth--;
-                if (bounds_check) {
-                    need_bounds_panic = true;
-                    emitter.cmp_rcx_rax_len ();
-                    emitter.branch (BranchKind.JAE, bounds_panic_label);
-                }
-                if (tt == ValaType.ARRAY)
+                if (is_ga) {
+                    if (bounds_check) {
+                        need_bounds_panic = true;
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.load_rax_disp (24);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JBE, bounds_panic_label);
+                        emitter.pop_rax ();
+                        push_depth--;
+                    }
+                    emitter.load_rax_disp (16);
                     emitter.load_qword_rax_rcx_16 ();
-                else
-                    emitter.load_byte_rax_rcx_16 ();
+                } else {
+                    if (bounds_check) {
+                        need_bounds_panic = true;
+                        emitter.cmp_rcx_rax_len ();
+                        emitter.branch (BranchKind.JAE, bounds_panic_label);
+                    }
+                    if (tt == ValaType.ARRAY)
+                        emitter.load_qword_rax_rcx_16 ();
+                    else
+                        emitter.load_byte_rax_rcx_16 ();
+                }
             } else if (e is SliceExpr) {
                 var se = (SliceExpr) e;
                 string tt_name = "";
@@ -4818,6 +6367,36 @@ namespace Planc {
                 emitter.lea_rax_rbp_disp (base_disp);
             } else if (e is VarRef) {
                 var v = (VarRef) e;
+                if (v.target_del_type != "") {
+                    unowned var dd = program.find_delegate (v.target_del_type);
+                    unowned var f = resolve_call_target (v.name);
+                    var base_disp = struct_base_disp (v.temp_slot, 2);
+                    if (f.owner_class != "" && !f.is_static) {
+                        load_this_slot ();
+                        if (program_uses_heap) {
+                            emitter.mov_rdi_rax ();
+                            call_aligned ("__planc_ref");
+                        }
+                        if (v.ref_temp_slot >= 0)
+                            emitter.store_local (v.ref_temp_slot);
+                        emitter.store_rbp_disp (base_disp + 8);
+                        bool need_thunk = (f.is_virtual || f.is_abstract || f.iface_slot >= 0);
+                        string code_sym = need_thunk
+                            ? ensure_free_delegate_thunk (f, dd, true, 1)
+                            : f.name;
+                        emitter.lea_rax_fn (code_sym);
+                        emitter.store_rbp_disp (base_disp);
+                        emitter.lea_rax_rbp_disp (base_disp);
+                        return;
+                    }
+                    var thunk_sym = ensure_free_delegate_thunk (f, dd, false, 0);
+                    emitter.lea_rax_fn (thunk_sym);
+                    emitter.store_rbp_disp (base_disp);
+                    emitter.xor_eax ();
+                    emitter.store_rbp_disp (base_disp + 8);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                    return;
+                }
                 var idx = lookup (v.name);
                 if (idx >= 0) {
                     if (local_by_ref[idx]) {
@@ -4850,7 +6429,7 @@ namespace Planc {
                             unowned ClassField? cf = null;
                             var fslot = class_field_offset_slots (current_class, v.name, out cf);
                             if (fslot >= 0 && cf != null) {
-                                emitter.load_local (0);
+                                load_this_slot ();
                                 if (cf.field_type == ValaType.STRUCT)
                                     emitter.add_rax_imm (16 + 8 * fslot);
                                 else
@@ -5027,6 +6606,48 @@ namespace Planc {
                 }
             } else if (e is CallExpr) {
                 gen_call ((CallExpr) e);
+            } else if (e is LambdaExpr) {
+                var lam = (LambdaExpr) e;
+                var base_disp = struct_base_disp (lam.temp_slot, 2);
+                if (lam.captured_names.length == 0) {
+                    emitter.lea_rax_fn (lam.synth_func_name);
+                    emitter.store_rbp_disp (base_disp);
+                    emitter.xor_eax ();
+                    emitter.store_rbp_disp (base_disp + 8);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                } else {
+                    int ncap = lam.captured_names.length;
+                    emitter.mov_rdi_imm ((int64) 8 * ncap);
+                    emitter.mov_esi_imm (1);
+                    call_aligned ("__planc_alloc");
+                    if (lam.ref_temp_slot >= 0)
+                        emitter.store_local (lam.ref_temp_slot);
+                    emitter.mov_rcx_rax ();
+                    emitter.mov_rax_imm ((int64) lam.ref_cap_count);
+                    emitter.store_rcx_disp_rax (8);
+
+                    for (int ci = 0; ci < ncap; ci++) {
+                        if (lam.captured_names[ci] == "this")
+                            load_this_slot ();
+                        else
+                            emitter.load_local (local_slots[lookup (lam.captured_names[ci])]);
+                        if (program_uses_heap && is_ref_type (lam.captured_types[ci])) {
+                            emitter.mov_rdi_rax ();
+                            call_aligned ("__planc_ref");
+                        }
+                        emitter.push_rax ();
+                        emitter.load_local (lam.ref_temp_slot);
+                        emitter.mov_rcx_rax ();
+                        emitter.pop_rax ();
+                        emitter.store_rcx_disp_rax (16 + 8 * ci);
+                    }
+
+                    emitter.lea_rax_fn (lam.synth_func_name);
+                    emitter.store_rbp_disp (base_disp);
+                    emitter.load_local (lam.ref_temp_slot);
+                    emitter.store_rbp_disp (base_disp + 8);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                }
             } else {
                 error ("expression not supported");
             }
@@ -5065,6 +6686,19 @@ namespace Planc {
         }
 
         private void gen_method_call (MethodCallExpr mc) throws SemanticError {
+            if (mc.target != null && !mc.is_base_call) {
+                unowned var md = resolve_member_delegate (mc.target, mc.method_name);
+                if (md != null) {
+                    var del_expr = new MemberAccessExpr () {
+                        target = mc.target,
+                        member = mc.method_name,
+                        line = mc.line,
+                        column = mc.column
+                    };
+                    emit_delegate_call (del_expr, md, mc.args, mc.temp_slot, mc.ref_temp_slot);
+                    return;
+                }
+            }
             unowned var m = resolve_method_call_fn (mc);
             if (m == null)
                 error ("unchecked method '%s'", mc.method_name);
@@ -5076,8 +6710,7 @@ namespace Planc {
                                 m, mc.args, mc.temp_slot, mc.ref_temp_slot);
         }
 
-        private void emit_call_arg (Function fn, int param_idx, Expr arg) throws SemanticError {
-            var p = fn.params[param_idx];
+        private void emit_call_arg_param (Param p, Expr arg) throws SemanticError {
             if (p.is_ref || p.is_out) {
                 ValaType lt;
                 string lt_name;
@@ -5087,6 +6720,10 @@ namespace Planc {
             } else {
                 gen_expr (arg);
             }
+        }
+
+        private void emit_call_arg (Function fn, int param_idx, Expr arg) throws SemanticError {
+            emit_call_arg_param (fn.params[param_idx], arg);
         }
 
         private void emit_instance_call_from_slot (int obj_slot, Function m, GenericArray<Expr> args)
@@ -5123,7 +6760,12 @@ namespace Planc {
                 emitter.sub_rsp (8);
             if (m.vtable_slot >= 0) {
                 emitter.load_rdi_disp_to_rax (8);
-                emitter.call_rax_disp (16 + 8 * m.vtable_slot);
+                emitter.call_rax_disp (24 + 8 * m.vtable_slot);
+            } else if (m.iface_slot >= 0) {
+                need_iface_lookup = true;
+                emitter.mov_rax_imm (m.iface_id);
+                emitter.call_rel32 ("__planc_iface_lookup");
+                emitter.call_rax_disp (8 * m.iface_slot);
             } else {
                 emitter.call_rel32 (m.name);
             }
@@ -5153,7 +6795,7 @@ namespace Planc {
                 if (local_types[0] == ValaType.STRUCT)
                     emitter.lea_rax_rbp_disp (struct_base_disp (local_slots[0], type_slots (ValaType.STRUCT, local_type_names[0])));
                 else
-                    emitter.load_local (0);
+                    load_this_slot ();
             } else {
                 string tt_name = "";
                 var tt = expr_type_full (target_expr, out tt_name);
@@ -5183,7 +6825,12 @@ namespace Planc {
 
             if (!is_base && m.vtable_slot >= 0) {
                 emitter.load_rdi_disp_to_rax (8);
-                emitter.call_rax_disp (16 + 8 * m.vtable_slot);
+                emitter.call_rax_disp (24 + 8 * m.vtable_slot);
+            } else if (!is_base && m.iface_slot >= 0) {
+                need_iface_lookup = true;
+                emitter.mov_rax_imm (m.iface_id);
+                emitter.call_rel32 ("__planc_iface_lookup");
+                emitter.call_rax_disp (8 * m.iface_slot);
             } else {
                 emitter.call_rel32 (m.name);
             }
@@ -5201,6 +6848,10 @@ namespace Planc {
                 var base_disp = struct_base_disp (struct_temp_slot, nslots);
                 emitter.lea_rcx_rbp_disp (base_disp);
                 copy_struct_rax_to_rcx (nslots);
+                if (program_uses_heap && ref_temp_slot >= 0 && is_delegate_type (program, m.return_type, m.return_type_name)) {
+                    emitter.load_rcx_disp_to_rax (8);
+                    emitter.store_local (ref_temp_slot);
+                }
                 emitter.mov_rax_rcx ();
             } else if (program_uses_heap && is_ref_type (m.return_type) && ref_temp_slot >= 0) {
                 emitter.store_local (ref_temp_slot);
@@ -5208,6 +6859,12 @@ namespace Planc {
         }
 
         private void gen_call (CallExpr e) throws SemanticError {
+            unowned DelegateDecl? dd = resolve_delegate_callee (e.callee);
+            if (dd != null) {
+                var del_expr = new VarRef () { name = e.callee, line = e.line, column = e.column };
+                emit_delegate_call (del_expr, dd, e.args, e.temp_slot, e.ref_temp_slot);
+                return;
+            }
             unowned var f = resolve_call_target (e.callee);
             if (f == null)
                 error ("unchecked callee %s", e.callee);
@@ -5217,6 +6874,77 @@ namespace Planc {
                 return;
             }
             emit_static_call (f, e.args, e.temp_slot, e.ref_temp_slot);
+        }
+
+        private void emit_delegate_call (Expr del_expr, DelegateDecl dd, GenericArray<Expr> args,
+                                         int struct_temp_slot, int ref_temp_slot)
+                throws SemanticError {
+            gen_expr (del_expr);
+            emitter.mov_rcx_rax ();
+            emitter.load_rcx_disp_to_rax (0); // #code
+            emitter.push_rax ();
+            push_depth++;
+            emitter.load_rcx_disp_to_rax (8); // #env
+
+            var total_args = 1 + args.length;
+            var r = total_args < ARG_REGS.length ? total_args : ARG_REGS.length;
+            var s = total_args - r;
+            var depth = push_depth;
+
+            var area = align16 (8 * s);
+            if (s > 0 && depth % 2 == 1)
+                area += 8;
+            if (area != 0)
+                emitter.sub_rsp (area);
+
+            emitter.push_rax ();
+            push_depth++;
+
+            for (int i = 0; i < args.length; i++) {
+                int idx = i + 1;
+                emit_call_arg_param (dd.params[i], args[i]);
+                if (idx < r) {
+                    emitter.push_rax ();
+                    push_depth++;
+                } else {
+                    emitter.store_rsp (8 * idx);
+                }
+            }
+
+            for (int i = r - 1; i >= 0; i--)
+                emitter.pop_reg (ARG_REGS[i]);
+            push_depth -= r;
+
+            if (s == 0 && depth % 2 == 1)
+                emitter.sub_rsp (8);
+
+            int fn_disp = (s > 0) ? area : ((depth % 2 == 1) ? 8 : 0);
+            emitter.load_rsp (fn_disp);
+            emitter.call_rax ();
+
+            if (s > 0)
+                emitter.add_rsp (area);
+            else if (depth % 2 == 1)
+                emitter.add_rsp (8);
+
+            emitter.add_rsp (8); // discard spilled #code without clobbering rax/rdx
+            push_depth--;
+
+            emit_post_call_error_check_flag (dd.throws_domains.length > 0);
+
+            if (dd.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
+                var nslots = type_slots (ValaType.STRUCT, dd.return_type_name);
+                var base_disp = struct_base_disp (struct_temp_slot, nslots);
+                emitter.lea_rcx_rbp_disp (base_disp);
+                copy_struct_rax_to_rcx (nslots);
+                if (program_uses_heap && ref_temp_slot >= 0 && is_delegate_type (program, dd.return_type, dd.return_type_name)) {
+                    emitter.load_rcx_disp_to_rax (8);
+                    emitter.store_local (ref_temp_slot);
+                }
+                emitter.mov_rax_rcx ();
+            } else if (program_uses_heap && is_ref_type (dd.return_type) && ref_temp_slot >= 0) {
+                emitter.store_local (ref_temp_slot);
+            }
         }
 
         private void emit_static_call (Function f, GenericArray<Expr> args,
@@ -5265,6 +6993,10 @@ namespace Planc {
                 var base_disp = struct_base_disp (struct_temp_slot, nslots);
                 emitter.lea_rcx_rbp_disp (base_disp);
                 copy_struct_rax_to_rcx (nslots);
+                if (program_uses_heap && ref_temp_slot >= 0 && is_delegate_type (program, f.return_type, f.return_type_name)) {
+                    emitter.load_rcx_disp_to_rax (8);
+                    emitter.store_local (ref_temp_slot);
+                }
                 emitter.mov_rax_rcx ();
             } else if (program_uses_heap && is_ref_type (f.return_type) && ref_temp_slot >= 0) {
                 emitter.store_local (ref_temp_slot);

@@ -73,6 +73,7 @@ namespace Planc {
                 var parser = new Parser.with_program (sources[i], program);
                 parser.parse_unit ();
             }
+            program.monomorphize_all ();
             if (program.find ("main") == null)
                 throw new ParseError.MISSING_MAIN ("the program does not define main");
         } catch (LexError e) {

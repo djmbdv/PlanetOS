@@ -26,6 +26,7 @@ namespace Planc {
         COLON,       // :
         QUESTION,    // ?
         QUESTION_QUESTION, // ??
+        ARROW,       // =>
         ASSIGN,      // =
         PLUS,        // +
         MINUS,       // -
@@ -76,6 +77,14 @@ namespace Planc {
 
         public Lexer (string source) {
             this.source = source;
+        }
+
+        public Lexer clone_state () {
+            var cp = new Lexer (source);
+            cp.pos = pos;
+            cp.line = line;
+            cp.column = column;
+            return cp;
         }
 
         private uint8 current () {
@@ -261,6 +270,7 @@ namespace Planc {
                 || ch == '&' || ch == '|' || ch == '+' || ch == '-') {
                 var n = peek (1);
                 if (ch == '=' && n == '=') { advance (); advance (); return two_char (TokenKind.EQ, l, c); }
+                if (ch == '=' && n == '>') { advance (); advance (); return two_char (TokenKind.ARROW, l, c); }
                 if (ch == '!' && n == '=') { advance (); advance (); return two_char (TokenKind.NE, l, c); }
                 if (ch == '<' && n == '=') { advance (); advance (); return two_char (TokenKind.LE, l, c); }
                 if (ch == '>' && n == '=') { advance (); advance (); return two_char (TokenKind.GE, l, c); }

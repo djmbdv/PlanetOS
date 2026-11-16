@@ -15,22 +15,26 @@ namespace Planc {
         STRUCT,
         ARRAY,
         CLASS,
+        INTERFACE,
         ERROR,
+        TYPE_PARAM,
         NULL;
 
         public string label () {
             switch (this) {
-                case VOID:   return "void";
-                case INT:    return "int";
-                case BOOL:   return "bool";
-                case STRING: return "string";
-                case ENUM:   return "enum";
-                case STRUCT: return "struct";
-                case ARRAY:  return "array";
-                case CLASS:  return "class";
-                case ERROR:  return "Error";
-                case NULL:   return "null";
-                default:     return "?";
+                case VOID:       return "void";
+                case INT:        return "int";
+                case BOOL:       return "bool";
+                case STRING:     return "string";
+                case ENUM:       return "enum";
+                case STRUCT:     return "struct";
+                case ARRAY:      return "array";
+                case CLASS:      return "class";
+                case INTERFACE:  return "interface";
+                case ERROR:      return "Error";
+                case TYPE_PARAM: return "type_param";
+                case NULL:       return "null";
+                default:         return "?";
             }
         }
     }
@@ -70,6 +74,7 @@ namespace Planc {
         public Expr target { get; set; }
         public string member { get; set; }
         public int temp_slot { get; set; default = -1; }
+        public string target_del_type { get; set; default = ""; }
     }
 
     public class IndexExpr : Expr {
@@ -107,6 +112,8 @@ namespace Planc {
 
     public class VarRef : Expr {
         public string name { get; set; }
+        public int temp_slot { get; set; default = -1; }
+        public string target_del_type { get; set; default = ""; }
     }
 
     public class UnaryExpr : Expr {
@@ -135,6 +142,7 @@ namespace Planc {
 
     public class ClassNewExpr : Expr {
         public string class_name { get; set; }
+        public string ctor_name { get; set; default = ""; }
         public GenericArray<Expr> args { get; private set; }
         public GenericArray<string> init_names { get; private set; }
         public GenericArray<Expr> init_values { get; private set; }
@@ -180,6 +188,27 @@ namespace Planc {
     public class CoalesceExpr : Expr {
         public Expr left { get; set; }
         public Expr right { get; set; }
+    }
+
+    public class LambdaExpr : Expr {
+        public GenericArray<string> param_names { get; private set; }
+        public GenericArray<Statement> body { get; private set; }
+        public Expr? expr_body { get; set; }
+        public string delegate_type_name { get; set; default = ""; }
+        public string synth_func_name { get; set; default = ""; }
+        public int temp_slot { get; set; default = -1; }
+        public GenericArray<string> captured_names { get; private set; }
+        public GenericArray<ValaType> captured_types { get; private set; }
+        public GenericArray<string> captured_type_names { get; private set; }
+        public int ref_cap_count { get; set; default = 0; }
+
+        public LambdaExpr () {
+            param_names = new GenericArray<string> ();
+            body = new GenericArray<Statement> ();
+            captured_names = new GenericArray<string> ();
+            captured_types = new GenericArray<ValaType> ();
+            captured_type_names = new GenericArray<string> ();
+        }
     }
 
     // ------------------------------------------------------------------
@@ -350,12 +379,16 @@ namespace Planc {
     public class StructDecl : Object {
         public string name { get; set; }
         public bool is_defined { get; set; default = false; }
+        public bool is_generic_template { get; set; default = false; }
+        public bool is_delegate { get; set; default = false; }
+        public GenericArray<string> type_params { get; private set; }
         public GenericArray<StructField> fields { get; private set; }
         public GenericArray<Function> methods { get; private set; }
         public int line { get; set; }
         public int column { get; set; }
 
         public StructDecl () {
+            type_params = new GenericArray<string> ();
             fields = new GenericArray<StructField> ();
             methods = new GenericArray<Function> ();
         }
@@ -384,6 +417,7 @@ namespace Planc {
         public bool unmanaged { get; set; default = false; }
         public bool is_ref { get; set; default = false; }
         public bool is_out { get; set; default = false; }
+        public Expr? default_value { get; set; default = null; }
         public int line { get; set; }
         public int column { get; set; }
     }
@@ -401,11 +435,18 @@ namespace Planc {
         public bool is_abstract { get; set; default = false; }
         public bool is_static { get; set; default = false; }
         public bool is_ctor { get; set; default = false; }
+        public string ctor_subname { get; set; default = ""; }
         public bool is_dtor { get; set; default = false; }
         public bool has_base_call { get; set; default = false; }
+        public bool has_this_call { get; set; default = false; }
+        public string this_ctor_subname { get; set; default = ""; }
         public GenericArray<Expr> base_args { get; private set; }
         public string owner_class { get; set; default = ""; }
         public int vtable_slot { get; set; default = -1; }
+        public int iface_id { get; set; default = -1; }
+        public int iface_slot { get; set; default = -1; }
+        public bool has_body { get; set; default = true; }
+        public LambdaExpr? from_lambda { get; set; default = null; }
         public GenericArray<string> throws_domains { get; private set; }
         public bool can_throw {
             get { return throws_domains.length > 0; }
@@ -437,11 +478,16 @@ namespace Planc {
         public string base_name { get; set; default = ""; }
         public bool is_abstract { get; set; default = false; }
         public bool is_defined { get; set; default = false; }
+        public bool is_generic_template { get; set; default = false; }
+        public GenericArray<string> type_params { get; private set; }
+        public GenericArray<string> iface_names { get; private set; }
         public GenericArray<ClassField> fields { get; private set; }
         public GenericArray<Function> methods { get; private set; }
+        public GenericArray<Function> named_ctors { get; private set; }
         public Function? ctor { get; set; }
         public Function? dtor { get; set; }
         public int vtable_rodata_offset { get; set; default = -1; }
+        public int itable_rodata_offset { get; set; default = -1; }
         public bool needs_finalizer { get; set; default = false; }
         public GenericArray<string> vtable_method_names { get; private set; }
         public GenericArray<string> vtable_impl_symbols { get; private set; }
@@ -449,10 +495,21 @@ namespace Planc {
         public int column { get; set; }
 
         public ClassDecl () {
+            type_params = new GenericArray<string> ();
+            iface_names = new GenericArray<string> ();
             fields = new GenericArray<ClassField> ();
             methods = new GenericArray<Function> ();
+            named_ctors = new GenericArray<Function> ();
             vtable_method_names = new GenericArray<string> ();
             vtable_impl_symbols = new GenericArray<string> ();
+        }
+
+        public unowned Function? find_own_named_ctor (string sub) {
+            foreach (unowned var c in named_ctors) {
+                if (c.ctor_subname == sub)
+                    return c;
+            }
+            return null;
         }
 
         public unowned ClassField? find_own_field (string fname) {
@@ -535,6 +592,59 @@ namespace Planc {
         }
     }
 
+    public class InterfaceDecl : Object {
+        public string name { get; set; }
+        public int iface_id { get; set; }
+        public bool is_defined { get; set; default = false; }
+        public GenericArray<string> prereq_names { get; private set; }
+        public GenericArray<Function> methods { get; private set; }
+        public int line { get; set; }
+        public int column { get; set; }
+
+        public InterfaceDecl () {
+            prereq_names = new GenericArray<string> ();
+            methods = new GenericArray<Function> ();
+        }
+
+        public unowned Function? find_own_method (string mname) {
+            foreach (unowned var m in methods) {
+                if (m.name == mname || m.method_name == mname)
+                    return m;
+            }
+            return null;
+        }
+    }
+
+    public class DelegateDecl : Object {
+        public string name { get; set; }
+        public bool is_defined { get; set; default = false; }
+        public ValaType return_type { get; set; default = ValaType.VOID; }
+        public string return_type_name { get; set; default = ""; }
+        public GenericArray<Param> params { get; private set; }
+        public GenericArray<string> throws_domains { get; private set; }
+        public int line { get; set; }
+        public int column { get; set; }
+
+        public DelegateDecl () {
+            params = new GenericArray<Param> ();
+            throws_domains = new GenericArray<string> ();
+        }
+    }
+
+    public class GenericInstantiation : Object {
+        public string template_name { get; set; }
+        public string mangled_name { get; set; }
+        public bool is_struct { get; set; default = false; }
+        public bool has_type_param { get; set; default = false; }
+        public GenericArray<ValaType> arg_types { get; private set; }
+        public GenericArray<string> arg_type_names { get; private set; }
+
+        public GenericInstantiation () {
+            arg_types = new GenericArray<ValaType> ();
+            arg_type_names = new GenericArray<string> ();
+        }
+    }
+
     public class Program : Object {
         public GenericArray<Function> functions { get; private set; }
         public GenericArray<GlobalVar> globals { get; private set; }
@@ -543,6 +653,9 @@ namespace Planc {
         public GenericArray<StructDecl> structs { get; private set; }
         public GenericArray<ClassDecl> classes { get; private set; }
         public GenericArray<ErrorDomainDecl> error_domains { get; private set; }
+        public GenericArray<InterfaceDecl> interfaces { get; private set; }
+        public GenericArray<DelegateDecl> delegates { get; private set; }
+        public GenericArray<GenericInstantiation> instantiations { get; private set; }
 
         public Program () {
             functions = new GenericArray<Function> ();
@@ -552,6 +665,9 @@ namespace Planc {
             structs = new GenericArray<StructDecl> ();
             classes = new GenericArray<ClassDecl> ();
             error_domains = new GenericArray<ErrorDomainDecl> ();
+            interfaces = new GenericArray<InterfaceDecl> ();
+            delegates = new GenericArray<DelegateDecl> ();
+            instantiations = new GenericArray<GenericInstantiation> ();
         }
 
         public unowned ErrorDomainDecl? find_error_domain (string name) {
@@ -560,6 +676,43 @@ namespace Planc {
                     return d;
             }
             return null;
+        }
+
+        public unowned InterfaceDecl? find_interface (string name) {
+            foreach (unowned var itf in interfaces) {
+                if (itf.name == name)
+                    return itf;
+            }
+            return null;
+        }
+
+        public unowned DelegateDecl? find_delegate (string name) {
+            foreach (unowned var d in delegates) {
+                if (d.name == name)
+                    return d;
+            }
+            return null;
+        }
+
+        public void register_delegate_struct (string name) {
+            if (find_struct (name) != null)
+                return;
+            var sd = new StructDecl () {
+                name = name,
+                is_defined = true,
+                is_delegate = true
+            };
+            sd.fields.add (new StructField () {
+                field_type = ValaType.INT,
+                type_name = "",
+                name = "#code"
+            });
+            sd.fields.add (new StructField () {
+                field_type = ValaType.STRING,
+                type_name = "string?",
+                name = "#env"
+            });
+            structs.add (sd);
         }
 
         public unowned ConstDecl? find_const (string owner, string cname) {
@@ -600,6 +753,885 @@ namespace Planc {
                     return c;
             }
             return null;
+        }
+
+        public unowned GenericInstantiation? find_instantiation_by_mangled (string mangled) {
+            foreach (unowned var gi in instantiations) {
+                if (gi.mangled_name == mangled)
+                    return gi;
+            }
+            return null;
+        }
+
+        private static string sanitize_ident (string s) {
+            var sb = new StringBuilder ();
+            for (int i = 0; i < s.length; i++) {
+                var ch = (char) s[i];
+                if (ch == '?')
+                    sb.append ("_q");
+                else if (ch == '.' || ch == '<' || ch == '>' || ch == ',' || ch == '[' || ch == ']')
+                    sb.append_c ('_');
+                else
+                    sb.append_c (ch);
+            }
+            return sb.str;
+        }
+
+        private static string mangle_type_arg (ValaType t, string tname) {
+            if (t == ValaType.ARRAY)
+                return "arr_" + sanitize_ident (tname);
+            if (t == ValaType.STRING)
+                return (tname == "?" || tname == "string?") ? "string_q" : "string";
+            if (t == ValaType.ERROR) {
+                if (tname == "" || tname == "Error")
+                    return "Error";
+                if (tname == "?" || tname == "Error?")
+                    return "Error_q";
+                return sanitize_ident (tname);
+            }
+            if (tname != "")
+                return sanitize_ident (tname);
+            return t.label ();
+        }
+
+        private static string strip_q_str (string s) {
+            return s.has_suffix ("?") ? s[0:s.length - 1] : s;
+        }
+
+        public string request_instantiation (string template_name, bool is_struct,
+                                             GenericArray<ValaType> arg_types,
+                                             GenericArray<string> arg_type_names) {
+            bool has_tp = false;
+            for (int i = 0; i < arg_types.length; i++) {
+                if (arg_types[i] == ValaType.TYPE_PARAM) {
+                    has_tp = true;
+                    break;
+                }
+                var bare = strip_q_str (arg_type_names[i]);
+                unowned var sub = (bare != "") ? find_instantiation_by_mangled (bare) : null;
+                if (sub != null && sub.has_type_param) {
+                    has_tp = true;
+                    break;
+                }
+            }
+
+            if (!has_tp) {
+                var sb = new StringBuilder (template_name);
+                for (int i = 0; i < arg_types.length; i++) {
+                    sb.append ("__");
+                    sb.append (mangle_type_arg (arg_types[i], arg_type_names[i]));
+                }
+                var mangled = sb.str;
+                foreach (unowned var existing in instantiations) {
+                    if (existing.mangled_name == mangled)
+                        return mangled;
+                }
+                var gi = new GenericInstantiation () {
+                    template_name = template_name,
+                    mangled_name = mangled,
+                    is_struct = is_struct,
+                    has_type_param = false
+                };
+                for (int i = 0; i < arg_types.length; i++) {
+                    gi.arg_types.add (arg_types[i]);
+                    gi.arg_type_names.add (arg_type_names[i]);
+                }
+                instantiations.add (gi);
+                return mangled;
+            }
+
+            // Parameterized reference inside a generic template: reuse matching key if identical.
+            foreach (unowned var existing in instantiations) {
+                if (existing.has_type_param && existing.template_name == template_name
+                    && existing.is_struct == is_struct
+                    && existing.arg_types.length == arg_types.length) {
+                    bool same = true;
+                    for (int i = 0; i < arg_types.length; i++) {
+                        if (existing.arg_types[i] != arg_types[i]
+                            || existing.arg_type_names[i] != arg_type_names[i]) {
+                            same = false;
+                            break;
+                        }
+                    }
+                    if (same)
+                        return existing.mangled_name;
+                }
+            }
+            var tpl_mangled = @"$(template_name)__@tpl_$(instantiations.length)";
+            var pgi = new GenericInstantiation () {
+                template_name = template_name,
+                mangled_name = tpl_mangled,
+                is_struct = is_struct,
+                has_type_param = true
+            };
+            for (int i = 0; i < arg_types.length; i++) {
+                pgi.arg_types.add (arg_types[i]);
+                pgi.arg_type_names.add (arg_type_names[i]);
+            }
+            instantiations.add (pgi);
+            return tpl_mangled;
+        }
+
+        private void substitute_type (ref ValaType t, ref string tname,
+                                      GenericArray<string> tparams,
+                                      GenericArray<ValaType> targs,
+                                      GenericArray<string> targ_names) {
+            if (t == ValaType.TYPE_PARAM) {
+                bool is_null = tname.has_suffix ("?");
+                var bare = strip_q_str (tname);
+                for (int i = 0; i < tparams.length; i++) {
+                    if (tparams[i] == bare) {
+                        t = targs[i];
+                        var rname = targ_names[i];
+                        if (is_null && (t == ValaType.STRING || t == ValaType.CLASS
+                                        || t == ValaType.INTERFACE || t == ValaType.ERROR)) {
+                            if (t == ValaType.STRING)
+                                rname = "?";
+                            else if (t == ValaType.ERROR && rname == "")
+                                rname = "?";
+                            else if (!rname.has_suffix ("?"))
+                                rname = rname + "?";
+                        }
+                        tname = rname;
+                        return;
+                    }
+                }
+                return;
+            }
+            if (t == ValaType.ARRAY) {
+                bool arr_null = tname.has_suffix ("?");
+                var bare = strip_q_str (tname);
+                for (int i = 0; i < tparams.length; i++) {
+                    if (tparams[i] == bare) {
+                        var et = targs[i];
+                        var en = targ_names[i];
+                        string sname;
+                        if (et == ValaType.CLASS || et == ValaType.ENUM
+                            || et == ValaType.INTERFACE || et == ValaType.ERROR
+                            || et == ValaType.STRUCT) {
+                            sname = (en != "") ? en : et.label ();
+                        } else if (et == ValaType.STRING && en.has_suffix ("?")) {
+                            sname = "string?";
+                        } else {
+                            sname = et.label ();
+                        }
+                        if (arr_null && !sname.has_suffix ("?"))
+                            sname = sname + "?";
+                        tname = sname;
+                        return;
+                    }
+                }
+                unowned var sub = (bare != "") ? find_instantiation_by_mangled (bare) : null;
+                if (sub != null && sub.has_type_param) {
+                    var ntypes = new GenericArray<ValaType> ();
+                    var nnames = new GenericArray<string> ();
+                    for (int j = 0; j < sub.arg_types.length; j++) {
+                        var at = sub.arg_types[j];
+                        var an = sub.arg_type_names[j];
+                        substitute_type (ref at, ref an, tparams, targs, targ_names);
+                        ntypes.add (at);
+                        nnames.add (an);
+                    }
+                    var rm = request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames);
+                    tname = arr_null ? (rm + "?") : rm;
+                }
+                return;
+            }
+            if ((t == ValaType.CLASS || t == ValaType.STRUCT) && tname != "") {
+                bool is_null = tname.has_suffix ("?");
+                var bare = strip_q_str (tname);
+                unowned var sub = find_instantiation_by_mangled (bare);
+                if (sub != null && sub.has_type_param) {
+                    var ntypes = new GenericArray<ValaType> ();
+                    var nnames = new GenericArray<string> ();
+                    for (int j = 0; j < sub.arg_types.length; j++) {
+                        var at = sub.arg_types[j];
+                        var an = sub.arg_type_names[j];
+                        substitute_type (ref at, ref an, tparams, targs, targ_names);
+                        ntypes.add (at);
+                        nnames.add (an);
+                    }
+                    var rm = request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames);
+                    tname = is_null ? (rm + "?") : rm;
+                }
+            }
+        }
+
+        public Expr clone_expr_plain (Expr e) {
+            return clone_expr (e, new GenericArray<string> (),
+                               new GenericArray<ValaType> (),
+                               new GenericArray<string> ());
+        }
+
+        private Expr clone_expr (Expr e,
+                                 GenericArray<string> tparams,
+                                 GenericArray<ValaType> targs,
+                                 GenericArray<string> targ_names) {
+            if (e is IntLiteral) {
+                var o = (IntLiteral) e;
+                return new IntLiteral () { value = o.value, line = o.line, column = o.column };
+            }
+            if (e is BoolLiteral) {
+                var o = (BoolLiteral) e;
+                return new BoolLiteral () { value = o.value, line = o.line, column = o.column };
+            }
+            if (e is StringLiteral) {
+                var o = (StringLiteral) e;
+                return new StringLiteral () { value = o.value, line = o.line, column = o.column };
+            }
+            if (e is NullLiteral) {
+                return new NullLiteral () { line = e.line, column = e.column };
+            }
+            if (e is TemplateExpr) {
+                var o = (TemplateExpr) e;
+                var n = new TemplateExpr () { line = o.line, column = o.column };
+                foreach (var p in o.parts)
+                    n.parts.add (clone_expr (p, tparams, targs, targ_names));
+                return n;
+            }
+            if (e is MemberAccessExpr) {
+                var o = (MemberAccessExpr) e;
+                return new MemberAccessExpr () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    member = o.member,
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is IndexExpr) {
+                var o = (IndexExpr) e;
+                return new IndexExpr () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    index = clone_expr (o.index, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is ArrayNewExpr) {
+                var o = (ArrayNewExpr) e;
+                var et = o.elem_type;
+                var en = o.elem_type_name;
+                substitute_type (ref et, ref en, tparams, targs, targ_names);
+                return new ArrayNewExpr () {
+                    elem_type = et,
+                    elem_type_name = en,
+                    length_expr = clone_expr (o.length_expr, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is ArrayLiteralExpr) {
+                var o = (ArrayLiteralExpr) e;
+                var et = o.elem_type;
+                var en = o.elem_type_name;
+                substitute_type (ref et, ref en, tparams, targs, targ_names);
+                var n = new ArrayLiteralExpr () {
+                    elem_type = et,
+                    elem_type_name = en,
+                    line = o.line, column = o.column
+                };
+                foreach (var el in o.elements)
+                    n.elements.add (clone_expr (el, tparams, targs, targ_names));
+                return n;
+            }
+            if (e is StructLiteral) {
+                var o = (StructLiteral) e;
+                var st = ValaType.STRUCT;
+                var sn = o.struct_name;
+                substitute_type (ref st, ref sn, tparams, targs, targ_names);
+                var n = new StructLiteral () { struct_name = sn, line = o.line, column = o.column };
+                for (int i = 0; i < o.field_names.length; i++) {
+                    n.field_names.add (o.field_names[i]);
+                    n.field_values.add (clone_expr (o.field_values[i], tparams, targs, targ_names));
+                }
+                return n;
+            }
+            if (e is VarRef) {
+                var o = (VarRef) e;
+                return new VarRef () { name = o.name, line = o.line, column = o.column };
+            }
+            if (e is UnaryExpr) {
+                var o = (UnaryExpr) e;
+                return new UnaryExpr () {
+                    op = o.op,
+                    operand = clone_expr (o.operand, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is BinaryExpr) {
+                var o = (BinaryExpr) e;
+                return new BinaryExpr () {
+                    op = o.op,
+                    left = clone_expr (o.left, tparams, targs, targ_names),
+                    right = clone_expr (o.right, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is CallExpr) {
+                var o = (CallExpr) e;
+                var n = new CallExpr () { callee = o.callee, line = o.line, column = o.column };
+                foreach (var a in o.args)
+                    n.args.add (clone_expr (a, tparams, targs, targ_names));
+                return n;
+            }
+            if (e is ClassNewExpr) {
+                var o = (ClassNewExpr) e;
+                var ct = ValaType.CLASS;
+                var cn = o.class_name;
+                substitute_type (ref ct, ref cn, tparams, targs, targ_names);
+                var n = new ClassNewExpr () {
+                    class_name = cn,
+                    ctor_name = o.ctor_name,
+                    line = o.line, column = o.column
+                };
+                foreach (var a in o.args)
+                    n.args.add (clone_expr (a, tparams, targs, targ_names));
+                for (int i = 0; i < o.init_names.length; i++) {
+                    n.init_names.add (o.init_names[i]);
+                    n.init_values.add (clone_expr (o.init_values[i], tparams, targs, targ_names));
+                }
+                return n;
+            }
+            if (e is MethodCallExpr) {
+                var o = (MethodCallExpr) e;
+                var n = new MethodCallExpr () {
+                    target = (o.target != null) ? clone_expr (o.target, tparams, targs, targ_names) : null,
+                    is_base_call = o.is_base_call,
+                    method_name = o.method_name,
+                    line = o.line, column = o.column
+                };
+                foreach (var a in o.args)
+                    n.args.add (clone_expr (a, tparams, targs, targ_names));
+                return n;
+            }
+            if (e is TypeCheckExpr) {
+                var o = (TypeCheckExpr) e;
+                var tt = o.target_type;
+                var tn = o.target_type_name;
+                substitute_type (ref tt, ref tn, tparams, targs, targ_names);
+                return new TypeCheckExpr () {
+                    op = o.op,
+                    operand = clone_expr (o.operand, tparams, targs, targ_names),
+                    target_type = tt,
+                    target_type_name = tn,
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is SliceExpr) {
+                var o = (SliceExpr) e;
+                return new SliceExpr () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    start = clone_expr (o.start, tparams, targs, targ_names),
+                    end = clone_expr (o.end, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is TernaryExpr) {
+                var o = (TernaryExpr) e;
+                return new TernaryExpr () {
+                    condition = clone_expr (o.condition, tparams, targs, targ_names),
+                    then_expr = clone_expr (o.then_expr, tparams, targs, targ_names),
+                    else_expr = clone_expr (o.else_expr, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is CoalesceExpr) {
+                var o = (CoalesceExpr) e;
+                return new CoalesceExpr () {
+                    left = clone_expr (o.left, tparams, targs, targ_names),
+                    right = clone_expr (o.right, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            var lo = (LambdaExpr) e;
+            var ln = new LambdaExpr () {
+                expr_body = (lo.expr_body != null) ? clone_expr (lo.expr_body, tparams, targs, targ_names) : null,
+                line = lo.line, column = lo.column
+            };
+            foreach (var pn in lo.param_names)
+                ln.param_names.add (pn);
+            foreach (var bs in lo.body)
+                ln.body.add (clone_stmt (bs, tparams, targs, targ_names));
+            return ln;
+        }
+
+        private Statement clone_stmt (Statement s,
+                                      GenericArray<string> tparams,
+                                      GenericArray<ValaType> targs,
+                                      GenericArray<string> targ_names) {
+            if (s is PrintStatement) {
+                var o = (PrintStatement) s;
+                return new PrintStatement () {
+                    value = clone_expr (o.value, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is ExitStatement) {
+                var o = (ExitStatement) s;
+                return new ExitStatement () {
+                    value = clone_expr (o.value, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is ReturnStatement) {
+                var o = (ReturnStatement) s;
+                return new ReturnStatement () {
+                    value = (o.value != null) ? clone_expr (o.value, tparams, targs, targ_names) : null,
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is VarDeclStatement) {
+                var o = (VarDeclStatement) s;
+                var dt = o.decl_type;
+                var dn = o.decl_type_name;
+                if (!o.infer_type)
+                    substitute_type (ref dt, ref dn, tparams, targs, targ_names);
+                return new VarDeclStatement () {
+                    decl_type = dt,
+                    decl_type_name = dn,
+                    infer_type = o.infer_type,
+                    name = o.name,
+                    init = (o.init != null) ? clone_expr (o.init, tparams, targs, targ_names) : null,
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is AssignStatement) {
+                var o = (AssignStatement) s;
+                return new AssignStatement () {
+                    name = o.name,
+                    value = clone_expr (o.value, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is FieldAssignStatement) {
+                var o = (FieldAssignStatement) s;
+                return new FieldAssignStatement () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    field_name = o.field_name,
+                    op = o.op,
+                    value = clone_expr (o.value, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is IndexAssignStatement) {
+                var o = (IndexAssignStatement) s;
+                return new IndexAssignStatement () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    index = clone_expr (o.index, tparams, targs, targ_names),
+                    op = o.op,
+                    value = clone_expr (o.value, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is ExprStatement) {
+                var o = (ExprStatement) s;
+                return new ExprStatement () {
+                    expr = clone_expr (o.expr, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is BlockStatement) {
+                var o = (BlockStatement) s;
+                var n = new BlockStatement () { line = o.line, column = o.column };
+                foreach (var st in o.statements)
+                    n.statements.add (clone_stmt (st, tparams, targs, targ_names));
+                return n;
+            }
+            if (s is IfStatement) {
+                var o = (IfStatement) s;
+                return new IfStatement () {
+                    condition = clone_expr (o.condition, tparams, targs, targ_names),
+                    then_body = clone_stmt (o.then_body, tparams, targs, targ_names),
+                    else_body = (o.else_body != null) ? clone_stmt (o.else_body, tparams, targs, targ_names) : null,
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is WhileStatement) {
+                var o = (WhileStatement) s;
+                return new WhileStatement () {
+                    condition = clone_expr (o.condition, tparams, targs, targ_names),
+                    body = clone_stmt (o.body, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is ForStatement) {
+                var o = (ForStatement) s;
+                return new ForStatement () {
+                    init = (o.init != null) ? clone_stmt (o.init, tparams, targs, targ_names) : null,
+                    condition = (o.condition != null) ? clone_expr (o.condition, tparams, targs, targ_names) : null,
+                    step = (o.step != null) ? clone_stmt (o.step, tparams, targs, targ_names) : null,
+                    body = clone_stmt (o.body, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is BreakStatement)
+                return new BreakStatement () { line = s.line, column = s.column };
+            if (s is ContinueStatement)
+                return new ContinueStatement () { line = s.line, column = s.column };
+            if (s is ForeachStatement) {
+                var o = (ForeachStatement) s;
+                var et = o.elem_type;
+                var en = o.elem_type_name;
+                if (!o.infer_type)
+                    substitute_type (ref et, ref en, tparams, targs, targ_names);
+                return new ForeachStatement () {
+                    elem_type = et,
+                    elem_type_name = en,
+                    infer_type = o.infer_type,
+                    var_name = o.var_name,
+                    collection = clone_expr (o.collection, tparams, targs, targ_names),
+                    body = clone_stmt (o.body, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (s is SwitchStatement) {
+                var o = (SwitchStatement) s;
+                var n = new SwitchStatement () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    has_default = o.has_default,
+                    line = o.line, column = o.column
+                };
+                foreach (var sc in o.cases) {
+                    var nsc = new SwitchCase () { line = sc.line, column = sc.column };
+                    foreach (var v in sc.values)
+                        nsc.values.add (clone_expr (v, tparams, targs, targ_names));
+                    foreach (var bs in sc.body)
+                        nsc.body.add (clone_stmt (bs, tparams, targs, targ_names));
+                    n.cases.add (nsc);
+                }
+                foreach (var ds in o.default_body)
+                    n.default_body.add (clone_stmt (ds, tparams, targs, targ_names));
+                return n;
+            }
+            if (s is ThrowStatement) {
+                var o = (ThrowStatement) s;
+                return new ThrowStatement () {
+                    domain_name = o.domain_name,
+                    code_name = o.code_name,
+                    message = clone_expr (o.message, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            var to = (TryStatement) s;
+            var tn = new TryStatement () {
+                has_finally = to.has_finally,
+                line = to.line, column = to.column
+            };
+            foreach (var st in to.try_body)
+                tn.try_body.add (clone_stmt (st, tparams, targs, targ_names));
+            foreach (var cc in to.catches) {
+                var ncc = new CatchClause () {
+                    domain_name = cc.domain_name,
+                    var_name = cc.var_name,
+                    line = cc.line, column = cc.column
+                };
+                foreach (var bs in cc.body)
+                    ncc.body.add (clone_stmt (bs, tparams, targs, targ_names));
+                tn.catches.add (ncc);
+            }
+            foreach (var fs in to.finally_body)
+                tn.finally_body.add (clone_stmt (fs, tparams, targs, targ_names));
+            return tn;
+        }
+
+        private Function clone_function (Function f, string new_owner,
+                                         GenericArray<string> tparams,
+                                         GenericArray<ValaType> targs,
+                                         GenericArray<string> targ_names) {
+            var rt = f.return_type;
+            var rn = f.return_type_name;
+            substitute_type (ref rt, ref rn, tparams, targs, targ_names);
+            var nf = new Function () {
+                name = f.name,
+                method_name = f.method_name,
+                return_type = rt,
+                return_type_name = rn,
+                is_virtual = f.is_virtual,
+                is_override = f.is_override,
+                is_abstract = f.is_abstract,
+                is_static = f.is_static,
+                is_ctor = f.is_ctor,
+                ctor_subname = f.ctor_subname,
+                is_dtor = f.is_dtor,
+                has_base_call = f.has_base_call,
+                has_this_call = f.has_this_call,
+                this_ctor_subname = f.this_ctor_subname,
+                owner_class = new_owner,
+                has_body = f.has_body,
+                line = f.line, column = f.column
+            };
+            foreach (var p in f.params) {
+                var pt = p.param_type;
+                var pn = p.type_name;
+                substitute_type (ref pt, ref pn, tparams, targs, targ_names);
+                nf.params.add (new Param () {
+                    param_type = pt,
+                    type_name = pn,
+                    name = p.name,
+                    unmanaged = p.unmanaged,
+                    is_ref = p.is_ref,
+                    is_out = p.is_out,
+                    default_value = (p.default_value != null) ? clone_expr (p.default_value, tparams, targs, targ_names) : null,
+                    line = p.line, column = p.column
+                });
+            }
+            foreach (var td in f.throws_domains)
+                nf.throws_domains.add (td);
+            foreach (var ba in f.base_args)
+                nf.base_args.add (clone_expr (ba, tparams, targs, targ_names));
+            foreach (var st in f.body)
+                nf.body.add (clone_stmt (st, tparams, targs, targ_names));
+            return nf;
+        }
+
+        private void synthesize_generic_array (GenericInstantiation inst) {
+            if (find_class (inst.mangled_name) != null)
+                return;
+            var et = inst.arg_types[0];
+            var en = inst.arg_type_names[0];
+            string arr_elem_name;
+            if (et == ValaType.STRING && en.has_suffix ("?"))
+                arr_elem_name = "?";
+            else if (et == ValaType.CLASS || et == ValaType.ENUM || et == ValaType.INTERFACE
+                     || (et == ValaType.ERROR && en != ""))
+                arr_elem_name = en;
+            else
+                arr_elem_name = et.label ();
+
+            var cd = new ClassDecl () {
+                name = inst.mangled_name,
+                is_defined = true
+            };
+            cd.fields.add (new ClassField () {
+                field_type = ValaType.ARRAY,
+                type_name = arr_elem_name,
+                name = "data"
+            });
+            cd.fields.add (new ClassField () {
+                field_type = ValaType.INT,
+                type_name = "",
+                name = "length"
+            });
+
+            var ctor = new Function () {
+                name = "__ctor",
+                return_type = ValaType.VOID,
+                is_ctor = true,
+                owner_class = inst.mangled_name
+            };
+            ctor.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" },
+                field_name = "data",
+                op = "=",
+                value = new ArrayNewExpr () {
+                    elem_type = et,
+                    elem_type_name = en,
+                    length_expr = new IntLiteral () { value = 8 }
+                }
+            });
+            ctor.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" },
+                field_name = "length",
+                op = "=",
+                value = new IntLiteral () { value = 0 }
+            });
+            cd.ctor = ctor;
+
+            var add_m = new Function () {
+                name = "add",
+                return_type = ValaType.VOID,
+                owner_class = inst.mangled_name
+            };
+            add_m.params.add (new Param () {
+                param_type = et,
+                type_name = en,
+                name = "item"
+            });
+            var grow_if = new IfStatement () {
+                condition = new BinaryExpr () {
+                    op = ">=",
+                    left = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    },
+                    right = new MemberAccessExpr () {
+                        target = new MemberAccessExpr () {
+                            target = new VarRef () { name = "this" },
+                            member = "data"
+                        },
+                        member = "length"
+                    }
+                }
+            };
+            var then_blk = new BlockStatement ();
+            then_blk.statements.add (new VarDeclStatement () {
+                infer_type = true,
+                name = "grown",
+                init = new ArrayNewExpr () {
+                    elem_type = et,
+                    elem_type_name = en,
+                    length_expr = new BinaryExpr () {
+                        op = "*",
+                        left = new MemberAccessExpr () {
+                            target = new MemberAccessExpr () {
+                                target = new VarRef () { name = "this" },
+                                member = "data"
+                            },
+                            member = "length"
+                        },
+                        right = new IntLiteral () { value = 2 }
+                    }
+                }
+            });
+            var copy_loop = new ForStatement () {
+                init = new VarDeclStatement () {
+                    decl_type = ValaType.INT,
+                    name = "i",
+                    init = new IntLiteral () { value = 0 }
+                },
+                condition = new BinaryExpr () {
+                    op = "<",
+                    left = new VarRef () { name = "i" },
+                    right = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    }
+                },
+                step = new AssignStatement () {
+                    name = "i",
+                    value = new BinaryExpr () {
+                        op = "+",
+                        left = new VarRef () { name = "i" },
+                        right = new IntLiteral () { value = 1 }
+                    }
+                }
+            };
+            var copy_body = new BlockStatement ();
+            copy_body.statements.add (new IndexAssignStatement () {
+                target = new VarRef () { name = "grown" },
+                index = new VarRef () { name = "i" },
+                op = "=",
+                value = new IndexExpr () {
+                    target = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "data"
+                    },
+                    index = new VarRef () { name = "i" }
+                }
+            });
+            copy_loop.body = copy_body;
+            then_blk.statements.add (copy_loop);
+            then_blk.statements.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" },
+                field_name = "data",
+                op = "=",
+                value = new VarRef () { name = "grown" }
+            });
+            grow_if.then_body = then_blk;
+            add_m.body.add (grow_if);
+            add_m.body.add (new IndexAssignStatement () {
+                target = new MemberAccessExpr () {
+                    target = new VarRef () { name = "this" },
+                    member = "data"
+                },
+                index = new MemberAccessExpr () {
+                    target = new VarRef () { name = "this" },
+                    member = "length"
+                },
+                op = "=",
+                value = new VarRef () { name = "item" }
+            });
+            add_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" },
+                field_name = "length",
+                op = "=",
+                value = new BinaryExpr () {
+                    op = "+",
+                    left = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    },
+                    right = new IntLiteral () { value = 1 }
+                }
+            });
+            cd.methods.add (add_m);
+            classes.add (cd);
+        }
+
+        public void monomorphize_all () {
+            for (int ii = 0; ii < instantiations.length; ii++) {
+                var inst = instantiations[ii];
+                if (inst.has_type_param)
+                    continue;
+                if (inst.template_name == "GenericArray") {
+                    if (inst.arg_types.length == 1)
+                        synthesize_generic_array (inst);
+                    continue;
+                }
+                if (inst.is_struct) {
+                    unowned var tmpl_sd = find_struct (inst.template_name);
+                    if (tmpl_sd == null || tmpl_sd.type_params.length != inst.arg_types.length)
+                        continue;
+                    if (find_struct (inst.mangled_name) != null)
+                        continue;
+                    var nsd = new StructDecl () {
+                        name = inst.mangled_name,
+                        is_defined = tmpl_sd.is_defined,
+                        line = tmpl_sd.line,
+                        column = tmpl_sd.column
+                    };
+                    foreach (var fld in tmpl_sd.fields) {
+                        var ft = fld.field_type;
+                        var fn = fld.type_name;
+                        substitute_type (ref ft, ref fn, tmpl_sd.type_params, inst.arg_types, inst.arg_type_names);
+                        nsd.fields.add (new StructField () {
+                            field_type = ft,
+                            type_name = fn,
+                            name = fld.name,
+                            line = fld.line,
+                            column = fld.column
+                        });
+                    }
+                    foreach (var m in tmpl_sd.methods)
+                        nsd.methods.add (clone_function (m, inst.mangled_name, tmpl_sd.type_params, inst.arg_types, inst.arg_type_names));
+                    structs.add (nsd);
+                } else {
+                    unowned var tmpl_cd = find_class (inst.template_name);
+                    if (tmpl_cd == null || tmpl_cd.type_params.length != inst.arg_types.length)
+                        continue;
+                    if (find_class (inst.mangled_name) != null)
+                        continue;
+                    var ncd = new ClassDecl () {
+                        name = inst.mangled_name,
+                        base_name = tmpl_cd.base_name,
+                        is_abstract = tmpl_cd.is_abstract,
+                        is_defined = tmpl_cd.is_defined,
+                        line = tmpl_cd.line,
+                        column = tmpl_cd.column
+                    };
+                    foreach (var iname in tmpl_cd.iface_names)
+                        ncd.iface_names.add (iname);
+                    foreach (var fld in tmpl_cd.fields) {
+                        var ft = fld.field_type;
+                        var fn = fld.type_name;
+                        substitute_type (ref ft, ref fn, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names);
+                        ncd.fields.add (new ClassField () {
+                            field_type = ft,
+                            type_name = fn,
+                            name = fld.name,
+                            init = (fld.init != null) ? clone_expr (fld.init, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names) : null,
+                            line = fld.line,
+                            column = fld.column
+                        });
+                    }
+                    foreach (var m in tmpl_cd.methods)
+                        ncd.methods.add (clone_function (m, inst.mangled_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names));
+                    if (tmpl_cd.ctor != null)
+                        ncd.ctor = clone_function (tmpl_cd.ctor, inst.mangled_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names);
+                    foreach (var nc in tmpl_cd.named_ctors)
+                        ncd.named_ctors.add (clone_function (nc, inst.mangled_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names));
+                    if (tmpl_cd.dtor != null)
+                        ncd.dtor = clone_function (tmpl_cd.dtor, inst.mangled_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names);
+                    classes.add (ncd);
+                }
+            }
         }
     }
 

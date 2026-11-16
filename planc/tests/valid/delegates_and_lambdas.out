@@ -1,0 +1,9 @@
+free=12
+static=25
+bound=12
+nc1=14
+nc2=8
+fmt1=cap:a=123
+fmt2=pre:H1:b=17
+fmt1_re=pre:H1:c=11
+self=10

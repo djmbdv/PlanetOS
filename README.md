@@ -139,36 +139,43 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 146 cases, 146 pass
+./planc/tests/run.sh   # 155 cases, 155 pass
 ```
 
 The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/
 `ssize_t`/`char`/`uchar`/`bool`/`string`/`enum`/`errordomain`/`struct`/`T[]`/
-`class`/`Error`/`T?`/`void` functions and methods (`static`, `virtual`,
-`override`, `abstract`, plus `enum`/`struct` methods) with value, `out`, and
-`ref` parameters (any number; beyond the sixth they travel on the stack),
-`const` declarations, local `var` type inference, 64-bit integer (hex `0x`,
-binary `0b`, char `'x'`, underscore/suffix literals) and bitwise expressions,
-comparisons, short-circuit logic, ternary `?:`, lazy null-coalescing `??`
+`class`/`interface`/`delegate`/`Error`/`T?`/`void` functions and methods
+(`static`, `virtual`, `override`, `abstract`, plus `enum`/`struct` methods) with
+value, `out`, and `ref` parameters (any number; beyond the sixth they travel on
+the stack) and default parameter values, `const` declarations, local `var` type
+inference, 64-bit integer (hex `0x`, binary `0b`, char `'x'`, underscore/suffix
+literals), bitwise expressions, and scalar integer casts (`(uint8)`, `(int8)`,
+etc.), comparisons, short-circuit logic, ternary `?:`, lazy null-coalescing `??`
 (`T? ?? T` -> non-null `T`), guarded arena + size-class heap allocation,
 compiler-inserted atomic reference counting (leak-checkable via
-`--check-leaks`), single-inheritance `class` hierarchies with `.rodata`
-vtables, `: base(...)` constructor chaining, inline and custom/`virtual`/
-`override` properties (`{ get; set; default = ...; }`), `new Cls() { prop =
-expr }` object initializers, `~Destructor()` hierarchical cleanup,
-`throws`/`throw`/`try`/`catch`/`finally` checked error propagation via
-`(rax, rdx)`, `is`/`as`/checked casts, Option B null safety (compile-time `T` +
-flow narrowing + `--no-null-check` opt-out on unnarrowed `T?`), dynamic arrays
-(`new T[n]`, array literals, `.length`, bounds-checked `arr[i]` reads/writes,
-retained `foreach`), `string` literals/variables/globals with 16-byte ABI
-headers, concatenation (`s1 + s2`), bounds-checked slicing (`s[start:end]`),
-value-producing `@"..."` templates, $O(1)$ `.length`, bounds-checked `s[i]`
-(`--no-bounds-check`), `==`/`!=` string and reference comparisons, `if`/`else`,
-`switch`/`case`/`default` (VL-14), `while`, `for`/`break`/`continue`,
-`+=`/`-=`/`++`/`--`, value-semantics `struct`s, `owned`/`unowned` syntax hints,
-`namespace`/`using` blocks, cross-file forward types, multi-file CLI inputs,
-global variables with `.data`/`.bss` (`R_X86_64_64` relocations for string
-globals), and `print` / `exit` builtins.
+`--check-leaks`), compile-time monomorphized generics (`Box<T>`, `Pair<K, V>`,
+`struct Span<T>`) plus built-in `GenericArray<T>` (`.add`, `.length`, `[i]`,
+`foreach`), single-inheritance `class` hierarchies with `.rodata` vtables and
+`interface` `.rodata` `itable` dispatch (VL-01, prerequisite interfaces, default
+method bodies, `IFoo[]`), `: base(...)` and `: this(...)` / `: this.named(...)`
+constructor chaining with named constructors (`new Cls.named(...)`), inline and
+custom/`virtual`/`override` properties (`{ get; set; default = ...; }`), `new
+Cls() { prop = expr }` object initializers, `~Destructor()` hierarchical
+cleanup, 16-byte `{ #code, #env }` `delegate`s and lambdas/capturing closures
+with ARC-managed `#env`, `throws`/`throw`/`try`/`catch`/`finally` checked error
+propagation via `(rax, rdx)`, `is`/`as`/checked casts, Option B null safety
+(compile-time `T` + flow narrowing + `--no-null-check` opt-out on unnarrowed
+`T?`), dynamic arrays (`new T[n]`, array literals, `.length`, bounds-checked
+`arr[i]` reads/writes, retained `foreach`), `main(string[] args)` startup build,
+`string` literals/variables/globals with 16-byte ABI headers, concatenation
+(`s1 + s2`), bounds-checked slicing (`s[start:end]`), value-producing `@"..."`
+templates, $O(1)$ `.length`, bounds-checked `s[i]` (`--no-bounds-check`),
+`==`/`!=` string and reference comparisons, `if`/`else`, `switch`/`case`/
+`default` (VL-14), `while`, `for`/`break`/`continue`, `+=`/`-=`/`++`/`--`,
+value-semantics `struct`s, `owned`/`unowned` syntax hints, `namespace`/`using`
+blocks, cross-file forward types, multi-file CLI inputs, global variables with
+`.data`/`.bss` (`R_X86_64_64` relocations for string globals), and `print` /
+`exit` builtins.
 The calling convention is the project ABI (§3.1 of [01-architecture.md](docs/01-architecture.md)):
 arguments in `rdi`–`r9` plus stack, return in `rax` (plus `Error*` in `rdx`
 for `throws` functions), `rbp` frame pointer, 16-byte stack alignment at every
@@ -177,7 +184,7 @@ call, no red zone.
 Produced binaries have three `PT_LOAD` segments (R|X, R and RW — never RWX,
 and never one page mapped with two permission sets), an empty `nm -u`, a
 `.symtab` that makes `objdump -d` and `gdb` work, and byte-identical output
-across runs. See [docs/planc/slice-8.md](docs/planc/slice-8.md).
+across runs. See [docs/planc/slice-9.md](docs/planc/slice-9.md).
 
 ## 6. Changes from the previous revision
 

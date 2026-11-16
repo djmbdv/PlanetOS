@@ -1,0 +1,10 @@
+d=OK:20:btn-badge
+c=click:OK:9
+i=0 name=OK badge=btn-badge
+clickable=click:OK:0
+btn_kind=button
+i=1 name=Go badge=custom-badge
+clickable=click:Go:1
+btn_kind=custom
+i=2 name=Info badge=named
+n2=OK
