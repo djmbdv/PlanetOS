@@ -1606,7 +1606,9 @@ namespace Planc {
                 var r = (ReturnStatement) s;
                 if (r.value != null)
                     da_expr (r.value);
-            } else if (s is ThrowStatement || s is BreakStatement || s is ContinueStatement) {
+            } else if (s is ThrowStatement) {
+                da_expr (((ThrowStatement) s).message);
+            } else if (s is BreakStatement || s is ContinueStatement) {
                 // Exits unconditionally; nothing to track.
             } else if (s is VarDeclStatement) {
                 var d = (VarDeclStatement) s;
@@ -1646,31 +1648,30 @@ namespace Planc {
                 var pre_len = da_names.length;
                 da_expr (i.condition);
                 bool then_exits = stmt_always_exits (i.then_body);
-                GenericArray<int>? then_state = null;
-                if (!then_exits) {
-                    var mark = da_names.length;
-                    da_stmt (i.then_body);
-                    da_scope_exit (mark);
-                    then_state = da_state_copy ();
-                    da_state_restore (pre);
-                }
+                var mark_then = da_names.length;
+                da_stmt (i.then_body);
+                da_scope_exit (mark_then);
+                GenericArray<int>? then_state = then_exits ? null : da_state_copy ();
+                da_state_restore (pre);
+
+                bool else_exits = (i.else_body != null) && stmt_always_exits (i.else_body);
                 GenericArray<int>? else_state = null;
-                if (i.else_body != null && !stmt_always_exits (i.else_body)) {
-                    var mark = da_names.length;
+                if (i.else_body != null) {
+                    var mark_else = da_names.length;
                     da_stmt (i.else_body);
-                    da_scope_exit (mark);
-                    else_state = da_state_copy ();
+                    da_scope_exit (mark_else);
+                    if (!else_exits)
+                        else_state = da_state_copy ();
                     da_state_restore (pre);
                 }
-                // Merge at the join point: a branch that always exits (or an
-                // absent else) contributes nothing; a variable survives only
-                // if both live branches assigned it.
-                if (then_exits && else_state == null)
+                // Merge at the join point: a branch that always exits
+                // contributes nothing; an absent else falls through with `pre`.
+                if (then_state == null && else_state == null)
                     da_state_restore (pre);
-                else if (then_exits)
+                else if (then_state == null)
                     da_state_restore (else_state);
                 else if (else_state == null)
-                    da_state_restore (pre);
+                    da_state_restore (else_exits ? then_state : pre);
                 else {
                     for (int k = 0; k < pre_len; k++)
                         da_flags[k] = (then_state[k] != 0 && else_state[k] != 0) ? 1 : 0;
