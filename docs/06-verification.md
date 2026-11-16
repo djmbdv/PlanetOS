@@ -114,6 +114,7 @@ serial output against `<case>.expect`.
 | `errors` | XFS stays read-only, a failed `mkdir` does not shadow a disk file, and the syscall guard rejects bad pointers (`sysguard:ok=1`) |
 | `compiler` | `planc.elf` compiles and runs programs inside the guest |
 | `objects` | `gobject_demo` and `gmodule_demo` report 19/19 and 14/14 |
+| `mainloop` | `mainloop_demo` reports 17/17 (idle before timeouts, source removal, `Application.run`) |
 
 Assertions: `text` (substring, in order), `=text` (whole line), `!text`
 (absent) and `~regex`.

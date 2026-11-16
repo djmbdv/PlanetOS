@@ -3,6 +3,7 @@
 // FileInputStream, FileOutputStream, MemoryInputStream, MemoryOutputStream,
 // DataInputStream, DataOutputStream, Cancellable, IOError, and Application.
 
+using GLib;
 using Planet;
 
 namespace Gio {
@@ -826,6 +827,7 @@ namespace Gio {
         private string? app_id;
         private ApplicationFlags flags;
         private int hold_count = 0;
+        private MainLoop? loop = null;
 
         public signal void activate ();
 
@@ -849,10 +851,20 @@ namespace Gio {
         public void release () {
             if (hold_count > 0)
                 hold_count = hold_count - 1;
+            if (hold_count == 0) {
+                var current = loop;
+                if (current != null)
+                    current.quit ();
+            }
         }
 
         public int run (string[] args) {
             activate ();
+            if (hold_count <= 0)
+                return 0;
+            loop = new MainLoop ();
+            loop.run ();
+            loop = null;
             return 0;
         }
     }

@@ -130,6 +130,7 @@ problems** and **creates six**:
 | [docs/planc/slice-34.md](docs/planc/slice-34.md) | **Implemented slice 34**: directories — kernel path resolution ([kernel/vfs.vala](kernel/vfs.vala)), RAMFS directory entries, `SYS_MKDIR`/`SYS_READDIR(path)`/`SYS_STAT`, `mkdir`/`cd`/`ls [dir]` and Gio `make_directory`/per-directory enumeration |
 | [docs/planc/slice-35.md](docs/planc/slice-35.md) | **Implemented slice 35**: asm audit — 35 duplicated `int 0x80` trampolines replaced by [stdlib/planet_sys.vala](stdlib/planet_sys.vala) (3 primitives + typed wrappers), shell without raw memory, and kernel validation of every syscall pointer (`sysguard:ok=1`) |
 | [docs/planc/slice-36.md](docs/planc/slice-36.md) | **Implemented slice 36**: Cairo/Gdk split ([stdlib/cairo_compat.vala](stdlib/cairo_compat.vala), [stdlib/gdk_compat.vala](stdlib/gdk_compat.vala)), [GObject](stdlib/gobject_compat.vala) `Type`/`Value` layer and [GModule](stdlib/gmodule_compat.vala) with a static module registry |
+| [docs/planc/slice-37.md](docs/planc/slice-37.md) | **Implemented slice 37**: GLib main loop — `MainContext`, `idle_add`/`timeout_add`/`source_remove`, `MainLoop`, and a `Gio.Application.run()` that drives it while `hold()` is active |
 
 ## 5. State of the measurements
 

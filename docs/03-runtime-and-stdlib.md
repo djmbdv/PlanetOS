@@ -274,7 +274,7 @@ The `Planet.Pruebas` package is not a luxury: without it, verification inside th
 | Package / file | Content |
 |---|---|
 | `Planet.Sys` ([stdlib/planet_sys.vala](../../stdlib/planet_sys.vala)) | the only userland `int 0x80` trampoline plus typed wrappers for files, directories, processes, memory and console, validated before the call |
-| `GLib` ([stdlib/glib_compat.vala](../../stdlib/glib_compat.vala)) | `StringBuilder`, `FileUtils`, `Str`, `Environment` and `Gee.ArrayList` |
+| `GLib` ([stdlib/glib_compat.vala](../../stdlib/glib_compat.vala)) | `StringBuilder`, `FileUtils`, `Str`, `Environment`, `Gee.ArrayList` and the `MainContext`/`MainLoop` event loop |
 | `Gio` ([stdlib/gio_compat.vala](../../stdlib/gio_compat.vala)) | `File`, `FileInfo`, `FileEnumerator`, streams, `Cancellable`, `Application` |
 | `Cairo` ([stdlib/cairo_compat.vala](../../stdlib/cairo_compat.vala)) | surfaces, context and pixel helpers |
 | `Gdk` ([stdlib/gdk_compat.vala](../../stdlib/gdk_compat.vala)) | events, window, framebuffer blits and mouse/keyboard input |
