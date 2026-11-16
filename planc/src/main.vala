@@ -20,6 +20,7 @@ namespace Planc {
         var bounds_check = true;
         var null_check = true;
         var check_leaks = false;
+        var freestanding = false;
 
         for (int i = 1; i < args.length; i++) {
             var a = args[i];
@@ -37,6 +38,8 @@ namespace Planc {
                 null_check = false;
             } else if (a == "--check-leaks") {
                 check_leaks = true;
+            } else if (a == "--freestanding") {
+                freestanding = true;
             } else if (a == "-h" || a == "--help") {
                 Host.println (USAGE);
                 return 0;
@@ -89,6 +92,7 @@ namespace Planc {
         codegen.bounds_check = bounds_check;
         codegen.null_check = null_check;
         codegen.check_leaks = check_leaks;
+        codegen.freestanding = freestanding;
         try {
             codegen.generate (program);
         } catch (SemanticError e) {
@@ -208,8 +212,17 @@ namespace Planc {
                      out debug_line, out debug_abbrev, out debug_info);
         Elf.set_dwarf_sizes (ref layout, debug_line.length, debug_abbrev.length, debug_info.length);
 
+        string entry_sym = "_start";
+        if (freestanding) {
+            foreach (var sym in codegen.symbols) {
+                if (sym.name == "_kstart32") {
+                    entry_sym = "_kstart32";
+                    break;
+                }
+            }
+        }
         var image = Elf.build (text, rodata, data, codegen.symbols, layout,
-                               debug_line, debug_abbrev, debug_info);
+                               debug_line, debug_abbrev, debug_info, entry_sym);
 
         try {
             Host.write_file (output_path, image);

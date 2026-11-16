@@ -182,12 +182,13 @@ namespace Planc {
 
         public static uint8[] build (uint8[] text, uint8[] rodata, uint8[] data,
                                      GenericArray<Symbol> symbols, Layout l,
-                                     uint8[] debug_line, uint8[] debug_abbrev, uint8[] debug_info) {
+                                     uint8[] debug_line, uint8[] debug_abbrev, uint8[] debug_info,
+                                     string entry_name = "_start") {
             var f = new Buffer (4096);
 
             // _start, not main: the stub aligns rsp, calls main and exits
             // with its return value, so main obeys the standard convention.
-            write_header (f, l, entry_for (l, symbols, "_start"));
+            write_header (f, l, entry_for (l, symbols, entry_name));
 
             // Segment 1: R|X, covers headers and .text.
             write_program_header (f, 5 /* PF_R|PF_X */,
@@ -207,6 +208,14 @@ namespace Planc {
             expect_length (f, l.text_offset, "program headers");
 
             f.bytes (text);
+            if (entry_name == "_kstart32" && text.length >= 40
+                && text[8] == 0x02 && text[9] == 0xB0 && text[10] == 0xAD && text[11] == 0x1B) {
+                // Patch Multiboot1 load_end_addr (+28) and bss_end_addr (+32) in .text
+                uint32 load_end = (uint32) (l.data_vaddr + (uint64) l.data_size);
+                uint32 bss_end = (uint32) (l.data_vaddr + (uint64) l.data_size + (uint64) l.bss_size);
+                f.patch_u32le (l.text_offset + 28, load_end);
+                f.patch_u32le (l.text_offset + 32, bss_end);
+            }
             expect_length (f, l.text_offset + l.text_size, ".text");
 
             f.zeroes (l.rodata_offset - f.length);

@@ -1,0 +1,130 @@
+// Multiboot1 (a.out kludge) + 32-bit to 64-bit Long Mode bootstrapper for PlanetOS.
+// Placed first in .text (0x4000E8) by `planc --freestanding`.
+
+[AsmBody(@"
+    # Jump over 32-byte Multiboot1 header (2-byte jmp + 6 nop -> 4-byte aligned at 0x4000F0)
+    .byte 0xEB, 0x26, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90
+    # Multiboot1 header at 0x4000F0 (32 bytes: 0x4000F0..0x40010F)
+    .long 0x1BADB002
+    .long 0x00010000
+    .long 0xE4514FFE
+    .long 0x004000F0
+    .long 0x00400000
+    .long 0x00000000
+    .long 0x00000000
+    .long 0x00400110
+
+    # _mb_entry32 at 0x400110:
+    cli
+    # Set 32-bit stack pointer ESP = 0x200000
+    .byte 0xBC
+    .long 0x00200000
+    # Zero 12 KiB page tables at 0x100000 (PML4, PDPT, PD)
+    .byte 0xBF
+    .long 0x00100000
+    .byte 0x31, 0xC0
+    .byte 0xB9
+    .long 3072
+    .byte 0xF3, 0xAB
+
+    # PML4[0] = 0x101003, PDPT[0] = 0x102003
+    .byte 0xC7, 0x05
+    .long 0x00100000
+    .long 0x00101003
+    .byte 0xC7, 0x05
+    .long 0x00101000
+    .long 0x00102003
+
+    # Identity-map 512 x 2 MiB pages (1 GiB) in PD at 0x102000
+    .byte 0xBF
+    .long 0x00102000
+    .byte 0xB8
+    .long 0x00000083
+    .byte 0xB9
+    .long 512
+_pd_loop32:
+    .byte 0x89, 0x07
+    .byte 0x05
+    .long 0x00200000
+    .byte 0x83, 0xC7, 0x08
+    .byte 0x49
+    .byte 0x75, 0xF3
+
+    # Load CR3 = 0x100000
+    .byte 0xB8
+    .long 0x00100000
+    .byte 0x0F, 0x22, 0xD8
+
+    # Enable CR4.PAE (bit 5)
+    .byte 0x0F, 0x20, 0xE0
+    .byte 0x83, 0xC8, 0x20
+    .byte 0x0F, 0x22, 0xE0
+
+    # Enable EFER.LME (MSR 0xC0000080, bit 8)
+    .byte 0xB9
+    .long 0xC0000080
+    .byte 0x0F, 0x32
+    .byte 0x0D
+    .long 0x00000100
+    .byte 0x0F, 0x30
+
+    # Enable CR0.PG | CR0.PE
+    .byte 0x0F, 0x20, 0xC0
+    .byte 0x0D
+    .long 0x80000001
+    .byte 0x0F, 0x22, 0xC0
+
+    # Copy 24-byte 64-bit GDT + 6-byte GDTR to 0x104000
+    .byte 0xC7, 0x05
+    .long 0x00104000
+    .long 0x00000000
+    .byte 0xC7, 0x05
+    .long 0x00104004
+    .long 0x00000000
+    .byte 0xC7, 0x05
+    .long 0x00104008
+    .long 0x0000FFFF
+    .byte 0xC7, 0x05
+    .long 0x0010400C
+    .long 0x00AF9A00
+    .byte 0xC7, 0x05
+    .long 0x00104010
+    .long 0x0000FFFF
+    .byte 0xC7, 0x05
+    .long 0x00104014
+    .long 0x00AF9200
+    .byte 0x66, 0xC7, 0x05
+    .long 0x00104020
+    .word 23
+    .byte 0xC7, 0x05
+    .long 0x00104022
+    .long 0x00104000
+    .byte 0x0F, 0x01, 0x15
+    .long 0x00104020
+
+    # Compute _kstart64 address and far jump 0x08:_kstart64
+    .byte 0xE8, 0x00, 0x00, 0x00, 0x00
+    .byte 0x58
+    .byte 0x83, 0xC0, 0x18
+    .byte 0xA3
+    .long 0x00104030
+    .byte 0x66, 0xC7, 0x05
+    .long 0x00104034
+    .word 0x0008
+    .byte 0xFF, 0x2D
+    .long 0x00104030
+
+_kstart64:
+    mov $0x10, %ax
+    mov %ax, %ds
+    mov %ax, %es
+    mov %ax, %ss
+    mov $0x200000, %rsp
+    xor %rbp, %rbp
+    call main
+    cli
+_k64_halt:
+    hlt
+    jmp _k64_halt
+")]
+public extern void _kstart32 ();

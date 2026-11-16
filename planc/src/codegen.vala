@@ -29,6 +29,7 @@ namespace Planc {
         public bool bounds_check { get; set; default = true; }
         public bool null_check { get; set; default = true; }
         public bool check_leaks { get; set; default = false; }
+        public bool freestanding { get; set; default = false; }
 
         private const uint32 SYS_EXIT = 60;
 
@@ -54,6 +55,7 @@ namespace Planc {
         private int alloc_bss_offset = -1;
         private int async_bss_offset = -1;
         private int sig_bss_offset = -1;
+        private int freestanding_heap_off = -1;
         private bool in_async_resume = false;
         private GenericArray<Label> async_resume_labels;
         private GenericArray<string> non_null_vars;
@@ -216,6 +218,8 @@ namespace Planc {
                 alloc_bss_offset = emitter.add_bss_bytes (104);
                 async_bss_offset = emitter.add_bss_bytes (64);
                 sig_bss_offset = emitter.add_bss_bytes (8);
+                if (freestanding)
+                    freestanding_heap_off = emitter.add_bss_bytes (262144);
                 need_alloc = true;
                 need_ref = true;
                 need_unref = true;
@@ -235,8 +239,17 @@ namespace Planc {
 
             register_globals ();
 
-            for (int fi = 0; fi < program.functions.length; fi++)
+            if (freestanding) {
+                for (int fi = 0; fi < program.functions.length; fi++) {
+                    if (program.functions[fi].name == "_kstart32")
+                        generate_function (program.functions[fi]);
+                }
+            }
+            for (int fi = 0; fi < program.functions.length; fi++) {
+                if (freestanding && program.functions[fi].name == "_kstart32")
+                    continue;
                 generate_function (program.functions[fi]);
+            }
 
             emit_start ();
             emit_runtime ();
@@ -1223,7 +1236,7 @@ namespace Planc {
 
             if (need_write_str) {
                 var start = emitter.here ();
-                emitter.emit_rt_write_str ();
+                emitter.emit_rt_write_str (freestanding);
                 symbols.add (new Symbol ("__planc_write_str", start, emitter.here () - start));
             }
             if (need_str_eq) {
@@ -1233,12 +1246,12 @@ namespace Planc {
             }
             if (need_write_int) {
                 var start = emitter.here ();
-                emitter.emit_rt_write_int ();
+                emitter.emit_rt_write_int (freestanding);
                 symbols.add (new Symbol ("__planc_write_int", start, emitter.here () - start));
             }
             if (need_alloc || need_ref || need_unref) {
                 var start_alloc = emitter.here ();
-                emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label);
+                emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label, freestanding_heap_off);
                 symbols.add (new Symbol ("__planc_alloc", start_alloc, emitter.here () - start_alloc));
 
                 var start_ref = emitter.here ();
@@ -1356,7 +1369,7 @@ namespace Planc {
             var msg_off = emitter.add_string (msg);
             var start = emitter.here ();
             emitter.bind (lbl);
-            emitter.emit_rt_panic (msg_off, msg.length);
+            emitter.emit_rt_panic (msg_off, msg.length, freestanding);
             symbols.add (new Symbol (sym_name, start, emitter.here () - start));
         }
 
@@ -1385,6 +1398,13 @@ namespace Planc {
                 emitter.code.u8 (0x4C); emitter.code.u8 (0x89); emitter.code.u8 (0xEF);
             }
             emitter.call_rel32 ("main");
+
+            if (freestanding) {
+                emitter.code.u8 (0xFA); emitter.code.u8 (0xF4); // cli; hlt
+                emitter.code.u8 (0xEB); emitter.code.u8 (0xFD); // jmp -3
+                symbols.add (new Symbol ("_start", start, emitter.here () - start));
+                return;
+            }
 
             if (program_uses_heap) {
                 emitter.mov_r12d_eax ();
@@ -6418,9 +6438,14 @@ namespace Planc {
                 cleanup_expr_temps (e.value);
                 emitter.pop_rax ();
                 push_depth--;
-                emitter.mov_edi_eax ();
-                emitter.mov_eax (SYS_EXIT);
-                emitter.syscall ();
+                if (freestanding) {
+                    emitter.code.u8 (0xFA); emitter.code.u8 (0xF4); // cli; hlt
+                    emitter.code.u8 (0xEB); emitter.code.u8 (0xFD); // jmp -3
+                } else {
+                    emitter.mov_edi_eax ();
+                    emitter.mov_eax (SYS_EXIT);
+                    emitter.syscall ();
+                }
             } else if (s is ReturnStatement) {
                 var r = (ReturnStatement) s;
                 if (finally_labels.length > 0) {

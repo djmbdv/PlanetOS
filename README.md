@@ -110,6 +110,7 @@ problems** and **creates six**:
 | [docs/planc/slice-14.md](docs/planc/slice-14.md) | **Implemented slice 14**: `signal`, `.connect()`, `.disconnect()`, default handlers, and ARC destructor cleanup |
 | [docs/planc/slice-15.md](docs/planc/slice-15.md) | **Implemented slice 15**: `Channel<T>` (`send` / `yield recv` / `close`) and `Mutex` over the M:N `async` scheduler |
 | [docs/planc/slice-16.md](docs/planc/slice-16.md) | **Implemented slice 16**: DWARF v4 debug info (`.debug_line`, `.debug_abbrev`, `.debug_info`) for `gdb` and self-hosted `plandbg` |
+| [docs/planc/slice-17.md](docs/planc/slice-17.md) | **Implemented slice 17**: `--freestanding` mode, `planetrt` (Multiboot1 + COM1 serial + static `.bss` heap), and `kernel/main.vala` booting x86-64 Long Mode in QEMU |
 
 ## 5. State of the measurements
 
@@ -145,9 +146,9 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 173 cases, 173 pass
+./planc/tests/run.sh   # 174 cases, 174 pass
 ./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3),
-                       # 173/173 under the self-hosted compiler
+                       # 174/174 under the self-hosted compiler
 ```
 
 The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/

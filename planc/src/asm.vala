@@ -806,6 +806,32 @@ namespace Planc {
 
             // 2-operand instructions (AT&T: op0 = src, op1 = dst)
             if (ops.length == 2 && op0 != null && op1 != null) {
+                if (stem == "out") {
+                    if (op0.kind == AsmOpKind.REG && op0.reg == 0 && op1.kind == AsmOpKind.REG && op1.reg == 2 && op1.width == 16) {
+                        if (op0.width == 8) { emitter.code.u8 (0xEE); return; }
+                        if (op0.width == 16) { emitter.code.u8 (0x66); emitter.code.u8 (0xEF); return; }
+                        if (op0.width == 32) { emitter.code.u8 (0xEF); return; }
+                    }
+                    if (op0.kind == AsmOpKind.REG && op0.reg == 0 && op1.kind == AsmOpKind.IMM) {
+                        if (op0.width == 8) { emitter.code.u8 (0xE6); emitter.code.u8 ((uint8) op1.imm); return; }
+                        if (op0.width == 32) { emitter.code.u8 (0xE7); emitter.code.u8 ((uint8) op1.imm); return; }
+                    }
+                    fail (rel_line, "invalid operands for 'out'");
+                    return;
+                }
+                if (stem == "in") {
+                    if (op0.kind == AsmOpKind.REG && op0.reg == 2 && op0.width == 16 && op1.kind == AsmOpKind.REG && op1.reg == 0) {
+                        if (op1.width == 8) { emitter.code.u8 (0xEC); return; }
+                        if (op1.width == 16) { emitter.code.u8 (0x66); emitter.code.u8 (0xED); return; }
+                        if (op1.width == 32) { emitter.code.u8 (0xED); return; }
+                    }
+                    if (op0.kind == AsmOpKind.IMM && op1.kind == AsmOpKind.REG && op1.reg == 0) {
+                        if (op1.width == 8) { emitter.code.u8 (0xE4); emitter.code.u8 ((uint8) op0.imm); return; }
+                        if (op1.width == 32) { emitter.code.u8 (0xE5); emitter.code.u8 ((uint8) op0.imm); return; }
+                    }
+                    fail (rel_line, "invalid operands for 'in'");
+                    return;
+                }
                 if (stem == "mov") {
                     if (op0.kind == AsmOpKind.CREG && op1.kind == AsmOpKind.REG) {
                         emit_rex (false, op0.reg, -1, op1.reg);

@@ -996,7 +996,18 @@ namespace Planc {
         // ------------------------------------------------------------------
 
         // void __planc_write_str(string* rdi) -> writes bytes to stdout in O(1).
-        public void emit_rt_write_str () {
+        public void emit_rt_write_str (bool freestanding = false) {
+            if (freestanding) {
+                push_rbp ();
+                mov_rsp_to_rbp ();
+                // mov rsi, [rdi + 8]; lea rdi, [rdi + 16]
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x77); code.u8 (0x08);
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7F); code.u8 (0x10);
+                call_rel32 ("__planet_console_write");
+                leave ();
+                ret ();
+                return;
+            }
             // mov rdx, [rdi + 8]              48 8B 57 08
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x57); code.u8 (0x08);
             // lea rsi, [rdi + 16]             48 8D 77 10
@@ -1051,7 +1062,16 @@ namespace Planc {
         }
 
         // Writes panic message to stderr and exits 134.
-        public void emit_rt_panic (int msg_rodata_offset, int msg_len) {
+        public void emit_rt_panic (int msg_rodata_offset, int msg_len, bool freestanding = false) {
+            if (freestanding) {
+                // lea rdi, [rip + msg_rodata_offset + 16]
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x3D);
+                record_rip (msg_rodata_offset + 16, PatchSpace.RODATA);
+                mov_esi_imm ((uint32) msg_len);
+                call_rel32 ("__planet_panic");
+                code.u8 (0xFA); code.u8 (0xF4); code.u8 (0xEB); code.u8 (0xFD); // cli; hlt; jmp -3
+                return;
+            }
             mov_eax (1);
             mov_edi (2);
             lea_rsi_rip (msg_rodata_offset + 16);
@@ -1106,11 +1126,21 @@ namespace Planc {
         }
 
         // void __planc_write_int(int64 rdi) -> formats signed decimal to stdout.
-        public void emit_rt_write_int () {
+        public void emit_rt_write_int (bool freestanding = false) {
             push_rbp ();
             mov_rsp_to_rbp ();
             sub_rsp (32);
             emit_format_int_to_stack ();
+            if (freestanding) {
+                // mov rdi, rcx; mov rsi, rbp; sub rsi, rcx
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xCF);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xEE);
+                code.u8 (0x48); code.u8 (0x29); code.u8 (0xCE);
+                call_rel32 ("__planet_console_write");
+                leave ();
+                ret ();
+                return;
+            }
             // mov rsi, rcx                    48 89 CE
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xCE);
             // mov rdx, rbp                    48 89 EA
@@ -1129,7 +1159,7 @@ namespace Planc {
         // ------------------------------------------------------------------
 
         // void* __planc_alloc(uint64 rdi = payload_bytes, uint64 rsi = elem_ref)
-        public void emit_rt_alloc (int bss_base, Label mem_panic_lbl) {
+        public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1) {
             var l_class_loop = new_label ();
             var l_found_class = new_label ();
             var l_arena_carve = new_label ();
@@ -1266,6 +1296,22 @@ namespace Planc {
 
             // Map new 64KB slab + 4KB PROT_NONE guard page (0x11000)
             bind (l_new_slab);
+            if (free_heap_bss_off >= 0) {
+                // Freestanding static 256 KiB BSS heap: only valid if [rbx + 24] == 0
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x18); code.u8 (0x00);
+                branch (BranchKind.JNE, mem_panic_lbl);
+                code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x25); // lea r12, [rip + free_heap_bss_off]
+                record_rip (free_heap_bss_off, PatchSpace.BSS);
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
+                code.u8 (0x48); code.u8 (0x01); code.u8 (0xD0);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0x43); code.u8 (0x10); // arena_cur = r12 + rdx
+                code.u8 (0x4D); code.u8 (0x89); code.u8 (0xE1);
+                code.u8 (0x49); code.u8 (0x81); code.u8 (0xC1); code.u32le (0x40000); // 256 KiB
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0x4B); code.u8 (0x18); // arena_end
+                code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0); // unlock
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0); // rax = r12
+                branch (BranchKind.JMP, l_init_header);
+            } else {
             push_reg (Reg.RCX);
             push_reg (Reg.RDX);
             mov_esi_imm (0x11000);
@@ -1293,6 +1339,7 @@ namespace Planc {
             // Release spinlock: mov dword ptr [rbx + 96], 0
             code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0);
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
+            }
 
             // Header: refcount=1, elem_ref=r13b, size_class=cl, magic=0x504C
             bind (l_init_header);
