@@ -557,6 +557,9 @@ namespace Gio {
                 return "text/x-vala";
             if (name.has_suffix (".elf"))
                 return "application/x-executable";
+            if (name.has_suffix (".txt") || name.has_suffix (".md")
+                || name.has_suffix (".sh") || name.has_suffix (".log"))
+                return "text/plain";
             return "application/octet-stream";
         }
     }
@@ -736,9 +739,13 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            int fd = __gio_create (p);
-            if (fd < 0)
-                throw new IOError.FAILED ("Failed to open file for append");
+            int fd = __gio_open (p);
+            if (fd < 0) {
+                fd = __gio_create (p);
+                if (fd < 0)
+                    throw new IOError.FAILED ("Failed to open file for append");
+                return new FileOutputStream (fd, 0);
+            }
             int pos = __gio_sys (20, fd, -1, 0);
             if (pos < 0)
                 pos = 0;

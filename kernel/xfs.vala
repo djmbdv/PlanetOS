@@ -175,13 +175,18 @@ namespace Planet.Kernel {
             return be64 (xfs_sec_buf + off + 56);
         }
 
-        public static int read_file (int ino, int dst_buf, int max_bytes) {
+        public static int read_file (int ino, int offset, int dst_buf, int max_bytes) {
+            if (offset < 0 || max_bytes <= 0)
+                return 0;
             if (!load_inode (ino, xfs_sec_buf))
                 return -1;
             int off = inode_off (ino);
             int ino_base = xfs_sec_buf + off;
             int fsize = be64 (ino_base + 56);
-            int to_read = (fsize < max_bytes) ? fsize : max_bytes;
+            if (offset >= fsize)
+                return 0;
+            int avail = fsize - offset;
+            int to_read = (avail < max_bytes) ? avail : max_bytes;
             int fmt = read_u8 (ino_base + 5);
             int ver = read_u8 (ino_base + 4);
             int df = ino_base + ((ver >= 3) ? 176 : 100);
@@ -189,6 +194,7 @@ namespace Planet.Kernel {
                 return -1;
             int nextents = be32 (ino_base + 76);
             int copied = 0;
+            int skip = offset;
             int tmp = Pmm.alloc_frame ();
             if (tmp == 0)
                 return -1;
@@ -201,17 +207,22 @@ namespace Planet.Kernel {
                 int lba = fsbno_to_lba (startblock);
                 int total_secs = blockcount * (xfs_blocksize / 512);
                 for (int s = 0; s < total_secs && copied < to_read; s++) {
+                    if (skip >= 512) {
+                        skip = skip - 512;
+                        continue;
+                    }
                     if (!Ata.read_sector (lba + s, tmp)) {
                         Pmm.free_frame (tmp);
                         return copied;
                     }
                     int chunk = to_read - copied;
-                    if (chunk > 512)
-                        chunk = 512;
+                    if (chunk > 512 - skip)
+                        chunk = 512 - skip;
                     for (int bi = 0; bi < chunk; bi++) {
-                        mmio_write8 (dst_buf + copied + bi, read_u8 (tmp + bi));
+                        mmio_write8 (dst_buf + copied + bi, read_u8 (tmp + skip + bi));
                     }
                     copied = copied + chunk;
+                    skip = 0;
                 }
             }
             Pmm.free_frame (tmp);

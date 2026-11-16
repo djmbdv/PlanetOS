@@ -125,7 +125,7 @@ namespace Planet.Kernel {
             int ebuf = Pmm.alloc_contiguous (pages);
             if (ebuf == 0)
                 return 0;
-            int got = (rslot >= 0) ? Ramfs.read (rslot, 0, ebuf, esz) : Xfs.read_file (ino, ebuf, esz);
+            int got = (rslot >= 0) ? Ramfs.read (rslot, 0, ebuf, esz) : Xfs.read_file (ino, 0, ebuf, esz);
             int entry = (got == esz) ? load_image (ebuf, esz) : 0;
             for (int p = 0; p < pages; p++) {
                 Pmm.free_frame (ebuf + p * 4096);

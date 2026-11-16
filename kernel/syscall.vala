@@ -112,7 +112,7 @@ namespace Planet.Kernel {
             int pos = mmio_read64 (slot + 24);
             if (pos >= fsz)
                 return 0;
-            int n = (kind == 2) ? Ramfs.read (id, pos, a1, a2) : Xfs.read_file (id, a1, a2);
+            int n = (kind == 2) ? Ramfs.read (id, pos, a1, a2) : Xfs.read_file (id, pos, a1, a2);
             if (n > 0)
                 mmio_write64 (slot + 24, pos + n);
             return n;

@@ -124,6 +124,7 @@ problems** and **creates six**:
 | [docs/planc/slice-28.md](docs/planc/slice-28.md) | **Implemented slice 28**: 100% pure-Vala `dash`-inspired shell ([user/shell.vala](user/shell.vala)) with `$VAR`, quotes, `|`, `>`, `>>`, `<`, `&&`, `||`, `if`/`for`, `.sh` scripts, and `SYS_SET_STDIO` |
 | [docs/planc/slice-29.md](docs/planc/slice-29.md) | **Implemented slice 29**: SSE enable, Bochs VBE `800x600x32` framebuffer (`kernel/fb.vala`), PS/2 mouse (`IRQ12`), and pure-Vala `Cairo` + `Gdk` layer ([stdlib/cairo_gdk_compat.vala](stdlib/cairo_gdk_compat.vala), `user/cairo_demo.vala`) |
 | [docs/planc/slice-30.md](docs/planc/slice-30.md) | **Implemented slice 30**: double-buffered `BGA` display driver (`16 MiB` VRAM, `SYS_FB_INFO`/`SYS_FB_BLIT_RECT`) and `--target=spirv` deterministic Vala shader compiler ([planc/src/spirv.vala](planc/src/spirv.vala)) |
+| [docs/planc/slice-31.md](docs/planc/slice-31.md) | **Implemented slice 31**: pure-Vala `Gio` layer in userland ([stdlib/gio_compat.vala](stdlib/gio_compat.vala), [user/gio_demo.vala](user/gio_demo.vala)) with streaming XFS reads and non-truncating append |
 
 ## 5. State of the measurements
 
