@@ -60,6 +60,47 @@ private uint32 read_u32_le (uint8[] buf, int word_idx) {
         | ((uint32) buf[off + 3] << 24);
 }
 
+private int th_running = 1;
+private int th_sat_x = 664;
+private int th_sat_y = 300;
+private int th_ticks = 0;
+private int th_pulse_milli = 1000;
+
+[AsmBody(@"
+    # Devuelve la direccion de la funcion orbit_worker para SYS_THREAD_SPAWN
+    lea orbit_worker(%rip), %rax
+    ret
+")]
+private extern int addr_orbit_worker ();
+
+public void orbit_worker (int arg) {
+    // Hilo de fisica/orbita en segundo plano: usa solo aritmetica entera para no tocar XMM
+    int last_t = -1;
+    while (th_running != 0) {
+        int ticks = __spv_sys (2, 0, 0, 0);
+        if (ticks != last_t) {
+            last_t = ticks;
+            th_ticks = ticks;
+
+            int phase = (ticks * 3) % 120;
+            int tri = (phase < 60) ? phase : (120 - phase);
+            th_pulse_milli = 650 + (350 * tri) / 60;
+
+            int ang = (ticks * 2) & 63;
+            int qx = (ang + 16) & 63;
+            int sx = (ang < 32) ? ang : (64 - ang);
+            int cx = (qx < 32) ? qx : (64 - qx);
+            int sin_m = (ang < 32 ? 1 : -1) * (1000 - ((sx - 16) * (sx - 16) * 1000) / 256);
+            int cos_m = (qx < 32 ? 1 : -1) * (1000 - ((cx - 16) * (cx - 16) * 1000) / 256);
+            th_sat_x = 540 + (cos_m * 124) / 1000;
+            th_sat_y = 300 + (sin_m * 124) / 1000;
+        } else {
+            __spv_sys (10, 0, 0, 0);
+        }
+    }
+    __spv_sys (11, 0, 0, 0);
+}
+
 int main (string[] args) {
     string spv_name = (args.length > 1 && args[1] != "--once") ? args[1] : "frag.spv";
     bool once = false;
@@ -177,6 +218,9 @@ int main (string[] args) {
         return 1;
     var cr = win.create_cairo_context ();
 
+    th_running = 1;
+    int worker_tid = once ? -1 : __spv_sys (27, addr_orbit_worker (), 0, 0);
+
     int frame = 0;
     int last_tick = -1;
     while (true) {
@@ -185,20 +229,9 @@ int main (string[] args) {
             last_tick = ticks;
             frame = frame + 1;
 
-            // Smooth triangle-wave pulse (0.65 .. 1.0) and orbiting satellite angle
-            int phase = (ticks * 3) % 120;
-            int tri = (phase < 60) ? phase : (120 - phase);
-            double pulse = 0.65 + 0.35 * ((double) tri / 60.0);
-
-            // Approximate sin/cos on 64-step circle using quadratic parabola wave
-            int ang = (ticks * 2) & 63;
-            int qx = (ang + 16) & 63;
-            int sx = (ang < 32) ? ang : (64 - ang);
-            int cx = (qx < 32) ? qx : (64 - qx);
-            double sin_v = (ang < 32 ? 1.0 : -1.0) * (1.0 - ((double) (sx - 16) * (double) (sx - 16)) / 256.0);
-            double cos_v = (qx < 32 ? 1.0 : -1.0) * (1.0 - ((double) (cx - 16) * (double) (cx - 16)) / 256.0);
-            int sat_x = 540 + (int) (cos_v * 124.0);
-            int sat_y = 300 + (int) (sin_v * 124.0);
+            double pulse = (double) th_pulse_milli / 1000.0;
+            int sat_x = th_sat_x;
+            int sat_y = th_sat_y;
 
             double pr = out_r * pulse;
             double pg = out_g * pulse;
@@ -255,7 +288,7 @@ int main (string[] args) {
             cr.show_text (@"FRAG COLOR: ($ir, $ig, $ib)");
             cr.move_to (108, 345);
             cr.set_source_rgb (0.96, 0.62, 0.04);
-            cr.show_text (@"FRAME: $frame  TICKS: $ticks");
+            cr.show_text (@"FRAME: $frame  TID: $worker_tid");
             cr.move_to (108, 460);
             cr.set_source_rgb (0.22, 0.74, 0.97);
             cr.show_text ("PRESS Q TO RETURN TO SHELL");
@@ -274,6 +307,9 @@ int main (string[] args) {
         }
     }
 
+    th_running = 0;
+    if (worker_tid > 0)
+        __spv_sys (17, worker_tid, 0, 0);
     win.close ();
     return 0;
 }

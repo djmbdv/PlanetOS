@@ -165,6 +165,30 @@ namespace Planet.Kernel {
             return -1;
         }
 
+        public static int spawn_thread (int entry, int arg) {
+            int stack_base = Pmm.alloc_contiguous (16);
+            if (stack_base == 0)
+                return -1;
+            int arg_sp = stack_base + 16 * 4096 - 16;
+            // Temporarily write "thread" name on stack_base+0..6
+            mmio_write8 (stack_base + 0, 't');
+            mmio_write8 (stack_base + 1, 'h');
+            mmio_write8 (stack_base + 2, 'r');
+            mmio_write8 (stack_base + 3, 'e');
+            mmio_write8 (stack_base + 4, 'a');
+            mmio_write8 (stack_base + 5, 'd');
+            int tid = spawn_ready (entry, arg_sp, stack_base, stack_base, 6);
+            if (tid < 0) {
+                for (int p = 0; p < 16; p++)
+                    Pmm.free_frame (stack_base + p * 4096);
+                return -1;
+            }
+            // Put `arg` into saved %rdi slot (offset +72 in 15-GPR frame)
+            int frame_rsp = mmio_read64 (TCB_BASE + tid * TCB_SIZE + 8);
+            mmio_write64 (frame_rsp + 72, arg);
+            return tid;
+        }
+
         public static void exit_current (int code) {
             int cur = mmio_read64 (SCHED_CUR_ADDR);
             int tcb = TCB_BASE + cur * TCB_SIZE;

@@ -245,6 +245,9 @@ namespace Planet.Kernel {
             Fb.blit_rect (a0, a1, a2);
             return 0;
         }
+        if (num == 27) { // SYS_THREAD_SPAWN(entry_fn, arg) -> tid
+            return Sched.spawn_thread (a0, a1);
+        }
         return -1;
     }
 
