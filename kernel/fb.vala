@@ -68,10 +68,31 @@ namespace Planet.Kernel {
     ")]
     public extern void fb_copy_dwords (int dst, int src, int count);
 
+    [AsmBody(@"
+        # vga_inb(port in rdi) -> lee 1 byte desde un puerto I/O VGA
+        mov %di, %dx
+        xor %eax, %eax
+        in %dx, %al
+        ret
+    ")]
+    public extern int vga_inb (int port);
+
+    [AsmBody(@"
+        # vga_outb(port in rdi, val in rsi) -> escribe 1 byte en un puerto I/O VGA
+        mov %di, %dx
+        mov %sil, %al
+        out %al, %dx
+        ret
+    ")]
+    public extern void vga_outb (int port, int val);
+
     private int fb_phys_addr = 0;
     private int fb_width = 0;
     private int fb_height = 0;
     private int fb_page = 0;
+    private int vga_saved = 0;
+    private int vga_misc = 0;
+    private int vga_state_buf = 0;
 
     public class Fb : Object {
         private const int PD3_ADDR = 0x103000;
@@ -110,6 +131,89 @@ namespace Planet.Kernel {
             tlb_flush ();
         }
 
+        private static int reg_read (int idx) {
+            int addr = vga_state_buf + 8192 + idx;
+            int w = mmio_read32 (addr & ~3);
+            return (w >> ((addr & 3) * 8)) & 0xFF;
+        }
+
+        private static void save_vga_text_state () {
+            if (vga_saved != 0)
+                return;
+            vga_state_buf = Pmm.alloc_contiguous (3); // 8 KiB font + VGA registers
+            if (vga_state_buf == 0)
+                return;
+            vga_misc = vga_inb (0x3CC);
+            for (int i = 0; i < 5; i++) {
+                vga_outb (0x3C4, i);
+                mmio_write8 (vga_state_buf + 8192 + i, vga_inb (0x3C5));
+            }
+            for (int i = 0; i < 25; i++) {
+                vga_outb (0x3D4, i);
+                mmio_write8 (vga_state_buf + 8192 + 5 + i, vga_inb (0x3D5));
+            }
+            for (int i = 0; i < 9; i++) {
+                vga_outb (0x3CE, i);
+                mmio_write8 (vga_state_buf + 8192 + 30 + i, vga_inb (0x3CF));
+            }
+            for (int i = 0; i < 21; i++) {
+                vga_inb (0x3DA);
+                vga_outb (0x3C0, i);
+                mmio_write8 (vga_state_buf + 8192 + 39 + i, vga_inb (0x3C1));
+            }
+            vga_inb (0x3DA);
+            vga_outb (0x3C0, 0x20);
+
+            vga_outb (0x3C4, 0x02); vga_outb (0x3C5, 0x04);
+            vga_outb (0x3C4, 0x04); vga_outb (0x3C5, 0x06);
+            vga_outb (0x3CE, 0x04); vga_outb (0x3CF, 0x02);
+            vga_outb (0x3CE, 0x05); vga_outb (0x3CF, 0x00);
+            vga_outb (0x3CE, 0x06); vga_outb (0x3CF, 0x04);
+            fb_copy_dwords (vga_state_buf, 0xA0000, 2048);
+            vga_saved = 1;
+        }
+
+        private static void restore_vga_text_state () {
+            if (vga_saved == 0 || vga_state_buf == 0)
+                return;
+            vga_outb (0x3C2, vga_misc);
+            vga_outb (0x3C4, 0x00); vga_outb (0x3C5, 0x01);
+            for (int i = 1; i < 5; i++) {
+                vga_outb (0x3C4, i);
+                vga_outb (0x3C5, reg_read (i));
+            }
+            vga_outb (0x3C4, 0x00); vga_outb (0x3C5, 0x03);
+
+            vga_outb (0x3D4, 0x11);
+            vga_outb (0x3D5, reg_read (5 + 0x11) & 0x7F);
+            for (int i = 0; i < 25; i++) {
+                vga_outb (0x3D4, i);
+                vga_outb (0x3D5, reg_read (5 + i));
+            }
+
+            vga_outb (0x3C4, 0x02); vga_outb (0x3C5, 0x04);
+            vga_outb (0x3C4, 0x04); vga_outb (0x3C5, 0x06);
+            vga_outb (0x3CE, 0x05); vga_outb (0x3CF, 0x00);
+            vga_outb (0x3CE, 0x06); vga_outb (0x3CF, 0x04);
+            fb_copy_dwords (0xA0000, vga_state_buf, 2048);
+
+            for (int i = 1; i < 5; i++) {
+                vga_outb (0x3C4, i);
+                vga_outb (0x3C5, reg_read (i));
+            }
+            for (int i = 0; i < 9; i++) {
+                vga_outb (0x3CE, i);
+                vga_outb (0x3CF, reg_read (30 + i));
+            }
+            vga_inb (0x3DA);
+            for (int i = 0; i < 21; i++) {
+                vga_outb (0x3C0, i);
+                vga_outb (0x3C0, reg_read (39 + i));
+            }
+            vga_inb (0x3DA);
+            vga_outb (0x3C0, 0x20);
+        }
+
         public static int init (int w, int h) {
             int ver = bga_read (0);
             if (ver < 0xB0C0 || ver > 0xB0C6)
@@ -117,6 +221,7 @@ namespace Planet.Kernel {
             int bar0 = find_vga_bar0 ();
             if (bar0 == 0)
                 return 0;
+            save_vga_text_state ();
             map_lfb (bar0);
             bga_write (4, 0);       // VBE_DISPI_INDEX_ENABLE = 0
             bga_write (1, w);       // XRES
@@ -186,9 +291,13 @@ namespace Planet.Kernel {
         public static void close () {
             if (fb_phys_addr != 0) {
                 bga_write (4, 0);
+                bga_write (8, 0);
+                bga_write (9, 0);
                 fb_phys_addr = 0;
                 fb_width = 0;
                 fb_height = 0;
+                fb_page = 0;
+                restore_vga_text_state ();
                 Vga.init ();
             }
         }
