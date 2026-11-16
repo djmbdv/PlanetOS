@@ -112,7 +112,7 @@ namespace Planc {
                 throws ParseError, LexError {
             if ((t != ValaType.CLASS && t != ValaType.STRUCT) || current.kind != TokenKind.LT)
                 return;
-            if (t == ValaType.CLASS && tname != "GenericArray") {
+            if (t == ValaType.CLASS && tname != "GenericArray" && tname != "Channel") {
                 unowned var cd = program.find_class (tname);
                 if (cd == null || !cd.is_generic_template)
                     return;
@@ -150,7 +150,7 @@ namespace Planc {
             }
 
             int expected_arity = -1;
-            if (tname == "GenericArray") {
+            if (tname == "GenericArray" || tname == "Channel") {
                 expected_arity = 1;
             } else if (t == ValaType.CLASS) {
                 unowned var cd = program.find_class (tname);
@@ -245,9 +245,9 @@ namespace Planc {
                 t = ValaType.ERROR;
                 return true;
             }
-            if (text == "GenericArray") {
+            if (text == "GenericArray" || text == "Channel" || text == "Mutex") {
                 t = ValaType.CLASS;
-                tname = "GenericArray";
+                tname = text;
                 return true;
             }
             if (program.find_error_domain (text) != null) {
@@ -3424,7 +3424,7 @@ namespace Planc {
                         string sn = name;
                         parse_generic_type_args (ref st, ref sn);
                         name = sn;
-                    } else if ((c_tmpl != null && c_tmpl.is_generic_template) || name == "GenericArray") {
+                    } else if ((c_tmpl != null && c_tmpl.is_generic_template) || name == "GenericArray" || name == "Channel") {
                         ValaType ct = ValaType.CLASS;
                         string cn = name;
                         parse_generic_type_args (ref ct, ref cn);

@@ -51,6 +51,7 @@ namespace Planc {
         private bool program_uses_heap = false;
         private int alloc_bss_offset = -1;
         private int async_bss_offset = -1;
+        private int sig_bss_offset = -1;
         private bool in_async_resume = false;
         private GenericArray<Label> async_resume_labels;
         private GenericArray<string> non_null_vars;
@@ -117,6 +118,8 @@ namespace Planc {
         private bool need_str_has_prefix = false;
         private bool need_str_has_suffix = false;
         private bool need_async = false;
+        private bool need_signal = false;
+        private bool need_sync = false;
         private bool need_str_to_int = false;
         private bool need_double_to_str = false;
         private bool need_str_to_double = false;
@@ -208,6 +211,7 @@ namespace Planc {
             if (program_uses_heap) {
                 alloc_bss_offset = emitter.add_bss_bytes (104);
                 async_bss_offset = emitter.add_bss_bytes (64);
+                sig_bss_offset = emitter.add_bss_bytes (8);
                 need_alloc = true;
                 need_ref = true;
                 need_unref = true;
@@ -721,6 +725,26 @@ namespace Planc {
                     }
                 }
 
+                foreach (var sd in cd.signals) {
+                    if (base_cd != null && find_class_signal (base_cd, sd.name) != null)
+                        throw new SemanticError.DUPLICATE_VARIABLE (
+                            @"signal '$(cd.name).$(sd.name)' shadows inherited signal at $(sd.line):$(sd.column)");
+                    cd.needs_finalizer = true;
+                    need_signal = true;
+                    var sf = new ClassField () {
+                        field_type = ValaType.INT,
+                        type_name = "",
+                        name = @"#sig_$(sd.name)",
+                        line = sd.line,
+                        column = sd.column
+                    };
+                    cd.fields.add (sf);
+                    unowned ClassField? dummy_sf = null;
+                    sd.slot_index = class_field_offset_slots (cd, sf.name, out dummy_sf);
+                    if (sd.default_handler != null)
+                        program.functions.add (sd.default_handler);
+                }
+
                 if (base_cd != null) {
                     for (int i = 0; i < base_cd.vtable_method_names.length; i++) {
                         cd.vtable_method_names.add (base_cd.vtable_method_names[i]);
@@ -1223,6 +1247,12 @@ namespace Planc {
             }
             if (need_async) {
                 emitter.emit_rt_async (async_bss_offset, symbols);
+            }
+            if (need_signal) {
+                emitter.emit_rt_signal (sig_bss_offset, symbols);
+            }
+            if (need_sync) {
+                emitter.emit_rt_sync (symbols);
             }
             if (need_str_concat) {
                 var start = emitter.here ();
@@ -2084,6 +2114,21 @@ namespace Planc {
             if (df == null)
                 return false;
             parse_array_elem (df.type_name, out et, out et_name);
+            return true;
+        }
+
+        private bool find_channel_elem (string tt_name, out ValaType et, out string et_name) {
+            et = ValaType.INT;
+            et_name = "";
+            var cname = strip_null (tt_name);
+            if (!cname.has_prefix ("Channel__"))
+                return false;
+            unowned var cd = program.find_class (cname);
+            unowned ClassField? ef = (cd != null) ? cd.find_own_field ("elem") : null;
+            if (ef == null)
+                return false;
+            et = ef.field_type;
+            et_name = ef.type_name;
             return true;
         }
 
@@ -3178,7 +3223,7 @@ namespace Planc {
                     else if (bi_kind == "async_run" || bi_kind == "async_run_parallel")
                         need_async = true;
                 } else {
-                    Expr? begin_recv = null;
+            Expr? begin_recv = null;
                     unowned Function? begin_fn = resolve_begin_call (mc, out begin_recv);
                     if (begin_fn != null) {
                         if (begin_recv != null)
@@ -3193,6 +3238,18 @@ namespace Planc {
                             pending_ref_exprs.add (e);
                             ref_temps++;
                         }
+                        foreach (var a in mc.args)
+                            prepare_expr (a, ref struct_temps, ref ref_temps);
+                        return;
+                    }
+                    Expr? sig_obj = null;
+                    unowned SignalDecl? sig_conn = resolve_signal_connect (mc, out sig_obj);
+                    if (sig_conn != null) {
+                        need_signal = true;
+                        if (sig_obj != null)
+                            prepare_expr (sig_obj, ref struct_temps, ref ref_temps);
+                        if (mc.method_name == "connect" && mc.args.length > 0)
+                            bind_delegate_target (mc.args[0], ValaType.STRUCT, sig_conn.handler_delegate_name);
                         foreach (var a in mc.args)
                             prepare_expr (a, ref struct_temps, ref ref_temps);
                         return;
@@ -3265,11 +3322,15 @@ namespace Planc {
                             check_domains_handled (cf.throws_domains, ye.line, ye.column);
                     } else if (ye.value is MethodCallExpr) {
                         var mce = (MethodCallExpr) ye.value;
-                        Expr? dummy_r = null;
-                        unowned var mf = resolve_begin_call (mce, out dummy_r);
-                        if (mf == null) mf = resolve_method_call_fn (mce);
-                        if (mf != null && mf.can_throw)
-                            check_domains_handled (mf.throws_domains, ye.line, ye.column);
+                        string bk = "";
+                        ValaType br = ValaType.VOID;
+                        if (!is_builtin_method_call (mce, out bk, out br)) {
+                            Expr? dummy_r = null;
+                            unowned var mf = resolve_begin_call (mce, out dummy_r);
+                            if (mf == null) mf = resolve_method_call_fn (mce);
+                            if (mf != null && mf.can_throw)
+                                check_domains_handled (mf.throws_domains, ye.line, ye.column);
+                        }
                     }
                 }
             } else if (e is CallExpr) {
@@ -3946,6 +4007,13 @@ namespace Planc {
                     }
                 }
             }
+            for (int i = current_class.signals.length - 1; i >= 0; i--) {
+                var sd = current_class.signals[i];
+                emitter.load_local (0);
+                emitter.load_rax_disp (16 + 8 * sd.slot_index);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_sig_free_list");
+            }
             if (current_class.base_name != "") {
                 unowned var base_cd = program.find_class (current_class.base_name);
                 if (base_cd != null && base_cd.needs_finalizer) {
@@ -4103,6 +4171,59 @@ namespace Planc {
                 || callee == "__planc_host_write_file";
         }
 
+        private unowned SignalDecl? find_class_signal (ClassDecl? cd, string sname) {
+            unowned ClassDecl? cur = cd;
+            while (cur != null) {
+                unowned var sd = cur.find_own_signal (sname);
+                if (sd != null)
+                    return sd;
+                cur = (cur.base_name != "") ? program.find_class (cur.base_name) : null;
+            }
+            return null;
+        }
+
+        private unowned SignalDecl? resolve_signal_access (Expr? target, string sname, out Expr? obj_expr)
+                throws SemanticError {
+            obj_expr = null;
+            if (target == null) {
+                if (current_class == null || current == null || current.is_static)
+                    return null;
+                unowned var sd = find_class_signal (current_class, sname);
+                if (sd != null)
+                    obj_expr = new VarRef () { name = "this", line = sd.line, column = sd.column };
+                return sd;
+            }
+            if (target is VarRef && is_type_name (((VarRef) target).name))
+                return null;
+            string tt_name = "";
+            var tt = expr_type_full (target, out tt_name);
+            if (tt != ValaType.CLASS)
+                return null;
+            unowned var cd = program.find_class (strip_null (tt_name));
+            if (cd == null)
+                return null;
+            unowned var sd = find_class_signal (cd, sname);
+            if (sd != null)
+                obj_expr = target;
+            return sd;
+        }
+
+        private unowned SignalDecl? resolve_signal_connect (MethodCallExpr mc, out Expr? obj_expr)
+                throws SemanticError {
+            obj_expr = null;
+            if ((mc.method_name != "connect" && mc.method_name != "disconnect") || mc.target == null || mc.is_base_call)
+                return null;
+            if (mc.target is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) mc.target;
+                return resolve_signal_access (ma.target, ma.member, out obj_expr);
+            }
+            if (mc.target is VarRef) {
+                var vr = (VarRef) mc.target;
+                return resolve_signal_access (null, vr.name, out obj_expr);
+            }
+            return null;
+        }
+
         private static string make_async_task_type_name (ValaType ret_t, string ret_name) {
             return @"__AsyncTask:$((int) ret_t):$(ret_name)";
         }
@@ -4179,7 +4300,8 @@ namespace Planc {
                 throws SemanticError {
             kind = "";
             ret_t = ValaType.VOID;
-            if (mc.target == null || mc.is_base_call || mc.method_name == "begin")
+            if (mc.target == null || mc.is_base_call || mc.method_name == "begin"
+                || mc.method_name == "connect" || mc.method_name == "disconnect")
                 return false;
             if (mc.target is VarRef) {
                 var vn = ((VarRef) mc.target).name;
@@ -4203,6 +4325,39 @@ namespace Planc {
             }
             string tt_name = "";
             var tt = expr_type_full (mc.target, out tt_name);
+            if (tt == ValaType.CLASS && tt_name == "Mutex") {
+                if (mc.method_name == "lock") {
+                    kind = "mutex_lock";
+                    ret_t = ValaType.VOID;
+                    return true;
+                }
+                if (mc.method_name == "unlock") {
+                    kind = "mutex_unlock";
+                    ret_t = ValaType.VOID;
+                    return true;
+                }
+            }
+            if (tt == ValaType.CLASS) {
+                ValaType ch_et = ValaType.INT;
+                string ch_etn = "";
+                if (find_channel_elem (tt_name, out ch_et, out ch_etn)) {
+                    if (mc.method_name == "send") {
+                        kind = "chan_send";
+                        ret_t = ValaType.VOID;
+                        return true;
+                    }
+                    if (mc.method_name == "recv") {
+                        kind = "chan_recv";
+                        ret_t = ValaType.CLASS;
+                        return true;
+                    }
+                    if (mc.method_name == "close") {
+                        kind = "chan_close";
+                        ret_t = ValaType.VOID;
+                        return true;
+                    }
+                }
+            }
             if (tt == ValaType.INT && mc.method_name == "to_string") {
                 kind = "int_to_string";
                 ret_t = ValaType.STRING;
@@ -4471,7 +4626,8 @@ namespace Planc {
                 Expr? dummy_r = null;
                 if (resolve_begin_call (mc, out dummy_r) != null)
                     return true;
-                if (mc.target != null && !mc.is_base_call && mc.method_name != "begin") {
+                if (mc.target != null && !mc.is_base_call && mc.method_name != "begin"
+                    && mc.method_name != "connect" && mc.method_name != "disconnect") {
                     unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                     if (md != null)
                         return is_ref_type (md.return_type);
@@ -4591,9 +4747,15 @@ namespace Planc {
                 throw new SemanticError.TYPE_MISMATCH (
                     @"method '.$(mc.method_name)' not supported on $(type_label (tt, tt_name)) at $(mc.line):$(mc.column)");
             }
-            if (m == null)
+            if (m == null) {
+                if (tt == ValaType.CLASS) {
+                    unowned var cd = program.find_class (strip_null (tt_name));
+                    if (cd != null && find_class_signal (cd, mc.method_name) != null)
+                        return null;
+                }
                 throw new SemanticError.UNKNOWN_FUNCTION (
                     @"$(type_label (tt, tt_name)) has no method '$(mc.method_name)' at $(mc.line):$(mc.column)");
+            }
             if (m.is_static)
                 throw new SemanticError.TYPE_MISMATCH (
                     @"static method '$(mc.method_name)' must be called on type '$(strip_null (tt_name))' at $(mc.line):$(mc.column)");
@@ -4781,6 +4943,30 @@ namespace Planc {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument 1 of 'Async.run_parallel' expects int, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
                 need_async = true;
+            } else if (kind == "mutex_lock" || kind == "mutex_unlock" || kind == "chan_close" || kind == "chan_recv") {
+                if (mc.args.length != 0)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(mc.method_name) expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                need_sync = true;
+                if (kind == "chan_recv")
+                    need_async = true;
+            } else if (kind == "chan_send") {
+                if (mc.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"send expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string tn = "";
+                if (mc.target != null)
+                    expr_type_full (mc.target, out tn);
+                ValaType et = ValaType.INT;
+                string etn = "";
+                find_channel_elem (tn, out et, out etn);
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!type_compatible (et, etn, at, an))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"Channel.send expects $(type_label (et, etn)), got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                need_sync = true;
+                need_async = true;
             }
         }
 
@@ -4798,6 +4984,20 @@ namespace Planc {
                 return null;
             }
             unowned Function? f = resolve_call_target (c.callee);
+            if (f == null) {
+                Expr? sig_obj = null;
+                unowned SignalDecl? sd = resolve_signal_access (null, c.callee, out sig_obj);
+                if (sd != null) {
+                    need_signal = true;
+                    if (want_value && sd.return_type == ValaType.VOID)
+                        throw new SemanticError.VOID_IN_EXPRESSION (
+                            @"void signal '$(c.callee)' cannot be used as a value at $(c.line):$(c.column)");
+                    unowned var sdd = program.find_delegate (sd.handler_delegate_name);
+                    if (sdd != null)
+                        check_arg_param_list (c.callee, sdd.params, 1, c.args, c.line, c.column);
+                    return null;
+                }
+            }
             bool is_synth_init = (f != null && f.name.has_prefix ("__planc_init_"));
             if (f == null || (f.is_ctor && !is_synth_init) || f.is_dtor)
                 throw new SemanticError.UNKNOWN_FUNCTION (
@@ -4822,6 +5022,36 @@ namespace Planc {
                 check_builtin_method_args (mc, bi_kind);
                 return null;
             }
+            Expr? sig_obj_c = null;
+            unowned SignalDecl? sig_conn = resolve_signal_connect (mc, out sig_obj_c);
+            if (sig_conn != null) {
+                need_signal = true;
+                if (mc.method_name == "connect") {
+                    if (mc.args.length != 1)
+                        throw new SemanticError.WRONG_ARG_COUNT (
+                            @"connect expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                    bind_delegate_target (mc.args[0], ValaType.STRUCT, sig_conn.handler_delegate_name);
+                    string hn = "";
+                    var ht = expr_type_full (mc.args[0], out hn);
+                    if (!type_compatible (ValaType.STRUCT, sig_conn.handler_delegate_name, ht, hn))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"signal '$(sig_conn.name).connect' expects $(sig_conn.handler_delegate_name), got $(type_label (ht, hn)) at $(mc.args[0].line):$(mc.args[0].column)");
+                    return null;
+                } else {
+                    if (mc.args.length != 1)
+                        throw new SemanticError.WRONG_ARG_COUNT (
+                            @"disconnect expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                    string idn = "";
+                    var idt = expr_type_full (mc.args[0], out idn);
+                    if (!is_int_like (idt))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"signal '$(sig_conn.name).disconnect' expects int, got $(type_label (idt, idn)) at $(mc.args[0].line):$(mc.args[0].column)");
+                    if (want_value)
+                        throw new SemanticError.VOID_IN_EXPRESSION (
+                            @"void method 'disconnect' cannot be used as a value at $(mc.line):$(mc.column)");
+                    return null;
+                }
+            }
             Expr? begin_recv = null;
             unowned Function? begin_fn = resolve_begin_call (mc, out begin_recv);
             if (begin_fn != null) {
@@ -4840,9 +5070,22 @@ namespace Planc {
                 }
             }
             unowned Function? m = resolve_method_call_fn (mc);
-            if (m == null)
+            if (m == null) {
+                Expr? sig_obj = null;
+                unowned SignalDecl? sd_emit = resolve_signal_access (mc.target, mc.method_name, out sig_obj);
+                if (sd_emit != null) {
+                    need_signal = true;
+                    if (want_value && sd_emit.return_type == ValaType.VOID)
+                        throw new SemanticError.VOID_IN_EXPRESSION (
+                            @"void signal '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
+                    unowned var sdd = program.find_delegate (sd_emit.handler_delegate_name);
+                    if (sdd != null)
+                        check_arg_param_list (mc.method_name, sdd.params, 1, mc.args, mc.line, mc.column);
+                    return null;
+                }
                 throw new SemanticError.UNKNOWN_FUNCTION (
                     @"unknown method '$(mc.method_name)' at $(mc.line):$(mc.column)");
+            }
             if (want_value && m.is_void && !m.is_async)
                 throw new SemanticError.VOID_IN_EXPRESSION (
                     @"void method '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
@@ -4948,6 +5191,14 @@ namespace Planc {
             }
             if (e is ClassNewExpr) {
                 var cn = (ClassNewExpr) e;
+                if (cn.class_name == "Mutex" || cn.class_name.has_prefix ("Channel__")) {
+                    if (cn.args.length != 0 || cn.init_names.length != 0)
+                        throw new SemanticError.WRONG_ARG_COUNT (
+                            @"'$(cn.class_name)' constructor expects 0 argument(s) at $(cn.line):$(cn.column)");
+                    need_sync = true;
+                    tname = cn.class_name;
+                    return ValaType.CLASS;
+                }
                 unowned var cd = program.find_class (cn.class_name);
                 if (cd == null)
                     throw new SemanticError.TYPE_MISMATCH (
@@ -5037,9 +5288,19 @@ namespace Planc {
                 ValaType bi_ret = ValaType.VOID;
                 if (is_builtin_method_call (mc, out bi_kind, out bi_ret)) {
                     check_builtin_method_args (mc, bi_kind);
+                    if (bi_kind == "chan_recv") {
+                        string tn = "";
+                        if (mc.target != null)
+                            expr_type_full (mc.target, out tn);
+                        ValaType et = ValaType.INT;
+                        string etn = "";
+                        find_channel_elem (tn, out et, out etn);
+                        tname = make_async_task_type_name (et, etn);
+                    }
                     return bi_ret;
                 }
-                if (mc.target != null && !mc.is_base_call && mc.method_name != "begin") {
+                if (mc.target != null && !mc.is_base_call && mc.method_name != "begin"
+                    && mc.method_name != "connect" && mc.method_name != "disconnect") {
                     unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                     if (md != null) {
                         if (md.return_type == ValaType.VOID)
@@ -5050,7 +5311,44 @@ namespace Planc {
                         return md.return_type;
                     }
                 }
+                Expr? sig_obj_c = null;
+                unowned SignalDecl? sig_conn = resolve_signal_connect (mc, out sig_obj_c);
+                if (sig_conn != null) {
+                    need_signal = true;
+                    if (mc.method_name == "connect") {
+                        if (mc.args.length != 1)
+                            throw new SemanticError.WRONG_ARG_COUNT (
+                                @"connect expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                        bind_delegate_target (mc.args[0], ValaType.STRUCT, sig_conn.handler_delegate_name);
+                        string hn = "";
+                        var ht = expr_type_full (mc.args[0], out hn);
+                        if (!type_compatible (ValaType.STRUCT, sig_conn.handler_delegate_name, ht, hn))
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"signal '$(sig_conn.name).connect' expects $(sig_conn.handler_delegate_name), got $(type_label (ht, hn)) at $(mc.args[0].line):$(mc.args[0].column)");
+                        return ValaType.INT;
+                    } else {
+                        if (mc.args.length != 1)
+                            throw new SemanticError.WRONG_ARG_COUNT (
+                                @"disconnect expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                        string idn = "";
+                        var idt = expr_type_full (mc.args[0], out idn);
+                        if (!is_int_like (idt))
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"signal '$(sig_conn.name).disconnect' expects int, got $(type_label (idt, idn)) at $(mc.args[0].line):$(mc.args[0].column)");
+                        throw new SemanticError.VOID_IN_EXPRESSION (
+                            @"void method 'disconnect' cannot be used as a value at $(mc.line):$(mc.column)");
+                    }
+                }
                 unowned var m = check_method_call (mc, true);
+                if (m == null) {
+                    Expr? sig_obj_e = null;
+                    unowned SignalDecl? sd_e = resolve_signal_access (mc.target, mc.method_name, out sig_obj_e);
+                    if (sd_e != null) {
+                        tname = sd_e.return_type_name;
+                        return sd_e.return_type;
+                    }
+                    return ValaType.VOID;
+                }
                 if (m.is_async) {
                     tname = make_async_task_type_name (m.return_type, m.return_type_name);
                     return ValaType.CLASS;
@@ -5463,6 +5761,15 @@ namespace Planc {
                     return dd.return_type;
                 }
                 unowned var f = check_call (ce, true);
+                if (f == null) {
+                    Expr? sig_obj_e = null;
+                    unowned SignalDecl? sd_e = resolve_signal_access (null, ce.callee, out sig_obj_e);
+                    if (sd_e != null) {
+                        tname = sd_e.return_type_name;
+                        return sd_e.return_type;
+                    }
+                    return ValaType.VOID;
+                }
                 if (f.is_async) {
                     tname = make_async_task_type_name (f.return_type, f.return_type_name);
                     return ValaType.CLASS;
@@ -7256,6 +7563,24 @@ namespace Planc {
                 emitter.xor_eax ();
             } else if (e is ClassNewExpr) {
                 var cn = (ClassNewExpr) e;
+                if (cn.class_name == "Mutex") {
+                    need_sync = true;
+                    call_aligned ("__planc_mutex_new");
+                    if (program_uses_heap && cn.ref_temp_slot >= 0) {
+                        emitter.store_local (cn.ref_temp_slot);
+                        add_live_ref_slot (cn.ref_temp_slot);
+                    }
+                    return;
+                }
+                if (cn.class_name.has_prefix ("Channel__")) {
+                    need_sync = true;
+                    call_aligned ("__planc_chan_new");
+                    if (program_uses_heap && cn.ref_temp_slot >= 0) {
+                        emitter.store_local (cn.ref_temp_slot);
+                        add_live_ref_slot (cn.ref_temp_slot);
+                    }
+                    return;
+                }
                 unowned var cd = program.find_class (cn.class_name);
                 if (cd == null)
                     throw new SemanticError.TYPE_MISMATCH (
@@ -8531,12 +8856,52 @@ namespace Planc {
                 call_aligned ("__planc_async_run");
                 return;
             }
+            if (kind == "mutex_lock" || kind == "mutex_unlock" || kind == "chan_close") {
+                need_sync = true;
+                if (mc.target == null) return;
+                gen_expr (mc.target);
+                emitter.mov_rdi_rax ();
+                if (kind == "mutex_lock") call_aligned ("__planc_mutex_lock");
+                else if (kind == "mutex_unlock") call_aligned ("__planc_mutex_unlock");
+                else call_aligned ("__planc_chan_close");
+                return;
+            }
+            if (kind == "chan_send") {
+                need_sync = true;
+                if (mc.target == null) return;
+                string tn = "";
+                if (mc.target != null)
+                    expr_type_full (mc.target, out tn);
+                ValaType et = ValaType.INT;
+                string etn = "";
+                find_channel_elem (tn, out et, out etn);
+                gen_expr (mc.target);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (mc.args[0]);
+                if (is_fp_type (et)) {
+                    string an = "";
+                    var at = expr_type_full (mc.args[0], out an);
+                    emit_fp_coerce (at, et);
+                    emitter.movq_rax_xmm (0);
+                }
+                if (program_uses_heap && is_ref_type (et)) {
+                    emitter.mov_rdi_rax ();
+                    call_aligned ("__planc_ref");
+                }
+                emitter.mov_rsi_rax ();
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                call_aligned ("__planc_chan_send");
+                return;
+            }
             if (kind == "str_has_prefix" || kind == "str_has_suffix") {
                 if (mc.target == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'$(mc.method_name)()' requires a string receiver at $(mc.line):$(mc.column)");
                 string tn = "";
-                expr_type_full (mc.target, out tn);
+                if (mc.target != null)
+                    expr_type_full (mc.target, out tn);
                 gen_expr (mc.target);
                 emit_null_check_if_nullable (ValaType.STRING, tn);
                 emitter.push_rax ();
@@ -8636,6 +9001,58 @@ namespace Planc {
                     @"'yield' expects an async task, got $(type_label (vt, vt_name)) at $(ye.line):$(ye.column)");
 
             int child_slot = cur_total_slots++;
+            if (ye.value is MethodCallExpr) {
+                var mc = (MethodCallExpr) ye.value;
+                string bi_kind = "";
+                ValaType bi_ret = ValaType.VOID;
+                if (is_builtin_method_call (mc, out bi_kind, out bi_ret) && bi_kind == "chan_recv" && mc.target != null) {
+                    need_sync = true;
+                    var ch_tgt = mc.target;
+                    gen_expr (ch_tgt);
+                    if (is_owned_expr (ch_tgt)) {
+                        consume_ref_expr (ch_tgt);
+                    } else {
+                        emitter.mov_rdi_rax ();
+                        call_aligned ("__planc_ref");
+                    }
+                    emitter.store_local (child_slot);
+                    cleanup_expr_temps (ch_tgt);
+
+                    var l_try_recv = emitter.new_label ();
+                    var l_got_recv = emitter.new_label ();
+                    emitter.bind (l_try_recv);
+                    emitter.load_local (child_slot);
+                    emitter.mov_rdi_rax ();
+                    emitter.load_rbp_disp (-8);
+                    emitter.mov_rsi_rax ();
+                    call_aligned ("__planc_chan_try_recv");
+                    emitter.test_rax_rax ();
+                    emitter.branch (BranchKind.JE, l_got_recv);
+
+                    emitter.load_rbp_disp (-8);
+                    emitter.mov_rcx_rax ();
+                    emitter.mov_rax_imm ((int64) next_state);
+                    emitter.store_rcx_disp_rax (24);
+                    emitter.leave ();
+                    emitter.ret ();
+
+                    emitter.bind (l_resume);
+                    emitter.branch (BranchKind.JMP, l_try_recv);
+
+                    emitter.bind (l_got_recv);
+                    emitter.push_reg (Reg.RDX);
+                    emitter.load_local (child_slot);
+                    emitter.zero_local (child_slot);
+                    emitter.mov_rdi_rax ();
+                    call_aligned ("__planc_unref");
+                    emitter.pop_rax ();
+                    if (program_uses_heap && ye.ref_temp_slot >= 0 && is_ref_type (inner_t))
+                        emitter.store_local (ye.ref_temp_slot);
+                    if (is_fp_type (inner_t))
+                        emitter.movq_xmm_rax (0);
+                    return;
+                }
+            }
             gen_expr (ye.value);
             if (is_owned_expr (ye.value)) {
                 consume_ref_expr (ye.value);
@@ -8690,11 +9107,167 @@ namespace Planc {
                 emitter.movq_xmm_rax (0);
         }
 
+        private void emit_signal_emit (Expr obj_expr, SignalDecl sd, GenericArray<Expr> args)
+                throws SemanticError {
+            need_signal = true;
+            unowned DelegateDecl? dd = program.find_delegate (sd.handler_delegate_name);
+            if (dd == null)
+                throw new SemanticError.UNKNOWN_FUNCTION (@"missing signal delegate '$(sd.handler_delegate_name)'");
+
+            int nargs = args.length;
+            int area_top = align16 (8 * (3 + nargs));
+            emitter.sub_rsp (area_top);
+
+            gen_expr (obj_expr);
+            emitter.store_rsp (16);
+            for (int i = 0; i < nargs; i++) {
+                emit_call_arg_param (dd.params[1 + i], args[i]);
+                emitter.store_rsp (24 + 8 * i);
+            }
+            emitter.xor_eax ();
+            emitter.store_rsp (8);
+
+            if (sd.default_handler != null) {
+                bool[] d_reg;
+                bool[] d_xmm;
+                int[] d_rnum;
+                int[] d_sidx;
+                int d_s = 0;
+                plan_call_abi (sd.default_handler.params, false, 1 + nargs, out d_reg, out d_xmm, out d_rnum, out d_sidx, out d_s);
+                var d_depth = push_depth;
+                var d_area = align16 (8 * d_s);
+                if (d_s > 0 && d_depth % 2 == 1)
+                    d_area += 8;
+                if (d_area != 0)
+                    emitter.sub_rsp (d_area);
+                int d_pushed = 0;
+                for (int idx = 0; idx < 1 + nargs; idx++) {
+                    emitter.load_rsp (d_area + 8 * d_pushed + 16 + 8 * idx);
+                    if (d_reg[idx]) {
+                        emitter.push_rax ();
+                        push_depth++;
+                        d_pushed++;
+                    } else {
+                        emitter.store_rsp (8 * (d_pushed + d_sidx[idx]));
+                    }
+                }
+                pop_call_regs (1 + nargs, d_reg, d_xmm, d_rnum);
+                if (d_s == 0 && d_depth % 2 == 1)
+                    emitter.sub_rsp (8);
+                emitter.call_rel32 (sd.default_handler.name);
+                if (d_s > 0)
+                    emitter.add_rsp (d_area);
+                else if (d_depth % 2 == 1)
+                    emitter.add_rsp (8);
+                if (is_fp_type (sd.return_type))
+                    emitter.movq_rax_xmm (0);
+                emitter.store_rsp (8);
+            }
+
+            emitter.load_rsp (16);
+            emitter.load_rax_disp (16 + 8 * sd.slot_index);
+            emitter.store_rsp (0);
+
+            var l_sig_loop = emitter.new_label ();
+            var l_sig_done = emitter.new_label ();
+            emitter.bind (l_sig_loop);
+            emitter.load_rsp (0);
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, l_sig_done);
+            emitter.mov_rcx_rax ();
+            emitter.load_rcx_disp_to_rax (16); // next_node
+            emitter.store_rsp (0);
+
+            emitter.load_rcx_disp_to_rax (32); // fn_ptr
+            emitter.push_rax ();
+            push_depth++;
+            emitter.load_rcx_disp_to_rax (40); // env_ptr
+
+            var total_args = 2 + nargs;
+            bool[] is_reg;
+            bool[] reg_is_xmm;
+            int[] reg_num;
+            int[] stack_idx;
+            int s = 0;
+            plan_call_abi (dd.params, true, total_args, out is_reg, out reg_is_xmm, out reg_num, out stack_idx, out s);
+            var depth = push_depth;
+            var area = align16 (8 * s);
+            if (s > 0 && depth % 2 == 1)
+                area += 8;
+            if (area != 0)
+                emitter.sub_rsp (area);
+
+            emitter.push_rax (); // #env (arg 0)
+            push_depth++;
+            int pushed_regs = 1;
+
+            for (int idx = 1; idx < total_args; idx++) {
+                emitter.load_rsp (area + 8 * pushed_regs + 8 + 16 + 8 * (idx - 1));
+                if (is_reg[idx]) {
+                    emitter.push_rax ();
+                    push_depth++;
+                    pushed_regs++;
+                } else {
+                    emitter.store_rsp (8 * (pushed_regs + stack_idx[idx]));
+                }
+            }
+
+            pop_call_regs (total_args, is_reg, reg_is_xmm, reg_num);
+            if (s == 0 && depth % 2 == 1)
+                emitter.sub_rsp (8);
+            int fn_disp = (s > 0) ? area : ((depth % 2 == 1) ? 8 : 0);
+            emitter.load_rsp (fn_disp);
+            emitter.call_rax ();
+            if (s > 0)
+                emitter.add_rsp (area);
+            else if (depth % 2 == 1)
+                emitter.add_rsp (8);
+            emitter.add_rsp (8); // discard fn_ptr
+            push_depth--;
+            if (is_fp_type (sd.return_type))
+                emitter.movq_rax_xmm (0);
+            emitter.store_rsp (8);
+            emitter.branch (BranchKind.JMP, l_sig_loop);
+
+            emitter.bind (l_sig_done);
+            emitter.load_rsp (8);
+            if (is_fp_type (sd.return_type))
+                emitter.movq_xmm_rax (0);
+            emitter.add_rsp (area_top);
+        }
+
         private void gen_method_call (MethodCallExpr mc) throws SemanticError {
             string bi_kind = "";
             ValaType bi_ret = ValaType.VOID;
             if (is_builtin_method_call (mc, out bi_kind, out bi_ret)) {
                 gen_builtin_method_call (mc, bi_kind);
+                return;
+            }
+            Expr? sig_obj_c = null;
+            unowned SignalDecl? sig_conn = resolve_signal_connect (mc, out sig_obj_c);
+            if (sig_conn != null && sig_obj_c != null) {
+                need_signal = true;
+                gen_expr (sig_obj_c);
+                emitter.add_rax_imm (16 + 8 * sig_conn.slot_index);
+                emitter.push_rax ();
+                push_depth++;
+                if (mc.method_name == "connect") {
+                    gen_expr (mc.args[0]);
+                    emitter.mov_rcx_rax ();
+                    emitter.load_rcx_disp_to_rax (0);
+                    emitter.mov_rsi_rax ();
+                    emitter.load_rcx_disp_to_rax (8);
+                    emitter.mov_rdx_rax ();
+                    emitter.pop_reg (Reg.RDI);
+                    push_depth--;
+                    call_aligned ("__planc_sig_connect");
+                } else {
+                    gen_expr (mc.args[0]);
+                    emitter.mov_rsi_rax ();
+                    emitter.pop_reg (Reg.RDI);
+                    push_depth--;
+                    call_aligned ("__planc_sig_disconnect");
+                }
                 return;
             }
             Expr? begin_recv = null;
@@ -8710,7 +9283,8 @@ namespace Planc {
                 }
                 return;
             }
-            if (mc.target != null && !mc.is_base_call && mc.method_name != "begin") {
+            if (mc.target != null && !mc.is_base_call && mc.method_name != "begin"
+                && mc.method_name != "connect" && mc.method_name != "disconnect") {
                 unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                 if (md != null) {
                     var del_expr = new MemberAccessExpr () {
@@ -8725,6 +9299,12 @@ namespace Planc {
             }
             unowned var m = resolve_method_call_fn (mc);
             if (m == null) {
+                Expr? sig_obj_e = null;
+                unowned SignalDecl? sd_e = resolve_signal_access (mc.target, mc.method_name, out sig_obj_e);
+                if (sd_e != null && sig_obj_e != null) {
+                    emit_signal_emit (sig_obj_e, sd_e, mc.args);
+                    return;
+                }
                 Host.panic (@"unchecked method '$(mc.method_name)'");
                 return;
             }
@@ -9036,6 +9616,12 @@ namespace Planc {
             }
             unowned var f = resolve_call_target (e.callee);
             if (f == null) {
+                Expr? sig_obj_e = null;
+                unowned SignalDecl? sd_e = resolve_signal_access (null, e.callee, out sig_obj_e);
+                if (sd_e != null && sig_obj_e != null) {
+                    emit_signal_emit (sig_obj_e, sd_e, e.args);
+                    return;
+                }
                 Host.panic (@"unchecked callee $(e.callee)");
                 return;
             }

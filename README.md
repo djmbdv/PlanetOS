@@ -107,6 +107,8 @@ problems** and **creates six**:
 | [docs/planc/slice-11.md](docs/planc/slice-11.md) | **Implemented slice 11**: IEEE-754 `float` & `double` on x86-64-v3 (`xmm0`–`xmm7` ABI, pure-integer literal parser, `__planc_double_to_str`/`__planc_str_to_double`) |
 | [docs/planc/slice-12.md](docs/planc/slice-12.md) | **Implemented slice 12**: `[AsmBody("...")]` and built-in x86-64 assembler (`TC-04`, `VL-09`, `I5`) |
 | [docs/planc/slice-13.md](docs/planc/slice-13.md) | **Implemented slice 13**: `async`/`yield`/`.begin()` heap state machines (`VL-08`), thread-safe allocator, `Async.run()` & `Async.run_parallel(n)` M:N scheduler |
+| [docs/planc/slice-14.md](docs/planc/slice-14.md) | **Implemented slice 14**: `signal`, `.connect()`, `.disconnect()`, default handlers, and ARC destructor cleanup |
+| [docs/planc/slice-15.md](docs/planc/slice-15.md) | **Implemented slice 15**: `Channel<T>` (`send` / `yield recv` / `close`) and `Mutex` over the M:N `async` scheduler |
 
 ## 5. State of the measurements
 
@@ -142,9 +144,9 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 166 cases, 166 pass
+./planc/tests/run.sh   # 172 cases, 172 pass
 ./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3),
-                       # 166/166 under the self-hosted compiler
+                       # 172/172 under the self-hosted compiler
 ```
 
 The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/

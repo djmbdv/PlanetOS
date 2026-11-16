@@ -3205,5 +3205,408 @@ namespace Planc {
             ret ();
             symbols.add (new Symbol ("__planc_async_run", fn_start, here () - fn_start));
         }
+
+        // Signal runtime (Slice 14):
+        // bss_base: 8 bytes (next_sig_id counter)
+        // SigNode layout (allocated via __planc_alloc(32, 0)):
+        //   +16 next, +24 id, +32 fn_ptr, +40 env_ptr
+        public void emit_rt_signal (int bss_base, GenericArray<Symbol> symbols) {
+            // 1. int64 __planc_sig_connect(void** rdi, void* rsi, void* rdx)
+            int fn_start = here ();
+            var l_no_ref = new_label ();
+            var l_empty = new_label ();
+            var l_tail_loop = new_label ();
+            var l_done = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            // rbx = slot_addr, r12 = fn, r13 = env
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF4);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xD5);
+            // if env != 0: __planc_ref(env)
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xED);
+            branch (BranchKind.JE, l_no_ref);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEF);
+            call_rel32 ("__planc_ref");
+            bind (l_no_ref);
+            // node = __planc_alloc(32, 0)
+            mov_rdi_imm (32);
+            code.u8 (0x31); code.u8 (0xF6); // xor esi, esi
+            call_rel32 ("__planc_alloc");
+            // r14 = lock_xadd(&bss_base, 1) + 1
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x15);
+            record_rip (bss_base, PatchSpace.BSS);
+            code.u8 (0x49); code.u8 (0xC7); code.u8 (0xC6); code.u32le (1);
+            code.u8 (0xF0); code.u8 (0x4C); code.u8 (0x01); code.u8 (0x32); // lock xadd [rdx], r14
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6); // inc r14
+            // node->next = 0; node->id = r14; node->fn = r12; node->env = r13
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x40); code.u8 (0x10); code.u32le (0);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x70); code.u8 (0x18);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x60); code.u8 (0x20);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x68); code.u8 (0x28);
+            // Append to *rbx
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x0B); // mov rcx, [rbx]
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JE, l_empty);
+            bind (l_tail_loop);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x51); code.u8 (0x10); // mov rdx, [rcx + 16]
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2);
+            branch (BranchKind.JE, l_done);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD1); // mov rcx, rdx
+            branch (BranchKind.JMP, l_tail_loop);
+            bind (l_done);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x41); code.u8 (0x10); // mov [rcx + 16], rax
+            // return id (r14)
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);
+            code.u8 (0x41); code.u8 (0x5E);
+            code.u8 (0x41); code.u8 (0x5D);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            bind (l_empty);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x03); // mov [rbx], rax
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);
+            code.u8 (0x41); code.u8 (0x5E);
+            code.u8 (0x41); code.u8 (0x5D);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_sig_connect", fn_start, here () - fn_start));
+
+            // 2. void __planc_sig_disconnect(void** rdi, int64 rsi)
+            fn_start = here ();
+            var l_dc_loop = new_label ();
+            var l_dc_found = new_label ();
+            var l_dc_head = new_label ();
+            var l_dc_unlink_done = new_label ();
+            var l_dc_no_env = new_label ();
+            var l_dc_exit = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            // rbx = slot_addr, r12 = id, rcx = prev (0), rdx = cur (*rbx)
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF4);
+            code.u8 (0x31); code.u8 (0xC9);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x13); // mov rdx, [rbx]
+            bind (l_dc_loop);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2);
+            branch (BranchKind.JE, l_dc_exit);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0x62); code.u8 (0x18); // cmp [rdx + 24], r12
+            branch (BranchKind.JE, l_dc_found);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD1); // prev = cur
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x52); code.u8 (0x10); // cur = [cur + 16]
+            branch (BranchKind.JMP, l_dc_loop);
+            bind (l_dc_found);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x42); code.u8 (0x10); // rax = cur->next
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JE, l_dc_head);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x41); code.u8 (0x10); // prev->next = rax
+            branch (BranchKind.JMP, l_dc_unlink_done);
+            bind (l_dc_head);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x03); // *rbx = rax
+            bind (l_dc_unlink_done);
+            // rbx = cur; if cur->env != 0: __planc_unref(cur->env); __planc_unref(cur)
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD3);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x7B); code.u8 (0x28);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_dc_no_env);
+            call_rel32 ("__planc_unref");
+            bind (l_dc_no_env);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xDF);
+            call_rel32 ("__planc_unref");
+            bind (l_dc_exit);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_sig_disconnect", fn_start, here () - fn_start));
+
+            // 3. void __planc_sig_free_list(void* rdi)
+            fn_start = here ();
+            var l_fl_loop = new_label ();
+            var l_fl_no_env = new_label ();
+            var l_fl_done = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB); // rbx = cur
+            bind (l_fl_loop);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xDB);
+            branch (BranchKind.JE, l_fl_done);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x63); code.u8 (0x10); // r12 = cur->next
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x7B); code.u8 (0x28); // rdi = cur->env
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_fl_no_env);
+            call_rel32 ("__planc_unref");
+            bind (l_fl_no_env);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xDF);
+            call_rel32 ("__planc_unref");
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE3); // rbx = r12
+            branch (BranchKind.JMP, l_fl_loop);
+            bind (l_fl_done);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_sig_free_list", fn_start, here () - fn_start));
+        }
+
+        // Channel<T> and Mutex runtime (Slice 15):
+        // Channel layout (__planc_alloc(48, 0)):
+        //   +16 chan_lock, +24 val_head, +32 val_tail,
+        //   +40 wait_head, +48 wait_tail, +56 closed
+        // ChanVal layout (__planc_alloc(16, 0)):
+        //   +16 next, +24 value
+        // Mutex layout (__planc_alloc(16, 0)):
+        //   +16 lock_word
+        public void emit_rt_sync (GenericArray<Symbol> symbols) {
+            // 1. void* __planc_chan_new()
+            int fn_start = here ();
+            mov_rdi_imm (48);
+            code.u8 (0x31); code.u8 (0xF6); // xor esi, esi
+            call_rel32 ("__planc_alloc");
+            ret ();
+            symbols.add (new Symbol ("__planc_chan_new", fn_start, here () - fn_start));
+
+            // 2. void __planc_chan_send(void* rdi /* ch */, int64 rsi /* val */)
+            fn_start = here ();
+            var l_cs_lock = new_label ();
+            var l_cs_locked = new_label ();
+            var l_cs_closed = new_label ();
+            var l_cs_vempty = new_label ();
+            var l_cs_wcheck = new_label ();
+            var l_cs_wake = new_label ();
+            var l_cs_done = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            sub_rsp (8);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB); // rbx = ch
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF4); // r12 = val
+            // alloc node = __planc_alloc(16, 0) before taking lock
+            mov_rdi_imm (16);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC5); // r13 = node
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0x65); code.u8 (0x18); // [r13 + 24] = val
+            // acquire chan_lock [rbx + 16]
+            bind (l_cs_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x43); code.u8 (0x10);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_cs_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_cs_lock);
+            bind (l_cs_locked);
+            // if closed != 0: unlock and free node
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x38); code.u8 (0x00);
+            branch (BranchKind.JNE, l_cs_closed);
+            // append r13 to val_tail [rbx + 32]
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4B); code.u8 (0x20); // rcx = val_tail
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JE, l_cs_vempty);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x69); code.u8 (0x10); // val_tail->next = r13
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x6B); code.u8 (0x20); // val_tail = r13
+            branch (BranchKind.JMP, l_cs_wcheck);
+            bind (l_cs_vempty);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x6B); code.u8 (0x18); // val_head = r13
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x6B); code.u8 (0x20); // val_tail = r13
+            bind (l_cs_wcheck);
+            // pop waiter from wait_head [rbx + 40]
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x6B); code.u8 (0x28); // r13 = wait_head
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xED);
+            branch (BranchKind.JNE, l_cs_wake);
+            // unlock and return
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            branch (BranchKind.JMP, l_cs_done);
+            bind (l_cs_wake);
+            // wait_head = r13->next; if 0: wait_tail = 0; r13->next = 0
+            code.u8 (0x49); code.u8 (0x8B); code.u8 (0x45); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x43); code.u8 (0x28);
+            test_rax_rax ();
+            var l_cs_wh_nz = new_label ();
+            branch (BranchKind.JNE, l_cs_wh_nz);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x30); code.u32le (0);
+            bind (l_cs_wh_nz);
+            code.u8 (0x49); code.u8 (0xC7); code.u8 (0x45); code.u8 (0x10); code.u32le (0);
+            // unlock
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEF); // rdi = r13
+            call_rel32 ("__planc_async_enqueue");
+            branch (BranchKind.JMP, l_cs_done);
+            bind (l_cs_closed);
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEF);
+            call_rel32 ("__planc_unref");
+            bind (l_cs_done);
+            add_rsp (8);
+            code.u8 (0x41); code.u8 (0x5D);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_chan_send", fn_start, here () - fn_start));
+
+            // 3. (rax=status, rdx=val) __planc_chan_try_recv(void* rdi /* ch */, void* rsi /* waiter */)
+            // status 0 = got val in rdx (or closed with 0); status 1 = suspended (waiter enqueued).
+            fn_start = here ();
+            var l_cr_lock = new_label ();
+            var l_cr_locked = new_label ();
+            var l_cr_empty = new_label ();
+            var l_cr_wempty = new_label ();
+            var l_cr_closed = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB); // rbx = ch
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF4); // r12 = waiter
+            bind (l_cr_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x43); code.u8 (0x10);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_cr_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_cr_lock);
+            bind (l_cr_locked);
+            // check val_head [rbx + 24]
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x7B); code.u8 (0x18); // rdi = val_head
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_cr_empty);
+            // pop val_head: rax = [rdi + 16]; val_head = rax; if 0: val_tail = 0
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x43); code.u8 (0x18);
+            test_rax_rax ();
+            var l_cr_vh_nz = new_label ();
+            branch (BranchKind.JNE, l_cr_vh_nz);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x20); code.u32le (0);
+            bind (l_cr_vh_nz);
+            // r12 = [rdi + 24] (val); unlock; __planc_unref(rdi); rax = 0; rdx = r12
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x67); code.u8 (0x18);
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            call_rel32 ("__planc_unref");
+            xor_eax ();
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE2); // mov rdx, r12
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+
+            bind (l_cr_empty);
+            // if closed != 0: unlock; return (0, 0)
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x38); code.u8 (0x00);
+            branch (BranchKind.JNE, l_cr_closed);
+            // enqueue waiter r12 onto wait_tail [rbx + 48]
+            code.u8 (0x49); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x10); code.u32le (0); // r12->next = 0
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4B); code.u8 (0x30); // rcx = wait_tail
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JE, l_cr_wempty);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x61); code.u8 (0x10); // wait_tail->next = r12
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x63); code.u8 (0x30); // wait_tail = r12
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            mov_eax (1);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            bind (l_cr_wempty);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x63); code.u8 (0x28); // wait_head = r12
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x63); code.u8 (0x30); // wait_tail = r12
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            mov_eax (1);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+
+            bind (l_cr_closed);
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            xor_eax ();
+            xor_edx ();
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_chan_try_recv", fn_start, here () - fn_start));
+
+            // 4. void __planc_chan_close(void* rdi /* ch */)
+            fn_start = here ();
+            var l_cc_lock = new_label ();
+            var l_cc_locked = new_label ();
+            var l_cc_loop = new_label ();
+            var l_cc_done = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB);
+            bind (l_cc_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x43); code.u8 (0x10);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_cc_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_cc_lock);
+            bind (l_cc_locked);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x38); code.u32le (1); // closed = 1
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x63); code.u8 (0x28); // r12 = wait_head
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x28); code.u32le (0);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x30); code.u32le (0);
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            bind (l_cc_loop);
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xE4);
+            branch (BranchKind.JE, l_cc_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
+            code.u8 (0x4D); code.u8 (0x8B); code.u8 (0x64); code.u8 (0x24); code.u8 (0x10); // r12 = r12->next
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x47); code.u8 (0x10); code.u32le (0);
+            call_rel32 ("__planc_async_enqueue");
+            branch (BranchKind.JMP, l_cc_loop);
+            bind (l_cc_done);
+            code.u8 (0x41); code.u8 (0x5C);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_chan_close", fn_start, here () - fn_start));
+
+            // 5. void* __planc_mutex_new()
+            fn_start = here ();
+            mov_rdi_imm (16);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            ret ();
+            symbols.add (new Symbol ("__planc_mutex_new", fn_start, here () - fn_start));
+
+            // 6. void __planc_mutex_lock(void* rdi)
+            fn_start = here ();
+            var l_ml_loop = new_label ();
+            var l_ml_done = new_label ();
+            bind (l_ml_loop);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x47); code.u8 (0x10);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_ml_done);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_ml_loop);
+            bind (l_ml_done);
+            ret ();
+            symbols.add (new Symbol ("__planc_mutex_lock", fn_start, here () - fn_start));
+
+            // 7. void __planc_mutex_unlock(void* rdi)
+            fn_start = here ();
+            code.u8 (0xC7); code.u8 (0x47); code.u8 (0x10); code.u32le (0);
+            ret ();
+            symbols.add (new Symbol ("__planc_mutex_unlock", fn_start, here () - fn_start));
+        }
     }
 }

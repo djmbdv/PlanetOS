@@ -1461,6 +1461,21 @@ namespace Planc {
             return nf;
         }
 
+        private void synthesize_channel (GenericInstantiation inst) {
+            if (find_class (inst.mangled_name) != null)
+                return;
+            var cd = new ClassDecl () {
+                name = inst.mangled_name,
+                is_defined = true
+            };
+            cd.fields.add (new ClassField () {
+                field_type = inst.arg_types[0],
+                type_name = inst.arg_type_names[0],
+                name = "elem"
+            });
+            classes.add (cd);
+        }
+
         private void synthesize_generic_array (GenericInstantiation inst) {
             if (find_class (inst.mangled_name) != null)
                 return;
@@ -1744,6 +1759,11 @@ namespace Planc {
                 if (inst.template_name == "GenericArray") {
                     if (inst.arg_types.length == 1)
                         synthesize_generic_array (inst);
+                    continue;
+                }
+                if (inst.template_name == "Channel") {
+                    if (inst.arg_types.length == 1)
+                        synthesize_channel (inst);
                     continue;
                 }
                 if (inst.is_struct) {
