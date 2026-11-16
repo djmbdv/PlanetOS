@@ -200,7 +200,16 @@ namespace Planc {
             Host.eprintln (@".rodata: $(rodata.length) bytes");
         }
 
-        var image = Elf.build (text, rodata, data, codegen.symbols, layout);
+        uint8[] debug_line;
+        uint8[] debug_abbrev;
+        uint8[] debug_info;
+        Dwarf.build (source_paths[0], layout.text_vaddr, text.length,
+                     codegen.debug_lines, codegen.debug_funcs,
+                     out debug_line, out debug_abbrev, out debug_info);
+        Elf.set_dwarf_sizes (ref layout, debug_line.length, debug_abbrev.length, debug_info.length);
+
+        var image = Elf.build (text, rodata, data, codegen.symbols, layout,
+                               debug_line, debug_abbrev, debug_info);
 
         try {
             Host.write_file (output_path, image);

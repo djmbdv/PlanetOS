@@ -348,6 +348,19 @@ else
     fi
 fi
 
+echo "== dwarf =="
+if command -v readelf >/dev/null 2>&1; then
+    dw_bin="$WORK/dwarf_rec"
+    if ! "$PLANC" "$HERE/valid/recursion.vala" -o "$dw_bin" 2>"$WORK/dw.err"; then
+        ko "dwarf_info" "compile failed: $(cat "$WORK/dw.err")"
+    elif ! readelf --debug-dump=decodedline "$dw_bin" 2>/dev/null | grep -q "recursion.vala" \
+         || ! readelf --debug-dump=info "$dw_bin" 2>/dev/null | grep -q "DW_TAG_subprogram"; then
+        ko "dwarf_info" "missing DWARF line/subprogram entries"
+    else
+        ok "dwarf_info"
+    fi
+fi
+
 echo
 echo "SUMMARY: $((PASS + FAIL)) cases, $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

@@ -35,7 +35,7 @@ namespace Planc {
         public const int PROGRAM_HEADER_SIZE = 56;
         public const int PROGRAM_HEADER_COUNT = 3;
         public const int SECTION_HEADER_SIZE = 64;
-        public const int SECTION_HEADER_COUNT = 8;
+        public const int SECTION_HEADER_COUNT = 11;
         public const int PAGE_SIZE = 0x1000;
         public const int SYMBOL_ENTRY_SIZE = 24;
 
@@ -63,6 +63,9 @@ namespace Planc {
         public const int SEC_SYMTAB = 5;
         public const int SEC_STRTAB = 6;
         public const int SEC_SHSTRTAB = 7;
+        public const int SEC_DEBUG_LINE = 8;
+        public const int SEC_DEBUG_ABBREV = 9;
+        public const int SEC_DEBUG_INFO = 10;
 
         public struct Layout {
             public int text_offset;
@@ -78,6 +81,12 @@ namespace Planc {
             public int strtab_size;
             public int shstrtab_offset;
             public int shstrtab_size;
+            public int debug_line_offset;
+            public int debug_line_size;
+            public int debug_abbrev_offset;
+            public int debug_abbrev_size;
+            public int debug_info_offset;
+            public int debug_info_size;
             public int sections_offset;
             public uint64 text_vaddr;
             public uint64 rodata_vaddr;
@@ -93,7 +102,7 @@ namespace Planc {
         // string constant containing NULs would be truncated at the first one.
         // Layout: "\0" ".text\0" ".rodata\0" ".data\0" ".bss\0" ".symtab\0"
         //         ".strtab\0" ".shstrtab\0"
-        private const int SHSTRTAB_SIZE = 1 + 6 + 8 + 6 + 5 + 8 + 8 + 10;
+        private const int SHSTRTAB_SIZE = 1 + 6 + 8 + 6 + 5 + 8 + 8 + 10 + 12 + 14 + 12;
         private const uint32 NAME_TEXT = 1;
         private const uint32 NAME_RODATA = 7;
         private const uint32 NAME_DATA = 15;
@@ -101,6 +110,9 @@ namespace Planc {
         private const uint32 NAME_SYMTAB = 26;
         private const uint32 NAME_STRTAB = 34;
         private const uint32 NAME_SHSTRTAB = 42;
+        private const uint32 NAME_DEBUG_LINE = 52;
+        private const uint32 NAME_DEBUG_ABBREV = 64;
+        private const uint32 NAME_DEBUG_INFO = 78;
 
         private static int strtab_size (GenericArray<Symbol> symbols) {
             var size = 1;  // leading NUL
@@ -139,8 +151,24 @@ namespace Planc {
             l.strtab_size = strtab_size (symbols);
             l.shstrtab_offset = l.strtab_offset + l.strtab_size;
             l.shstrtab_size = SHSTRTAB_SIZE;
+            l.debug_line_offset = l.shstrtab_offset + l.shstrtab_size;
+            l.debug_line_size = 0;
+            l.debug_abbrev_offset = l.debug_line_offset;
+            l.debug_abbrev_size = 0;
+            l.debug_info_offset = l.debug_abbrev_offset;
+            l.debug_info_size = 0;
             l.sections_offset = align_up (l.shstrtab_offset + l.shstrtab_size, 8);
             return l;
+        }
+
+        public static void set_dwarf_sizes (ref Layout l, int line_sz, int abbrev_sz, int info_sz) {
+            l.debug_line_offset = l.shstrtab_offset + l.shstrtab_size;
+            l.debug_line_size = line_sz;
+            l.debug_abbrev_offset = l.debug_line_offset + l.debug_line_size;
+            l.debug_abbrev_size = abbrev_sz;
+            l.debug_info_offset = l.debug_abbrev_offset + l.debug_abbrev_size;
+            l.debug_info_size = info_sz;
+            l.sections_offset = align_up (l.debug_info_offset + l.debug_info_size, 8);
         }
 
         public static uint64 entry_for (Layout l, GenericArray<Symbol> symbols, string name) {
@@ -153,7 +181,8 @@ namespace Planc {
         }
 
         public static uint8[] build (uint8[] text, uint8[] rodata, uint8[] data,
-                                     GenericArray<Symbol> symbols, Layout l) {
+                                     GenericArray<Symbol> symbols, Layout l,
+                                     uint8[] debug_line, uint8[] debug_abbrev, uint8[] debug_info) {
             var f = new Buffer (4096);
 
             // _start, not main: the stub aligns rsp, calls main and exits
@@ -200,6 +229,15 @@ namespace Planc {
 
             write_shstrtab (f);
             expect_length (f, l.shstrtab_offset + l.shstrtab_size, ".shstrtab");
+
+            f.bytes (debug_line);
+            expect_length (f, l.debug_line_offset + l.debug_line_size, ".debug_line");
+
+            f.bytes (debug_abbrev);
+            expect_length (f, l.debug_abbrev_offset + l.debug_abbrev_size, ".debug_abbrev");
+
+            f.bytes (debug_info);
+            expect_length (f, l.debug_info_offset + l.debug_info_size, ".debug_info");
 
             f.zeroes (l.sections_offset - f.length);
             write_sections (f, l);
@@ -290,6 +328,12 @@ namespace Planc {
             f.u8 (0);
             f.ascii (".shstrtab");
             f.u8 (0);
+            f.ascii (".debug_line");
+            f.u8 (0);
+            f.ascii (".debug_abbrev");
+            f.u8 (0);
+            f.ascii (".debug_info");
+            f.u8 (0);
         }
 
         private static void write_sections (Buffer f, Layout l) {
@@ -325,6 +369,18 @@ namespace Planc {
             write_section_header (f, NAME_SHSTRTAB, SHT_STRTAB, 0,
                                   0, (uint64) l.shstrtab_offset,
                                   (uint64) l.shstrtab_size, 0, 0, 1, 0);
+            // SEC_DEBUG_LINE
+            write_section_header (f, NAME_DEBUG_LINE, SHT_PROGBITS, 0,
+                                  0, (uint64) l.debug_line_offset,
+                                  (uint64) l.debug_line_size, 0, 0, 1, 0);
+            // SEC_DEBUG_ABBREV
+            write_section_header (f, NAME_DEBUG_ABBREV, SHT_PROGBITS, 0,
+                                  0, (uint64) l.debug_abbrev_offset,
+                                  (uint64) l.debug_abbrev_size, 0, 0, 1, 0);
+            // SEC_DEBUG_INFO
+            write_section_header (f, NAME_DEBUG_INFO, SHT_PROGBITS, 0,
+                                  0, (uint64) l.debug_info_offset,
+                                  (uint64) l.debug_info_size, 0, 0, 1, 0);
         }
 
         private static void write_section_header (Buffer f, uint32 name, uint32 type,

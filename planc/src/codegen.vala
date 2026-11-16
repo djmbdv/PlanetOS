@@ -24,6 +24,8 @@ namespace Planc {
 
         public Emitter emitter { get; private set; }
         public GenericArray<Symbol> symbols { get; private set; }
+        public GenericArray<DebugLineEntry> debug_lines { get; private set; }
+        public GenericArray<DebugFunc> debug_funcs { get; private set; }
         public bool bounds_check { get; set; default = true; }
         public bool null_check { get; set; default = true; }
         public bool check_leaks { get; set; default = false; }
@@ -141,6 +143,8 @@ namespace Planc {
         public Codegen () {
             emitter = new Emitter ();
             symbols = new GenericArray<Symbol> ();
+            debug_lines = new GenericArray<DebugLineEntry> ();
+            debug_funcs = new GenericArray<DebugFunc> ();
             non_null_vars = new GenericArray<string> ();
             locals = new GenericArray<string> ();
             local_types = new GenericArray<ValaType> ();
@@ -3977,6 +3981,23 @@ namespace Planc {
             }
 
             symbols.add (new Symbol (f.name, start, emitter.here () - start));
+            var df = new DebugFunc () {
+                name = f.name,
+                start_offset = start,
+                end_offset = emitter.here (),
+                line = f.line
+            };
+            for (int li = 0; li < locals.length; li++) {
+                if (local_by_ref[li])
+                    continue;
+                df.vars.add (new DebugVar () {
+                    name = locals[li],
+                    slot = local_slots[li],
+                    var_type = local_types[li],
+                    is_param = (li < f.params.length)
+                });
+            }
+            debug_funcs.add (df);
         }
 
         private void emit_class_finalizer_body () {
@@ -6350,6 +6371,22 @@ namespace Planc {
         }
 
         private void gen_statement (Statement s) throws SemanticError {
+            if (s.line > 0) {
+                int cur_off = emitter.here ();
+                bool add_line = (debug_lines.length == 0);
+                if (!add_line) {
+                    var prev = debug_lines[debug_lines.length - 1];
+                    if (prev.line != s.line && cur_off >= prev.text_offset)
+                        add_line = true;
+                }
+                if (add_line) {
+                    debug_lines.add (new DebugLineEntry () {
+                        text_offset = cur_off,
+                        file_id = 1,
+                        line = s.line
+                    });
+                }
+            }
             if (s is PrintStatement) {
                 var p = (PrintStatement) s;
                 if (p.value is TemplateExpr) {

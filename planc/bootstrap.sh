@@ -22,6 +22,7 @@ $HERE/src/ast.vala
 $HERE/src/parser.vala
 $HERE/src/emitter.vala
 $HERE/src/asm.vala
+$HERE/src/dwarf.vala
 $HERE/src/elf.vala
 $HERE/src/codegen.vala
 $HERE/src/main.vala
