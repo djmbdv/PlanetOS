@@ -52,11 +52,11 @@ int main () {
     Keyboard.init ();
 
     int f0 = Pmm.free_frames ();
-    int p1 = invoke_syscall (3, 0, 0);
-    int p2 = invoke_syscall (3, 0, 0);
+    int p1 = invoke_syscall (3, 0, 0, 0);
+    int p2 = invoke_syscall (3, 0, 0, 0);
     print (@"pmm:free=$f0 p1=$p1 p2=$p2\n");
-    invoke_syscall (4, p1, 0);
-    invoke_syscall (4, p2, 0);
+    invoke_syscall (4, p1, 0, 0);
+    invoke_syscall (4, p2, 0, 0);
     int f1 = Pmm.free_frames ();
     print (@"pmm:restored=$(f1 == f0 ? 1 : 0)\n");
 
@@ -65,30 +65,39 @@ int main () {
     logger_task.begin (ch, 3);
     Async.run ();
 
-    int sc_ticks = invoke_syscall (2, 0, 0);
+    int sc_ticks = invoke_syscall (2, 0, 0, 0);
     print (@"sys:ticks=$sc_ticks\n");
 
     int kb_empty = Keyboard.poll_scancode ();
     int kb_a = Keyboard.scancode_to_ascii (0x1E);
     print (@"kb:ok=$(kb_empty == -1 && kb_a == 'a' ? 1 : 0)\n");
 
-    int dpage = Pmm.alloc_frame ();
-    if (Ata.identify (dpage)) {
-        int wbuf = dpage + 512;
-        int rbuf = dpage + 1024;
-        mmio_write32 (wbuf, 0x504C4E54); // "PLNT"
-        mmio_write32 (wbuf + 4, 0x12345678);
-        bool wok = Ata.write_sector (1, wbuf);
-        bool rok = Ata.read_sector (1, rbuf);
-        int m0 = mmio_read32 (rbuf);
-        int m1 = mmio_read32 (rbuf + 4);
-        print (@"ata:ok=$(wok && rok && m0 == 0x504C4E54 && m1 == 0x12345678 ? 1 : 0)\n");
-    } else {
-        print ("ata:ok=0\n");
+    int xok = Xfs.mount () ? 1 : 0;
+    print (@"xfs:mounted=$xok\n");
+    if (xok == 1) {
+        int xbuf = Pmm.alloc_frame ();
+        // Write "hello.txt" into xbuf+1024 to test SYS_OPEN / SYS_READ / SYS_CONSOLE_WRITE
+        int nbuf = xbuf + 1024;
+        mmio_write8 (nbuf + 0, 'h');
+        mmio_write8 (nbuf + 1, 'e');
+        mmio_write8 (nbuf + 2, 'l');
+        mmio_write8 (nbuf + 3, 'l');
+        mmio_write8 (nbuf + 4, 'o');
+        mmio_write8 (nbuf + 5, '.');
+        mmio_write8 (nbuf + 6, 't');
+        mmio_write8 (nbuf + 7, 'x');
+        mmio_write8 (nbuf + 8, 't');
+        int fd = invoke_syscall (6, nbuf, 9, 0);
+        int sz = invoke_syscall (9, fd, 0, 0);
+        int nr = invoke_syscall (7, fd, xbuf, 128);
+        print (@"xfs:fd=$fd sz=$sz nr=$nr\n");
+        if (nr > 0)
+            invoke_syscall (1, xbuf, nr, 0);
+        invoke_syscall (8, fd, 0, 0);
+        Pmm.free_frame (xbuf);
     }
-    Pmm.free_frame (dpage);
 
     print ("kernel:ok\n");
-    qemu_debug_exit (0);
+    invoke_syscall (11, 0, 0, 0);
     return 0;
 }
