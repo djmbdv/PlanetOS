@@ -996,7 +996,19 @@ namespace Planc {
         // ------------------------------------------------------------------
 
         // void __planc_write_str(string* rdi) -> writes bytes to stdout in O(1).
-        public void emit_rt_write_str (bool freestanding = false) {
+        public void int80 () {
+            code.u8 (0xCD); code.u8 (0x80);
+        }
+
+        public void emit_rt_write_str (bool freestanding = false, bool target_planetos = false) {
+            if (target_planetos) {
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x77); code.u8 (0x08); // mov rsi, [rdi + 8]
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7F); code.u8 (0x10); // lea rdi, [rdi + 16]
+                mov_eax (1);
+                int80 ();
+                ret ();
+                return;
+            }
             if (freestanding) {
                 push_rbp ();
                 mov_rsp_to_rbp ();
@@ -1062,7 +1074,18 @@ namespace Planc {
         }
 
         // Writes panic message to stderr and exits 134.
-        public void emit_rt_panic (int msg_rodata_offset, int msg_len, bool freestanding = false) {
+        public void emit_rt_panic (int msg_rodata_offset, int msg_len, bool freestanding = false, bool target_planetos = false) {
+            if (target_planetos) {
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x3D);
+                record_rip (msg_rodata_offset + 16, PatchSpace.RODATA);
+                mov_esi_imm ((uint32) msg_len);
+                mov_eax (1);
+                int80 ();
+                mov_edi (134);
+                mov_eax (11);
+                int80 ();
+                return;
+            }
             if (freestanding) {
                 // lea rdi, [rip + msg_rodata_offset + 16]
                 code.u8 (0x48); code.u8 (0x8D); code.u8 (0x3D);
@@ -1126,11 +1149,21 @@ namespace Planc {
         }
 
         // void __planc_write_int(int64 rdi) -> formats signed decimal to stdout.
-        public void emit_rt_write_int (bool freestanding = false) {
+        public void emit_rt_write_int (bool freestanding = false, bool target_planetos = false) {
             push_rbp ();
             mov_rsp_to_rbp ();
             sub_rsp (32);
             emit_format_int_to_stack ();
+            if (target_planetos) {
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xCF);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xEE);
+                code.u8 (0x48); code.u8 (0x29); code.u8 (0xCE);
+                mov_eax (1);
+                int80 ();
+                leave ();
+                ret ();
+                return;
+            }
             if (freestanding) {
                 // mov rdi, rcx; mov rsi, rbp; sub rsi, rcx
                 code.u8 (0x48); code.u8 (0x89); code.u8 (0xCF);
@@ -1159,7 +1192,7 @@ namespace Planc {
         // ------------------------------------------------------------------
 
         // void* __planc_alloc(uint64 rdi = payload_bytes, uint64 rsi = elem_ref)
-        public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1) {
+        public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1, bool target_planetos = false) {
             var l_class_loop = new_label ();
             var l_found_class = new_label ();
             var l_arena_carve = new_label ();
@@ -1310,6 +1343,26 @@ namespace Planc {
                 code.u8 (0x4C); code.u8 (0x89); code.u8 (0x4B); code.u8 (0x18); // arena_end
                 code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0); // unlock
                 code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0); // rax = r12
+                branch (BranchKind.JMP, l_init_header);
+            } else if (target_planetos) {
+                // PlanetOS userland: allocate 4 KiB page via SYS_ALLOC_PAGE (3)
+                push_reg (Reg.RCX);
+                push_reg (Reg.RDX);
+                mov_eax (3);
+                int80 ();
+                pop_reg (Reg.RDX);
+                pop_reg (Reg.RCX);
+                test_rax_rax ();
+                branch (BranchKind.JE, mem_panic_lbl);
+                code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4); // mov r12, rax
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
+                code.u8 (0x48); code.u8 (0x01); code.u8 (0xD0);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0x43); code.u8 (0x10); // arena_cur = r12 + rdx
+                code.u8 (0x4D); code.u8 (0x89); code.u8 (0xE1);
+                code.u8 (0x49); code.u8 (0x81); code.u8 (0xC1); code.u32le (0x1000); // 4 KiB
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0x4B); code.u8 (0x18); // arena_end
+                code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0); // unlock
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
                 branch (BranchKind.JMP, l_init_header);
             } else {
             push_reg (Reg.RCX);

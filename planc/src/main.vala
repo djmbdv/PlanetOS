@@ -21,6 +21,7 @@ namespace Planc {
         var null_check = true;
         var check_leaks = false;
         var freestanding = false;
+        var target_planetos = false;
 
         for (int i = 1; i < args.length; i++) {
             var a = args[i];
@@ -40,6 +41,8 @@ namespace Planc {
                 check_leaks = true;
             } else if (a == "--freestanding") {
                 freestanding = true;
+            } else if (a == "--target=planetos") {
+                target_planetos = true;
             } else if (a == "-h" || a == "--help") {
                 Host.println (USAGE);
                 return 0;
@@ -93,6 +96,7 @@ namespace Planc {
         codegen.null_check = null_check;
         codegen.check_leaks = check_leaks;
         codegen.freestanding = freestanding;
+        codegen.target_planetos = target_planetos;
         try {
             codegen.generate (program);
         } catch (SemanticError e) {
@@ -102,8 +106,9 @@ namespace Planc {
         var text = codegen.emitter.code.to_array ();
         var rodata = codegen.emitter.data.to_array ();
         var data = codegen.emitter.init_data.to_array ();
+        uint64 base_addr = target_planetos ? (uint64) 0x800000 : Elf.BASE_ADDRESS;
         var layout = Elf.compute (text.length, rodata.length, data.length,
-                                  codegen.emitter.bss_size, codegen.symbols);
+                                  codegen.emitter.bss_size, codegen.symbols, base_addr);
 
         // Relocation pass 1: .text -> allocated data references.
         // disp32 = target - (address of the next instruction)

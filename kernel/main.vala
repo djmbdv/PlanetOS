@@ -98,6 +98,38 @@ int main () {
     }
 
     print ("kernel:ok\n");
+
+    if (xok == 1) {
+        int nbuf2 = Pmm.alloc_frame ();
+        mmio_write8 (nbuf2 + 0, 'i');
+        mmio_write8 (nbuf2 + 1, 'n');
+        mmio_write8 (nbuf2 + 2, 'i');
+        mmio_write8 (nbuf2 + 3, 't');
+        mmio_write8 (nbuf2 + 4, '.');
+        mmio_write8 (nbuf2 + 5, 'e');
+        mmio_write8 (nbuf2 + 6, 'l');
+        mmio_write8 (nbuf2 + 7, 'f');
+        int efd = invoke_syscall (6, nbuf2, 8, 0);
+        Pmm.free_frame (nbuf2);
+        if (efd >= 0) {
+            int esz = invoke_syscall (9, efd, 0, 0);
+            int pages = (esz + 4095) / 4096;
+            int ebuf = Pmm.alloc_contiguous (pages);
+            if (ebuf != 0) {
+                int got = 0;
+                while (got < esz) {
+                    int r = invoke_syscall (7, efd, ebuf + got, esz - got);
+                    if (r <= 0)
+                        break;
+                    got = got + r;
+                }
+                invoke_syscall (8, efd, 0, 0);
+                if (got == esz)
+                    ElfLoader.load_and_run (ebuf, esz);
+            }
+        }
+    }
+
     invoke_syscall (11, 0, 0, 0);
     return 0;
 }

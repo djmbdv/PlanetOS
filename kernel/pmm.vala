@@ -121,6 +121,49 @@ namespace Planet.Kernel {
             pmm_free_count = pmm_free_count + 1;
         }
 
+        public static int alloc_contiguous (int num_pages) {
+            if (num_pages <= 0)
+                return 0;
+            int first_free = RESERVED_END / PAGE_SIZE;
+            int run = 0;
+            int start_f = first_free;
+            for (int f = first_free; f < pmm_total_frames; f++) {
+                if (!test_bit (f)) {
+                    if (run == 0)
+                        start_f = f;
+                    run = run + 1;
+                    if (run == num_pages) {
+                        for (int k = 0; k < num_pages; k++) {
+                            set_bit (start_f + k);
+                            pmm_free_count = pmm_free_count - 1;
+                            zero_page_4k ((start_f + k) * PAGE_SIZE);
+                        }
+                        return start_f * PAGE_SIZE;
+                    }
+                } else {
+                    run = 0;
+                }
+            }
+            return 0;
+        }
+
+        public static void reserve_range (int start_addr, int size) {
+            if (size <= 0)
+                return;
+            int start_f = start_addr / PAGE_SIZE;
+            int end_f = (start_addr + size + PAGE_SIZE - 1) / PAGE_SIZE;
+            if (start_f < 0)
+                start_f = 0;
+            if (end_f > pmm_total_frames)
+                end_f = pmm_total_frames;
+            for (int f = start_f; f < end_f; f++) {
+                if (!test_bit (f)) {
+                    set_bit (f);
+                    pmm_free_count = pmm_free_count - 1;
+                }
+            }
+        }
+
         public static int free_frames () {
             return pmm_free_count;
         }

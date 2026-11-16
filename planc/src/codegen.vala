@@ -30,6 +30,7 @@ namespace Planc {
         public bool null_check { get; set; default = true; }
         public bool check_leaks { get; set; default = false; }
         public bool freestanding { get; set; default = false; }
+        public bool target_planetos { get; set; default = false; }
 
         private const uint32 SYS_EXIT = 60;
 
@@ -1236,7 +1237,7 @@ namespace Planc {
 
             if (need_write_str) {
                 var start = emitter.here ();
-                emitter.emit_rt_write_str (freestanding);
+                emitter.emit_rt_write_str (freestanding, target_planetos);
                 symbols.add (new Symbol ("__planc_write_str", start, emitter.here () - start));
             }
             if (need_str_eq) {
@@ -1246,12 +1247,12 @@ namespace Planc {
             }
             if (need_write_int) {
                 var start = emitter.here ();
-                emitter.emit_rt_write_int (freestanding);
+                emitter.emit_rt_write_int (freestanding, target_planetos);
                 symbols.add (new Symbol ("__planc_write_int", start, emitter.here () - start));
             }
             if (need_alloc || need_ref || need_unref) {
                 var start_alloc = emitter.here ();
-                emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label, freestanding_heap_off);
+                emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label, freestanding_heap_off, target_planetos);
                 symbols.add (new Symbol ("__planc_alloc", start_alloc, emitter.here () - start_alloc));
 
                 var start_ref = emitter.here ();
@@ -1369,7 +1370,7 @@ namespace Planc {
             var msg_off = emitter.add_string (msg);
             var start = emitter.here ();
             emitter.bind (lbl);
-            emitter.emit_rt_panic (msg_off, msg.length, freestanding);
+            emitter.emit_rt_panic (msg_off, msg.length, freestanding, target_planetos);
             symbols.add (new Symbol (sym_name, start, emitter.here () - start));
         }
 
@@ -1438,8 +1439,13 @@ namespace Planc {
             } else {
                 emitter.mov_edi_eax ();
             }
-            emitter.mov_eax (SYS_EXIT);
-            emitter.syscall ();
+            if (target_planetos) {
+                emitter.mov_eax (11);
+                emitter.int80 ();
+            } else {
+                emitter.mov_eax (SYS_EXIT);
+                emitter.syscall ();
+            }
 
             symbols.add (new Symbol ("_start", start, emitter.here () - start));
         }
@@ -6441,6 +6447,10 @@ namespace Planc {
                 if (freestanding) {
                     emitter.code.u8 (0xFA); emitter.code.u8 (0xF4); // cli; hlt
                     emitter.code.u8 (0xEB); emitter.code.u8 (0xFD); // jmp -3
+                } else if (target_planetos) {
+                    emitter.mov_edi_eax ();
+                    emitter.mov_eax (11);
+                    emitter.int80 ();
                 } else {
                     emitter.mov_edi_eax ();
                     emitter.mov_eax (SYS_EXIT);

@@ -123,15 +123,16 @@ namespace Planc {
 
         public static Layout compute (int text_size, int rodata_size,
                                       int data_size, int bss_size,
-                                      GenericArray<Symbol> symbols) {
+                                      GenericArray<Symbol> symbols,
+                                      uint64 base_addr = BASE_ADDRESS) {
             var l = Layout ();
             l.text_offset = HEADER_SIZE + PROGRAM_HEADER_SIZE * PROGRAM_HEADER_COUNT;
             l.text_size = text_size;
-            l.text_vaddr = BASE_ADDRESS + (uint64) l.text_offset;
+            l.text_vaddr = base_addr + (uint64) l.text_offset;
 
             l.rodata_offset = align_up (l.text_offset + text_size, PAGE_SIZE);
             l.rodata_size = rodata_size;
-            l.rodata_vaddr = BASE_ADDRESS + (uint64) l.rodata_offset;
+            l.rodata_vaddr = base_addr + (uint64) l.rodata_offset;
 
             // The data segment must start on a page of its own: two segments
             // may never map the same page with different permissions. An
@@ -141,7 +142,7 @@ namespace Planc {
             l.data_offset = align_up (rodata_end, PAGE_SIZE);
             l.data_size = data_size;
             l.bss_size = bss_size;
-            l.data_vaddr = BASE_ADDRESS + (uint64) l.data_offset;
+            l.data_vaddr = base_addr + (uint64) l.data_offset;
 
             // Everything from here on is not loaded: it lives past the last
             // segment's p_filesz and no PT_LOAD covers it.
