@@ -269,6 +269,20 @@ Everything is Vala compiled by `planc` (RT-07). No third-party binaries, no exte
 
 The `Planet.Pruebas` package is not a luxury: without it, verification inside the system (VE-05) does not exist.
 
+### 9.1 Implemented subset (slices 27–35)
+
+| Package / file | Content |
+|---|---|
+| `Planet.Sys` ([stdlib/planet_sys.vala](../../stdlib/planet_sys.vala)) | the only userland `int 0x80` trampoline plus typed wrappers for files, directories, processes, memory and console, validated before the call |
+| `GLib` ([stdlib/glib_compat.vala](../../stdlib/glib_compat.vala)) | `StringBuilder`, `FileUtils`, `Str`, `Environment` and `Gee.ArrayList` |
+| `Gio` ([stdlib/gio_compat.vala](../../stdlib/gio_compat.vala)) | `File`, `FileInfo`, `FileEnumerator`, streams, `Cancellable`, `Application` |
+| `Cairo`/`Gdk` ([stdlib/cairo_gdk_compat.vala](../../stdlib/cairo_gdk_compat.vala)) | surfaces, context, framebuffer blits and mouse/keyboard input |
+
+The compatibility layers sit **above** `Planet.Sys`: they never issue a syscall
+themselves, and `Planet.Sys` depends on nothing but the compiler. Keeping the
+ABI in its own package is deliberate — `GLib`/`Gio`/`Cairo` are convenience
+shims, not the contract with the kernel.
+
 ## 10. Source compatibility with existing Vala
 
 **It is not a requirement.** A Vala program written for GLib uses `GLib.` and `GObject.` and will not compile.

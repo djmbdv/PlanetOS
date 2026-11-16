@@ -3,3 +3,4 @@
 =cat: not found
 =mkdir: cannot create '/hello.txt'
 =xfs:hello from PlanetOS disk!
+=sysguard:ok=1

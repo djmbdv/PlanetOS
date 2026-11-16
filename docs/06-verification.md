@@ -111,7 +111,8 @@ serial output against `<case>.expect`.
 | `directories` | `mkdir`/`cd`/`pwd`, `ls -l`, path-relative `write`/`cat`/`mv`/`rm`, empty-directory deletion |
 | `gio` | the Gio layer runs twice in one boot at 51/51 |
 | `exec` | bare, case-insensitive and `exec` command resolution |
-| `errors` | XFS stays read-only and a failed `mkdir` does not shadow a disk file |
+| `errors` | XFS stays read-only, a failed `mkdir` does not shadow a disk file, and the syscall guard rejects bad pointers (`sysguard:ok=1`) |
+| `compiler` | `planc.elf` compiles and runs programs inside the guest |
 
 Assertions: `text` (substring, in order), `=text` (whole line), `!text`
 (absent) and `~regex`.

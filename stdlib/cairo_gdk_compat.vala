@@ -1,18 +1,8 @@
 // Pure-Vala Cairo & Gdk compatibility layer for PlanetOS (zero C, zero .vapi).
 
-namespace Cairo {
+using Planet;
 
-    [AsmBody(@"
-        # __c_sys(num in rdi, a0 in rsi, a1 in rdx, a2 in rcx) -> syscall PlanetOS via int 0x80
-        # Reordena argumentos de System V ABI a la convencion int 0x80: rax=num, rdi=a0, rsi=a1, rdx=a2
-        mov %rdi, %rax
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        mov %rcx, %rdx
-        int $0x80
-        ret
-    ")]
-    private extern int __c_sys (int num, int a0, int a1, int a2);
+namespace Cairo {
 
     [AsmBody(@"
         # __c_fill32(addr in rdi, val in rsi, count in rdx)
@@ -60,7 +50,7 @@ namespace Cairo {
             height = h;
             int bytes = w * h * 4;
             int pages = (bytes + 4095) / 4096;
-            buf_addr = __c_sys (3, pages, 0, 0);
+            buf_addr = Sys.alloc_pages (pages);
         }
 
         public int get_width () { return width; }
@@ -350,16 +340,6 @@ namespace Gdk {
     using Cairo;
 
     [AsmBody(@"
-        mov %rdi, %rax
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        mov %rcx, %rdx
-        int $0x80
-        ret
-    ")]
-    private extern int __g_sys (int num, int a0, int a1, int a2);
-
-    [AsmBody(@"
         mov (%rdi), %rax
         ret
     ")]
@@ -425,7 +405,7 @@ namespace Gdk {
             width = w;
             height = h;
             surface = new ImageSurface (Format.ARGB32, w, h);
-            mouse_buf = __g_sys (3, 1, 0, 0);
+            mouse_buf = Sys.alloc_pages (1);
         }
 
         public Context create_cairo_context () {
@@ -433,18 +413,18 @@ namespace Gdk {
         }
 
         public void present () {
-            __g_sys (22, surface.buf_addr, width, height);
+            Sys.sys (22, surface.buf_addr, width, height);
         }
 
         public Event poll_event () {
             var ev = new Event ();
-            int key = __g_sys (5, 0, 0, 0);
+            int key = Sys.read_key ();
             if (key > 0) {
                 ev.type = EventType.KEY_PRESS;
                 ev.keyval = key;
                 return ev;
             }
-            __g_sys (24, mouse_buf, 0, 0);
+            Sys.sys (24, mouse_buf, 0, 0);
             int mx = __g_peek64 (mouse_buf + 0);
             int my = __g_peek64 (mouse_buf + 8);
             int mb = __g_peek64 (mouse_buf + 16);
@@ -471,15 +451,15 @@ namespace Gdk {
         }
 
         public void close () {
-            __g_sys (23, 0, 0, 0);
+            Sys.sys (23, 0, 0, 0);
             if (mouse_buf != 0) {
-                __g_sys (4, mouse_buf, 0, 0);
+                Sys.free_page (mouse_buf);
                 mouse_buf = 0;
             }
             if (surface.buf_addr != 0) {
                 int pages = (width * height * 4 + 4095) / 4096;
                 for (int p = 0; p < pages; p++) {
-                    __g_sys (4, surface.buf_addr + p * 4096, 0, 0);
+                    Sys.free_page (surface.buf_addr + p * 4096);
                 }
             }
         }
@@ -487,7 +467,7 @@ namespace Gdk {
 
     public class Display : Object {
         public static Window? open_window (int w = 800, int h = 600) {
-            int fb = __g_sys (21, w, h, 0);
+            int fb = Sys.sys (21, w, h, 0);
             if (fb == 0)
                 return null;
             return new Window (w, h);

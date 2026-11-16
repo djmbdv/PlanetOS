@@ -1,19 +1,11 @@
 // PlanetOS neofetch-style presentation banner (compiled with --target=planetos).
 
+using Planet;
+
 namespace UserBanner {
 
-    [AsmBody(@"
-        mov %rdi, %rax
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        mov %rcx, %rdx
-        int $0x80
-        ret
-    ")]
-    public extern int sys (int num, int a0, int a1, int a2);
-
     int main () {
-        int ticks = sys (2, 0, 0, 0);
+        int ticks = Sys.ticks ();
         string c = "\x1b[96m";
         string y = "\x1b[93m";
         string w = "\x1b[97m";

@@ -3,118 +3,9 @@
 // FileInputStream, FileOutputStream, MemoryInputStream, MemoryOutputStream,
 // DataInputStream, DataOutputStream, Cancellable, IOError, and Application.
 
+using Planet;
+
 namespace Gio {
-
-    [AsmBody(@"
-        # __gio_sys(num in rdi, a0 in rsi, a1 in rdx, a2 in rcx) -> syscall PlanetOS via int 0x80
-        mov %rdi, %rax
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        mov %rcx, %rdx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_sys (int num, int a0, int a1, int a2);
-
-    [AsmBody(@"
-        # __gio_open(path in rdi) -> fd o -1
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $6, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_open (string path);
-
-    [AsmBody(@"
-        # __gio_create(path in rdi) -> fd o -1
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $14, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_create (string path);
-
-    [AsmBody(@"
-        # __gio_read(fd in rdi, buf in rsi, count in rdx) -> bytes leidos
-        add $16, %rsi
-        mov $7, %rax
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_read (int fd, uint8[] buf, int count);
-
-    [AsmBody(@"
-        # __gio_write(fd in rdi, buf in rsi, count in rdx) -> bytes escritos
-        add $16, %rsi
-        mov $15, %rax
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_write (int fd, uint8[] buf, int count);
-
-    [AsmBody(@"
-        # __gio_unlink(path in rdi) -> 0 o -1
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $28, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_unlink (string path);
-
-    [AsmBody(@"
-        # __gio_rename(old in rdi, new in rsi) -> 0 o -1
-        mov %rdi, %r9
-        mov %rsi, %r10
-        mov 8(%r9), %rsi
-        mov 8(%r10), %r8
-        lea 16(%r9), %rdi
-        lea 16(%r10), %rdx
-        mov $29, %rax
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_rename (string old_path, string new_path);
-
-    [AsmBody(@"
-        # __gio_mkdir(path in rdi) -> 0 o -1
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $30, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_mkdir (string path);
-
-    [AsmBody(@"
-        # __gio_stat(path in rdi) -> 0 none, 1 file, 2 dir
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $32, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_stat (string path);
-
-    [AsmBody(@"
-        # __gio_readdir_path(path in rdi, buf in rsi, max in rdx) -> bytes
-        mov %rdx, %r8
-        mov 8(%rdi), %rcx
-        add $16, %rdi
-        lea 16(%rsi), %rdx
-        mov %rcx, %rsi
-        mov $31, %rax
-        int $0x80
-        ret
-    ")]
-    private extern int __gio_readdir_path (string path, uint8[] buf, int max_bytes);
 
     public errordomain IOError {
         FAILED,
@@ -295,7 +186,7 @@ namespace Gio {
                 throw new IOError.CLOSED ("Stream is closed");
             if (buffer.length == 0)
                 return 0;
-            int n = __gio_read (fd, buffer, buffer.length);
+            int n = Sys.read (fd, buffer, buffer.length);
             if (n < 0)
                 throw new IOError.FAILED ("Read failed");
             pos = pos + n;
@@ -315,14 +206,14 @@ namespace Gio {
             if (type == SeekType.CUR) {
                 target = pos + offset;
             } else if (type == SeekType.END) {
-                int sz = __gio_sys (9, fd, 0, 0);
+                int sz = Sys.file_size (fd);
                 if (sz < 0)
                     sz = 0;
                 target = sz + offset;
             }
             if (target < 0)
                 throw new IOError.INVALID_ARGUMENT ("Negative seek offset");
-            int res = __gio_sys (20, fd, target, 0);
+            int res = Sys.seek (fd, target);
             if (res < 0)
                 throw new IOError.FAILED ("Seek failed");
             pos = res;
@@ -331,7 +222,7 @@ namespace Gio {
 
         public override bool close (Cancellable? cancellable = null) throws IOError {
             if (!closed && fd >= 0) {
-                __gio_sys (8, fd, 0, 0);
+                Sys.close (fd);
                 fd = -1;
             }
             closed = true;
@@ -355,7 +246,7 @@ namespace Gio {
                 throw new IOError.CLOSED ("Stream is closed");
             if (buffer.length == 0)
                 return 0;
-            int n = __gio_write (fd, buffer, buffer.length);
+            int n = Sys.write (fd, buffer, buffer.length);
             if (n < 0)
                 throw new IOError.FAILED ("Write failed");
             pos = pos + n;
@@ -375,14 +266,14 @@ namespace Gio {
             if (type == SeekType.CUR) {
                 target = pos + offset;
             } else if (type == SeekType.END) {
-                int sz = __gio_sys (9, fd, 0, 0);
+                int sz = Sys.file_size (fd);
                 if (sz < 0)
                     sz = 0;
                 target = sz + offset;
             }
             if (target < 0)
                 throw new IOError.INVALID_ARGUMENT ("Negative seek offset");
-            int res = __gio_sys (20, fd, target, 0);
+            int res = Sys.seek (fd, target);
             if (res < 0)
                 throw new IOError.FAILED ("Seek failed");
             pos = res;
@@ -391,7 +282,7 @@ namespace Gio {
 
         public override bool close (Cancellable? cancellable = null) throws IOError {
             if (!closed && fd >= 0) {
-                __gio_sys (8, fd, 0, 0);
+                Sys.close (fd);
                 fd = -1;
             }
             closed = true;
@@ -640,15 +531,15 @@ namespace Gio {
             string name = names[idx];
             idx = idx + 1;
             string full = (base_path.length == 0 || base_path == "/") ? name : base_path + "/" + name;
-            int kind = __gio_stat (full);
+            int kind = Sys.stat (full);
             int sz = 0;
             if (kind == 1) {
-                int fd = __gio_open (full);
+                int fd = Sys.open (full);
                 if (fd >= 0) {
-                    sz = __gio_sys (9, fd, 0, 0);
+                    sz = Sys.file_size (fd);
                     if (sz < 0)
                         sz = 0;
-                    __gio_sys (8, fd, 0, 0);
+                    Sys.close (fd);
                 }
             }
             return new FileInfo (name, sz, (kind == 2) ? FileType.DIRECTORY : FileType.REGULAR);
@@ -738,13 +629,13 @@ namespace Gio {
                 return false;
             if (path_str == "/" || path_str == "." || path_str.length == 0)
                 return true;
-            return __gio_stat (normalize_fs_path ()) != 0;
+            return Sys.stat (normalize_fs_path ()) != 0;
         }
 
         public bool make_directory (Cancellable? cancellable = null) throws IOError {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
-            if (__gio_mkdir (normalize_fs_path ()) < 0)
+            if (Sys.mkdir (normalize_fs_path ()) < 0)
                 throw new IOError.FAILED ("Failed to create directory");
             return true;
         }
@@ -753,7 +644,7 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            if (__gio_unlink (p) < 0)
+            if (Sys.unlink (p) < 0)
                 throw new IOError.FAILED ("Failed to delete file");
             return true;
         }
@@ -768,10 +659,10 @@ namespace Gio {
             if (destination.query_exists ()) {
                 if (flags != FileCopyFlags.OVERWRITE)
                     throw new IOError.EXISTS ("Target file exists");
-                if (__gio_unlink (dst) < 0)
+                if (Sys.unlink (dst) < 0)
                     throw new IOError.FAILED ("Failed to replace target");
             }
-            if (__gio_rename (src, dst) < 0)
+            if (Sys.rename (src, dst) < 0)
                 throw new IOError.FAILED ("Failed to move file");
             return true;
         }
@@ -782,17 +673,17 @@ namespace Gio {
             if (path_str == "/" || path_str == "." || path_str.length == 0)
                 return new FileInfo (get_basename (), 0, FileType.DIRECTORY);
             string p = normalize_fs_path ();
-            int kind = __gio_stat (p);
+            int kind = Sys.stat (p);
             if (kind == 0)
                 throw new IOError.NOT_FOUND ("No such file");
             int sz = 0;
             if (kind == 1) {
-                int fd = __gio_open (p);
+                int fd = Sys.open (p);
                 if (fd >= 0) {
-                    sz = __gio_sys (9, fd, 0, 0);
+                    sz = Sys.file_size (fd);
                     if (sz < 0)
                         sz = 0;
-                    __gio_sys (8, fd, 0, 0);
+                    Sys.close (fd);
                 }
             }
             return new FileInfo (get_basename (), sz, (kind == 2) ? FileType.DIRECTORY : FileType.REGULAR);
@@ -802,7 +693,7 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            int fd = __gio_open (p);
+            int fd = Sys.open (p);
             if (fd < 0)
                 throw new IOError.NOT_FOUND ("Failed to open file for reading");
             return new FileInputStream (fd);
@@ -812,13 +703,13 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            int existing = __gio_open (p);
+            int existing = Sys.open (p);
             if (existing >= 0) {
-                __gio_sys (8, existing, 0, 0);
+                Sys.close (existing);
                 if (flags != FileCreateFlags.REPLACE_DESTINATION)
                     throw new IOError.EXISTS ("File already exists");
             }
-            int fd = __gio_create (p);
+            int fd = Sys.create (p);
             if (fd < 0)
                 throw new IOError.FAILED ("Failed to create file");
             return new FileOutputStream (fd, 0);
@@ -828,7 +719,7 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            int fd = __gio_create (p);
+            int fd = Sys.create (p);
             if (fd < 0)
                 throw new IOError.FAILED ("Failed to replace file");
             return new FileOutputStream (fd, 0);
@@ -838,14 +729,14 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            int fd = __gio_open (p);
+            int fd = Sys.open (p);
             if (fd < 0) {
-                fd = __gio_create (p);
+                fd = Sys.create (p);
                 if (fd < 0)
                     throw new IOError.FAILED ("Failed to open file for append");
                 return new FileOutputStream (fd, 0);
             }
-            int pos = __gio_sys (20, fd, -1, 0);
+            int pos = Sys.seek (fd, -1);
             if (pos < 0)
                 pos = 0;
             return new FileOutputStream (fd, pos);
@@ -857,10 +748,10 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             string p = normalize_fs_path ();
-            int fd = __gio_open (p);
+            int fd = Sys.open (p);
             if (fd < 0)
                 throw new IOError.NOT_FOUND ("File not found");
-            int sz = __gio_sys (9, fd, 0, 0);
+            int sz = Sys.file_size (fd);
             if (sz < 0)
                 sz = 0;
             var buf = new uint8[sz];
@@ -868,14 +759,14 @@ namespace Gio {
             while (got < sz) {
                 int rem = sz - got;
                 var chunk = new uint8[rem];
-                int r = __gio_read (fd, chunk, rem);
+                int r = Sys.read (fd, chunk, rem);
                 if (r <= 0)
                     break;
                 for (int i = 0; i < r; i++)
                     buf[got + i] = chunk[i];
                 got = got + r;
             }
-            __gio_sys (8, fd, 0, 0);
+            Sys.close (fd);
             if (got == sz) {
                 contents = buf;
             } else {
@@ -900,7 +791,10 @@ namespace Gio {
             if (cancellable != null && cancellable.is_cancelled ())
                 throw new IOError.CANCELLED ("Operation was cancelled");
             var buf = new uint8[4096];
-            int n = __gio_readdir_path (normalize_fs_path (), buf, 4096);
+            string dir = normalize_fs_path ();
+            if (dir.length == 0)
+                dir = "/";
+            int n = Sys.readdir_path (dir, buf, 4096);
             if (n < 0)
                 throw new IOError.NOT_FOUND ("Not a directory");
             var list = new GenericArray<string> ();

@@ -1,14 +1,8 @@
 // Interactive Cairo + Gdk graphical demo in 100% pure Vala on PlanetOS (no C, no .vapi).
 
+using Planet;
 using Cairo;
 using Gdk;
-
-[AsmBody(@"
-    mov %rdi, %rax
-    int $0x80
-    ret
-")]
-private extern int sys_yield (int num);
 
 void draw_scene (Context cr, int w, int h, int mx, int my, int clicks) {
     // Deep cosmic background
@@ -130,7 +124,7 @@ int main (string[] args) {
             draw_scene (cr, win.width, win.height, mx, my, clicks);
             win.present ();
         } else {
-            sys_yield (10);
+            Sys.yield_cpu ();
         }
     }
 

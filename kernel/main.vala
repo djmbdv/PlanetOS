@@ -52,6 +52,12 @@ int main () {
     Pmm.init ();
     Ramfs.init ();
     Syscalls.init ();
+
+    int g1 = invoke_syscall (6, 0, 0, 0);
+    int g2 = invoke_syscall (15, 3, 0, 16);
+    int g3 = invoke_syscall (30, 0x10, 4, 0);
+    bool guard_ok = (g1 == -1) && (g2 == -1) && (g3 == -1);
+    print (@"sysguard:ok=$(guard_ok ? 1 : 0)\n");
     Keyboard.init ();
     Mouse.init ();
 

@@ -9,11 +9,35 @@ namespace Planet.Kernel {
     // +0 in_use, +8 ino, +16 size, +24 pos)
     private const int FD_TABLE_ADDR = 0x107000;
     private const int MAX_FDS = 16;
+    private const int USER_LIMIT = 0x4000000; // 64 MiB, the PMM cap
+    private const int MAX_PATH = 512;
+    private const int MAX_XFER = 1048576;
     private int stdio_in_fd = -1;
     private int stdio_out_fd = -1;
 
+    // Userland and the kernel share one address space, so every pointer that
+    // arrives through int 0x80 is checked before the kernel dereferences it.
+    private bool user_ok (int ptr, int len) {
+        if (len < 0 || ptr < 0x1000 || len > MAX_XFER)
+            return false;
+        int end = ptr + len;
+        if (end < ptr)
+            return false;
+        return end <= USER_LIMIT;
+    }
+
+    private bool path_ok (int ptr, int len) {
+        return len > 0 && len <= MAX_PATH && user_ok (ptr, len);
+    }
+
+    private bool fd_ok (int fd) {
+        return fd == -1 || (fd >= 3 && fd < MAX_FDS);
+    }
+
     public int syscall_dispatch (int num, int a0, int a1, int a2, int a3) {
         if (num == 1) { // SYS_CONSOLE_WRITE(buf, len)
+            if (!user_ok (a0, a1))
+                return -1;
             if (stdio_out_fd >= 3 && stdio_out_fd < MAX_FDS) {
                 int slot = FD_TABLE_ADDR + stdio_out_fd * 32;
                 if (mmio_read64 (slot) == 2) {
@@ -39,6 +63,8 @@ namespace Planet.Kernel {
             return Hal.ticks ();
         }
         if (num == 3) { // SYS_ALLOC_PAGE(num_pages)
+            if (a0 < 0 || a0 > 256)
+                return -1;
             if (a0 > 1)
                 return Pmm.alloc_contiguous (a0);
             return Pmm.alloc_frame ();
@@ -72,6 +98,8 @@ namespace Planet.Kernel {
             return serial_try_read ();
         }
         if (num == 6) { // SYS_OPEN(name_ptr, name_len)
+            if (!path_ok (a0, a1))
+                return -1;
             int id = -1;
             int kind = Vfs.resolve (a0, a1, out id);
             int fd_kind = 0;
@@ -98,6 +126,8 @@ namespace Planet.Kernel {
             return -1;
         }
         if (num == 7) { // SYS_READ(fd, buf, len)
+            if (!user_ok (a1, a2))
+                return -1;
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
             int slot = FD_TABLE_ADDR + a0 * 32;
@@ -153,9 +183,13 @@ namespace Planet.Kernel {
             return n1 + n2;
         }
         if (num == 13) { // SYS_EXEC(name_ptr, name_len, cmdline_ptr)
+            if (!path_ok (a0, a1) || (a2 != 0 && !user_ok (a2, 1)))
+                return -1;
             return ElfLoader.exec_from_xfs (a0, a1, a2);
         }
         if (num == 14) { // SYS_CREATE(path_ptr, path_len) -> fd
+            if (!path_ok (a0, a1))
+                return -1;
             int base_ptr = 0;
             int base_len = 0;
             int parent = Vfs.resolve_parent (a0, a1, out base_ptr, out base_len);
@@ -177,6 +211,8 @@ namespace Planet.Kernel {
             return -1;
         }
         if (num == 15) { // SYS_WRITE(fd, buf, len)
+            if (!user_ok (a1, a2))
+                return -1;
             if (a0 == 1 || a0 == 2) {
                 __planet_console_write (a1, a2);
                 for (int i = 0; i < a2; i++) {
@@ -201,15 +237,21 @@ namespace Planet.Kernel {
             return nw;
         }
         if (num == 16) { // SYS_SPAWN(name_ptr, name_len, cmdline_ptr) -> tid
+            if (!path_ok (a0, a1) || (a2 != 0 && !user_ok (a2, 1)))
+                return -1;
             return ElfLoader.spawn_from_xfs (a0, a1, a2);
         }
         if (num == 17) { // SYS_WAIT(tid) -> exit_code
             return Sched.wait_tid (a0);
         }
         if (num == 18) { // SYS_PS(buf, max_bytes) -> bytes
+            if (!user_ok (a0, a1))
+                return -1;
             return Sched.list_tasks (a0, a1);
         }
         if (num == 19) { // SYS_SET_STDIO(in_fd, out_fd)
+            if (!fd_ok (a0) || !fd_ok (a1))
+                return -1;
             stdio_in_fd = a0;
             stdio_out_fd = a1;
             return 0;
@@ -237,10 +279,14 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 24) { // SYS_MOUSE_READ(out_buf)
+            if (!user_ok (a0, 24))
+                return -1;
             Mouse.poll_state (a0);
             return 0;
         }
         if (num == 25) { // SYS_FB_INFO(out_buf) -> (w<<16)|h
+            if (!user_ok (a0, 8))
+                return -1;
             return Fb.info (a0);
         }
         if (num == 26) { // SYS_FB_BLIT_RECT(src_buf, (x<<16)|y, (w<<16)|h)
@@ -248,9 +294,13 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 27) { // SYS_THREAD_SPAWN(entry_fn, arg) -> tid
+            if (!user_ok (a0, 16))
+                return -1;
             return Sched.spawn_thread (a0, a1);
         }
         if (num == 28) { // SYS_UNLINK(path_ptr, path_len)
+            if (!path_ok (a0, a1))
+                return -1;
             int id = -1;
             int kind = Vfs.resolve (a0, a1, out id);
             if (kind == Vfs.KIND_FILE)
@@ -260,6 +310,8 @@ namespace Planet.Kernel {
             return -1;
         }
         if (num == 29) { // SYS_RENAME(old_ptr, old_len, new_ptr, new_len)
+            if (!path_ok (a0, a1) || !path_ok (a2, a3))
+                return -1;
             int id = -1;
             int kind = Vfs.resolve (a0, a1, out id);
             if (kind != Vfs.KIND_FILE && kind != Vfs.KIND_DIR)
@@ -276,6 +328,8 @@ namespace Planet.Kernel {
             return Ramfs.rename_to (id, parent, base_ptr, base_len);
         }
         if (num == 30) { // SYS_MKDIR(path_ptr, path_len)
+            if (!path_ok (a0, a1))
+                return -1;
             int base_ptr = 0;
             int base_len = 0;
             int parent = Vfs.resolve_parent (a0, a1, out base_ptr, out base_len);
@@ -287,6 +341,8 @@ namespace Planet.Kernel {
             return (rslot < 0) ? -1 : 0;
         }
         if (num == 31) { // SYS_READDIR(path_ptr, path_len, buf, max_bytes)
+            if (!path_ok (a0, a1) || !user_ok (a2, a3))
+                return -1;
             int id = -1;
             int kind = Vfs.resolve (a0, a1, out id);
             if (kind != Vfs.KIND_DIR)
@@ -302,6 +358,8 @@ namespace Planet.Kernel {
             return n1 + n2;
         }
         if (num == 32) { // SYS_STAT(path_ptr, path_len) -> 0 none, 1 file, 2 dir
+            if (!path_ok (a0, a1))
+                return 0;
             int id = -1;
             int kind = Vfs.resolve (a0, a1, out id);
             if (kind == Vfs.KIND_DIR)

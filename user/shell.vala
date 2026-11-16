@@ -3,82 +3,9 @@
 
 using GLib;
 
+using Planet;
+
 namespace PlanetShell {
-
-    [AsmBody(@"
-        mov %rdi, %rax
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        mov %rcx, %rdx
-        int $0x80
-        ret
-    ")]
-    public extern int sys (int num, int a0, int a1, int a2);
-
-    [AsmBody(@"
-        mov %sil, (%rdi)
-        ret
-    ")]
-    public extern void poke8 (int addr, int val);
-
-    [AsmBody(@"
-        movzbl (%rdi), %eax
-        ret
-    ")]
-    public extern int peek8 (int addr);
-
-    [AsmBody(@"
-        # sys_str_call(num in rdi, s in rsi) -> passes (s+16, [s+8], 0)
-        mov %rdi, %rax
-        mov 8(%rsi), %rdx
-        add $16, %rsi
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    public extern int sys_str (int num, string s);
-
-    [AsmBody(@"
-        # sys_exec_str(num in rdi, name in rsi, cmdline in rdx)
-        mov %rdi, %rax
-        mov 8(%rsi), %rcx
-        add $16, %rsi
-        mov %rsi, %rdi
-        mov %rcx, %rsi
-        add $16, %rdx
-        int $0x80
-        ret
-    ")]
-    public extern int sys_exec_str (int num, string name, string cmdline);
-
-    [AsmBody(@"
-        # sys_rename_str(num in rdi, old in rsi, new in rdx) -> 0 o -1
-        mov %rdi, %rax
-        mov %rsi, %r9
-        mov %rdx, %r10
-        mov 8(%r9), %rsi
-        mov 8(%r10), %r8
-        lea 16(%r9), %rdi
-        lea 16(%r10), %rdx
-        int $0x80
-        ret
-    ")]
-    public extern int sys_rename_str (int num, string old_name, string new_name);
-
-    [AsmBody(@"
-        # sys_readdir_path(num in rdi, path in rsi, buf in rdx, max in rcx)
-        mov %rdi, %rax
-        mov %rcx, %r8
-        mov 8(%rsi), %rcx
-        add $16, %rsi
-        mov %rsi, %rdi
-        mov %rcx, %rsi
-        int $0x80
-        ret
-    ")]
-    public extern int sys_readdir_path (int num, string path, int buf, int max);
 
     private class Tok : Object {
         public string text;
@@ -92,7 +19,6 @@ namespace PlanetShell {
     private GenericArray<string> env_keys;
     private GenericArray<string> env_vals;
     private int last_status = 0;
-    private int scratch_page = 0;
     private string cwd = "/";
 
     private string int_to_s (int v) {
@@ -326,9 +252,9 @@ namespace PlanetShell {
             string val = args[2];
             if (op == "-z") return (val.length == 0) ? 0 : 1;
             if (op == "-n") return (val.length > 0) ? 0 : 1;
-            if (op == "-e") return (sys_str (32, canonical_path (abs_path (val))) != 0) ? 0 : 1;
-            if (op == "-f") return (sys_str (32, canonical_path (abs_path (val))) == 1) ? 0 : 1;
-            if (op == "-d") return (sys_str (32, canonical_path (abs_path (val))) == 2) ? 0 : 1;
+            if (op == "-e") return (Sys.stat (canonical_path (abs_path (val))) != 0) ? 0 : 1;
+            if (op == "-f") return (Sys.stat (canonical_path (abs_path (val))) == 1) ? 0 : 1;
+            if (op == "-d") return (Sys.stat (canonical_path (abs_path (val))) == 2) ? 0 : 1;
             if (op == "!") return (val.length == 0) ? 0 : 1;
             return 1;
         }
@@ -410,7 +336,7 @@ namespace PlanetShell {
         int out_fd = -1;
         if (redir_in.length > 0) {
             redir_in = canonical_path (abs_path (redir_in));
-            in_fd = sys_str (6, redir_in);
+            in_fd = Sys.open (redir_in);
             if (in_fd < 0) {
                 print (@"sh: cannot open '$redir_in'\n");
                 return 1;
@@ -419,27 +345,27 @@ namespace PlanetShell {
         if (redir_out.length > 0) {
             redir_out = canonical_path (abs_path (redir_out));
             if (append_out && FileUtils.test (redir_out, FileTest.EXISTS)) {
-                out_fd = sys_str (6, redir_out);
+                out_fd = Sys.open (redir_out);
                 if (out_fd >= 3)
-                    sys (20, out_fd, -1, 0); // seek to end
+                    Sys.seek (out_fd, -1); // seek to end
             } else {
-                out_fd = sys_str (14, redir_out);
+                out_fd = Sys.create (redir_out);
             }
             if (out_fd < 0) {
-                if (in_fd >= 3) sys (8, in_fd, 0, 0);
+                if (in_fd >= 3) Sys.close (in_fd);
                 print (@"sh: cannot write '$redir_out'\n");
                 return 1;
             }
         }
         if (in_fd >= 3 || out_fd >= 3)
-            sys (19, in_fd, out_fd, 0);
+            Sys.set_stdio (in_fd, out_fd);
 
         int rc = exec_command (cmd_args, bg, out should_exit);
 
         if (in_fd >= 3 || out_fd >= 3)
-            sys (19, -1, -1, 0);
-        if (in_fd >= 3) sys (8, in_fd, 0, 0);
-        if (out_fd >= 3) sys (8, out_fd, 0, 0);
+            Sys.set_stdio (-1, -1);
+        if (in_fd >= 3) Sys.close (in_fd);
+        if (out_fd >= 3) Sys.close (out_fd);
         return rc;
     }
 
@@ -463,39 +389,39 @@ namespace PlanetShell {
         return s;
     }
 
-    private bool root_entry_equals_ci (int addr, int len, string want) {
+    private bool root_entry_equals_ci (uint8[] buf, int start, int len, string want) {
         if (len != want.length)
             return false;
         for (int i = 0; i < len; i++) {
-            if (ascii_fold ((uint8) peek8 (addr + i)) != ascii_fold (want[i]))
+            if (ascii_fold (buf[start + i]) != ascii_fold (want[i]))
                 return false;
         }
         return true;
     }
 
-    private string root_entry_str (int addr, int len) {
+    private string root_entry_str (uint8[] buf, int start, int len) {
         var sb = new StringBuilder ();
         for (int i = 0; i < len; i++)
-            sb.append_c ((char) (uint8) peek8 (addr + i));
+            sb.append_c ((char) buf[start + i]);
         return sb.str;
     }
 
     private string find_in_dir_ci (string dir, string want, bool any_name) {
-        int buf = scratch_page + 512;
-        int n = sys_readdir_path (31, dir, buf, 3584);
+        var buf = new uint8[3584];
+        int n = Sys.readdir_path (dir, buf, 3584);
         if (n <= 0)
             return "";
         string want_elf = want + ".elf";
         int start = 0;
         for (int i = 0; i <= n; i++) {
-            if (i == n || peek8 (buf + i) == '\n') {
+            if (i == n || buf[i] == '\n') {
                 int len = i - start;
                 if (len > 0) {
-                    bool match = root_entry_equals_ci (buf + start, len, want_elf);
+                    bool match = root_entry_equals_ci (buf, start, len, want_elf);
                     if (!match && (any_name || ends_with_elf_ci (want)))
-                        match = root_entry_equals_ci (buf + start, len, want);
+                        match = root_entry_equals_ci (buf, start, len, want);
                     if (match)
-                        return root_entry_str (buf + start, len);
+                        return root_entry_str (buf, start, len);
                 }
                 start = i + 1;
             }
@@ -539,8 +465,8 @@ namespace PlanetShell {
     }
 
     private int ls_long (string dir) {
-        int buf = scratch_page + 512;
-        int n = sys_readdir_path (31, dir, buf, 3584);
+        var buf = new uint8[3584];
+        int n = Sys.readdir_path (dir, buf, 3584);
         if (n < 0) {
             print (@"ls: not a directory: '$dir'\n");
             return 1;
@@ -549,18 +475,18 @@ namespace PlanetShell {
             return 0;
         int start = 0;
         for (int i = 0; i <= n; i++) {
-            if (i == n || peek8 (buf + i) == '\n') {
+            if (i == n || buf[i] == '\n') {
                 int len = i - start;
                 if (len > 0) {
-                    string name = root_entry_str (buf + start, len);
+                    string name = root_entry_str (buf, start, len);
                     string full = (dir == "/") ? "/" + name : dir + "/" + name;
-                    int kind = sys_str (32, full);
+                    int kind = Sys.stat (full);
                     int sz = -1;
                     if (kind == 1) {
-                        int fd = sys_str (6, full);
+                        int fd = Sys.open (full);
                         if (fd >= 0) {
-                            sz = sys (9, fd, 0, 0);
-                            sys (8, fd, 0, 0);
+                            sz = Sys.file_size (fd);
+                            Sys.close (fd);
                         }
                     }
                     if (kind == 2)
@@ -628,7 +554,7 @@ namespace PlanetShell {
         }
         if (cmd == "cd") {
             string target = (args.length > 1) ? canonical_path (abs_path (args[1])) : "/";
-            if (sys_str (32, target) != 2) {
+            if (Sys.stat (target) != 2) {
                 print (@"cd: not a directory: '$target'\n");
                 return 1;
             }
@@ -648,7 +574,7 @@ namespace PlanetShell {
             return 0;
         }
         if (cmd == "banner") {
-            return sys_exec_str (13, "banner.elf", "banner.elf");
+            return Sys.exec ("banner.elf", "banner.elf");
         }
         if (cmd == "mkdir") {
             if (args.length < 2) {
@@ -658,7 +584,7 @@ namespace PlanetShell {
             int rc = 0;
             for (int i = 1; i < args.length; i++) {
                 string target = canonical_path (abs_path (args[i]));
-                if (sys_str (30, target) < 0) {
+                if (Sys.mkdir (target) < 0) {
                     print (@"mkdir: cannot create '$target'\n");
                     rc = 1;
                 }
@@ -669,32 +595,32 @@ namespace PlanetShell {
             if (args.length > 1 && args[1] == "-l")
                 return ls_long ((args.length > 2) ? canonical_path (abs_path (args[2])) : cwd);
             string where = (args.length > 1) ? canonical_path (abs_path (args[1])) : cwd;
-            int io_buf = scratch_page + 512;
-            int n = sys_readdir_path (31, where, io_buf, 3584);
+            var io_buf = new uint8[3584];
+            int n = Sys.readdir_path (where, io_buf, 3584);
             if (n < 0) {
                 print (@"ls: not a directory: '$where'\n");
                 return 1;
             }
             if (n > 0)
-                sys (1, io_buf, n, 0);
+                Sys.write (1, io_buf, n);
             return 0;
         }
         if (cmd == "ps") {
-            int io_buf = scratch_page + 512;
-            int n = sys (18, io_buf, 3584, 0);
+            var io_buf = new uint8[3584];
+            int n = Sys.list_tasks (io_buf, 3584);
             if (n > 0)
-                sys (1, io_buf, n, 0);
+                Sys.write (1, io_buf, n);
             return 0;
         }
         if (cmd == "cat") {
             if (args.length < 2) {
-                int ch_buf = scratch_page + 500;
+                var one = new uint8[1];
                 while (true) {
-                    int ch = sys (5, 0, 0, 0);
+                    int ch = Sys.read_key ();
                     if (ch == -2) break;
-                    if (ch < 0) { sys (10, 0, 0, 0); continue; }
-                    poke8 (ch_buf, ch);
-                    sys (1, ch_buf, 1, 0);
+                    if (ch < 0) { Sys.yield_cpu (); continue; }
+                    one[0] = (uint8) ch;
+                    Sys.write (1, one, 1);
                 }
                 return 0;
             }
@@ -727,7 +653,7 @@ namespace PlanetShell {
             int rc = 0;
             for (int i = 1; i < args.length; i++) {
                 string target = canonical_path (abs_path (args[i]));
-                if (sys_str (28, target) < 0) {
+                if (Sys.unlink (target) < 0) {
                     print (@"rm: cannot remove '$target'\n");
                     rc = 1;
                 }
@@ -741,7 +667,7 @@ namespace PlanetShell {
             }
             string from = canonical_path (abs_path (args[1]));
             string to = canonical_path (abs_path (args[2]));
-            if (sys_rename_str (29, from, to) < 0) {
+            if (Sys.rename (from, to) < 0) {
                 print (@"mv: cannot move '$from' to '$to'\n");
                 return 1;
             }
@@ -774,22 +700,23 @@ namespace PlanetShell {
                 string target = canonical_path (abs_path (args[i]));
                 if (FileUtils.test (target, FileTest.EXISTS))
                     continue;
-                int fd = sys_str (14, target);
+                int fd = Sys.create (target);
                 if (fd < 0) {
                     print (@"touch: cannot create '$target'\n");
                     return 1;
                 }
-                sys (8, fd, 0, 0);
+                Sys.close (fd);
             }
             return 0;
         }
-        if (cmd == "ticks") {            int t = sys (2, 0, 0, 0);
+        if (cmd == "ticks") {
+            int t = Sys.ticks ();
             print (@"ticks: $t\n");
             return 0;
         }
         if (cmd == "mem") {
-            int p = sys (3, 0, 0, 0);
-            sys (4, p, 0, 0);
+            int p = Sys.alloc_pages (1);
+            Sys.free_page (p);
             print (@"mem: page=$p\n");
             return 0;
         }
@@ -799,7 +726,7 @@ namespace PlanetShell {
                 return 1;
             }
             int tid = parse_int_s (args[1]);
-            int code = sys (17, tid, 0, 0);
+            int code = Sys.wait (tid);
             print (@"wait: tid=$tid exit=$code\n");
             return code;
         }
@@ -831,7 +758,7 @@ namespace PlanetShell {
             cmdline.append (i == elf_idx ? target : args[i]);
         }
         if (bg) {
-            int tid = sys_exec_str (16, target, cmdline.str);
+            int tid = Sys.spawn (target, cmdline.str);
             if (tid < 0) {
                 print (@"$target: cannot execute\n");
                 return 127;
@@ -839,7 +766,7 @@ namespace PlanetShell {
             print (@"spawn: tid=$tid\n");
             return 0;
         }
-        int code = sys_exec_str (13, target, cmdline.str);
+        int code = Sys.exec (target, cmdline.str);
         if (code < 0)
             print (@"$target: cannot execute\n");
         else if (explicit_exec)
@@ -873,17 +800,17 @@ namespace PlanetShell {
             string cur_in = (st == 0) ? "" : ((st % 2 == 1) ? pipe_a : pipe_b);
             string cur_out = (st == starts.length - 1) ? "" : ((st % 2 == 0) ? pipe_a : pipe_b);
 
-            int in_fd = (cur_in.length > 0) ? sys_str (6, cur_in) : -1;
-            int out_fd = (cur_out.length > 0) ? sys_str (14, cur_out) : -1;
+            int in_fd = (cur_in.length > 0) ? Sys.open (cur_in) : -1;
+            int out_fd = (cur_out.length > 0) ? Sys.create (cur_out) : -1;
             if (in_fd >= 3 || out_fd >= 3)
-                sys (19, in_fd, out_fd, 0);
+                Sys.set_stdio (in_fd, out_fd);
 
             rc = run_simple (toks, starts[st], ends[st], false, out should_exit);
 
             if (in_fd >= 3 || out_fd >= 3)
-                sys (19, -1, -1, 0);
-            if (in_fd >= 3) sys (8, in_fd, 0, 0);
-            if (out_fd >= 3) sys (8, out_fd, 0, 0);
+                Sys.set_stdio (-1, -1);
+            if (in_fd >= 3) Sys.close (in_fd);
+            if (out_fd >= 3) Sys.close (out_fd);
             if (should_exit)
                 break;
         }
@@ -1052,56 +979,54 @@ namespace PlanetShell {
     int main (string[] args) {
         env_keys = new GenericArray<string> ();
         env_vals = new GenericArray<string> ();
-        scratch_page = sys (3, 0, 0, 0);
-        int line_buf = scratch_page;
-        int ch_buf = scratch_page + 500;
-
         set_var ("SHELL", "shell.elf");
         set_var ("PS1", "planet> ");
 
         if (args.length > 1)
             return run_script (canonical_path (abs_path (args[1])));
 
-        sys_exec_str (13, "banner.elf", "banner.elf");
+        Sys.exec ("banner.elf", "banner.elf");
         print ("PlanetOS Shell v0.2 (dash-compatible 100% Vala, type 'help')\n");
+
+        var line = new uint8[480];
+        var one = new uint8[1];
 
         while (true) {
             print (get_var ("PS1"));
             int len = 0;
             while (true) {
-                int ch = sys (5, 0, 0, 0);
+                int ch = Sys.read_key ();
                 if (ch < 0) {
-                    sys (10, 0, 0, 0);
+                    Sys.yield_cpu ();
                     continue;
                 }
                 if (ch == '\r' || ch == '\n') {
-                    poke8 (ch_buf, '\n');
-                    sys (1, ch_buf, 1, 0);
+                    one[0] = (uint8) '\n';
+                    Sys.write (1, one, 1);
                     break;
                 }
                 if (ch == 8 || ch == 127) {
                     if (len > 0) {
-                        while (len > 0 && (peek8 (line_buf + len - 1) & 0xC0) == 0x80)
+                        len = len - 1;
+                        while (len > 0 && (line[len - 1] & 0xC0) == 0x80)
                             len = len - 1;
-                        if (len > 0)
-                            len = len - 1;
-                        poke8 (ch_buf, 8); sys (1, ch_buf, 1, 0);
-                        poke8 (ch_buf, ' '); sys (1, ch_buf, 1, 0);
-                        poke8 (ch_buf, 8); sys (1, ch_buf, 1, 0);
+                        one[0] = (uint8) 8; Sys.write (1, one, 1);
+                        one[0] = (uint8) ' '; Sys.write (1, one, 1);
+                        one[0] = (uint8) 8; Sys.write (1, one, 1);
                     }
                     continue;
                 }
                 if (len < 480) {
-                    poke8 (line_buf + len, ch);
+                    line[len] = (uint8) ch;
                     len = len + 1;
-                    poke8 (ch_buf, ch);
-                    sys (1, ch_buf, 1, 0);
+                    one[0] = (uint8) ch;
+                    Sys.write (1, one, 1);
                 }
             }
 
             var sb = new StringBuilder ();
             for (int k = 0; k < len; k++)
-                sb.append_c ((char) (uint8) peek8 (line_buf + k));
+                sb.append_c ((char) line[k]);
 
             bool should_exit = false;
             int rc = eval_line (sb.str, out should_exit);
@@ -1110,7 +1035,6 @@ namespace PlanetShell {
                 break;
         }
 
-        sys (4, scratch_page, 0, 0);
         return last_status;
     }
 }

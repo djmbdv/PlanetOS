@@ -1,52 +1,8 @@
 // Pure-Vala GLib & Gee compatibility layer for PlanetOS (zero C, zero .vapi).
 
+using Planet;
+
 namespace GLib {
-
-    [AsmBody(@"
-        mov %rdi, %rax
-        mov %rsi, %rdi
-        mov %rdx, %rsi
-        mov %rcx, %rdx
-        int $0x80
-        ret
-    ")]
-    private extern int __pos_sys (int num, int a0, int a1, int a2);
-
-    [AsmBody(@"
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $6, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __pos_open (string path);
-
-    [AsmBody(@"
-        mov 8(%rdi), %rsi
-        add $16, %rdi
-        mov $14, %rax
-        xor %edx, %edx
-        int $0x80
-        ret
-    ")]
-    private extern int __pos_create (string path);
-
-    [AsmBody(@"
-        add $16, %rsi
-        mov $7, %rax
-        int $0x80
-        ret
-    ")]
-    private extern int __pos_read (int fd, uint8[] buf, int count);
-
-    [AsmBody(@"
-        add $16, %rsi
-        mov $15, %rax
-        int $0x80
-        ret
-    ")]
-    private extern int __pos_write_str (int fd, string s, int count);
 
     public void printerr (string s) {
         print (s);
@@ -126,6 +82,20 @@ namespace GLib {
             }
         }
 
+        public int byte_at (int index) {
+            if (index < 0 || index >= used)
+                return -1;
+            return (int) buf[index];
+        }
+
+        public void remove_last (int count) {
+            if (count <= 0)
+                return;
+            if (count > used)
+                count = used;
+            used = used - count;
+        }
+
         public void truncate (int new_len = 0) {
             if (new_len < 0)
                 new_len = 0;
@@ -138,42 +108,45 @@ namespace GLib {
         public static bool test (string path, FileTest mode) {
             if (mode == FileTest.IS_DIR)
                 return false;
-            int fd = __pos_open (path);
+            int fd = Sys.open (path);
             if (fd < 0)
                 return false;
-            __pos_sys (8, fd, 0, 0);
+            Sys.close (fd);
             return true;
         }
 
         public static bool get_contents (string path, out string contents) {
             contents = "";
-            int fd = __pos_open (path);
+            int fd = Sys.open (path);
             if (fd < 0)
                 return false;
-            int sz = __pos_sys (9, fd, 0, 0);
+            int sz = Sys.file_size (fd);
             if (sz < 0) {
-                __pos_sys (8, fd, 0, 0);
+                Sys.close (fd);
                 return false;
             }
             var buf = new uint8[sz];
             int got = 0;
             while (got < sz) {
-                int r = __pos_read (fd, buf, sz - got);
+                var chunk = new uint8[sz - got];
+                int r = Sys.read (fd, chunk, sz - got);
                 if (r <= 0)
                     break;
+                for (int i = 0; i < r; i++)
+                    buf[got + i] = chunk[i];
                 got = got + r;
             }
-            __pos_sys (8, fd, 0, 0);
+            Sys.close (fd);
             contents = __planc_host_bytes_to_str (buf, got);
             return true;
         }
 
         public static bool set_contents (string path, string contents) {
-            int fd = __pos_create (path);
+            int fd = Sys.create (path);
             if (fd < 0)
                 return false;
-            int nw = __pos_write_str (fd, contents, contents.length);
-            __pos_sys (8, fd, 0, 0);
+            int nw = Sys.write_str (fd, contents, contents.length);
+            Sys.close (fd);
             return nw == contents.length;
         }
     }

@@ -1,58 +1,10 @@
 // PlanetOS userland host adapter (compiled with --target=planetos using int 0x80 syscalls).
 
+using Planet;
+
 namespace Planc {
 
     public class Host : Object {
-
-        [AsmBody(@"
-            mov %rdi, %rax
-            mov %rsi, %rdi
-            mov %rdx, %rsi
-            mov %rcx, %rdx
-            int $0x80
-            ret
-        ")]
-        private static extern int sys (int num, int a0, int a1, int a2);
-
-        [AsmBody(@"
-            # sys_open_str(string* rdi) -> fd
-            mov 8(%rdi), %rsi
-            add $16, %rdi
-            mov $6, %rax
-            xor %edx, %edx
-            int $0x80
-            ret
-        ")]
-        private static extern int sys_open_str (string path);
-
-        [AsmBody(@"
-            # sys_create_str(string* rdi) -> fd
-            mov 8(%rdi), %rsi
-            add $16, %rdi
-            mov $14, %rax
-            xor %edx, %edx
-            int $0x80
-            ret
-        ")]
-        private static extern int sys_create_str (string path);
-
-        [AsmBody(@"
-            # sys_read_arr(int fd, uint8[] buf, int count)
-            add $16, %rsi
-            mov $7, %rax
-            int $0x80
-            ret
-        ")]
-        private static extern int sys_read_arr (int fd, uint8[] buf, int count);
-
-        [AsmBody(@"
-            # sys_write_arr(int fd, uint8[] buf, int count)
-            add $16, %rsi
-            mov $15, %rax
-            int $0x80
-            ret
-        ")]
-        private static extern int sys_write_arr (int fd, uint8[] buf, int count);
 
         public static void eprint (string s) {
             print (s);
@@ -72,32 +24,35 @@ namespace Planc {
         }
 
         public static string read_file (string path) throws FileError {
-            int fd = sys_open_str (path);
+            int fd = Sys.open (path);
             if (fd < 0)
                 throw new FileError.FAILED (@"cannot open '$path'");
-            int sz = sys (9, fd, 0, 0);
+            int sz = Sys.file_size (fd);
             if (sz < 0) {
-                sys (8, fd, 0, 0);
+                Sys.close (fd);
                 throw new FileError.FAILED (@"cannot stat '$path'");
             }
             var buf = new uint8[sz];
             int got = 0;
             while (got < sz) {
-                int r = sys_read_arr (fd, buf, sz - got);
+                var chunk = new uint8[sz - got];
+                int r = Sys.read (fd, chunk, sz - got);
                 if (r <= 0)
                     break;
+                for (int i = 0; i < r; i++)
+                    buf[got + i] = chunk[i];
                 got = got + r;
             }
-            sys (8, fd, 0, 0);
+            Sys.close (fd);
             return bytes_to_string (buf, got);
         }
 
         public static void write_file (string path, uint8[] data) throws FileError {
-            int fd = sys_create_str (path);
+            int fd = Sys.create (path);
             if (fd < 0)
                 throw new FileError.FAILED (@"cannot create '$path'");
-            int nw = sys_write_arr (fd, data, data.length);
-            sys (8, fd, 0, 0);
+            int nw = Sys.write (fd, data, data.length);
+            Sys.close (fd);
             if (nw != data.length)
                 throw new FileError.FAILED (@"short write to '$path'");
         }

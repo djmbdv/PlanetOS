@@ -1,38 +1,8 @@
 // SPIR-V 1.0 Shader Loader, Pure-Vala VM Evaluator, and Framebuffer Demo on PlanetOS.
 
+using Planet;
 using Cairo;
 using Gdk;
-
-[AsmBody(@"
-    # __spv_sys(num in rdi, a0 in rsi, a1 in rdx, a2 in rcx) -> syscall PlanetOS via int 0x80
-    mov %rdi, %rax
-    mov %rsi, %rdi
-    mov %rdx, %rsi
-    mov %rcx, %rdx
-    int $0x80
-    ret
-")]
-private extern int __spv_sys (int num, int a0, int a1, int a2);
-
-[AsmBody(@"
-    # __spv_open(path_str in rdi) -> fd
-    mov 8(%rdi), %rsi
-    add $16, %rdi
-    mov $6, %rax
-    xor %edx, %edx
-    int $0x80
-    ret
-")]
-private extern int __spv_open (string path);
-
-[AsmBody(@"
-    # __spv_read_arr(fd in rdi, buf in rsi, count in rdx) -> bytes read
-    add $16, %rsi
-    mov $7, %rax
-    int $0x80
-    ret
-")]
-private extern int __spv_read_arr (int fd, uint8[] buf, int count);
 
 private double f32_bits_to_double (uint32 bits) {
     if ((bits & 0x7FFFFFFFu) == 0)
@@ -77,7 +47,7 @@ public void orbit_worker (int arg) {
     // Hilo de fisica/orbita en segundo plano: usa solo aritmetica entera para no tocar XMM
     int last_t = -1;
     while (th_running != 0) {
-        int ticks = __spv_sys (2, 0, 0, 0);
+        int ticks = Sys.ticks ();
         if (ticks != last_t) {
             last_t = ticks;
             th_ticks = ticks;
@@ -95,10 +65,10 @@ public void orbit_worker (int arg) {
             th_sat_x = 540 + (cos_m * 124) / 1000;
             th_sat_y = 300 + (sin_m * 124) / 1000;
         } else {
-            __spv_sys (10, 0, 0, 0);
+            Sys.yield_cpu ();
         }
     }
-    __spv_sys (11, 0, 0, 0);
+    Sys.sys (11, 0, 0, 0);
 }
 
 int main (string[] args) {
@@ -109,25 +79,28 @@ int main (string[] args) {
             once = true;
     }
 
-    int fd = __spv_open (spv_name);
+    int fd = Sys.open (spv_name);
     if (fd < 0) {
         print (@"spv_demo: cannot open '$spv_name'\n");
         return 1;
     }
-    int sz = __spv_sys (9, fd, 0, 0);
+    int sz = Sys.file_size (fd);
     if (sz < 20 || (sz % 4) != 0) {
-        __spv_sys (8, fd, 0, 0);
+        Sys.close (fd);
         print ("spv_demo: invalid .spv size\n");
         return 1;
     }
     var buf = new uint8[sz];
     int got = 0;
     while (got < sz) {
-        int r = __spv_read_arr (fd, buf, sz - got);
+        var chunk = new uint8[sz - got];
+        int r = Sys.read (fd, chunk, sz - got);
         if (r <= 0) break;
+        for (int i = 0; i < r; i++)
+            buf[got + i] = chunk[i];
         got = got + r;
     }
-    __spv_sys (8, fd, 0, 0);
+    Sys.close (fd);
 
     uint32 magic = read_u32_le (buf, 0);
     uint32 ver   = read_u32_le (buf, 1);
@@ -219,12 +192,12 @@ int main (string[] args) {
     var cr = win.create_cairo_context ();
 
     th_running = 1;
-    int worker_tid = once ? -1 : __spv_sys (27, addr_orbit_worker (), 0, 0);
+    int worker_tid = once ? -1 : Sys.sys (27, addr_orbit_worker (), 0, 0);
 
     int frame = 0;
     int last_tick = -1;
     while (true) {
-        int ticks = __spv_sys (2, 0, 0, 0);
+        int ticks = Sys.ticks ();
         if (ticks != last_tick) {
             last_tick = ticks;
             frame = frame + 1;
@@ -303,13 +276,13 @@ int main (string[] args) {
             if (ev.keyval == 'q' || ev.keyval == 'Q' || ev.keyval == 'x' || ev.keyval == 'X' || ev.keyval == 27)
                 break;
         } else {
-            __spv_sys (10, 0, 0, 0);
+            Sys.yield_cpu ();
         }
     }
 
     th_running = 0;
     if (worker_tid > 0)
-        __spv_sys (17, worker_tid, 0, 0);
+        Sys.wait (worker_tid);
     win.close ();
     return 0;
 }
