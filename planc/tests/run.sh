@@ -181,7 +181,7 @@ if [ -f "$HERE/valid/string_index.vala" ]; then
 fi
 
 echo "== check_leaks =="
-for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals; do
+for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types; do
     src="$HERE/valid/$base_name.vala"
     bin="$WORK/leaks_$base_name"
     case_name="check_leaks_$base_name"
@@ -287,6 +287,64 @@ else
         ko "bad_cast_panic" "missing panic diagnostic: $(cat "$WORK/bad_cast.runerr")"
     else
         ok "bad_cast_panic"
+    fi
+fi
+
+echo "== multifile =="
+cat >"$WORK/multi_a.vala" <<'EOF'
+using Models;
+
+void describe(User u, out string summary) {
+    summary = @"$(u.name):$(u.level)";
+}
+
+int main() {
+    try {
+        var u = new User("alice") { level = 7 };
+        string s = "";
+        describe(u, out s);
+        print(@"$s\n");
+        var bad = new User("");
+        return bad.level;
+    } catch (AuthError e) {
+        print(@"auth:$(e.message)\n");
+    }
+    return 0;
+}
+EOF
+cat >"$WORK/multi_b.vala" <<'EOF'
+namespace Models {
+    public errordomain AuthError {
+        EMPTY_NAME
+    }
+
+    public class User {
+        public string name { get; set; default = "anon"; }
+        public int level { get; set; default = 1; }
+
+        public User(string name) throws AuthError {
+            if (name.length == 0) {
+                throw new AuthError.EMPTY_NAME("empty user");
+            }
+            this.name = name;
+        }
+    }
+}
+EOF
+if ! "$PLANC" --check-leaks "$WORK/multi_a.vala" "$WORK/multi_b.vala" -o "$WORK/multifile_bin" 2>"$WORK/multifile.err"; then
+    ko "multifile" "compile failed: $(cat "$WORK/multifile.err")"
+elif ! check_elf "multifile" "$WORK/multifile_bin"; then
+    :
+else
+    "$WORK/multifile_bin" >"$WORK/multifile.stdout" 2>"$WORK/multifile.runerr"
+    code=$?
+    printf 'alice:7\nauth:empty user\n' >"$WORK/multifile.expected"
+    if [ "$code" != "0" ]; then
+        ko "multifile" "exit $code, expected 0 ($(cat "$WORK/multifile.runerr"))"
+    elif ! cmp -s "$WORK/multifile.stdout" "$WORK/multifile.expected"; then
+        ko "multifile" "unexpected stdout: $(cat "$WORK/multifile.stdout")"
+    else
+        ok "multifile"
     fi
 fi
 

@@ -3,16 +3,20 @@
 **An operating system and its toolchain, entirely in Vala, compiled straight to
 native code.**
 
-Status: **specification plus a working compiler slice (`slice 7`) with static
-types (`int`/`uint8`–`uint64`/`size_t`/`char`, `bool`, `string`, `enum`,
-`struct`, `T[]`, `class`, `T?`, `void`, `var`), a guarded arena/slab heap
-allocator, automatic atomic reference counting (`--check-leaks`), single
-inheritance with `.rodata` vtables and destructors, Option B compile-time
-non-null + guarded nullable checks (`--no-null-check`), `foreach`/`switch`,
-`?:`/`??`, `s[start:end]` slicing, `const`, and `static`/value methods.** This
-repository holds the technical specification and a working `planc` that compiles
-a growing Vala subset to a static x86_64 ELF with no libc, no assembler and no
-external linker. The kernel and the runtime are still specification only.
+Status: **specification plus a working compiler slice (`slice 8`) with static
+types (`int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/`ssize_t`/`char`/`uchar`,
+`bool`, `string`, `enum`, `errordomain`, `struct`, `T[]`, `class`, `Error`, `T?`,
+`void`, `var`), a guarded arena/slab heap allocator, automatic atomic reference
+counting (`--check-leaks`), single inheritance with `.rodata` vtables and
+destructors, Option B compile-time non-null + guarded nullable checks
+(`--no-null-check`), `throws`/`try`/`catch`/`finally`, `out`/`ref` parameters,
+inline and `virtual`/`override` properties, `new Cls() { prop = expr }`
+initializers, `foreach`/`switch`, `?:`/`??`, `s[start:end]` slicing, `const`,
+`static`/value methods, `namespace`/`using`, forward types, and multi-file
+compilation.** This repository holds the technical specification and a working
+`planc` that compiles a growing Vala subset to a static x86_64 ELF with no
+libc, no assembler and no external linker. The kernel and the runtime are still
+specification only.
 
 ---
 
@@ -99,6 +103,7 @@ problems** and **creates six**:
 | [docs/planc/slice-5.md](docs/planc/slice-5.md) | **Implemented slice 5**: guarded arena/slab heap allocator, automatic atomic ARC (`--check-leaks`), `T[]`, `s1 + s2`, value `@"..."` templates |
 | [docs/planc/slice-6.md](docs/planc/slice-6.md) | **Implemented slice 6**: `class` objects, `.rodata` vtables, `virtual`/`override`/`abstract`, `: base(...)`, destructors, `is`/`as`/casts, Option B `T` vs `T?` null safety (`--no-null-check`) |
 | [docs/planc/slice-7.md](docs/planc/slice-7.md) | **Implemented slice 7**: `foreach`, `switch` (VL-14), `s[start:end]` slicing, `?:`/`??` (`T? ?? T -> T`), `const`, `static`/`enum`/`struct` methods, `0x`/`0b`/char literals, integer aliases |
+| [docs/planc/slice-8.md](docs/planc/slice-8.md) | **Implemented slice 8**: `errordomain`/`throws`/`try`/`catch`/`finally` (`(rax, rdx)` ABI), `out`/`ref` parameters, inline and `virtual` properties, object initializers, `namespace`/`using`, forward types, multi-file compilation |
 
 ## 5. State of the measurements
 
@@ -134,38 +139,45 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 135 cases, 135 pass
+./planc/tests/run.sh   # 146 cases, 146 pass
 ```
 
-The accepted subset now covers `int`/`uint8`–`uint64`/`size_t`/`char`/`bool`/
-`string`/`enum`/`struct`/`T[]`/`class`/`T?`/`void` functions and methods
-(`static`, `virtual`, `override`, `abstract`, plus `enum`/`struct` methods) with
-parameters (any number; beyond the sixth they travel on the stack), `const`
-declarations, local `var` type inference, 64-bit integer (hex `0x`, binary `0b`,
-char `'x'`, underscore/suffix literals) and bitwise expressions, comparisons,
-short-circuit logic, ternary `?:`, lazy null-coalescing `??` (`T? ?? T` -> non-null `T`),
-guarded arena + size-class heap allocation, compiler-inserted atomic reference
-counting (leak-checkable via `--check-leaks`), single-inheritance `class`
-hierarchies with `.rodata` vtables, `: base(...)` constructor chaining,
-`~Destructor()` hierarchical cleanup, `is`/`as`/checked casts, Option B null
-safety (compile-time `T` + flow narrowing + `--no-null-check` opt-out on
-unnarrowed `T?`), dynamic arrays (`new T[n]`, array literals, `.length`,
-bounds-checked `arr[i]` reads/writes, retained `foreach`), `string`
-literals/variables/globals with 16-byte ABI headers, concatenation (`s1 + s2`),
-bounds-checked slicing (`s[start:end]`), value-producing `@"..."` templates,
-$O(1)$ `.length`, bounds-checked `s[i]` (`--no-bounds-check`), `==`/`!=` string
-and reference comparisons, `if`/`else`, `switch`/`case`/`default` (VL-14),
-`while`, `for`/`break`/`continue`, `+=`/`-=`/`++`/`--`, value-semantics
-`struct`s, `owned`/`unowned` syntax hints, global variables with `.data`/`.bss`
-(`R_X86_64_64` relocations for string globals), and `print` / `exit` builtins.
+The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/
+`ssize_t`/`char`/`uchar`/`bool`/`string`/`enum`/`errordomain`/`struct`/`T[]`/
+`class`/`Error`/`T?`/`void` functions and methods (`static`, `virtual`,
+`override`, `abstract`, plus `enum`/`struct` methods) with value, `out`, and
+`ref` parameters (any number; beyond the sixth they travel on the stack),
+`const` declarations, local `var` type inference, 64-bit integer (hex `0x`,
+binary `0b`, char `'x'`, underscore/suffix literals) and bitwise expressions,
+comparisons, short-circuit logic, ternary `?:`, lazy null-coalescing `??`
+(`T? ?? T` -> non-null `T`), guarded arena + size-class heap allocation,
+compiler-inserted atomic reference counting (leak-checkable via
+`--check-leaks`), single-inheritance `class` hierarchies with `.rodata`
+vtables, `: base(...)` constructor chaining, inline and custom/`virtual`/
+`override` properties (`{ get; set; default = ...; }`), `new Cls() { prop =
+expr }` object initializers, `~Destructor()` hierarchical cleanup,
+`throws`/`throw`/`try`/`catch`/`finally` checked error propagation via
+`(rax, rdx)`, `is`/`as`/checked casts, Option B null safety (compile-time `T` +
+flow narrowing + `--no-null-check` opt-out on unnarrowed `T?`), dynamic arrays
+(`new T[n]`, array literals, `.length`, bounds-checked `arr[i]` reads/writes,
+retained `foreach`), `string` literals/variables/globals with 16-byte ABI
+headers, concatenation (`s1 + s2`), bounds-checked slicing (`s[start:end]`),
+value-producing `@"..."` templates, $O(1)$ `.length`, bounds-checked `s[i]`
+(`--no-bounds-check`), `==`/`!=` string and reference comparisons, `if`/`else`,
+`switch`/`case`/`default` (VL-14), `while`, `for`/`break`/`continue`,
+`+=`/`-=`/`++`/`--`, value-semantics `struct`s, `owned`/`unowned` syntax hints,
+`namespace`/`using` blocks, cross-file forward types, multi-file CLI inputs,
+global variables with `.data`/`.bss` (`R_X86_64_64` relocations for string
+globals), and `print` / `exit` builtins.
 The calling convention is the project ABI (§3.1 of [01-architecture.md](docs/01-architecture.md)):
-arguments in `rdi`–`r9` plus stack, return in `rax`, `rbp` frame pointer,
-16-byte stack alignment at every call, no red zone.
+arguments in `rdi`–`r9` plus stack, return in `rax` (plus `Error*` in `rdx`
+for `throws` functions), `rbp` frame pointer, 16-byte stack alignment at every
+call, no red zone.
 
 Produced binaries have three `PT_LOAD` segments (R|X, R and RW — never RWX,
 and never one page mapped with two permission sets), an empty `nm -u`, a
 `.symtab` that makes `objdump -d` and `gdb` work, and byte-identical output
-across runs. See [docs/planc/slice-7.md](docs/planc/slice-7.md).
+across runs. See [docs/planc/slice-8.md](docs/planc/slice-8.md).
 
 ## 6. Changes from the previous revision
 

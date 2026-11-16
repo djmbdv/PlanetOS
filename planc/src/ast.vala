@@ -15,6 +15,7 @@ namespace Planc {
         STRUCT,
         ARRAY,
         CLASS,
+        ERROR,
         NULL;
 
         public string label () {
@@ -27,6 +28,7 @@ namespace Planc {
                 case STRUCT: return "struct";
                 case ARRAY:  return "array";
                 case CLASS:  return "class";
+                case ERROR:  return "Error";
                 case NULL:   return "null";
                 default:     return "?";
             }
@@ -67,6 +69,7 @@ namespace Planc {
     public class MemberAccessExpr : Expr {
         public Expr target { get; set; }
         public string member { get; set; }
+        public int temp_slot { get; set; default = -1; }
     }
 
     public class IndexExpr : Expr {
@@ -133,9 +136,13 @@ namespace Planc {
     public class ClassNewExpr : Expr {
         public string class_name { get; set; }
         public GenericArray<Expr> args { get; private set; }
+        public GenericArray<string> init_names { get; private set; }
+        public GenericArray<Expr> init_values { get; private set; }
 
         public ClassNewExpr () {
             args = new GenericArray<Expr> ();
+            init_names = new GenericArray<string> ();
+            init_values = new GenericArray<Expr> ();
         }
     }
 
@@ -304,6 +311,7 @@ namespace Planc {
 
     public class EnumDecl : Object {
         public string name { get; set; }
+        public bool is_defined { get; set; default = false; }
         public GenericArray<EnumMember> members { get; private set; }
         public GenericArray<Function> methods { get; private set; }
         public int line { get; set; }
@@ -341,6 +349,7 @@ namespace Planc {
 
     public class StructDecl : Object {
         public string name { get; set; }
+        public bool is_defined { get; set; default = false; }
         public GenericArray<StructField> fields { get; private set; }
         public GenericArray<Function> methods { get; private set; }
         public int line { get; set; }
@@ -373,6 +382,8 @@ namespace Planc {
         public string type_name { get; set; default = ""; }
         public string name { get; set; }
         public bool unmanaged { get; set; default = false; }
+        public bool is_ref { get; set; default = false; }
+        public bool is_out { get; set; default = false; }
         public int line { get; set; }
         public int column { get; set; }
     }
@@ -395,6 +406,10 @@ namespace Planc {
         public GenericArray<Expr> base_args { get; private set; }
         public string owner_class { get; set; default = ""; }
         public int vtable_slot { get; set; default = -1; }
+        public GenericArray<string> throws_domains { get; private set; }
+        public bool can_throw {
+            get { return throws_domains.length > 0; }
+        }
         public GenericArray<Param> params { get; private set; }
         public GenericArray<Statement> body { get; private set; }
         public int line { get; set; }
@@ -404,6 +419,7 @@ namespace Planc {
             params = new GenericArray<Param> ();
             body = new GenericArray<Statement> ();
             base_args = new GenericArray<Expr> ();
+            throws_domains = new GenericArray<string> ();
         }
     }
 
@@ -420,6 +436,7 @@ namespace Planc {
         public string name { get; set; }
         public string base_name { get; set; default = ""; }
         public bool is_abstract { get; set; default = false; }
+        public bool is_defined { get; set; default = false; }
         public GenericArray<ClassField> fields { get; private set; }
         public GenericArray<Function> methods { get; private set; }
         public Function? ctor { get; set; }
@@ -466,6 +483,58 @@ namespace Planc {
         public int column { get; set; }
     }
 
+    public class ThrowStatement : Statement {
+        public string domain_name { get; set; }
+        public string code_name { get; set; }
+        public Expr message { get; set; }
+    }
+
+    public class CatchClause : Object {
+        public string domain_name { get; set; }
+        public string var_name { get; set; }
+        public GenericArray<Statement> body { get; private set; }
+        public int line { get; set; }
+        public int column { get; set; }
+
+        public CatchClause () {
+            body = new GenericArray<Statement> ();
+        }
+    }
+
+    public class TryStatement : Statement {
+        public GenericArray<Statement> try_body { get; private set; }
+        public GenericArray<CatchClause> catches { get; private set; }
+        public GenericArray<Statement> finally_body { get; private set; }
+        public bool has_finally { get; set; default = false; }
+
+        public TryStatement () {
+            try_body = new GenericArray<Statement> ();
+            catches = new GenericArray<CatchClause> ();
+            finally_body = new GenericArray<Statement> ();
+        }
+    }
+
+    public class ErrorDomainDecl : Object {
+        public string name { get; set; }
+        public int domain_id { get; set; }
+        public bool is_defined { get; set; default = false; }
+        public GenericArray<EnumMember> codes { get; private set; }
+        public int line { get; set; }
+        public int column { get; set; }
+
+        public ErrorDomainDecl () {
+            codes = new GenericArray<EnumMember> ();
+        }
+
+        public unowned EnumMember? find_code (string cname) {
+            foreach (unowned var m in codes) {
+                if (m.name == cname)
+                    return m;
+            }
+            return null;
+        }
+    }
+
     public class Program : Object {
         public GenericArray<Function> functions { get; private set; }
         public GenericArray<GlobalVar> globals { get; private set; }
@@ -473,6 +542,7 @@ namespace Planc {
         public GenericArray<EnumDecl> enums { get; private set; }
         public GenericArray<StructDecl> structs { get; private set; }
         public GenericArray<ClassDecl> classes { get; private set; }
+        public GenericArray<ErrorDomainDecl> error_domains { get; private set; }
 
         public Program () {
             functions = new GenericArray<Function> ();
@@ -481,6 +551,15 @@ namespace Planc {
             enums = new GenericArray<EnumDecl> ();
             structs = new GenericArray<StructDecl> ();
             classes = new GenericArray<ClassDecl> ();
+            error_domains = new GenericArray<ErrorDomainDecl> ();
+        }
+
+        public unowned ErrorDomainDecl? find_error_domain (string name) {
+            foreach (unowned var d in error_domains) {
+                if (d.name == name)
+                    return d;
+            }
+            return null;
         }
 
         public unowned ConstDecl? find_const (string owner, string cname) {

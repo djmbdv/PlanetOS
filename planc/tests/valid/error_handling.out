@@ -1,0 +1,11 @@
+res:20/4=5
+m2:0:div by zero
+generic_io:forbidden 42
+ret_fin
+r=15
+ret_fin
+after_fin:div by zero
+outer_fin
+inner:too big: 200
+inner_fin
+caught_rethrow:rethrow

@@ -801,9 +801,19 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x39); code.u8 (0xC8);
         }
 
+        // xor edx, edx                       31 D2
+        public void xor_edx () {
+            code.u8 (0x31); code.u8 (0xD2);
+        }
+
         // test rax, rax                      48 85 C0
         public void test_rax_rax () {
             code.u8 (0x48); code.u8 (0x85); code.u8 (0xC0);
+        }
+
+        // test rdx, rdx                      48 85 D2
+        public void test_rdx_rdx () {
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2);
         }
 
         // setcc al (cc: 94=E, 95=NE, 9C=L, 9E=LE, 9F=G, 9D=GE)

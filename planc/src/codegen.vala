@@ -48,10 +48,24 @@ namespace Planc {
         private GenericArray<string> local_type_names;
         private GenericArray<int> local_slots;
         private GenericArray<bool> local_active;
+        private GenericArray<bool> local_by_ref;
         private int next_var_slot;
         private GenericArray<Expr> pending_struct_exprs;
         private GenericArray<int> pending_struct_rel_slots;
         private GenericArray<Expr> pending_ref_exprs;
+        private int cur_ref_temp_start;
+        private int cur_total_slots;
+        private int err_prop_slot;
+        private Label cur_func_throw_label;
+        private bool need_func_throw;
+        private GenericArray<string> active_catch_domains;
+        private GenericArray<Label> unwind_labels;
+        private GenericArray<int> unwind_marks;
+        private GenericArray<Label> finally_labels;
+        private GenericArray<int> finally_mode_slots;
+        private GenericArray<int> finally_ret_slots;
+        private GenericArray<int> finally_marks;
+        private GenericArray<int> live_stmt_ref_slots;
         private int push_depth;
 
         // Loop target and cleanup scope stacks for `break` / `continue`.
@@ -140,6 +154,10 @@ namespace Planc {
                 throw new SemanticError.BAD_MAIN (
                     @"main cannot return '$(type_label (main.return_type, main.return_type_name))' at $(main.line):$(main.column)");
             }
+            if (main.can_throw) {
+                throw new SemanticError.BAD_MAIN (
+                    @"main cannot declare 'throws' at $(main.line):$(main.column)");
+            }
 
             program_uses_heap = check_leaks || scan_program_heap ();
             if (program_uses_heap) {
@@ -174,14 +192,14 @@ namespace Planc {
             if (program.classes.length > 0)
                 return true;
             foreach (var g in program.globals) {
-                if (g.var_type == ValaType.ARRAY || g.var_type == ValaType.CLASS)
+                if (g.var_type == ValaType.ARRAY || g.var_type == ValaType.CLASS || g.var_type == ValaType.ERROR)
                     return true;
             }
             foreach (var f in program.functions) {
-                if (f.return_type == ValaType.ARRAY)
+                if (f.can_throw || f.return_type == ValaType.ARRAY || f.return_type == ValaType.ERROR)
                     return true;
                 foreach (var p in f.params) {
-                    if (p.param_type == ValaType.ARRAY)
+                    if (p.param_type == ValaType.ARRAY || p.param_type == ValaType.ERROR)
                         return true;
                 }
                 foreach (var s in f.body) {
@@ -270,6 +288,26 @@ namespace Planc {
                 }
                 foreach (var ds in sw.default_body) {
                     if (scan_stmt_heap (ds))
+                        return true;
+                }
+                return false;
+            }
+            if (s is ThrowStatement)
+                return true;
+            if (s is TryStatement) {
+                var tr = (TryStatement) s;
+                foreach (var ts in tr.try_body) {
+                    if (scan_stmt_heap (ts))
+                        return true;
+                }
+                foreach (var cc in tr.catches) {
+                    foreach (var cs in cc.body) {
+                        if (scan_stmt_heap (cs))
+                            return true;
+                    }
+                }
+                foreach (var fs in tr.finally_body) {
+                    if (scan_stmt_heap (fs))
                         return true;
                 }
                 return false;
@@ -482,7 +520,8 @@ namespace Planc {
                             throw new SemanticError.DUPLICATE_VARIABLE (
                                 @"field '$(cd.name).$(fld.name)' shadows inherited field at $(fld.line):$(fld.column)");
                     }
-                    if (fld.field_type == ValaType.CLASS && !is_nullable_type (fld.field_type, fld.type_name)) {
+                    if ((fld.field_type == ValaType.CLASS || fld.field_type == ValaType.ERROR)
+                        && !is_nullable_type (fld.field_type, fld.type_name)) {
                         bool ok = (fld.init != null) || (cd.ctor != null && ctor_assigns_field (cd.ctor, fld.name));
                         if (!ok)
                             throw new SemanticError.TYPE_MISMATCH (
@@ -722,15 +761,31 @@ namespace Planc {
             for (int i = 0; i < derived.params.length; i++) {
                 var dp = derived.params[i];
                 var bp = base_m.params[i + 1];
-                if (dp.param_type != bp.param_type || dp.type_name != bp.type_name)
+                if (dp.param_type != bp.param_type || dp.type_name != bp.type_name
+                    || dp.is_ref != bp.is_ref || dp.is_out != bp.is_out) {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"override '$(cname).$(derived.name)' parameter $(i + 1) type mismatch at $(dp.line):$(dp.column)");
+                }
+            }
+            foreach (var ddom in derived.throws_domains) {
+                bool found = false;
+                foreach (var bdom in base_m.throws_domains) {
+                    if (ddom == bdom || bdom == "Error") {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"override '$(cname).$(derived.name)' throws '$(ddom)' not thrown by base at $(derived.line):$(derived.column)");
+                }
             }
         }
 
         private bool ctor_assigns_field (Function ctor, string fname) {
+            string alt = fname.has_prefix ("#prop_") ? fname.substring (6) : fname;
             foreach (var s in ctor.body) {
-                if (stmt_assigns_field (s, fname))
+                if (stmt_assigns_field (s, fname) || (alt != fname && stmt_assigns_field (s, alt)))
                     return true;
             }
             return false;
@@ -1020,6 +1075,7 @@ namespace Planc {
             local_slots = new GenericArray<int> ();
             local_active = new GenericArray<bool> ();
             local_unmanaged = new GenericArray<bool> ();
+            local_by_ref = new GenericArray<bool> ();
         }
 
         private void deactivate_from (int saved_len) {
@@ -1088,7 +1144,8 @@ namespace Planc {
 
         private static bool stmt_always_exits (Statement s) {
             if (s is ReturnStatement || s is ExitStatement
-                || s is BreakStatement || s is ContinueStatement) {
+                || s is BreakStatement || s is ContinueStatement
+                || s is ThrowStatement) {
                 return true;
             }
             if (s is BlockStatement) {
@@ -1141,14 +1198,160 @@ namespace Planc {
             }
         }
 
+        private void push_local (string name, ValaType t, string tname, int slot,
+                                 bool unmanaged, bool by_ref = false) {
+            locals.add (name);
+            local_types.add (t);
+            local_type_names.add (tname);
+            local_slots.add (slot);
+            local_active.add (true);
+            local_unmanaged.add (unmanaged);
+            local_by_ref.add (by_ref);
+        }
+
+        private void add_live_ref_slot (int slot) {
+            if (slot < 0)
+                return;
+            for (int i = 0; i < live_stmt_ref_slots.length; i++) {
+                if (live_stmt_ref_slots[i] == slot)
+                    return;
+            }
+            live_stmt_ref_slots.add (slot);
+        }
+
+        private void check_domain_exists (string dom, int line, int col) throws SemanticError {
+            if (dom != "Error" && program.find_error_domain (dom) == null)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"unknown error domain '$(dom)' at $line:$col");
+        }
+
+        private void check_domains_handled (GenericArray<string> domains, int line, int col)
+                throws SemanticError {
+            foreach (var dom in domains) {
+                check_domain_exists (dom, line, col);
+                bool ok = false;
+                foreach (var ad in active_catch_domains) {
+                    if (ad == dom || ad == "Error") {
+                        ok = true;
+                        break;
+                    }
+                }
+                if (!ok && current != null) {
+                    foreach (var td in current.throws_domains) {
+                        if (td == dom || td == "Error") {
+                            ok = true;
+                            break;
+                        }
+                    }
+                }
+                if (!ok) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"unhandled error '$(dom)' at $line:$col");
+                }
+            }
+        }
+
+        private unowned Function? find_prop_getter (ValaType tt, string tt_name, string prop) {
+            if (tt == ValaType.CLASS) {
+                unowned var cd = program.find_class (strip_null (tt_name));
+                unowned var gm = (cd != null) ? find_class_method (cd, @"get_$(prop)") : null;
+                if (gm != null && !gm.is_static && gm.params.length == 1)
+                    return gm;
+            } else if (tt == ValaType.STRUCT) {
+                unowned var sd = program.find_struct (tt_name);
+                unowned var gm = (sd != null) ? sd.find_method (@"get_$(prop)") : null;
+                if (gm != null && !gm.is_static && gm.params.length == 1)
+                    return gm;
+            }
+            return null;
+        }
+
+        private unowned Function? find_prop_setter (ValaType tt, string tt_name, string prop) {
+            if (tt == ValaType.CLASS) {
+                unowned var cd = program.find_class (strip_null (tt_name));
+                unowned var sm = (cd != null) ? find_class_method (cd, @"set_$(prop)") : null;
+                if (sm != null && !sm.is_static && sm.params.length == 2)
+                    return sm;
+            } else if (tt == ValaType.STRUCT) {
+                unowned var sd = program.find_struct (tt_name);
+                unowned var sm = (sd != null) ? sd.find_method (@"set_$(prop)") : null;
+                if (sm != null && !sm.is_static && sm.params.length == 2)
+                    return sm;
+            }
+            return null;
+        }
+
+        private unowned Function? find_this_prop_getter (string prop) {
+            if (current_class != null && current != null && !current.is_static)
+                return find_prop_getter (ValaType.CLASS, current_class.name, prop);
+            if (current_struct != null && current != null && !current.is_static)
+                return find_prop_getter (ValaType.STRUCT, current_struct.name, prop);
+            return null;
+        }
+
+        private unowned Function? find_this_prop_setter (string prop) {
+            if (current_class != null && current != null && !current.is_static)
+                return find_prop_setter (ValaType.CLASS, current_class.name, prop);
+            if (current_struct != null && current != null && !current.is_static)
+                return find_prop_setter (ValaType.STRUCT, current_struct.name, prop);
+            return null;
+        }
+
+        private void emit_error_jump () {
+            if (push_depth > 0)
+                emitter.add_rsp (8 * push_depth);
+            int saved_pd = push_depth;
+            push_depth = 0;
+
+            if (program_uses_heap && live_stmt_ref_slots.length > 0) {
+                for (int k = live_stmt_ref_slots.length - 1; k >= 0; k--) {
+                    int rslot = live_stmt_ref_slots[k];
+                    emitter.load_local (rslot);
+                    emitter.mov_rdi_rax ();
+                    call_aligned ("__planc_unref");
+                    emitter.zero_local (rslot);
+                }
+            }
+
+            Label target;
+            int tmark = 0;
+            if (unwind_labels.length > 0) {
+                target = unwind_labels[unwind_labels.length - 1];
+                tmark = unwind_marks[unwind_marks.length - 1];
+            } else {
+                need_func_throw = true;
+                target = cur_func_throw_label;
+                tmark = 0;
+            }
+
+            if (program_uses_heap)
+                unref_locals_from (tmark);
+            emitter.branch (BranchKind.JMP, target);
+            push_depth = saved_pd;
+        }
+
+        private void emit_post_call_error_check (Function callee) {
+            if (!callee.can_throw)
+                return;
+            emitter.test_rdx_rdx ();
+            var l_ok = emitter.new_label ();
+            emitter.branch (BranchKind.JE, l_ok);
+            emitter.store_local_reg (err_prop_slot, Reg.RDX);
+            emit_error_jump ();
+            emitter.bind (l_ok);
+        }
+
         private int prepare_function (Function f, out int ref_temp_start) throws SemanticError {
             current = f;
             current_class = (f.owner_class != "") ? program.find_class (f.owner_class) : null;
             current_struct = (f.owner_class != "") ? program.find_struct (f.owner_class) : null;
             current_enum = (f.owner_class != "") ? program.find_enum (f.owner_class) : null;
+            foreach (var d in f.throws_domains)
+                check_domain_exists (d, f.line, f.column);
             pending_struct_exprs = new GenericArray<Expr> ();
             pending_struct_rel_slots = new GenericArray<int> ();
             pending_ref_exprs = new GenericArray<Expr> ();
+            active_catch_domains = new GenericArray<string> ();
             non_null_vars = new GenericArray<string> ();
             reset_locals ();
             next_var_slot = 0;
@@ -1157,18 +1360,15 @@ namespace Planc {
                 var p = f.params[i];
                 var raw_slot = next_var_slot++;
                 int var_slot = raw_slot;
-                if (p.param_type == ValaType.STRUCT) {
+                bool by_ref = p.is_ref || p.is_out;
+                if (p.param_type == ValaType.STRUCT && !by_ref) {
                     var n = type_slots (ValaType.STRUCT, p.type_name);
                     var_slot = next_var_slot;
                     next_var_slot += n;
                 }
-                locals.add (p.name);
-                local_types.add (p.param_type);
-                local_type_names.add (p.type_name);
-                local_slots.add (var_slot);
-                local_active.add (true);
-                local_unmanaged.add (p.unmanaged);
+                push_local (p.name, p.param_type, p.type_name, var_slot, p.unmanaged || by_ref, by_ref);
             }
+            err_prop_slot = next_var_slot++;
 
             int struct_temp_slots = 0;
             int ref_temp_slots = 0;
@@ -1186,6 +1386,7 @@ namespace Planc {
                 if (se is StructLiteral) ((StructLiteral) se).temp_slot = slot;
                 else if (se is CallExpr) ((CallExpr) se).temp_slot = slot;
                 else if (se is MethodCallExpr) ((MethodCallExpr) se).temp_slot = slot;
+                else if (se is MemberAccessExpr) ((MemberAccessExpr) se).temp_slot = slot;
             }
 
             ref_temp_start = var_end + struct_temp_slots;
@@ -1234,7 +1435,7 @@ namespace Planc {
                         if (!type_compatible (vt, vtname, it, itname))
                             throw new SemanticError.TYPE_MISMATCH (
                                 @"cannot initialize $(type_label (vt, vtname)) variable '$(d.name)' with $(type_label (it, itname)) at $(d.init.line):$(d.init.column)");
-                    } else if (vt == ValaType.CLASS && !is_nullable_type (vt, vtname)) {
+                    } else if ((vt == ValaType.CLASS || vt == ValaType.ERROR) && !is_nullable_type (vt, vtname)) {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"non-nullable $(type_label (vt, vtname)) variable '$(d.name)' must be initialized at $(d.line):$(d.column)");
                     }
@@ -1242,12 +1443,7 @@ namespace Planc {
                 var n = type_slots (vt, vtname);
                 var slot = next_var_slot;
                 next_var_slot += n;
-                locals.add (d.name);
-                local_types.add (vt);
-                local_type_names.add (vtname);
-                local_slots.add (slot);
-                local_active.add (true);
-                local_unmanaged.add (false);
+                push_local (d.name, vt, vtname, slot, false);
             } else if (s is AssignStatement) {
                 var a = (AssignStatement) s;
                 prepare_expr (a.value, ref struct_temps, ref ref_temps);
@@ -1256,11 +1452,20 @@ namespace Planc {
                     var vt = expr_type_full (a.value, out vtn);
                     if (is_nullable_type (vt, vtn))
                         remove_non_null (a.name);
+                } else if (lookup_global (a.name) < 0) {
+                    unowned var sm = find_this_prop_setter (a.name);
+                    if (sm != null && sm.can_throw)
+                        check_domains_handled (sm.throws_domains, a.line, a.column);
                 }
             } else if (s is FieldAssignStatement) {
                 var fa = (FieldAssignStatement) s;
                 prepare_expr (fa.target, ref struct_temps, ref ref_temps);
                 prepare_expr (fa.value, ref struct_temps, ref ref_temps);
+                string tt_name = "";
+                var tt = expr_type_full (fa.target, out tt_name);
+                unowned var sm = find_prop_setter (tt, tt_name, fa.field_name);
+                if (sm != null && sm.can_throw)
+                    check_domains_handled (sm.throws_domains, fa.line, fa.column);
             } else if (s is IndexAssignStatement) {
                 var ia = (IndexAssignStatement) s;
                 prepare_expr (ia.target, ref struct_temps, ref ref_temps);
@@ -1345,28 +1550,13 @@ namespace Planc {
                         @"duplicate variable: $(fe.var_name) at $(fe.line):$(fe.column)");
                 var col_mark = locals.length;
                 var cslot = next_var_slot++;
-                locals.add (@"#fe_col_$(col_mark)");
-                local_types.add (ValaType.ARRAY);
-                local_type_names.add (strip_null (ct_name));
-                local_slots.add (cslot);
-                local_active.add (true);
-                local_unmanaged.add (false);
+                push_local (@"#fe_col_$(col_mark)", ValaType.ARRAY, strip_null (ct_name), cslot, false);
 
                 var islot = next_var_slot++;
-                locals.add (@"#fe_idx_$(col_mark)");
-                local_types.add (ValaType.INT);
-                local_type_names.add ("");
-                local_slots.add (islot);
-                local_active.add (true);
-                local_unmanaged.add (false);
+                push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", islot, false);
 
                 var eslot = next_var_slot++;
-                locals.add (fe.var_name);
-                local_types.add (vtype);
-                local_type_names.add (vtname);
-                local_slots.add (eslot);
-                local_active.add (true);
-                local_unmanaged.add (false);
+                push_local (fe.var_name, vtype, vtname, eslot, false);
 
                 prepare_stmt (fe.body, ref struct_temps, ref ref_temps);
                 deactivate_from (col_mark);
@@ -1382,12 +1572,7 @@ namespace Planc {
                 }
                 var sw_mark = locals.length;
                 var sw_slot = next_var_slot++;
-                locals.add (@"#sw_$(sw_mark)");
-                local_types.add (st == ValaType.STRING ? ValaType.STRING : ValaType.INT);
-                local_type_names.add ("");
-                local_slots.add (sw_slot);
-                local_active.add (true);
-                local_unmanaged.add (false);
+                push_local (@"#sw_$(sw_mark)", st == ValaType.STRING ? ValaType.STRING : ValaType.INT, "", sw_slot, false);
 
                 foreach (var sc in sw.cases) {
                     foreach (var v in sc.values) {
@@ -1410,6 +1595,56 @@ namespace Planc {
                     deactivate_from (def_mark);
                 }
                 deactivate_from (sw_mark);
+            } else if (s is ThrowStatement) {
+                var ts = (ThrowStatement) s;
+                unowned var ed = program.find_error_domain (ts.domain_name);
+                if (ed == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"unknown error domain '$(ts.domain_name)' at $(ts.line):$(ts.column)");
+                if (ed.find_code (ts.code_name) == null)
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"error domain '$(ts.domain_name)' has no code '$(ts.code_name)' at $(ts.line):$(ts.column)");
+                var one = new GenericArray<string> ();
+                one.add (ts.domain_name);
+                check_domains_handled (one, ts.line, ts.column);
+                prepare_expr (ts.message, ref struct_temps, ref ref_temps);
+            } else if (s is TryStatement) {
+                var tr = (TryStatement) s;
+                if (tr.has_finally) {
+                    next_var_slot++; // fin_mode_slot
+                    next_var_slot++; // fin_ret_slot
+                }
+                int saved_dom = active_catch_domains.length;
+                foreach (var cc in tr.catches) {
+                    check_domain_exists (cc.domain_name, cc.line, cc.column);
+                    active_catch_domains.add (cc.domain_name);
+                }
+                var try_mark = locals.length;
+                foreach (var st in tr.try_body)
+                    prepare_stmt (st, ref struct_temps, ref ref_temps);
+                deactivate_from (try_mark);
+                while (active_catch_domains.length > saved_dom)
+                    active_catch_domains.remove_index (active_catch_domains.length - 1);
+
+                foreach (var cc in tr.catches) {
+                    if (lookup (cc.var_name) >= 0)
+                        throw new SemanticError.DUPLICATE_VARIABLE (
+                            @"duplicate variable: $(cc.var_name) at $(cc.line):$(cc.column)");
+                    var c_mark = locals.length;
+                    var cslot = next_var_slot++;
+                    push_local (cc.var_name, ValaType.ERROR,
+                                cc.domain_name == "Error" ? "" : cc.domain_name,
+                                cslot, false);
+                    foreach (var st in cc.body)
+                        prepare_stmt (st, ref struct_temps, ref ref_temps);
+                    deactivate_from (c_mark);
+                }
+                if (tr.has_finally) {
+                    var fin_mark = locals.length;
+                    foreach (var fs in tr.finally_body)
+                        prepare_stmt (fs, ref struct_temps, ref ref_temps);
+                    deactivate_from (fin_mark);
+                }
             }
         }
 
@@ -1438,7 +1673,29 @@ namespace Planc {
                 prepare_expr (b.left, ref struct_temps, ref ref_temps);
                 prepare_expr (b.right, ref struct_temps, ref ref_temps);
             } else if (e is MemberAccessExpr) {
-                prepare_expr (((MemberAccessExpr) e).target, ref struct_temps, ref ref_temps);
+                var ma = (MemberAccessExpr) e;
+                prepare_expr (ma.target, ref struct_temps, ref ref_temps);
+                if (!(ma.target is VarRef && is_type_name (((VarRef) ma.target).name))) {
+                    string tt_name = "";
+                    var tt = expr_type_full (ma.target, out tt_name);
+                    unowned var gm = find_prop_getter (tt, tt_name, ma.member);
+                    if (gm != null) {
+                        if (gm.can_throw)
+                            check_domains_handled (gm.throws_domains, ma.line, ma.column);
+                        if (gm.return_type == ValaType.STRUCT) {
+                            pending_struct_exprs.add (e);
+                            pending_struct_rel_slots.add (struct_temps);
+                            struct_temps += type_slots (ValaType.STRUCT, gm.return_type_name);
+                        }
+                    }
+                }
+            } else if (e is VarRef) {
+                var vr = (VarRef) e;
+                if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0) {
+                    unowned var gm = find_this_prop_getter (vr.name);
+                    if (gm != null && gm.can_throw)
+                        check_domains_handled (gm.throws_domains, vr.line, vr.column);
+                }
             } else if (e is IndexExpr) {
                 var ix = (IndexExpr) e;
                 prepare_expr (ix.target, ref struct_temps, ref ref_temps);
@@ -1449,8 +1706,21 @@ namespace Planc {
                 foreach (var el in ((ArrayLiteralExpr) e).elements)
                     prepare_expr (el, ref struct_temps, ref ref_temps);
             } else if (e is ClassNewExpr) {
-                foreach (var a in ((ClassNewExpr) e).args)
+                var cn = (ClassNewExpr) e;
+                foreach (var a in cn.args)
                     prepare_expr (a, ref struct_temps, ref ref_temps);
+                foreach (var iv in cn.init_values)
+                    prepare_expr (iv, ref struct_temps, ref ref_temps);
+                unowned var cd = program.find_class (cn.class_name);
+                if (cd != null && cd.ctor != null && cd.ctor.can_throw)
+                    check_domains_handled (cd.ctor.throws_domains, cn.line, cn.column);
+                if (cd != null) {
+                    foreach (var iname in cn.init_names) {
+                        unowned var sm = find_prop_setter (ValaType.CLASS, cd.name, iname);
+                        if (sm != null && sm.can_throw)
+                            check_domains_handled (sm.throws_domains, cn.line, cn.column);
+                    }
+                }
             } else if (e is TemplateExpr) {
                 foreach (var part in ((TemplateExpr) e).parts)
                     prepare_expr (part, ref struct_temps, ref ref_temps);
@@ -1468,20 +1738,28 @@ namespace Planc {
                 foreach (var a in mc.args)
                     prepare_expr (a, ref struct_temps, ref ref_temps);
                 unowned var m = resolve_method_call_fn (mc);
-                if (m != null && m.return_type == ValaType.STRUCT) {
-                    pending_struct_exprs.add (e);
-                    pending_struct_rel_slots.add (struct_temps);
-                    struct_temps += type_slots (ValaType.STRUCT, m.return_type_name);
+                if (m != null) {
+                    if (m.can_throw)
+                        check_domains_handled (m.throws_domains, mc.line, mc.column);
+                    if (m.return_type == ValaType.STRUCT) {
+                        pending_struct_exprs.add (e);
+                        pending_struct_rel_slots.add (struct_temps);
+                        struct_temps += type_slots (ValaType.STRUCT, m.return_type_name);
+                    }
                 }
             } else if (e is CallExpr) {
                 var ce = (CallExpr) e;
                 foreach (var a in ce.args)
                     prepare_expr (a, ref struct_temps, ref ref_temps);
                 unowned var f = resolve_call_target (ce.callee);
-                if (f != null && f.return_type == ValaType.STRUCT) {
-                    pending_struct_exprs.add (e);
-                    pending_struct_rel_slots.add (struct_temps);
-                    struct_temps += type_slots (ValaType.STRUCT, f.return_type_name);
+                if (f != null) {
+                    if (f.can_throw)
+                        check_domains_handled (f.throws_domains, ce.line, ce.column);
+                    if (f.return_type == ValaType.STRUCT) {
+                        pending_struct_exprs.add (e);
+                        pending_struct_rel_slots.add (struct_temps);
+                        struct_temps += type_slots (ValaType.STRUCT, f.return_type_name);
+                    }
                 }
             }
             if (program_uses_heap && is_owned_expr (e)) {
@@ -1520,8 +1798,11 @@ namespace Planc {
                 foreach (var a in ((CallExpr) e).args)
                     fn (a);
             } else if (e is ClassNewExpr) {
-                foreach (var a in ((ClassNewExpr) e).args)
+                var cn = (ClassNewExpr) e;
+                foreach (var a in cn.args)
                     fn (a);
+                foreach (var iv in cn.init_values)
+                    fn (iv);
             } else if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
                 if (mc.target != null)
@@ -1555,6 +1836,18 @@ namespace Planc {
             current_class = (f.owner_class != "") ? program.find_class (f.owner_class) : null;
             current_struct = (f.owner_class != "") ? program.find_struct (f.owner_class) : null;
             current_enum = (f.owner_class != "") ? program.find_enum (f.owner_class) : null;
+            cur_ref_temp_start = ref_temp_start;
+            cur_total_slots = total_slots;
+            cur_func_throw_label = emitter.new_label ();
+            need_func_throw = false;
+            unwind_labels = new GenericArray<Label> ();
+            unwind_marks = new GenericArray<int> ();
+            finally_labels = new GenericArray<Label> ();
+            finally_mode_slots = new GenericArray<int> ();
+            finally_ret_slots = new GenericArray<int> ();
+            finally_marks = new GenericArray<int> ();
+            live_stmt_ref_slots = new GenericArray<int> ();
+            active_catch_domains = new GenericArray<string> ();
             non_null_vars = new GenericArray<string> ();
             reset_locals ();
             next_var_slot = 0;
@@ -1586,7 +1879,8 @@ namespace Planc {
                     emitter.load_rbp_disp (16 + 8 * (i - ARG_REGS.length));
                     emitter.store_local (raw_slot);
                 }
-                if (f.params[i].param_type == ValaType.STRUCT) {
+                bool by_ref = f.params[i].is_ref || f.params[i].is_out;
+                if (f.params[i].param_type == ValaType.STRUCT && !by_ref) {
                     var n = type_slots (ValaType.STRUCT, f.params[i].type_name);
                     param_final_slots[i] = next_var_slot;
                     next_var_slot += n;
@@ -1594,12 +1888,44 @@ namespace Planc {
                     param_final_slots[i] = raw_slot;
                 }
             }
+            err_prop_slot = next_var_slot++;
 
-            // Retain borrowed reference parameters so the callee owns its
-            // local slot and can safely reassign or unref on exit.
+            // Retain borrowed value parameters, or clear `out` storage via Decision A2.
             for (int i = 0; i < f.params.length; i++) {
                 var p = f.params[i];
-                if (p.param_type == ValaType.STRUCT) {
+                bool by_ref = p.is_ref || p.is_out;
+                if (by_ref) {
+                    if (p.is_out) {
+                        if (is_ref_type (p.param_type)) {
+                            if (program_uses_heap) {
+                                emitter.load_local (param_final_slots[i]);
+                                emitter.load_rax_disp (0);
+                                emitter.mov_rdi_rax ();
+                                call_aligned ("__planc_unref");
+                            }
+                            emitter.load_local (param_final_slots[i]);
+                            emitter.mov_rcx_rax ();
+                            if (p.param_type == ValaType.STRING && !is_nullable_type (p.param_type, p.type_name))
+                                emitter.lea_rax_rip (emitter.add_string (""));
+                            else
+                                emitter.xor_eax ();
+                            emitter.store_rcx_disp_rax (0);
+                        } else if (p.param_type == ValaType.STRUCT) {
+                            unowned var sd = program.find_struct (p.type_name);
+                            emitter.load_local (param_final_slots[i]);
+                            emitter.mov_rcx_rax ();
+                            if (program_uses_heap && sd != null && struct_has_string (sd))
+                                unref_struct_at_rcx (sd, 0);
+                            if (sd != null)
+                                init_struct_at_rcx (sd, 0);
+                        } else {
+                            emitter.load_local (param_final_slots[i]);
+                            emitter.mov_rcx_rax ();
+                            emitter.xor_eax ();
+                            emitter.store_rcx_disp_rax (0);
+                        }
+                    }
+                } else if (p.param_type == ValaType.STRUCT) {
                     var n = type_slots (ValaType.STRUCT, p.type_name);
                     emitter.load_local (param_raw_slots[i]);
                     emitter.lea_rcx_rbp_disp (struct_base_disp (param_final_slots[i], n));
@@ -1614,12 +1940,7 @@ namespace Planc {
                     emitter.mov_rdi_rax ();
                     emitter.call_rel32 ("__planc_ref");
                 }
-                locals.add (p.name);
-                local_types.add (p.param_type);
-                local_type_names.add (p.type_name);
-                local_slots.add (param_final_slots[i]);
-                local_active.add (true);
-                local_unmanaged.add (p.unmanaged);
+                push_local (p.name, p.param_type, p.type_name, param_final_slots[i], p.unmanaged || by_ref, by_ref);
             }
 
             if (f.is_dtor && f.name.has_prefix ("__planc_dtor_")) {
@@ -1650,7 +1971,7 @@ namespace Planc {
                 unref_locals_from (0);
             if (f.return_type == ValaType.STRING) {
                 emitter.lea_rax_rip (emitter.add_string (""));
-            } else if (f.return_type == ValaType.ARRAY || f.return_type == ValaType.CLASS) {
+            } else if (f.return_type == ValaType.ARRAY || f.return_type == ValaType.CLASS || f.return_type == ValaType.ERROR) {
                 emitter.xor_eax ();
             } else if (f.return_type == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (f.return_type_name);
@@ -1661,8 +1982,18 @@ namespace Planc {
             } else {
                 emitter.xor_eax ();
             }
+            emitter.xor_edx ();
             emitter.leave ();
             emitter.ret ();
+
+            if (need_func_throw) {
+                emitter.bind (cur_func_throw_label);
+                emitter.load_local (err_prop_slot);
+                emitter.mov_rdx_rax ();
+                emitter.xor_eax ();
+                emitter.leave ();
+                emitter.ret ();
+            }
 
             symbols.add (new Symbol (f.name, start, emitter.here () - start));
         }
@@ -1740,6 +2071,10 @@ namespace Planc {
             }
             if (t == ValaType.STRING && tname == "?")
                 return "string?";
+            if (t == ValaType.ERROR) {
+                if (tname == "?") return "Error?";
+                return (tname != "") ? tname : "Error";
+            }
             if ((t == ValaType.ENUM || t == ValaType.STRUCT || t == ValaType.CLASS) && tname != "")
                 return tname;
             return t.label ();
@@ -1750,7 +2085,8 @@ namespace Planc {
         }
 
         private static bool is_ref_type (ValaType t) {
-            return t == ValaType.STRING || t == ValaType.ARRAY || t == ValaType.CLASS;
+            return t == ValaType.STRING || t == ValaType.ARRAY
+                || t == ValaType.CLASS || t == ValaType.ERROR;
         }
 
         private void parse_array_elem (string elem_name, out ValaType et, out string et_name) {
@@ -1759,7 +2095,11 @@ namespace Planc {
             if (raw == "int") et = ValaType.INT;
             else if (raw == "bool") et = ValaType.BOOL;
             else if (raw == "string") et = ValaType.STRING;
-            else if (program.find_class (raw) != null) {
+            else if (raw == "Error") et = ValaType.ERROR;
+            else if (program.find_error_domain (raw) != null) {
+                et = ValaType.ERROR;
+                et_name = raw;
+            } else if (program.find_class (raw) != null) {
                 et = ValaType.CLASS;
                 et_name = raw;
             } else {
@@ -1781,6 +2121,8 @@ namespace Planc {
                     return en == an;
                 if (expected == ValaType.CLASS)
                     return en == an || is_subclass_of (an, en);
+                if (expected == ValaType.ERROR)
+                    return en == "" || en == an;
                 return true;
             }
             if (is_int_like (expected) && is_int_like (actual))
@@ -1826,7 +2168,8 @@ namespace Planc {
             }
             return program.find_class (name) != null
                 || program.find_struct (name) != null
-                || program.find_enum (name) != null;
+                || program.find_enum (name) != null
+                || program.find_error_domain (name) != null;
         }
 
         private unowned Function? resolve_type_method (string type_name, string mname) {
@@ -1914,6 +2257,24 @@ namespace Planc {
             if (e is CallExpr) {
                 unowned var f = resolve_call_target (((CallExpr) e).callee);
                 return f != null && is_ref_type (f.return_type);
+            }
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                if (!(ma.target is VarRef && is_type_name (((VarRef) ma.target).name))) {
+                    string tt_name = "";
+                    var tt = expr_type_full (ma.target, out tt_name);
+                    unowned var gm = find_prop_getter (tt, tt_name, ma.member);
+                    if (gm != null)
+                        return is_ref_type (gm.return_type);
+                }
+            }
+            if (e is VarRef) {
+                var vr = (VarRef) e;
+                if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0) {
+                    unowned var gm = find_this_prop_getter (vr.name);
+                    if (gm != null)
+                        return is_ref_type (gm.return_type);
+                }
             }
             return false;
         }
@@ -2010,13 +2371,31 @@ namespace Planc {
                 throw new SemanticError.WRONG_ARG_COUNT (
                     @"$(desc) expects $(expected_count) argument(s), got $(args.length) at $(line):$(col)");
             for (int i = 0; i < args.length; i++) {
+                var p = fn.params[param_offset + i];
                 string at_name = "";
                 var at = expr_type_full (args[i], out at_name);
-                var pt = fn.params[param_offset + i].param_type;
-                var pt_name = fn.params[param_offset + i].type_name;
-                if (!type_compatible (pt, pt_name, at, at_name))
+                var pt = p.param_type;
+                var pt_name = p.type_name;
+                if (p.is_ref || p.is_out) {
+                    if (!(args[i] is VarRef || args[i] is MemberAccessExpr || args[i] is IndexExpr))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument $(i + 1) of '$(desc)' requires a variable or field lvalue for '$(p.is_out ? "out" : "ref")' at $(args[i].line):$(args[i].column)");
+                    if (pt != at || strip_null (pt_name) != strip_null (at_name))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument $(i + 1) of '$(desc)' expects $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
+                    if (p.is_ref && is_nullable_type (pt, pt_name) != is_nullable_type (at, at_name))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"ref argument $(i + 1) of '$(desc)' nullability mismatch: expected $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
+                    if (p.is_out && !is_nullable_type (pt, pt_name) && is_nullable_type (at, at_name)) {
+                        // OK under Option B if caller holds nullable and callee writes non-null.
+                    } else if (!type_compatible (pt, pt_name, at, at_name)) {
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument $(i + 1) of '$(desc)' expects $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
+                    }
+                } else if (!type_compatible (pt, pt_name, at, at_name)) {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument $(i + 1) of '$(desc)' expects $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
+                }
             }
         }
 
@@ -2140,6 +2519,29 @@ namespace Planc {
                     throw new SemanticError.WRONG_ARG_COUNT (
                         @"'$(cd.name)' constructor expects 0 argument(s), got $(cn.args.length) at $(cn.line):$(cn.column)");
                 }
+                for (int i = 0; i < cn.init_names.length; i++) {
+                    var iname = cn.init_names[i];
+                    var ival = cn.init_values[i];
+                    ValaType ft;
+                    string ft_name;
+                    unowned ClassField? cf = null;
+                    if (class_field_offset_slots (cd, iname, out cf) >= 0 && cf != null) {
+                        ft = cf.field_type;
+                        ft_name = cf.type_name;
+                    } else {
+                        unowned var sm = find_prop_setter (ValaType.CLASS, cd.name, iname);
+                        if (sm == null)
+                            throw new SemanticError.UNKNOWN_MEMBER (
+                                @"class '$(cd.name)' has no field or writable property '$(iname)' at $(ival.line):$(ival.column)");
+                        ft = sm.params[1].param_type;
+                        ft_name = sm.params[1].type_name;
+                    }
+                    string vt_name = "";
+                    var vt = expr_type_full (ival, out vt_name);
+                    if (!type_compatible (ft, ft_name, vt, vt_name))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"cannot initialize '$(cd.name).$(iname)' ($(type_label (ft, ft_name))) with $(type_label (vt, vt_name)) at $(ival.line):$(ival.column)");
+                }
                 tname = cd.name;
                 return ValaType.CLASS;
             }
@@ -2147,6 +2549,12 @@ namespace Planc {
                 var tc = (TypeCheckExpr) e;
                 string ot_name = "";
                 var ot = expr_type_full (tc.operand, out ot_name);
+                if (tc.target_type == ValaType.ERROR) {
+                    if (ot != ValaType.ERROR && ot != ValaType.NULL)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'$(tc.op)' requires an Error value, got $(type_label (ot, ot_name)) at $(tc.line):$(tc.column)");
+                    return ValaType.BOOL;
+                }
                 if (ot != ValaType.CLASS && ot != ValaType.NULL)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'$(tc.op)' requires a class instance, got $(type_label (ot, ot_name)) at $(tc.line):$(tc.column)");
@@ -2174,6 +2582,13 @@ namespace Planc {
                             tname = cd_const.type_name;
                             return cd_const.const_type;
                         }
+                        unowned var err_d = program.find_error_domain (vr.name);
+                        if (err_d != null) {
+                            if (err_d.find_code (m.member) == null)
+                                throw new SemanticError.UNKNOWN_MEMBER (
+                                    @"error domain '$(err_d.name)' has no code '$(m.member)' at $(m.line):$(m.column)");
+                            return ValaType.INT;
+                        }
                         unowned var ed = program.find_enum (vr.name);
                         if (ed != null) {
                             if (ed.find_member (m.member) == null)
@@ -2188,6 +2603,14 @@ namespace Planc {
                 }
                 string tt_name = "";
                 var tt = expr_type_full (m.target, out tt_name);
+                if (tt == ValaType.ERROR) {
+                    if (m.member == "message")
+                        return ValaType.STRING;
+                    if (m.member == "domain" || m.member == "code")
+                        return ValaType.INT;
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"Error has no member '$(m.member)' at $(m.line):$(m.column)");
+                }
                 if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
                     if (m.member != "length")
                         throw new SemanticError.UNKNOWN_MEMBER (
@@ -2198,20 +2621,32 @@ namespace Planc {
                     var cname = strip_null (tt_name);
                     unowned var cd = program.find_class (cname);
                     unowned ClassField? cf = null;
-                    if (cd == null || class_field_offset_slots (cd, m.member, out cf) < 0 || cf == null)
-                        throw new SemanticError.UNKNOWN_MEMBER (
-                            @"class '$(cname)' has no field '$(m.member)' at $(m.line):$(m.column)");
-                    tname = cf.type_name;
-                    return cf.field_type;
+                    if (cd != null && class_field_offset_slots (cd, m.member, out cf) >= 0 && cf != null) {
+                        tname = cf.type_name;
+                        return cf.field_type;
+                    }
+                    unowned var gm = find_prop_getter (tt, tt_name, m.member);
+                    if (gm != null) {
+                        tname = gm.return_type_name;
+                        return gm.return_type;
+                    }
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"class '$(cname)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
                 }
                 if (tt == ValaType.STRUCT) {
                     unowned var sd = program.find_struct (tt_name);
                     unowned StructField? fld = null;
-                    if (sd == null || struct_field_offset_slots (sd, m.member, out fld) < 0 || fld == null)
-                        throw new SemanticError.UNKNOWN_MEMBER (
-                            @"struct '$(tt_name)' has no field '$(m.member)' at $(m.line):$(m.column)");
-                    tname = fld.type_name;
-                    return fld.field_type;
+                    if (sd != null && struct_field_offset_slots (sd, m.member, out fld) >= 0 && fld != null) {
+                        tname = fld.type_name;
+                        return fld.field_type;
+                    }
+                    unowned var gm = find_prop_getter (tt, tt_name, m.member);
+                    if (gm != null) {
+                        tname = gm.return_type_name;
+                        return gm.return_type;
+                    }
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"struct '$(tt_name)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
                 }
                 throw new SemanticError.TYPE_MISMATCH (
                     @"cannot access member '.$(m.member)' on $(type_label (tt, tt_name)) at $(m.line):$(m.column)");
@@ -2385,6 +2820,11 @@ namespace Planc {
                         return ValaType.ENUM;
                     }
                 }
+                unowned var gm = find_this_prop_getter (v.name);
+                if (gm != null) {
+                    tname = gm.return_type_name;
+                    return gm.return_type;
+                }
                 unowned var g_const = program.find_const ("", v.name);
                 if (g_const != null) {
                     tname = g_const.type_name;
@@ -2525,14 +2965,23 @@ namespace Planc {
             }
         }
 
+        private void remove_live_ref_slot (int slot) {
+            for (int i = live_stmt_ref_slots.length - 1; i >= 0; i--) {
+                if (live_stmt_ref_slots[i] == slot)
+                    live_stmt_ref_slots.remove_index (i);
+            }
+        }
+
         // Transfers ownership of a reference-typed expression in `rax` to a
         // storage location (`ref` if borrowed, or zero `ref_temp_slot` if owned).
         private void consume_ref_expr (Expr e) throws SemanticError {
             if (!program_uses_heap)
                 return;
             if (is_owned_expr (e)) {
-                if (e.ref_temp_slot >= 0)
+                if (e.ref_temp_slot >= 0) {
                     emitter.zero_local (e.ref_temp_slot);
+                    remove_live_ref_slot (e.ref_temp_slot);
+                }
             } else {
                 emitter.mov_rdi_rax ();
                 call_aligned ("__planc_ref");
@@ -2548,6 +2997,7 @@ namespace Planc {
                 emitter.mov_rdi_rax ();
                 call_aligned ("__planc_unref");
                 emitter.zero_local (e.ref_temp_slot);
+                remove_live_ref_slot (e.ref_temp_slot);
             }
         }
 
@@ -2581,7 +3031,9 @@ namespace Planc {
                     ltname = is_non_null_narrowed (vr.name)
                         ? strip_null (local_type_names[idx])
                         : local_type_names[idx];
-                    if (ltype == ValaType.STRUCT) {
+                    if (local_by_ref[idx]) {
+                        emitter.load_local (local_slots[idx]);
+                    } else if (ltype == ValaType.STRUCT) {
                         var n = type_slots (ValaType.STRUCT, ltname);
                         emitter.lea_rax_rbp_disp (struct_base_disp (local_slots[idx], n));
                     } else {
@@ -2656,6 +3108,35 @@ namespace Planc {
                 emitter.add_rax_imm (8 * off_slots);
                 ltype = fld.field_type;
                 ltname = fld.type_name;
+                return;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                string tt_name = "";
+                var tt = expr_type_full (ix.target, out tt_name);
+                if (tt != ValaType.ARRAY)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"indexed address requires an array, got $(type_label (tt, tt_name)) at $(ix.line):$(ix.column)");
+                string it_name = "";
+                var it = expr_type_full (ix.index, out it_name);
+                if (!is_int_like (it))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"array index must be int, got $(type_label (it, it_name)) at $(ix.index.line):$(ix.index.column)");
+                gen_expr (ix.target);
+                emit_null_check_if_nullable (tt, tt_name);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (ix.index);
+                emitter.mov_rcx_rax ();
+                emitter.pop_rax ();
+                push_depth--;
+                if (bounds_check) {
+                    need_bounds_panic = true;
+                    emitter.cmp_rcx_rax_len ();
+                    emitter.branch (BranchKind.JAE, bounds_panic_label);
+                }
+                emitter.lea_rax_rax_rcx_8_16 ();
+                parse_array_elem (tt_name, out ltype, out ltname);
                 return;
             }
             throw new SemanticError.TYPE_MISMATCH (
@@ -2807,46 +3288,87 @@ namespace Planc {
                 emitter.syscall ();
             } else if (s is ReturnStatement) {
                 var r = (ReturnStatement) s;
-                if (r.value != null) {
-                    if (current.is_void)
-                        throw new SemanticError.RETURN_MISMATCH (
-                            @"void function '$(current.name)' cannot return a value at $(r.line):$(r.column)");
-                    string rt_name = "";
-                    var rt = expr_type_full (r.value, out rt_name);
-                    if (!type_compatible (current.return_type, current.return_type_name, rt, rt_name))
-                        throw new SemanticError.RETURN_MISMATCH (
-                            @"function '$(current.name)' returns $(type_label (current.return_type, current.return_type_name)), got $(type_label (rt, rt_name)) at $(r.line):$(r.column)");
-                    gen_expr (r.value);
-                    if (is_ref_type (current.return_type))
-                        consume_ref_expr (r.value);
-                    if (current.return_type == ValaType.STRUCT) {
-                        var n = type_slots (ValaType.STRUCT, current.return_type_name);
-                        emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
-                        copy_struct_rax_to_rcx (n);
-                        if (program_uses_heap) {
-                            unowned var sd = program.find_struct (current.return_type_name);
-                            if (sd != null && struct_has_string (sd))
-                                ref_struct_at_rcx (sd, 0);
+                if (finally_labels.length > 0) {
+                    int fin_idx = finally_labels.length - 1;
+                    if (r.value != null) {
+                        if (current.is_void)
+                            throw new SemanticError.RETURN_MISMATCH (
+                                @"void function '$(current.name)' cannot return a value at $(r.line):$(r.column)");
+                        string rt_name = "";
+                        var rt = expr_type_full (r.value, out rt_name);
+                        if (!type_compatible (current.return_type, current.return_type_name, rt, rt_name))
+                            throw new SemanticError.RETURN_MISMATCH (
+                                @"function '$(current.name)' returns $(type_label (current.return_type, current.return_type_name)), got $(type_label (rt, rt_name)) at $(r.line):$(r.column)");
+                        gen_expr (r.value);
+                        if (is_ref_type (current.return_type))
+                            consume_ref_expr (r.value);
+                        if (current.return_type == ValaType.STRUCT) {
+                            var n = type_slots (ValaType.STRUCT, current.return_type_name);
+                            emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
+                            copy_struct_rax_to_rcx (n);
+                            if (program_uses_heap) {
+                                unowned var sd = program.find_struct (current.return_type_name);
+                                if (sd != null && struct_has_string (sd))
+                                    ref_struct_at_rcx (sd, 0);
+                            }
+                            emitter.mov_rax_rcx ();
                         }
-                        emitter.mov_rax_rcx ();
+                        emitter.store_local (finally_ret_slots[fin_idx]);
+                        cleanup_expr_temps (r.value);
+                    } else {
+                        if (!current.is_void)
+                            throw new SemanticError.RETURN_MISMATCH (
+                                @"$(type_label (current.return_type, current.return_type_name)) function '$(current.name)' must return a value at $(r.line):$(r.column)");
+                        emitter.zero_local (finally_ret_slots[fin_idx]);
                     }
-                    emitter.push_rax ();
-                    push_depth++;
-                    cleanup_expr_temps (r.value);
                     if (program_uses_heap)
-                        unref_locals_from (0);
-                    emitter.pop_rax ();
-                    push_depth--;
+                        unref_locals_from (finally_marks[fin_idx]);
+                    emitter.mov_rax_imm (2);
+                    emitter.store_local (finally_mode_slots[fin_idx]);
+                    emitter.branch (BranchKind.JMP, finally_labels[fin_idx]);
                 } else {
-                    if (!current.is_void)
-                        throw new SemanticError.RETURN_MISMATCH (
-                            @"$(type_label (current.return_type, current.return_type_name)) function '$(current.name)' must return a value at $(r.line):$(r.column)");
-                    if (program_uses_heap)
-                        unref_locals_from (0);
-                    emitter.xor_eax ();
+                    if (r.value != null) {
+                        if (current.is_void)
+                            throw new SemanticError.RETURN_MISMATCH (
+                                @"void function '$(current.name)' cannot return a value at $(r.line):$(r.column)");
+                        string rt_name = "";
+                        var rt = expr_type_full (r.value, out rt_name);
+                        if (!type_compatible (current.return_type, current.return_type_name, rt, rt_name))
+                            throw new SemanticError.RETURN_MISMATCH (
+                                @"function '$(current.name)' returns $(type_label (current.return_type, current.return_type_name)), got $(type_label (rt, rt_name)) at $(r.line):$(r.column)");
+                        gen_expr (r.value);
+                        if (is_ref_type (current.return_type))
+                            consume_ref_expr (r.value);
+                        if (current.return_type == ValaType.STRUCT) {
+                            var n = type_slots (ValaType.STRUCT, current.return_type_name);
+                            emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
+                            copy_struct_rax_to_rcx (n);
+                            if (program_uses_heap) {
+                                unowned var sd = program.find_struct (current.return_type_name);
+                                if (sd != null && struct_has_string (sd))
+                                    ref_struct_at_rcx (sd, 0);
+                            }
+                            emitter.mov_rax_rcx ();
+                        }
+                        emitter.push_rax ();
+                        push_depth++;
+                        cleanup_expr_temps (r.value);
+                        if (program_uses_heap)
+                            unref_locals_from (0);
+                        emitter.pop_rax ();
+                        push_depth--;
+                    } else {
+                        if (!current.is_void)
+                            throw new SemanticError.RETURN_MISMATCH (
+                                @"$(type_label (current.return_type, current.return_type_name)) function '$(current.name)' must return a value at $(r.line):$(r.column)");
+                        if (program_uses_heap)
+                            unref_locals_from (0);
+                        emitter.xor_eax ();
+                    }
+                    emitter.xor_edx ();
+                    emitter.leave ();
+                    emitter.ret ();
                 }
-                emitter.leave ();
-                emitter.ret ();
             } else if (s is VarDeclStatement) {
                 var d = (VarDeclStatement) s;
                 if (lookup (d.name) >= 0)
@@ -2868,7 +3390,7 @@ namespace Planc {
                         if (!type_compatible (vtype, vtname, it, itname))
                             throw new SemanticError.TYPE_MISMATCH (
                                 @"cannot initialize $(type_label (vtype, vtname)) variable '$(d.name)' with $(type_label (it, itname)) at $(d.init.line):$(d.init.column)");
-                    } else if (vtype == ValaType.CLASS && !is_nullable_type (vtype, vtname)) {
+                    } else if ((vtype == ValaType.CLASS || vtype == ValaType.ERROR) && !is_nullable_type (vtype, vtname)) {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"non-nullable $(type_label (vtype, vtname)) variable '$(d.name)' must be initialized at $(d.line):$(d.column)");
                     }
@@ -2876,12 +3398,6 @@ namespace Planc {
                 var nslots = type_slots (vtype, vtname);
                 var slot = next_var_slot;
                 next_var_slot += nslots;
-                locals.add (d.name);
-                local_types.add (vtype);
-                local_type_names.add (vtname);
-                local_slots.add (slot);
-                local_active.add (true);
-                local_unmanaged.add (false);
 
                 if (vtype == ValaType.STRUCT) {
                     var base_disp = struct_base_disp (slot, nslots);
@@ -2919,6 +3435,7 @@ namespace Planc {
                         emitter.zero_local (slot);
                     }
                 }
+                push_local (d.name, vtype, vtname, slot, false);
             } else if (s is AssignStatement) {
                 var a = (AssignStatement) s;
                 var idx = lookup (a.name);
@@ -2928,34 +3445,39 @@ namespace Planc {
                     if (!type_compatible (local_types[idx], local_type_names[idx], vt, vt_name))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"cannot assign $(type_label (vt, vt_name)) to $(type_label (local_types[idx], local_type_names[idx])) variable '$(a.name)' at $(a.line):$(a.column)");
-                    gen_expr (a.value);
-                    if (local_types[idx] == ValaType.STRUCT) {
-                        var n = type_slots (ValaType.STRUCT, local_type_names[idx]);
-                        emitter.lea_rcx_rbp_disp (struct_base_disp (local_slots[idx], n));
-                        unowned var sd = program.find_struct (local_type_names[idx]);
-                        if (program_uses_heap && sd != null && struct_has_string (sd)) {
+                    if (local_by_ref[idx]) {
+                        emitter.load_local (local_slots[idx]);
+                        emit_field_store (local_types[idx], local_type_names[idx], "=", a.value);
+                    } else {
+                        gen_expr (a.value);
+                        if (local_types[idx] == ValaType.STRUCT) {
+                            var n = type_slots (ValaType.STRUCT, local_type_names[idx]);
+                            emitter.lea_rcx_rbp_disp (struct_base_disp (local_slots[idx], n));
+                            unowned var sd = program.find_struct (local_type_names[idx]);
+                            if (program_uses_heap && sd != null && struct_has_string (sd)) {
+                                emitter.push_rax ();
+                                push_depth++;
+                                unref_struct_at_rcx (sd, 0);
+                                emitter.pop_rax ();
+                                push_depth--;
+                                copy_struct_rax_to_rcx (n);
+                                ref_struct_at_rcx (sd, 0);
+                            } else {
+                                copy_struct_rax_to_rcx (n);
+                            }
+                        } else if (program_uses_heap && is_ref_type (local_types[idx])) {
+                            consume_ref_expr (a.value);
                             emitter.push_rax ();
                             push_depth++;
-                            unref_struct_at_rcx (sd, 0);
+                            emitter.load_local (local_slots[idx]);
+                            emitter.mov_rdi_rax ();
+                            call_aligned ("__planc_unref");
                             emitter.pop_rax ();
                             push_depth--;
-                            copy_struct_rax_to_rcx (n);
-                            ref_struct_at_rcx (sd, 0);
+                            emitter.store_local (local_slots[idx]);
                         } else {
-                            copy_struct_rax_to_rcx (n);
+                            emitter.store_local (local_slots[idx]);
                         }
-                    } else if (program_uses_heap && is_ref_type (local_types[idx])) {
-                        consume_ref_expr (a.value);
-                        emitter.push_rax ();
-                        push_depth++;
-                        emitter.load_local (local_slots[idx]);
-                        emitter.mov_rdi_rax ();
-                        call_aligned ("__planc_unref");
-                        emitter.pop_rax ();
-                        push_depth--;
-                        emitter.store_local (local_slots[idx]);
-                    } else {
-                        emitter.store_local (local_slots[idx]);
                     }
                     cleanup_expr_temps (a.value);
                     if (is_nullable_type (vt, vt_name))
@@ -2995,6 +3517,21 @@ namespace Planc {
                                 cleanup_expr_temps (a.value);
                                 return;
                             }
+                        }
+                        unowned var sm = find_this_prop_setter (a.name);
+                        if (sm != null) {
+                            string vt_name = "";
+                            var vt = expr_type_full (a.value, out vt_name);
+                            var pt = sm.params[1].param_type;
+                            var pt_name = sm.params[1].type_name;
+                            if (!type_compatible (pt, pt_name, vt, vt_name))
+                                throw new SemanticError.TYPE_MISMATCH (
+                                    @"cannot assign $(type_label (vt, vt_name)) to property '$(a.name)' ($(type_label (pt, pt_name))) at $(a.line):$(a.column)");
+                            var arglist = new GenericArray<Expr> ();
+                            arglist.add (a.value);
+                            emit_instance_call (null, false, true, sm, arglist, -1, -1);
+                            cleanup_expr_temps (a.value);
+                            return;
                         }
                         throw new SemanticError.UNKNOWN_VARIABLE (
                             @"unknown variable: $(a.name) at $(a.line):$(a.column)");
@@ -3049,9 +3586,29 @@ namespace Planc {
                     unowned var cd = program.find_class (cname);
                     unowned ClassField? cf = null;
                     var fslot = (cd != null) ? class_field_offset_slots (cd, fa.field_name, out cf) : -1;
-                    if (fslot < 0 || cf == null)
+                    if (fslot < 0 || cf == null) {
+                        unowned var sm = find_prop_setter (peek_t, peek_name, fa.field_name);
+                        if (sm != null && fa.op == "=") {
+                            string vt_name = "";
+                            var vt = expr_type_full (fa.value, out vt_name);
+                            var pt = sm.params[1].param_type;
+                            var pt_name = sm.params[1].type_name;
+                            if (!type_compatible (pt, pt_name, vt, vt_name))
+                                throw new SemanticError.TYPE_MISMATCH (
+                                    @"cannot assign $(type_label (vt, vt_name)) to property '$(cname).$(fa.field_name)' ($(type_label (pt, pt_name))) at $(fa.line):$(fa.column)");
+                            var arglist = new GenericArray<Expr> ();
+                            arglist.add (fa.value);
+                            emit_instance_call (fa.target, false, false, sm, arglist, -1, -1);
+                            cleanup_expr_temps (fa.target);
+                            cleanup_expr_temps (fa.value);
+                            return;
+                        }
+                        if (sm != null)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"compound assignment '$(fa.op)=' is not supported on custom property '$(cname).$(fa.field_name)' at $(fa.line):$(fa.column)");
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"class '$(cname)' has no field '$(fa.field_name)' at $(fa.line):$(fa.column)");
+                    }
                     ft = cf.field_type;
                     ft_name = cf.type_name;
                     owner_label = cname;
@@ -3079,9 +3636,35 @@ namespace Planc {
                     unowned var sd = program.find_struct (base_name);
                     unowned StructField? fld = null;
                     var off_slots = (sd != null) ? struct_field_offset_slots (sd, fa.field_name, out fld) : -1;
-                    if (off_slots < 0 || fld == null)
+                    if (off_slots < 0 || fld == null) {
+                        unowned var sm = find_prop_setter (base_t, base_name, fa.field_name);
+                        if (sm != null && fa.op == "=") {
+                            string vt_name = "";
+                            var vt = expr_type_full (fa.value, out vt_name);
+                            var pt = sm.params[1].param_type;
+                            var pt_name = sm.params[1].type_name;
+                            if (!type_compatible (pt, pt_name, vt, vt_name))
+                                throw new SemanticError.TYPE_MISMATCH (
+                                    @"cannot assign $(type_label (vt, vt_name)) to property '$(base_name).$(fa.field_name)' ($(type_label (pt, pt_name))) at $(fa.line):$(fa.column)");
+                            emitter.push_rax ();
+                            push_depth++;
+                            gen_expr (fa.value);
+                            emitter.mov_rsi_rax ();
+                            emitter.pop_reg (Reg.RDI);
+                            push_depth--;
+                            if (sm.can_throw) {
+                                call_aligned (sm.name);
+                                emit_post_call_error_check (sm);
+                            } else {
+                                call_aligned (sm.name);
+                            }
+                            cleanup_expr_temps (fa.target);
+                            cleanup_expr_temps (fa.value);
+                            return;
+                        }
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"struct '$(base_name)' has no field '$(fa.field_name)' at $(fa.line):$(fa.column)");
+                    }
                     ft = fld.field_type;
                     ft_name = fld.type_name;
                     owner_label = base_name;
@@ -3314,20 +3897,7 @@ namespace Planc {
 
                 var col_mark = locals.length;
                 var col_slot = next_var_slot++;
-                locals.add (@"#fe_col_$(col_mark)");
-                local_types.add (ValaType.ARRAY);
-                local_type_names.add (strip_null (ct_name));
-                local_slots.add (col_slot);
-                local_active.add (true);
-                local_unmanaged.add (false);
-
                 var idx_slot = next_var_slot++;
-                locals.add (@"#fe_idx_$(col_mark)");
-                local_types.add (ValaType.INT);
-                local_type_names.add ("");
-                local_slots.add (idx_slot);
-                local_active.add (true);
-                local_unmanaged.add (false);
 
                 gen_expr (fe.collection);
                 emit_null_check_if_nullable (ct, ct_name);
@@ -3335,6 +3905,8 @@ namespace Planc {
                 emitter.store_local (col_slot);
                 cleanup_expr_temps (fe.collection);
                 emitter.zero_local (idx_slot);
+                push_local (@"#fe_col_$(col_mark)", ValaType.ARRAY, strip_null (ct_name), col_slot, false);
+                push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
 
                 var l_cond = emitter.new_label ();
                 var l_step = emitter.new_label ();
@@ -3346,12 +3918,7 @@ namespace Planc {
                 continue_scope_marks.add (iter_mark);
 
                 var eslot = next_var_slot++;
-                locals.add (fe.var_name);
-                local_types.add (vtype);
-                local_type_names.add (vtname);
-                local_slots.add (eslot);
-                local_active.add (true);
-                local_unmanaged.add (false);
+                push_local (fe.var_name, vtype, vtname, eslot, false);
 
                 emitter.bind (l_cond);
                 emitter.load_local (col_slot);
@@ -3398,18 +3965,13 @@ namespace Planc {
                 }
                 var sw_mark = locals.length;
                 var sw_slot = next_var_slot++;
-                locals.add (@"#sw_$(sw_mark)");
-                local_types.add (st == ValaType.STRING ? ValaType.STRING : ValaType.INT);
-                local_type_names.add ("");
-                local_slots.add (sw_slot);
-                local_active.add (true);
-                local_unmanaged.add (false);
 
                 gen_expr (sw.target);
                 if (st == ValaType.STRING)
                     consume_ref_expr (sw.target);
                 emitter.store_local (sw_slot);
                 cleanup_expr_temps (sw.target);
+                push_local (@"#sw_$(sw_mark)", st == ValaType.STRING ? ValaType.STRING : ValaType.INT, "", sw_slot, false);
 
                 var l_end = emitter.new_label ();
                 var l_default = emitter.new_label ();
@@ -3477,18 +4039,264 @@ namespace Planc {
                 pop_break_label ();
                 unref_locals_from (sw_mark);
                 deactivate_from (sw_mark);
+            } else if (s is ThrowStatement) {
+                var ts = (ThrowStatement) s;
+                unowned var ed = program.find_error_domain (ts.domain_name);
+                unowned var em = (ed != null) ? ed.find_code (ts.code_name) : null;
+                if (ed == null || em == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"unknown error '$(ts.domain_name).$(ts.code_name)' at $(ts.line):$(ts.column)");
+                var one = new GenericArray<string> ();
+                one.add (ts.domain_name);
+                check_domains_handled (one, ts.line, ts.column);
+                string mt_name = "";
+                var mt = expr_type_full (ts.message, out mt_name);
+                if (mt != ValaType.STRING || is_nullable_type (mt, mt_name))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"throw message must be a non-null string, got $(type_label (mt, mt_name)) at $(ts.message.line):$(ts.message.column)");
+                gen_expr (ts.message);
+                consume_ref_expr (ts.message);
+                emitter.push_rax ();
+                push_depth++;
+                emitter.mov_rdi_imm (24);
+                emitter.mov_esi_imm (1);
+                call_aligned ("__planc_alloc");
+                emitter.store_local (err_prop_slot);
+                emitter.mov_rcx_rax ();
+                emitter.mov_rax_imm (1);
+                emitter.store_rcx_disp_rax (8);
+                emitter.mov_rax_imm (ed.domain_id);
+                emitter.store_rcx_disp_rax (24);
+                emitter.mov_rax_imm (em.value);
+                emitter.store_rcx_disp_rax (32);
+                emitter.pop_rax ();
+                push_depth--;
+                emitter.store_rcx_disp_rax (16);
+                cleanup_expr_temps (ts.message);
+                emit_error_jump ();
+            } else if (s is TryStatement) {
+                var tr = (TryStatement) s;
+                int fin_mode_slot = -1;
+                int fin_ret_slot = -1;
+                Label l_finally = emitter.new_label ();
+                Label l_finally_err = emitter.new_label ();
+                Label l_end = emitter.new_label ();
+
+                int fin_scope_mark = locals.length;
+                if (tr.has_finally) {
+                    fin_mode_slot = next_var_slot++;
+                    fin_ret_slot = next_var_slot++;
+                    emitter.zero_local (fin_mode_slot);
+                    emitter.zero_local (fin_ret_slot);
+                    finally_labels.add (l_finally);
+                    finally_mode_slots.add (fin_mode_slot);
+                    finally_ret_slots.add (fin_ret_slot);
+                    finally_marks.add (fin_scope_mark);
+                }
+
+                int saved_dom = active_catch_domains.length;
+                foreach (var cc in tr.catches) {
+                    check_domain_exists (cc.domain_name, cc.line, cc.column);
+                    active_catch_domains.add (cc.domain_name);
+                }
+
+                var l_dispatch = emitter.new_label ();
+                var try_mark = locals.length;
+                unwind_labels.add (l_dispatch);
+                unwind_marks.add (try_mark);
+
+                foreach (var st in tr.try_body)
+                    gen_statement (st);
+                unref_locals_from (try_mark);
+                deactivate_from (try_mark);
+                if (tr.has_finally)
+                    emitter.zero_local (fin_mode_slot);
+                emitter.branch (BranchKind.JMP, tr.has_finally ? l_finally : l_end);
+
+                unwind_labels.remove_index (unwind_labels.length - 1);
+                unwind_marks.remove_index (unwind_marks.length - 1);
+                while (active_catch_domains.length > saved_dom)
+                    active_catch_domains.remove_index (active_catch_domains.length - 1);
+
+                if (tr.has_finally) {
+                    unwind_labels.add (l_finally_err);
+                    unwind_marks.add (fin_scope_mark);
+                }
+
+                var catch_labels = new GenericArray<Label> ();
+                for (int ci = 0; ci < tr.catches.length; ci++)
+                    catch_labels.add (emitter.new_label ());
+
+                emitter.bind (l_dispatch);
+                for (int ci = 0; ci < tr.catches.length; ci++) {
+                    var cc = tr.catches[ci];
+                    if (cc.domain_name == "Error") {
+                        emitter.branch (BranchKind.JMP, catch_labels[ci]);
+                    } else {
+                        unowned var ed = program.find_error_domain (cc.domain_name);
+                        emitter.load_local (err_prop_slot);
+                        emitter.load_rax_disp (24);
+                        emitter.mov_rcx_rax ();
+                        emitter.mov_rax_imm (ed.domain_id);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JE, catch_labels[ci]);
+                    }
+                }
+                if (tr.has_finally) {
+                    emitter.branch (BranchKind.JMP, l_finally_err);
+                } else {
+                    emit_error_jump ();
+                }
+
+                for (int ci = 0; ci < tr.catches.length; ci++) {
+                    var cc = tr.catches[ci];
+                    emitter.bind (catch_labels[ci]);
+                    var catch_mark = locals.length;
+                    if (lookup (cc.var_name) >= 0)
+                        throw new SemanticError.DUPLICATE_VARIABLE (
+                            @"duplicate variable: $(cc.var_name) at $(cc.line):$(cc.column)");
+                    var cslot = next_var_slot++;
+                    push_local (cc.var_name, ValaType.ERROR,
+                                cc.domain_name == "Error" ? "" : cc.domain_name,
+                                cslot, false);
+                    emitter.load_local (err_prop_slot);
+                    emitter.store_local (cslot);
+                    foreach (var cs in cc.body)
+                        gen_statement (cs);
+                    unref_locals_from (catch_mark);
+                    deactivate_from (catch_mark);
+                    if (tr.has_finally)
+                        emitter.zero_local (fin_mode_slot);
+                    emitter.branch (BranchKind.JMP, tr.has_finally ? l_finally : l_end);
+                }
+
+                if (tr.has_finally) {
+                    unwind_labels.remove_index (unwind_labels.length - 1);
+                    unwind_marks.remove_index (unwind_marks.length - 1);
+                    finally_labels.remove_index (finally_labels.length - 1);
+                    finally_mode_slots.remove_index (finally_mode_slots.length - 1);
+                    finally_ret_slots.remove_index (finally_ret_slots.length - 1);
+                    finally_marks.remove_index (finally_marks.length - 1);
+
+                    emitter.bind (l_finally_err);
+                    emitter.mov_rax_imm (1);
+                    emitter.store_local (fin_mode_slot);
+
+                    emitter.bind (l_finally);
+                    var fin_mark = locals.length;
+                    foreach (var fs in tr.finally_body)
+                        gen_statement (fs);
+                    unref_locals_from (fin_mark);
+                    deactivate_from (fin_mark);
+
+                    var l_chk_ret = emitter.new_label ();
+                    emitter.load_local (fin_mode_slot);
+                    emitter.mov_rcx_rax ();
+                    emitter.mov_rax_imm (1);
+                    emitter.cmp_rax_rcx ();
+                    emitter.branch (BranchKind.JNE, l_chk_ret);
+                    emit_error_jump ();
+
+                    emitter.bind (l_chk_ret);
+                    var l_chk_brk = emitter.new_label ();
+                    emitter.load_local (fin_mode_slot);
+                    emitter.mov_rcx_rax ();
+                    emitter.mov_rax_imm (2);
+                    emitter.cmp_rax_rcx ();
+                    emitter.branch (BranchKind.JNE, l_chk_brk);
+                    if (finally_labels.length > 0) {
+                        int outer_idx = finally_labels.length - 1;
+                        emitter.load_local (fin_ret_slot);
+                        emitter.store_local (finally_ret_slots[outer_idx]);
+                        if (program_uses_heap)
+                            unref_locals_from (finally_marks[outer_idx]);
+                        emitter.mov_rax_imm (2);
+                        emitter.store_local (finally_mode_slots[outer_idx]);
+                        emitter.branch (BranchKind.JMP, finally_labels[outer_idx]);
+                    } else {
+                        if (program_uses_heap)
+                            unref_locals_from (0);
+                        emitter.load_local (fin_ret_slot);
+                        emitter.xor_edx ();
+                        emitter.leave ();
+                        emitter.ret ();
+                    }
+
+                    emitter.bind (l_chk_brk);
+                    if (break_labels.length > 0) {
+                        var l_chk_cont = emitter.new_label ();
+                        emitter.load_local (fin_mode_slot);
+                        emitter.mov_rcx_rax ();
+                        emitter.mov_rax_imm (3);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JNE, l_chk_cont);
+                        if (finally_labels.length > 0
+                            && finally_marks[finally_labels.length - 1] > break_scope_marks[break_scope_marks.length - 1]) {
+                            int outer_idx = finally_labels.length - 1;
+                            if (program_uses_heap)
+                                unref_locals_from (finally_marks[outer_idx]);
+                            emitter.mov_rax_imm (3);
+                            emitter.store_local (finally_mode_slots[outer_idx]);
+                            emitter.branch (BranchKind.JMP, finally_labels[outer_idx]);
+                        } else {
+                            unref_locals_from (break_scope_marks[break_scope_marks.length - 1]);
+                            emitter.branch (BranchKind.JMP, break_labels[break_labels.length - 1]);
+                        }
+                        emitter.bind (l_chk_cont);
+                    }
+                    if (continue_labels.length > 0) {
+                        emitter.load_local (fin_mode_slot);
+                        emitter.mov_rcx_rax ();
+                        emitter.mov_rax_imm (4);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JNE, l_end);
+                        if (finally_labels.length > 0
+                            && finally_marks[finally_labels.length - 1] > continue_scope_marks[continue_scope_marks.length - 1]) {
+                            int outer_idx = finally_labels.length - 1;
+                            if (program_uses_heap)
+                                unref_locals_from (finally_marks[outer_idx]);
+                            emitter.mov_rax_imm (4);
+                            emitter.store_local (finally_mode_slots[outer_idx]);
+                            emitter.branch (BranchKind.JMP, finally_labels[outer_idx]);
+                        } else {
+                            unref_locals_from (continue_scope_marks[continue_scope_marks.length - 1]);
+                            emitter.branch (BranchKind.JMP, continue_labels[continue_labels.length - 1]);
+                        }
+                    }
+                }
+                emitter.bind (l_end);
             } else if (s is BreakStatement) {
                 if (break_labels.length == 0)
                     throw new SemanticError.BAD_LOOP_CONTROL (
                         @"'break' outside of loop at $(s.line):$(s.column)");
-                unref_locals_from (break_scope_marks[break_scope_marks.length - 1]);
-                emitter.branch (BranchKind.JMP, break_labels[break_labels.length - 1]);
+                if (finally_labels.length > 0
+                    && finally_marks[finally_labels.length - 1] > break_scope_marks[break_scope_marks.length - 1]) {
+                    int fin_idx = finally_labels.length - 1;
+                    if (program_uses_heap)
+                        unref_locals_from (finally_marks[fin_idx]);
+                    emitter.mov_rax_imm (3);
+                    emitter.store_local (finally_mode_slots[fin_idx]);
+                    emitter.branch (BranchKind.JMP, finally_labels[fin_idx]);
+                } else {
+                    unref_locals_from (break_scope_marks[break_scope_marks.length - 1]);
+                    emitter.branch (BranchKind.JMP, break_labels[break_labels.length - 1]);
+                }
             } else if (s is ContinueStatement) {
                 if (continue_labels.length == 0)
                     throw new SemanticError.BAD_LOOP_CONTROL (
                         @"'continue' outside of loop at $(s.line):$(s.column)");
-                unref_locals_from (continue_scope_marks[continue_scope_marks.length - 1]);
-                emitter.branch (BranchKind.JMP, continue_labels[continue_labels.length - 1]);
+                if (finally_labels.length > 0
+                    && finally_marks[finally_labels.length - 1] > continue_scope_marks[continue_scope_marks.length - 1]) {
+                    int fin_idx = finally_labels.length - 1;
+                    if (program_uses_heap)
+                        unref_locals_from (finally_marks[fin_idx]);
+                    emitter.mov_rax_imm (4);
+                    emitter.store_local (finally_mode_slots[fin_idx]);
+                    emitter.branch (BranchKind.JMP, finally_labels[fin_idx]);
+                } else {
+                    unref_locals_from (continue_scope_marks[continue_scope_marks.length - 1]);
+                    emitter.branch (BranchKind.JMP, continue_labels[continue_labels.length - 1]);
+                }
             } else {
                 error ("statement not supported");
             }
@@ -3526,6 +4334,12 @@ namespace Planc {
         }
 
         private void gen_expr (Expr e) throws SemanticError {
+            gen_expr_impl (e);
+            if (program_uses_heap && e.ref_temp_slot >= 0)
+                add_live_ref_slot (e.ref_temp_slot);
+        }
+
+        private void gen_expr_impl (Expr e) throws SemanticError {
             if (e is IntLiteral) {
                 emitter.mov_rax_imm (((IntLiteral) e).value);
             } else if (e is BoolLiteral) {
@@ -3550,11 +4364,47 @@ namespace Planc {
                 emitter.store_local (cn.ref_temp_slot);
                 emitter.mov_rdi_rax ();
                 call_aligned (@"__planc_init_$(cd.name)");
+                if (program_uses_heap && cn.ref_temp_slot >= 0)
+                    add_live_ref_slot (cn.ref_temp_slot);
                 if (cd.ctor != null)
                     emit_instance_call_from_slot (cn.ref_temp_slot, cd.ctor, cn.args);
+                for (int i = 0; i < cn.init_names.length; i++) {
+                    var iname = cn.init_names[i];
+                    var ival = cn.init_values[i];
+                    unowned ClassField? cf = null;
+                    var fslot = class_field_offset_slots (cd, iname, out cf);
+                    if (fslot >= 0 && cf != null) {
+                        emitter.load_local (cn.ref_temp_slot);
+                        emitter.add_rax_imm (16 + 8 * fslot);
+                        emit_field_store (cf.field_type, cf.type_name, "=", ival);
+                    } else {
+                        unowned var sm = find_prop_setter (ValaType.CLASS, cd.name, iname);
+                        var arglist = new GenericArray<Expr> ();
+                        arglist.add (ival);
+                        emit_instance_call_from_slot (cn.ref_temp_slot, sm, arglist);
+                    }
+                }
                 emitter.load_local (cn.ref_temp_slot);
             } else if (e is TypeCheckExpr) {
                 var tc = (TypeCheckExpr) e;
+                if (tc.target_type == ValaType.ERROR) {
+                    unowned var ed = program.find_error_domain (tc.target_type_name);
+                    gen_expr (tc.operand);
+                    var l_false = emitter.new_label ();
+                    var l_done = emitter.new_label ();
+                    emitter.test_rax_rax ();
+                    emitter.branch (BranchKind.JE, l_false);
+                    emitter.load_rax_disp (24);
+                    emitter.mov_rcx_rax ();
+                    emitter.mov_rax_imm (ed.domain_id);
+                    emitter.cmp_rax_rcx ();
+                    setcc ("==");
+                    emitter.branch (BranchKind.JMP, l_done);
+                    emitter.bind (l_false);
+                    emitter.xor_eax ();
+                    emitter.bind (l_done);
+                    return;
+                }
                 unowned var tcd = program.find_class (strip_null (tc.target_type_name));
                 gen_expr (tc.operand);
                 if (tc.op == "is") {
@@ -3610,6 +4460,7 @@ namespace Planc {
                     need_str_concat = true;
                     emitter.lea_rax_rip (emitter.add_string (""));
                     emitter.store_local (t.ref_temp_slot);
+                    add_live_ref_slot (t.ref_temp_slot);
                     foreach (var part in t.parts) {
                         var pt = expr_type (part);
                         bool part_fresh = false;
@@ -3696,6 +4547,7 @@ namespace Planc {
                 emitter.pop_rax ();
                 emitter.store_rax_8_rcx ();
                 emitter.store_local (arr.ref_temp_slot);
+                add_live_ref_slot (arr.ref_temp_slot);
                 for (int i = 0; i < n; i++) {
                     gen_expr (arr.elements[i]);
                     if (elem_ref)
@@ -3722,6 +4574,15 @@ namespace Planc {
                                 emitter.mov_rax_imm (cd_const.int_value);
                             return;
                         }
+                        unowned var err_d = program.find_error_domain (vr.name);
+                        if (err_d != null) {
+                            unowned var em = err_d.find_code (m.member);
+                            if (em == null)
+                                throw new SemanticError.UNKNOWN_MEMBER (
+                                    @"error domain '$(err_d.name)' has no code '$(m.member)' at $(m.line):$(m.column)");
+                            emitter.mov_rax_imm (em.value);
+                            return;
+                        }
                         unowned var ed = program.find_enum (vr.name);
                         if (ed != null) {
                             unowned var mem = ed.find_member (m.member);
@@ -3737,6 +4598,20 @@ namespace Planc {
                 }
                 string tt_name = "";
                 var tt = expr_type_full (m.target, out tt_name);
+                if (tt == ValaType.ERROR) {
+                    gen_expr (m.target);
+                    emit_null_check_if_nullable (tt, tt_name);
+                    if (m.member == "message")
+                        emitter.load_rax_disp (16);
+                    else if (m.member == "domain")
+                        emitter.load_rax_disp (24);
+                    else if (m.member == "code")
+                        emitter.load_rax_disp (32);
+                    else
+                        throw new SemanticError.UNKNOWN_MEMBER (
+                            @"Error has no member '$(m.member)' at $(m.line):$(m.column)");
+                    return;
+                }
                 if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
                     gen_expr (m.target);
                     emit_null_check_if_nullable (tt, tt_name);
@@ -3748,9 +4623,15 @@ namespace Planc {
                     unowned var cd = program.find_class (cname);
                     unowned ClassField? cf = null;
                     var fslot = (cd != null) ? class_field_offset_slots (cd, m.member, out cf) : -1;
-                    if (fslot < 0 || cf == null)
+                    if (fslot < 0 || cf == null) {
+                        unowned var gm = find_prop_getter (tt, tt_name, m.member);
+                        if (gm != null) {
+                            emit_instance_call (m.target, false, false, gm, new GenericArray<Expr> (), m.temp_slot, m.ref_temp_slot);
+                            return;
+                        }
                         throw new SemanticError.UNKNOWN_MEMBER (
-                            @"class '$(cname)' has no field '$(m.member)' at $(m.line):$(m.column)");
+                            @"class '$(cname)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
+                    }
                     gen_expr (m.target);
                     emit_null_check_if_nullable (tt, tt_name);
                     if (cf.field_type == ValaType.STRUCT)
@@ -3762,9 +4643,15 @@ namespace Planc {
                 unowned var sd = program.find_struct (tt_name);
                 unowned StructField? fld = null;
                 var off_slots = (sd != null) ? struct_field_offset_slots (sd, m.member, out fld) : -1;
-                if (off_slots < 0 || fld == null)
+                if (off_slots < 0 || fld == null) {
+                    unowned var gm = find_prop_getter (tt, tt_name, m.member);
+                    if (gm != null) {
+                        emit_instance_call (m.target, false, false, gm, new GenericArray<Expr> (), m.temp_slot, m.ref_temp_slot);
+                        return;
+                    }
                     throw new SemanticError.UNKNOWN_MEMBER (
-                        @"struct '$(tt_name)' has no field '$(m.member)' at $(m.line):$(m.column)");
+                        @"struct '$(tt_name)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
+                }
                 gen_expr (m.target);
                 if (fld.field_type == ValaType.STRUCT)
                     emitter.add_rax_imm (8 * off_slots);
@@ -3933,7 +4820,11 @@ namespace Planc {
                 var v = (VarRef) e;
                 var idx = lookup (v.name);
                 if (idx >= 0) {
-                    if (local_types[idx] == ValaType.STRUCT) {
+                    if (local_by_ref[idx]) {
+                        emitter.load_local (local_slots[idx]);
+                        if (local_types[idx] != ValaType.STRUCT)
+                            emitter.load_rax_disp (0);
+                    } else if (local_types[idx] == ValaType.STRUCT) {
                         var n = type_slots (ValaType.STRUCT, local_type_names[idx]);
                         emitter.lea_rax_rbp_disp (struct_base_disp (local_slots[idx], n));
                     } else {
@@ -3967,6 +4858,11 @@ namespace Planc {
                                 return;
                             }
                         }
+                        unowned var gm_cls = find_this_prop_getter (v.name);
+                        if (gm_cls != null) {
+                            emit_instance_call (null, false, true, gm_cls, new GenericArray<Expr> (), -1, v.ref_temp_slot);
+                            return;
+                        }
                         unowned var gc1 = program.find_const ("", v.name);
                         if (gc1 != null) {
                             if (gc1.const_type == ValaType.STRING)
@@ -3998,6 +4894,11 @@ namespace Planc {
                                     emitter.load_rax_disp (8 * fslot);
                                 return;
                             }
+                        }
+                        unowned var gm_str = find_this_prop_getter (v.name);
+                        if (gm_str != null) {
+                            emit_instance_call (null, false, true, gm_str, new GenericArray<Expr> (), -1, v.ref_temp_slot);
+                            return;
                         }
                         unowned var gc2 = program.find_const ("", v.name);
                         if (gc2 != null) {
@@ -4175,6 +5076,19 @@ namespace Planc {
                                 m, mc.args, mc.temp_slot, mc.ref_temp_slot);
         }
 
+        private void emit_call_arg (Function fn, int param_idx, Expr arg) throws SemanticError {
+            var p = fn.params[param_idx];
+            if (p.is_ref || p.is_out) {
+                ValaType lt;
+                string lt_name;
+                gen_lvalue_addr (arg, out lt, out lt_name);
+                if (arg is VarRef && is_nullable_type (p.param_type, p.type_name))
+                    remove_non_null (((VarRef) arg).name);
+            } else {
+                gen_expr (arg);
+            }
+        }
+
         private void emit_instance_call_from_slot (int obj_slot, Function m, GenericArray<Expr> args)
                 throws SemanticError {
             var total_args = 1 + args.length;
@@ -4193,7 +5107,7 @@ namespace Planc {
             push_depth++;
             for (int i = 0; i < args.length; i++) {
                 int idx = i + 1;
-                gen_expr (args[i]);
+                emit_call_arg (m, i + 1, args[i]);
                 if (idx < r) {
                     emitter.push_rax ();
                     push_depth++;
@@ -4207,11 +5121,17 @@ namespace Planc {
 
             if (s == 0 && depth % 2 == 1)
                 emitter.sub_rsp (8);
-            emitter.call_rel32 (m.name);
+            if (m.vtable_slot >= 0) {
+                emitter.load_rdi_disp_to_rax (8);
+                emitter.call_rax_disp (16 + 8 * m.vtable_slot);
+            } else {
+                emitter.call_rel32 (m.name);
+            }
             if (s > 0)
                 emitter.add_rsp (area);
             else if (depth % 2 == 1)
                 emitter.add_rsp (8);
+            emit_post_call_error_check (m);
         }
 
         private void emit_instance_call (Expr? target_expr, bool is_base, bool target_is_this,
@@ -4245,7 +5165,7 @@ namespace Planc {
 
             for (int i = 0; i < args.length; i++) {
                 int idx = i + 1;
-                gen_expr (args[i]);
+                emit_call_arg (m, i + 1, args[i]);
                 if (idx < r) {
                     emitter.push_rax ();
                     push_depth++;
@@ -4273,6 +5193,8 @@ namespace Planc {
             } else if (depth % 2 == 1) {
                 emitter.add_rsp (8);
             }
+
+            emit_post_call_error_check (m);
 
             if (m.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
                 var nslots = type_slots (ValaType.STRUCT, m.return_type_name);
@@ -4312,7 +5234,7 @@ namespace Planc {
                 emitter.sub_rsp (area);
 
             for (int i = 0; i < n; i++) {
-                gen_expr (args[i]);
+                emit_call_arg (f, i, args[i]);
                 if (i < r) {
                     emitter.push_rax ();
                     push_depth++;
@@ -4335,6 +5257,8 @@ namespace Planc {
             } else if (depth % 2 == 1) {
                 emitter.add_rsp (8);
             }
+
+            emit_post_call_error_check (f);
 
             if (f.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
                 var nslots = type_slots (ValaType.STRUCT, f.return_type_name);

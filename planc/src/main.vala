@@ -11,10 +11,10 @@
 
 namespace Planc {
 
-    private const string USAGE = "usage: planc <source.vala> -o <output> [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks]";
+    private const string USAGE = "usage: planc <source.vala>... -o <output> [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks]";
 
     public static int main (string[] args) {
-        var source_path = "";
+        var source_paths = new GenericArray<string> ();
         var output_path = "";
         var dump = false;
         var bounds_check = true;
@@ -43,31 +43,38 @@ namespace Planc {
             } else if (a.has_prefix ("-")) {
                 stderr.printf ("unknown option: %s\n%s\n", a, USAGE);
                 return 2;
-            } else if (source_path == "") {
-                source_path = a;
             } else {
-                stderr.printf ("unexpected argument: %s\n%s\n", a, USAGE);
-                return 2;
+                source_paths.add (a);
             }
         }
 
-        if (source_path == "" || output_path == "") {
+        if (source_paths.length == 0 || output_path == "") {
             stderr.printf ("%s\n", USAGE);
             return 2;
         }
 
-        string source;
-        try {
-            FileUtils.get_contents (source_path, out source);
-        } catch (FileError e) {
-            stderr.printf ("planc: cannot read %s: %s\n", source_path, e.message);
-            return 1;
+        var sources = new GenericArray<string> ();
+        for (int i = 0; i < source_paths.length; i++) {
+            string src;
+            try {
+                FileUtils.get_contents (source_paths[i], out src);
+            } catch (FileError e) {
+                stderr.printf ("planc: cannot read %s: %s\n", source_paths[i], e.message);
+                return 1;
+            }
+            sources.add (src);
         }
 
-        Program program;
+        var program = new Program ();
         try {
-            var parser = new Parser (source);
-            program = parser.parse_program ();
+            for (int i = 0; i < sources.length; i++)
+                Parser.prescan_types (sources[i], program);
+            for (int i = 0; i < sources.length; i++) {
+                var parser = new Parser.with_program (sources[i], program);
+                parser.parse_unit ();
+            }
+            if (program.find ("main") == null)
+                throw new ParseError.MISSING_MAIN ("the program does not define main");
         } catch (LexError e) {
             stderr.printf ("planc: lexical error: %s\n", e.message);
             return 1;

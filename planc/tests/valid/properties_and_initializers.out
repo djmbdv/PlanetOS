@@ -1,0 +1,3 @@
+bare=bare:8080:1
+cfg=prod-v2:9000:6
+widget=button:99
