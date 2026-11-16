@@ -45,6 +45,13 @@ namespace UserShell {
         int io_buf = page + 512;
         int ch_buf = page + 500;
 
+        // Show presentation banner on startup if banner.elf is present
+        poke8 (ch_buf + 0, 'b'); poke8 (ch_buf + 1, 'a'); poke8 (ch_buf + 2, 'n');
+        poke8 (ch_buf + 3, 'n'); poke8 (ch_buf + 4, 'e'); poke8 (ch_buf + 5, 'r');
+        poke8 (ch_buf + 6, '.'); poke8 (ch_buf + 7, 'e'); poke8 (ch_buf + 8, 'l');
+        poke8 (ch_buf + 9, 'f'); poke8 (ch_buf + 10, 0);
+        sys (13, ch_buf, 10, 0);
+
         print ("PlanetOS Shell v0.1 (type 'help')\n");
 
         while (true) {
@@ -104,7 +111,13 @@ namespace UserShell {
             int arg_len = end - arg_start;
 
             if (buf_eq (cmd_ptr, cmd_len, "help")) {
-                print ("commands: help, ls, cat <file>, write <file> <text>, exec <file>, ticks, mem, exit\n");
+                print ("commands: help, banner, ls, cat <file>, write <file> <text>, exec <file>, ticks, mem, exit\n");
+            } else if (buf_eq (cmd_ptr, cmd_len, "banner")) {
+                poke8 (ch_buf + 0, 'b'); poke8 (ch_buf + 1, 'a'); poke8 (ch_buf + 2, 'n');
+                poke8 (ch_buf + 3, 'n'); poke8 (ch_buf + 4, 'e'); poke8 (ch_buf + 5, 'r');
+                poke8 (ch_buf + 6, '.'); poke8 (ch_buf + 7, 'e'); poke8 (ch_buf + 8, 'l');
+                poke8 (ch_buf + 9, 'f'); poke8 (ch_buf + 10, 0);
+                sys (13, ch_buf, 10, 0);
             } else if (buf_eq (cmd_ptr, cmd_len, "write")) {
                 if (arg_len == 0) {
                     print ("usage: write <file> <text>\n");

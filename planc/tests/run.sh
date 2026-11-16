@@ -447,7 +447,7 @@ PYEOF
         qcode=$?
         if [ "$qcode" != "1" ]; then
             ko "freestanding_qemu" "qemu exit $qcode, expected 1"
-        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.1" "$k_ser" || ! grep -q "commands: help, ls, cat" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
+        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.1" "$k_ser" || ! grep -q "commands: help, banner, ls, cat" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
             ko "freestanding_qemu" "unexpected serial: $(cat "$k_ser")"
         else
             ok "freestanding_qemu"

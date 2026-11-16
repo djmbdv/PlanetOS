@@ -24,6 +24,9 @@ namespace Planet.Kernel {
     private int vga_row = 0;
     private int vga_col = 0;
     private int vga_ready = 0;
+    private int vga_attr = 0x07;
+    private int vga_esc = 0;
+    private int vga_esc_val = 0;
     private int vga_utf8_cp = 0;
     private int vga_utf8_rem = 0;
 
@@ -38,12 +41,14 @@ namespace Planet.Kernel {
         }
 
         private static void clear () {
-            int blank = (ATTR << 8) | ' ';
+            int blank = (0x07 << 8) | ' ';
             for (int i = 0; i < ROWS * COLS; i++) {
                 mmio_write16 (VGA_BASE + i * 2, blank);
             }
             vga_row = 0;
             vga_col = 0;
+            vga_attr = 0x07;
+            vga_esc = 0;
             update_cursor ();
         }
 
@@ -83,11 +88,33 @@ namespace Planet.Kernel {
             if (cp == 0x00BF) return 0xA8; // ¿
             if (cp == 0x00A1) return 0xAD; // ¡
             if (cp == 0x00B0) return 0xF8; // °
+            if (cp == 0x2022) return 0x07; // •
             return '?';
         }
 
+        private static void apply_sgr (int code) {
+            if (code == 0) vga_attr = 0x07;
+            else if (code == 1) vga_attr = vga_attr | 0x08;
+            else if (code == 30) vga_attr = 0x00;
+            else if (code == 31) vga_attr = 0x04;
+            else if (code == 32) vga_attr = 0x02;
+            else if (code == 33) vga_attr = 0x06;
+            else if (code == 34) vga_attr = 0x01;
+            else if (code == 35) vga_attr = 0x05;
+            else if (code == 36) vga_attr = 0x03;
+            else if (code == 37) vga_attr = 0x07;
+            else if (code == 90) vga_attr = 0x08;
+            else if (code == 91) vga_attr = 0x0C;
+            else if (code == 92) vga_attr = 0x0A;
+            else if (code == 93) vga_attr = 0x0E;
+            else if (code == 94) vga_attr = 0x09;
+            else if (code == 95) vga_attr = 0x0D;
+            else if (code == 96) vga_attr = 0x0B;
+            else if (code == 97) vga_attr = 0x0F;
+        }
+
         private static void put_glyph (int glyph) {
-            mmio_write16 (VGA_BASE + (vga_row * COLS + vga_col) * 2, (ATTR << 8) | (glyph & 0xFF));
+            mmio_write16 (VGA_BASE + (vga_row * COLS + vga_col) * 2, (vga_attr << 8) | (glyph & 0xFF));
             vga_col = vga_col + 1;
             if (vga_col >= COLS) {
                 vga_col = 0;
@@ -102,6 +129,29 @@ namespace Planet.Kernel {
             if (vga_ready == 0)
                 return;
             int b = ch & 0xFF;
+            if (vga_esc == 1) {
+                vga_esc = (b == '[') ? 2 : 0;
+                vga_esc_val = 0;
+                return;
+            }
+            if (vga_esc == 2) {
+                if (b >= '0' && b <= '9') {
+                    vga_esc_val = vga_esc_val * 10 + (b - '0');
+                } else if (b == ';') {
+                    apply_sgr (vga_esc_val);
+                    vga_esc_val = 0;
+                } else if (b == 'm') {
+                    apply_sgr (vga_esc_val);
+                    vga_esc = 0;
+                } else {
+                    vga_esc = 0;
+                }
+                return;
+            }
+            if (b == 27) {
+                vga_esc = 1;
+                return;
+            }
             if (b < 0x80) {
                 vga_utf8_rem = 0;
                 if (b == '\n') {
