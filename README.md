@@ -139,7 +139,9 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 155 cases, 155 pass
+./planc/tests/run.sh   # 157 cases, 157 pass
+./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3),
+                       # 157/157 under the self-hosted compiler
 ```
 
 The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/
@@ -184,7 +186,10 @@ call, no red zone.
 Produced binaries have three `PT_LOAD` segments (R|X, R and RW — never RWX,
 and never one page mapped with two permission sets), an empty `nm -u`, a
 `.symtab` that makes `objdump -d` and `gdb` work, and byte-identical output
-across runs. See [docs/planc/slice-9.md](docs/planc/slice-9.md).
+across runs. The compiler is self-hosted: `planc/bootstrap.sh` compiles the
+compiler with itself to a byte-identical fixed point and runs the full suite
+under the result. See [docs/planc/slice-9.md](docs/planc/slice-9.md) and
+[docs/planc/slice-10.md](docs/planc/slice-10.md).
 
 ## 6. Changes from the previous revision
 
