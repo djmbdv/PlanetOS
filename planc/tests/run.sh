@@ -366,14 +366,14 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
     ROOT=$(cd "$HERE/../.." && pwd)
     k_bin="$WORK/planet-kernel"
     k_ser="$WORK/qemu_serial.log"
-    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
+    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
-        timeout 3 qemu-system-x86_64 -kernel "$k_bin" -display none -serial file:"$k_ser" -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >/dev/null 2>&1
+        timeout 4 qemu-system-x86_64 -kernel "$k_bin" -display none -serial file:"$k_ser" -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >/dev/null 2>&1
         qcode=$?
         if [ "$qcode" != "1" ]; then
             ko "freestanding_qemu" "qemu exit $qcode, expected 1"
-        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "kernel:ok" "$k_ser"; then
+        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "irq0 tick=" "$k_ser" || ! grep -q "kernel:ok" "$k_ser"; then
             ko "freestanding_qemu" "unexpected serial: $(cat "$k_ser")"
         else
             ok "freestanding_qemu"
