@@ -508,12 +508,13 @@ def is_stub_file(path, excluded_dirs):
     return False
 
 
-def preprocess(path, cc, fake, stubs, includes, defines=None, autostub=True, attempts=40):
+def preprocess(path, cc, fake, stubs, includes, defines=None, autostub=True, attempts=40,
+               main_only=None):
     """Preprocesses with the fake libc, auto-stubbing unknown headers.
 
-    Returns (parse_text, allowed_lines, error). `allowed_lines` holds the line
-    numbers of the preprocessed text that come from project code, so the
-    analysis can ignore everything our fake headers contributed.
+    Returns (parse_text, allowed_lines, error, stubbed_headers). `allowed_lines`
+    holds the line numbers that come from project code (everything but the fake
+    and stub headers), or only from the input file when `main_only` is set.
     """
     src_dir = os.path.dirname(os.path.abspath(path))
     stubbed = []
@@ -529,7 +530,7 @@ def preprocess(path, cc, fake, stubs, includes, defines=None, autostub=True, att
         except (OSError, subprocess.TimeoutExpired) as exc:
             return None, None, "preprocessor failed: %s" % exc, stubbed
         if proc.returncode == 0:
-            text, allowed = split_by_provenance(proc.stdout, [fake, stubs])
+            text, allowed = split_by_provenance(proc.stdout, [fake, stubs], main_only)
             return text, allowed, None, stubbed
         match = INCLUDE_RE.search(proc.stderr)
         if not (autostub and match):
@@ -547,16 +548,21 @@ def preprocess(path, cc, fake, stubs, includes, defines=None, autostub=True, att
     return None, None, "too many missing headers", stubbed
 
 
-def split_by_provenance(text, excluded_dirs):
+def split_by_provenance(text, excluded_dirs, main_only=None):
     """Blanks out #line markers (keeping line numbers) and records which lines
-    belong to project code rather than to the fake/stub headers."""
+    belong to project code rather than to the fake/stub headers. When
+    `main_only` is given, only lines from that file are recorded."""
     lines = []
     allowed = set()
     keep = True
     for raw in text.splitlines():
         m = MARKER_RE.match(raw)
         if m:
-            keep = not is_stub_file(m.group(1), excluded_dirs)
+            fname = m.group(1)
+            if main_only is not None:
+                keep = os.path.basename(fname) == main_only
+            else:
+                keep = not is_stub_file(fname, excluded_dirs)
             lines.append("")
             continue
         if keep:

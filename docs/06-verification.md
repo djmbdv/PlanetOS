@@ -127,6 +127,8 @@ python tests/qemu.py --no-build     # reuse the last build
 python tests/qemu.py --case gio     # one case
 ```
 
+Host-side differential tests for the C -> Vala translator live in 	ools/c2vala_tests/run.py (gcc vs valac on the same source; needs MSYS2, not QEMU).
+
 Tests that require QEMU, and only those:
 
 | Test | What it proves |

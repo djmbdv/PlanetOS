@@ -21,3 +21,6 @@
 # Python bytecode
 __pycache__/
 *.pyc
+
+# c2vala: third-party corpus fetched on demand
+tools/c2vala_tests/cases/jsmn/jsmn.h
