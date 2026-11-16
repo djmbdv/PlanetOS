@@ -42,6 +42,7 @@ async void logger_task (Channel<int> ch, int target) {
 }
 
 int main () {
+    cpu_enable_sse ();
     serial_init ();
     Vga.init ();
     var b = new KernelBanner ("PlanetOS", 0, 1);
@@ -52,6 +53,7 @@ int main () {
     Ramfs.init ();
     Syscalls.init ();
     Keyboard.init ();
+    Mouse.init ();
 
     int f0 = Pmm.free_frames ();
     int p1 = invoke_syscall (3, 0, 0, 0);

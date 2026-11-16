@@ -41,6 +41,23 @@ namespace Planet.Kernel {
     public extern void cpu_hlt ();
 
     [AsmBody(@"
+        # Habilita SSE/SSE2 en x86-64 (requerido para float/double en userland y kernel):
+        # - CR0.EM (bit 2) = 0: desactiva emulacion x87 para permitir instrucciones SSE
+        # - CR0.MP (bit 1) = 1: monitor coprocessor
+        # - CR4.OSFXSR (bit 9) = 1: habilita FXSAVE/FXRSTOR e instrucciones SSE
+        # - CR4.OSXMMEXCPT (bit 10) = 1: habilita excepciones SIMD #XF
+        mov %cr0, %rax
+        and $0xFFFFFFFB, %eax
+        or $0x02, %eax
+        mov %rax, %cr0
+        mov %cr4, %rax
+        or $0x600, %eax
+        mov %rax, %cr4
+        ret
+    ")]
+    public extern void cpu_enable_sse ();
+
+    [AsmBody(@"
         push %rbx
         xor %eax, %eax
         cpuid

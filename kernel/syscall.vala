@@ -223,6 +223,21 @@ namespace Planet.Kernel {
             mmio_write64 (slot + 24, target);
             return target;
         }
+        if (num == 21) { // SYS_FB_INIT(w, h) -> fb_phys or 0
+            return Fb.init (a0, a1);
+        }
+        if (num == 22) { // SYS_FB_BLIT(src_buf, w, h)
+            Fb.blit (a0, a1, a2);
+            return 0;
+        }
+        if (num == 23) { // SYS_FB_CLOSE()
+            Fb.close ();
+            return 0;
+        }
+        if (num == 24) { // SYS_MOUSE_READ(out_buf)
+            Mouse.poll_state (a0);
+            return 0;
+        }
         return -1;
     }
 
