@@ -3469,6 +3469,12 @@ namespace Planc {
         }
 
         private void generate_function (Function f) throws SemanticError {
+            if (f.is_asm_body) {
+                var start = emitter.here ();
+                AsmAssembler.assemble (emitter, program, f);
+                symbols.add (new Symbol (f.name, start, emitter.here () - start));
+                return;
+            }
             current = f;
             int ref_temp_start = 0;
             var total_slots = prepare_function (f, out ref_temp_start);

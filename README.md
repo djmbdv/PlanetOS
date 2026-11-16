@@ -105,6 +105,7 @@ problems** and **creates six**:
 | [docs/planc/slice-7.md](docs/planc/slice-7.md) | **Implemented slice 7**: `foreach`, `switch` (VL-14), `s[start:end]` slicing, `?:`/`??` (`T? ?? T -> T`), `const`, `static`/`enum`/`struct` methods, `0x`/`0b`/char literals, integer aliases |
 | [docs/planc/slice-8.md](docs/planc/slice-8.md) | **Implemented slice 8**: `errordomain`/`throws`/`try`/`catch`/`finally` (`(rax, rdx)` ABI), `out`/`ref` parameters, inline and `virtual` properties, object initializers, `namespace`/`using`, forward types, multi-file compilation |
 | [docs/planc/slice-11.md](docs/planc/slice-11.md) | **Implemented slice 11**: IEEE-754 `float` & `double` on x86-64-v3 (`xmm0`–`xmm7` ABI, pure-integer literal parser, `__planc_double_to_str`/`__planc_str_to_double`) |
+| [docs/planc/slice-12.md](docs/planc/slice-12.md) | **Implemented slice 12**: `[AsmBody("...")]` and built-in x86-64 assembler (`TC-04`, `VL-09`, `I5`) |
 
 ## 5. State of the measurements
 
@@ -140,9 +141,9 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 160 cases, 160 pass
+./planc/tests/run.sh   # 163 cases, 163 pass
 ./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3),
-                       # 160/160 under the self-hosted compiler
+                       # 163/163 under the self-hosted compiler
 ```
 
 The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/

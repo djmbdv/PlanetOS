@@ -553,7 +553,51 @@ namespace Planc {
             program.consts.add (cd);
         }
 
+        private void parse_attributes (out string? asm_body, out int asm_line, out int asm_col)
+                throws ParseError, LexError {
+            asm_body = null;
+            asm_line = 0;
+            asm_col = 0;
+            while (current.kind == TokenKind.LBRACKET) {
+                advance (); // '['
+                if (current.kind != TokenKind.IDENTIFIER)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expected attribute name at $(current.line):$(current.column)");
+                var attr_name = current.text;
+                var al = current.line;
+                var ac = current.column;
+                advance ();
+                if (attr_name == "AsmBody") {
+                    expect (TokenKind.LPAREN, "'('");
+                    if (current.kind != TokenKind.STRING && current.kind != TokenKind.TEMPLATE_STRING)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"[AsmBody] expects a string literal at $(current.line):$(current.column)");
+                    asm_body = current.text;
+                    asm_line = current.line;
+                    asm_col = current.column;
+                    advance ();
+                    expect (TokenKind.RPAREN, "')'");
+                } else if (current.kind == TokenKind.LPAREN) {
+                    advance ();
+                    int depth = 1;
+                    while (depth > 0 && current.kind != TokenKind.EOF) {
+                        if (current.kind == TokenKind.LPAREN) depth++;
+                        else if (current.kind == TokenKind.RPAREN) depth--;
+                        advance ();
+                    }
+                    if (depth != 0)
+                        throw new ParseError.UNEXPECTED_TOKEN (@"unterminated attribute '[$attr_name]' at $al:$ac");
+                }
+                expect (TokenKind.RBRACKET, "']'");
+            }
+        }
+
         private void parse_top_level () throws ParseError, LexError {
+            string? asm_body = null;
+            int asm_line = 0;
+            int asm_col = 0;
+            parse_attributes (out asm_body, out asm_line, out asm_col);
+
             if (current.kind != TokenKind.IDENTIFIER)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"expected a declaration at $(current.line):$(current.column)");
@@ -623,10 +667,12 @@ namespace Planc {
 
             bool is_abstract = false;
             bool is_static = false;
+            bool is_extern = false;
             while (current.kind == TokenKind.IDENTIFIER
-                   && (current.text == "abstract" || current.text == "static")) {
+                   && (current.text == "abstract" || current.text == "static" || current.text == "extern")) {
                 if (current.text == "abstract") is_abstract = true;
-                else is_static = true;
+                else if (current.text == "static") is_static = true;
+                else is_extern = true;
                 advance ();
             }
 
@@ -677,7 +723,7 @@ namespace Planc {
             advance ();
 
             if (current.kind == TokenKind.LPAREN) {
-                var f = parse_function_rest (decl_type, type_name, name, type_line, type_column);
+                var f = parse_function_rest (decl_type, type_name, name, type_line, type_column, asm_body, asm_line, asm_col, is_extern);
                 f.is_static = is_static;
                 if (has_top_name (name))
                     throw new ParseError.DUPLICATE_FUNCTION (
@@ -685,6 +731,9 @@ namespace Planc {
                 program.functions.add (f);
                 return;
             }
+            if (asm_body != null)
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"[AsmBody] is only valid on functions at $asm_line:$asm_col");
 
             if (decl_type == ValaType.VOID)
                 throw new ParseError.UNEXPECTED_TOKEN (
@@ -1711,6 +1760,10 @@ namespace Planc {
             while (current.kind != TokenKind.RBRACE) {
                 if (current.kind == TokenKind.EOF)
                     throw new ParseError.UNEXPECTED_TOKEN (@"unterminated class '$name'");
+                string? m_asm = null;
+                int m_asm_l = 0;
+                int m_asm_c = 0;
+                parse_attributes (out m_asm, out m_asm_l, out m_asm_c);
                 while (current.kind == TokenKind.IDENTIFIER && is_visibility_modifier (current.text))
                     advance ();
 
@@ -1741,13 +1794,16 @@ namespace Planc {
                 bool is_override = false;
                 bool is_abstract_m = false;
                 bool is_static_m = false;
+                bool is_extern_m = false;
                 while (current.kind == TokenKind.IDENTIFIER
                        && (current.text == "virtual" || current.text == "override"
-                           || current.text == "abstract" || current.text == "static")) {
+                           || current.text == "abstract" || current.text == "static"
+                           || current.text == "extern")) {
                     if (current.text == "virtual") is_virtual = true;
                     else if (current.text == "override") is_override = true;
                     else if (current.text == "abstract") is_abstract_m = true;
-                    else is_static_m = true;
+                    else if (current.text == "static") is_static_m = true;
+                    else is_extern_m = true;
                     advance ();
                 }
 
@@ -1904,7 +1960,20 @@ namespace Planc {
                     foreach (var p in plist)
                         mfn.params.add (p);
                     parse_throws_clause (mfn.throws_domains);
-                    if (is_abstract_m) {
+                    if (m_asm != null) {
+                        mfn.is_asm_body = true;
+                        mfn.asm_body = m_asm;
+                        mfn.asm_line = m_asm_l;
+                        mfn.asm_column = m_asm_c;
+                        mfn.has_body = false;
+                        if (current.kind == TokenKind.SEMICOLON) {
+                            advance ();
+                        } else {
+                            expect (TokenKind.LBRACE, "'{' or ';'");
+                            expect (TokenKind.RBRACE, "'}'");
+                        }
+                    } else if (is_abstract_m || is_extern_m) {
+                        mfn.has_body = false;
                         expect (TokenKind.SEMICOLON, "';'");
                     } else {
                         parse_block_into (mfn.body);
@@ -1993,7 +2062,9 @@ namespace Planc {
 
         // Parses the rest of a function whose type and name were consumed.
         private Function parse_function_rest (ValaType return_type, string return_type_name,
-                                              string name, int l, int c)
+                                              string name, int l, int c,
+                                              string? asm_body = null, int asm_l = 0, int asm_c = 0,
+                                              bool is_extern = false)
                 throws ParseError, LexError {
             var f = new Function () {
                 name = name,
@@ -2007,7 +2078,24 @@ namespace Planc {
             foreach (var p in plist)
                 f.params.add (p);
             parse_throws_clause (f.throws_domains);
-            parse_block_into (f.body);
+            if (asm_body != null) {
+                f.is_asm_body = true;
+                f.asm_body = asm_body;
+                f.asm_line = asm_l;
+                f.asm_column = asm_c;
+                f.has_body = false;
+                if (current.kind == TokenKind.SEMICOLON) {
+                    advance ();
+                } else {
+                    expect (TokenKind.LBRACE, "'{' or ';'");
+                    expect (TokenKind.RBRACE, "'}'");
+                }
+            } else if (is_extern) {
+                f.has_body = false;
+                expect (TokenKind.SEMICOLON, "';'");
+            } else {
+                parse_block_into (f.body);
+            }
             return f;
         }
 

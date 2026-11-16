@@ -462,6 +462,10 @@ namespace Planc {
         public int iface_id { get; set; default = -1; }
         public int iface_slot { get; set; default = -1; }
         public bool has_body { get; set; default = true; }
+        public bool is_asm_body { get; set; default = false; }
+        public string asm_body { get; set; default = ""; }
+        public int asm_line { get; set; default = 0; }
+        public int asm_column { get; set; default = 0; }
         public LambdaExpr? from_lambda { get; set; default = null; }
         public GenericArray<string> throws_domains { get; private set; }
         public bool can_throw {
@@ -1387,6 +1391,10 @@ namespace Planc {
                 this_ctor_subname = f.this_ctor_subname,
                 owner_class = new_owner,
                 has_body = f.has_body,
+                is_asm_body = f.is_asm_body,
+                asm_body = f.asm_body,
+                asm_line = f.asm_line,
+                asm_column = f.asm_column,
                 line = f.line, column = f.column
             };
             foreach (var p in f.params) {
