@@ -472,6 +472,16 @@ namespace Gdk {
 
         public void close () {
             __g_sys (23, 0, 0, 0);
+            if (mouse_buf != 0) {
+                __g_sys (4, mouse_buf, 0, 0);
+                mouse_buf = 0;
+            }
+            if (surface.buf_addr != 0) {
+                int pages = (width * height * 4 + 4095) / 4096;
+                for (int p = 0; p < pages; p++) {
+                    __g_sys (4, surface.buf_addr + p * 4096, 0, 0);
+                }
+            }
         }
     }
 

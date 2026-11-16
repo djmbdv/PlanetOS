@@ -114,7 +114,7 @@ int main (string[] args) {
     while (true) {
         var ev = win.poll_event ();
         if (ev.type == EventType.KEY_PRESS) {
-            if (ev.keyval == 'q' || ev.keyval == 'Q')
+            if (ev.keyval == 'q' || ev.keyval == 'Q' || ev.keyval == 'x' || ev.keyval == 'X' || ev.keyval == 27)
                 break;
         } else if (ev.type == EventType.BUTTON_PRESS) {
             mx = ev.x;

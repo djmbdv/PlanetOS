@@ -189,6 +189,7 @@ namespace Planet.Kernel {
                 fb_phys_addr = 0;
                 fb_width = 0;
                 fb_height = 0;
+                Vga.init ();
             }
         }
     }
