@@ -110,8 +110,8 @@ namespace Planet.Kernel {
         mov $0x01, %al
         out %al, $0x21
         out %al, $0xA1
-        # Mask all except IRQ0 (timer) on master, mask all on slave
-        mov $0xFE, %al
+        # Mask all except IRQ0 (timer) and IRQ1 (keyboard) on master, mask all on slave
+        mov $0xFC, %al
         out %al, $0x21
         mov $0xFF, %al
         out %al, $0xA1

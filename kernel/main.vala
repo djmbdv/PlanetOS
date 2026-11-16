@@ -49,6 +49,7 @@ int main () {
     Hal.init_interrupts ();
     Pmm.init ();
     Syscalls.init ();
+    Keyboard.init ();
 
     int f0 = Pmm.free_frames ();
     int p1 = invoke_syscall (3, 0, 0);
@@ -66,6 +67,27 @@ int main () {
 
     int sc_ticks = invoke_syscall (2, 0, 0);
     print (@"sys:ticks=$sc_ticks\n");
+
+    int kb_empty = Keyboard.poll_scancode ();
+    int kb_a = Keyboard.scancode_to_ascii (0x1E);
+    print (@"kb:ok=$(kb_empty == -1 && kb_a == 'a' ? 1 : 0)\n");
+
+    int dpage = Pmm.alloc_frame ();
+    if (Ata.identify (dpage)) {
+        int wbuf = dpage + 512;
+        int rbuf = dpage + 1024;
+        mmio_write32 (wbuf, 0x504C4E54); // "PLNT"
+        mmio_write32 (wbuf + 4, 0x12345678);
+        bool wok = Ata.write_sector (1, wbuf);
+        bool rok = Ata.read_sector (1, rbuf);
+        int m0 = mmio_read32 (rbuf);
+        int m1 = mmio_read32 (rbuf + 4);
+        print (@"ata:ok=$(wok && rok && m0 == 0x504C4E54 && m1 == 0x12345678 ? 1 : 0)\n");
+    } else {
+        print ("ata:ok=0\n");
+    }
+    Pmm.free_frame (dpage);
+
     print ("kernel:ok\n");
     qemu_debug_exit (0);
     return 0;

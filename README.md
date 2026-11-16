@@ -113,6 +113,7 @@ problems** and **creates six**:
 | [docs/planc/slice-17.md](docs/planc/slice-17.md) | **Implemented slice 17**: `--freestanding` mode, `planetrt` (Multiboot1 + COM1 serial + static `.bss` heap), and `kernel/main.vala` booting x86-64 Long Mode in QEMU |
 | [docs/planc/slice-18.md](docs/planc/slice-18.md) | **Implemented slice 18**: kernel 64-bit IDT, PIC 8259, PIT 100 Hz `IRQ0` timer, and in-kernel `async` + `Channel<T>` over hardware interrupts |
 | [docs/planc/slice-19.md](docs/planc/slice-19.md) | **Implemented slice 19**: kernel 4 KiB bitmap PMM (`Pmm`) and `int 0x80` (`DPL=3`) syscall dispatcher (`Syscalls`) |
+| [docs/planc/slice-20.md](docs/planc/slice-20.md) | **Implemented slice 20**: kernel PS/2 keyboard (`IRQ1`) and primary ATA PIO LBA28 disk drivers verified in QEMU |
 
 ## 5. State of the measurements
 
