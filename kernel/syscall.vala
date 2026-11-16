@@ -110,6 +110,9 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 11) { // SYS_EXIT(code)
+            if (Sched.current_tid () > 0) {
+                Sched.exit_current (a0);
+            }
             if (exec_depth > 0) {
                 exec_depth = exec_depth - 1;
                 exec_return_to_parent (a0);
@@ -166,6 +169,15 @@ namespace Planet.Kernel {
                 mmio_write64 (slot + 16, Ramfs.file_size (rslot));
             }
             return nw;
+        }
+        if (num == 16) { // SYS_SPAWN(name_ptr, name_len, cmdline_ptr) -> tid
+            return ElfLoader.spawn_from_xfs (a0, a1, a2);
+        }
+        if (num == 17) { // SYS_WAIT(tid) -> exit_code
+            return Sched.wait_tid (a0);
+        }
+        if (num == 18) { // SYS_PS(buf, max_bytes) -> bytes
+            return Sched.list_tasks (a0, a1);
         }
         return -1;
     }

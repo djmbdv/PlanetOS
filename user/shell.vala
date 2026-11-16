@@ -111,7 +111,7 @@ namespace UserShell {
             int arg_len = end - arg_start;
 
             if (buf_eq (cmd_ptr, cmd_len, "help")) {
-                print ("commands: help, banner, ls, cat <file>, write <file> <text>, exec <file>, ticks, mem, exit\n");
+                print ("commands: help, banner, ls, ps, cat <file>, write <file> <text>, exec <file> [args] [&], wait <tid>, ticks, mem, exit\n");
             } else if (buf_eq (cmd_ptr, cmd_len, "banner")) {
                 poke8 (ch_buf + 0, 'b'); poke8 (ch_buf + 1, 'a'); poke8 (ch_buf + 2, 'n');
                 poke8 (ch_buf + 3, 'n'); poke8 (ch_buf + 4, 'e'); poke8 (ch_buf + 5, 'r');
@@ -162,17 +162,47 @@ namespace UserShell {
                         sys (8, fd, 0, 0);
                     }
                 }
+            } else if (buf_eq (cmd_ptr, cmd_len, "ps")) {
+                int n = sys (18, io_buf, 3584, 0);
+                if (n > 0)
+                    sys (1, io_buf, n, 0);
+            } else if (buf_eq (cmd_ptr, cmd_len, "wait")) {
+                if (arg_len == 0) {
+                    print ("usage: wait <tid>\n");
+                } else {
+                    int tid = 0;
+                    for (int k = 0; k < arg_len; k++) {
+                        int c = peek8 (arg_ptr + k);
+                        if (c >= '0' && c <= '9')
+                            tid = tid * 10 + (c - '0');
+                    }
+                    int code = sys (17, tid, 0, 0);
+                    print (@"wait: tid=$tid exit=$code\n");
+                }
             } else if (buf_eq (cmd_ptr, cmd_len, "exec")) {
                 if (arg_len == 0) {
-                    print ("usage: exec <file> [args...]\n");
+                    print ("usage: exec <file> [args...] [&]\n");
                 } else {
+                    bool bg = false;
+                    int cmd_end = end;
+                    if (cmd_end > arg_start && peek8 (line_buf + cmd_end - 1) == '&') {
+                        bg = true;
+                        cmd_end = cmd_end - 1;
+                        while (cmd_end > arg_start && peek8 (line_buf + cmd_end - 1) == ' ')
+                            cmd_end = cmd_end - 1;
+                    }
                     int sp2 = arg_start;
-                    while (sp2 < end && peek8 (line_buf + sp2) != ' ')
+                    while (sp2 < cmd_end && peek8 (line_buf + sp2) != ' ')
                         sp2 = sp2 + 1;
                     int fn_len = sp2 - arg_start;
-                    poke8 (line_buf + end, 0);
-                    int code = sys (13, arg_ptr, fn_len, arg_ptr);
-                    print (@"exec: exit=$code\n");
+                    poke8 (line_buf + cmd_end, 0);
+                    if (bg) {
+                        int tid = sys (16, arg_ptr, fn_len, arg_ptr);
+                        print (@"spawn: tid=$tid\n");
+                    } else {
+                        int code = sys (13, arg_ptr, fn_len, arg_ptr);
+                        print (@"exec: exit=$code\n");
+                    }
                 }
             } else if (buf_eq (cmd_ptr, cmd_len, "ticks")) {
                 int t = sys (2, 0, 0, 0);

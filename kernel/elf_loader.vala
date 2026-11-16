@@ -101,36 +101,39 @@ namespace Planet.Kernel {
             return true;
         }
 
-        public static int exec_from_xfs (int name_ptr, int name_len, int cmdline_ptr) {
+        private static int prepare_process (int name_ptr, int name_len, int cmdline_ptr,
+                                            out int out_stack_base, out int out_arg_sp) {
+            out_stack_base = 0;
+            out_arg_sp = 0;
             int rslot = Ramfs.find (name_ptr, name_len);
             int ino = (rslot >= 0) ? 0 : Xfs.lookup_root (name_ptr, name_len);
             if (rslot < 0 && ino <= 0)
-                return -1;
+                return 0;
             int esz = (rslot >= 0) ? Ramfs.file_size (rslot) : Xfs.file_size (ino);
             if (esz < 64)
-                return -1;
+                return 0;
             int pages = (esz + 4095) / 4096;
             int ebuf = Pmm.alloc_contiguous (pages);
             if (ebuf == 0)
-                return -1;
+                return 0;
             int got = (rslot >= 0) ? Ramfs.read (rslot, 0, ebuf, esz) : Xfs.read_file (ino, ebuf, esz);
             int entry = (got == esz) ? load_image (ebuf, esz) : 0;
             for (int p = 0; p < pages; p++) {
                 Pmm.free_frame (ebuf + p * 4096);
             }
             if (entry == 0)
-                return -1;
+                return 0;
 
             int stack_pages = 16;
             int child_stack = Pmm.alloc_contiguous (stack_pages);
             if (child_stack == 0)
-                return -1;
+                return 0;
 
             // Build Linux-compatible argc/argv[] at top of child_stack
             int stack_top = child_stack + stack_pages * 4096;
             int str_base = stack_top - 1024;
             int argc = 0;
-            int ptr_base = str_base - 256; // up to 31 args
+            int ptr_base = str_base - 256;
             int s_pos = 0;
             if (cmdline_ptr != 0) {
                 int i = 0;
@@ -168,13 +171,32 @@ namespace Planet.Kernel {
             }
             mmio_write64 (ptr_base + 0, argc);
             mmio_write64 (ptr_base + 8 + argc * 8, 0);
+            out_stack_base = child_stack;
+            out_arg_sp = ptr_base;
+            return entry;
+        }
 
+        public static int exec_from_xfs (int name_ptr, int name_len, int cmdline_ptr) {
+            int child_stack = 0;
+            int ptr_base = 0;
+            int entry = prepare_process (name_ptr, name_len, cmdline_ptr, out child_stack, out ptr_base);
+            if (entry == 0)
+                return -1;
             exec_depth = exec_depth + 1;
             int code = exec_trampoline (entry, ptr_base);
-            for (int p = 0; p < stack_pages; p++) {
+            for (int p = 0; p < 16; p++) {
                 Pmm.free_frame (child_stack + p * 4096);
             }
             return code;
+        }
+
+        public static int spawn_from_xfs (int name_ptr, int name_len, int cmdline_ptr) {
+            int child_stack = 0;
+            int ptr_base = 0;
+            int entry = prepare_process (name_ptr, name_len, cmdline_ptr, out child_stack, out ptr_base);
+            if (entry == 0)
+                return -1;
+            return Sched.spawn_ready (entry, ptr_base, child_stack, name_ptr, name_len);
         }
     }
 }

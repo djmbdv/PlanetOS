@@ -139,8 +139,10 @@ int main () {
                     got = got + r;
                 }
                 invoke_syscall (8, efd, 0, 0);
-                if (got == esz)
+                if (got == esz) {
+                    Sched.init ();
                     ElfLoader.load_and_run (ebuf, esz);
+                }
             }
         }
     }

@@ -12,6 +12,7 @@ fi
 
 echo "Building PlanetOS kernel and userland..."
 "$PLANC" --target=planetos "$ROOT/user/init.vala" -o "$OUT/init.elf"
+"$PLANC" --target=planetos --image-base=0x900000 "$ROOT/user/worker.vala" -o "$OUT/worker.elf"
 "$PLANC" --target=planetos "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
 "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" --target=planetos --image-base=0xC00000 \
@@ -40,10 +41,11 @@ echo "Building PlanetOS kernel and userland..."
     "$ROOT/kernel/xfs.vala" \
     "$ROOT/kernel/syscall.vala" \
     "$ROOT/kernel/elf_loader.vala" \
+    "$ROOT/kernel/sched.vala" \
     "$ROOT/kernel/main.vala" \
     -o "$OUT/planet-kernel"
 
-python3 - "$OUT/disk.img" "$OUT/init.elf" "$OUT/shell.elf" "$OUT/planc.elf" "$OUT/banner.elf" \
+python3 - "$OUT/disk.img" "$OUT/init.elf" "$OUT/shell.elf" "$OUT/planc.elf" "$OUT/banner.elf" "$OUT/worker.elf" \
     "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" << 'PYEOF'
 import struct, sys
 
@@ -53,15 +55,17 @@ init_b = open(sys.argv[2], "rb").read()
 sh_b   = open(sys.argv[3], "rb").read()
 pl_b   = open(sys.argv[4], "rb").read()
 bn_b   = open(sys.argv[5], "rb").read()
-t1_b   = open(sys.argv[6], "rb").read()
-t2_b   = open(sys.argv[7], "rb").read()
+wk_b   = open(sys.argv[6], "rb").read()
+t1_b   = open(sys.argv[7], "rb").read()
+t2_b   = open(sys.argv[8], "rb").read()
 
 b_hello = 5
 b_init  = 6
 b_shell = b_init + blk(init_b)
 b_planc = b_shell + blk(sh_b)
 b_ban   = b_planc + blk(pl_b)
-b_t1    = b_ban + blk(bn_b)
+b_wk    = b_ban + blk(bn_b)
+b_t1    = b_wk + blk(wk_b)
 b_t2    = b_t1 + blk(t1_b)
 total_blocks = max(1024, b_t2 + blk(t2_b))
 img = bytearray(total_blocks * 4096)
@@ -84,8 +88,9 @@ entries = [
     (b"shell.elf",        67, sh_b,   b_shell, 0x81ED),
     (b"planc.elf",        68, pl_b,   b_planc, 0x81ED),
     (b"banner.elf",       69, bn_b,   b_ban,   0x81ED),
-    (b"utf8.vala",        70, t1_b,   b_t1,    0x81A4),
-    (b"class_basic.vala", 71, t2_b,   b_t2,    0x81A4),
+    (b"worker.elf",       70, wk_b,   b_wk,    0x81ED),
+    (b"utf8.vala",        71, t1_b,   b_t1,    0x81A4),
+    (b"class_basic.vala", 72, t2_b,   b_t2,    0x81A4),
 ]
 img[df + 0] = len(entries)
 img[df + 1] = 0

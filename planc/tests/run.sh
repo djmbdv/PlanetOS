@@ -366,22 +366,28 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
     ROOT=$(cd "$HERE/../.." && pwd)
     k_bin="$WORK/planet-kernel"
     u_bin="$WORK/init.elf"
+    w_bin="$WORK/worker.elf"
     s_bin="$WORK/shell.elf"
     k_ser="$WORK/qemu_serial.log"
     k_disk="$WORK/planet_disk.img"
     if ! "$PLANC" --target=planetos "$ROOT/user/init.vala" -o "$u_bin" 2>"$WORK/u.err"; then
         ko "freestanding_qemu" "user init compile failed: $(cat "$WORK/u.err")"
+    elif ! "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/user/worker.vala" -o "$w_bin" 2>"$WORK/w.err"; then
+        ko "freestanding_qemu" "user worker compile failed: $(cat "$WORK/w.err")"
     elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
-    python3 - "$k_disk" "$u_bin" "$s_bin" << 'PYEOF'
+    python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" << 'PYEOF'
 import struct, sys
 elf_bytes = open(sys.argv[2], "rb").read()
 sh_bytes = open(sys.argv[3], "rb").read()
+wk_bytes = open(sys.argv[4], "rb").read()
 elf_blocks = (len(elf_bytes) + 4095) // 4096
 sh_blocks = (len(sh_bytes) + 4095) // 4096
+wk_blocks = (len(wk_bytes) + 4095) // 4096
 sh_start = 6 + elf_blocks
-img = bytearray(max(131072, (sh_start + sh_blocks) * 4096))
+wk_start = sh_start + sh_blocks
+img = bytearray(max(131072, (wk_start + wk_blocks) * 4096))
 # XFS v4 superblock at block 0 (offset 0)
 struct.pack_into(">II", img, 0, 0x58465342, 4096) # magic "XFSB", blocksize=4096
 struct.pack_into(">Q", img, 56, 64)               # rootino = 64 (block 4, index 0)
@@ -396,11 +402,11 @@ struct.pack_into(">HH", img, r, 0x494E, 0x41ED)   # magic "IN", mode dir
 img[r + 4] = 2                                    # version 2
 img[r + 5] = 1                                    # format = 1 (local/shortform)
 df = r + 100
-img[df + 0] = 3                                   # count = 3
+img[df + 0] = 4                                   # count = 4
 img[df + 1] = 0                                   # i8count = 0
 struct.pack_into(">I", img, df + 4, 64)           # parent ino = 64
 ent = df + 8
-for name, child in [(b"hello.txt", 65), (b"init.elf", 66), (b"shell.elf", 67)]:
+for name, child in [(b"hello.txt", 65), (b"init.elf", 66), (b"shell.elf", 67), (b"worker.elf", 68)]:
     img[ent] = len(name)
     struct.pack_into(">H", img, ent + 1, 0)
     img[ent + 3:ent + 3 + len(name)] = name
@@ -438,16 +444,26 @@ struct.pack_into(">I", img, f3 + 76, 1)
 struct.pack_into(">QQ", img, f3 + 100, 0, (sh_start << 21) | sh_blocks)
 img[sh_start * 4096:sh_start * 4096 + len(sh_bytes)] = sh_bytes
 
+# Inode 68 (worker.elf, extent starting at wk_start) at block 4 + 1024
+f4 = r + 1024
+struct.pack_into(">HH", img, f4, 0x494E, 0x81ED)
+img[f4 + 4] = 2
+img[f4 + 5] = 2
+struct.pack_into(">Q", img, f4 + 56, len(wk_bytes))
+struct.pack_into(">I", img, f4 + 76, 1)
+struct.pack_into(">QQ", img, f4 + 100, 0, (wk_start << 21) | wk_blocks)
+img[wk_start * 4096:wk_start * 4096 + len(wk_bytes)] = wk_bytes
+
 open(sys.argv[1], "wb").write(img)
 PYEOF
-    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
+    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
-        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nexec init.elf\nticks\nexit\n' | timeout 5 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
+        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
         qcode=$?
         if [ "$qcode" != "1" ]; then
             ko "freestanding_qemu" "qemu exit $qcode, expected 1"
-        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.1" "$k_ser" || ! grep -q "commands: help, banner, ls, cat" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
+        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.1" "$k_ser" || ! grep -q "commands: help, banner, ls, ps" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
             ko "freestanding_qemu" "unexpected serial: $(cat "$k_ser")"
         else
             ok "freestanding_qemu"
