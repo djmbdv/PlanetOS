@@ -377,7 +377,7 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
         ko "freestanding_qemu" "user worker compile failed: $(cat "$WORK/w.err")"
     elif ! "$PLANC" --target=planetos "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
         ko "freestanding_qemu" "user wc compile failed: $(cat "$WORK/wc.err")"
-    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
+    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
     python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" << 'PYEOF'
@@ -475,11 +475,11 @@ PYEOF
     if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
-        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nexec wc.elf hello.txt\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
+        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
         qcode=$?
         if [ "$qcode" != "1" ]; then
             ko "freestanding_qemu" "qemu exit $qcode, expected 1"
-        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.1" "$k_ser" || ! grep -q "commands: help, banner, ls, ps" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "hello.txt: lines=1 words=4 bytes=30 chars=30 \[has PlanetOS\]" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
+        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.2" "$k_ser" || ! grep -q "PlanetOS dash" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "var=planet" "$k_ser" || ! grep -q "ok-and" "$k_ser" || ! grep -q "ok-or" "$k_ser" || ! grep -q "hello.txt: lines=1 words=4 bytes=30 chars=30 \[has PlanetOS\]" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
             ko "freestanding_qemu" "unexpected serial: $(cat "$k_ser")"
         else
             ok "freestanding_qemu"
@@ -546,7 +546,7 @@ for name, child, data, sblk, mode in entries:
 
 open(sys.argv[1], "wb").write(img)
 PYEOF
-    printf '\nexec planc.elf --target=planetos utf8.vala -o utf8.elf\nexec utf8.elf\nexec planc.elf --target=planetos class_basic.vala -o cls.elf\nexec cls.elf\nexit\n' | timeout 15 qemu-system-x86_64 -kernel "$k_bin" -drive file="$p_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$p_ser" 2>/dev/null
+    printf '\nexec planc.elf --target=planetos utf8.vala -o utf8.elf\nexec utf8.elf\nexec planc.elf --target=planetos class_basic.vala -o cls.elf\nexec cls.elf\nexit 0\n' | timeout 15 qemu-system-x86_64 -kernel "$k_bin" -drive file="$p_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$p_ser" 2>/dev/null
     qcode=$?
     if [ "$qcode" != "1" ]; then
         ko "planetos_planc_qemu" "qemu exit $qcode, expected 1 ($(tail -n 10 "$p_ser"))"

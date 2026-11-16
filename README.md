@@ -121,6 +121,7 @@ problems** and **creates six**:
 | [docs/planc/slice-25.md](docs/planc/slice-25.md) | **Implemented slice 25**: `host_planetos.vala`, multi-page `SYS_ALLOC_PAGE`, `argc`/`argv` in `SYS_EXEC`, and `planc.elf` compiling & running tests inside PlanetOS/QEMU |
 | [docs/planc/slice-26.md](docs/planc/slice-26.md) | **Implemented slice 26**: preemptive `IRQ0` round-robin scheduler (`kernel/sched.vala`), `SYS_SPAWN`/`SYS_WAIT`/`SYS_PS`, `ps`, `wait`, and `exec ... &` |
 | [docs/planc/slice-27.md](docs/planc/slice-27.md) | **Implemented slice 27**: `string.index_of`/`contains` and pure-Vala `GLib`/`Gee` compatibility layer ([stdlib/glib_compat.vala](stdlib/glib_compat.vala), `user/wc.vala`) with zero C or `.vapi` |
+| [docs/planc/slice-28.md](docs/planc/slice-28.md) | **Implemented slice 28**: 100% pure-Vala `dash`-inspired shell ([user/shell.vala](user/shell.vala)) with `$VAR`, quotes, `|`, `>`, `>>`, `<`, `&&`, `||`, `if`/`for`, `.sh` scripts, and `SYS_SET_STDIO` |
 
 ## 5. State of the measurements
 

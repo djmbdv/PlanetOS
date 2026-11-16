@@ -15,7 +15,7 @@ echo "Building PlanetOS kernel and userland..."
 "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/user/worker.vala" -o "$OUT/worker.elf"
 "$PLANC" --target=planetos "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
-"$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
+"$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" --target=planetos --image-base=0xC00000 \
     "$ROOT/planc/src/buffer.vala" \
     "$ROOT/planc/src/host_planetos.vala" \

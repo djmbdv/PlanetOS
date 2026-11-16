@@ -9,9 +9,24 @@ namespace Planet.Kernel {
     // +0 in_use, +8 ino, +16 size, +24 pos)
     private const int FD_TABLE_ADDR = 0x107000;
     private const int MAX_FDS = 16;
+    private int stdio_in_fd = -1;
+    private int stdio_out_fd = -1;
 
     public int syscall_dispatch (int num, int a0, int a1, int a2) {
         if (num == 1) { // SYS_CONSOLE_WRITE(buf, len)
+            if (stdio_out_fd >= 3 && stdio_out_fd < MAX_FDS) {
+                int slot = FD_TABLE_ADDR + stdio_out_fd * 32;
+                if (mmio_read64 (slot) == 2) {
+                    int rslot = mmio_read64 (slot + 8);
+                    int pos = mmio_read64 (slot + 24);
+                    int nw = Ramfs.write (rslot, pos, a0, a1);
+                    if (nw > 0) {
+                        mmio_write64 (slot + 24, pos + nw);
+                        mmio_write64 (slot + 16, Ramfs.file_size (rslot));
+                    }
+                    return nw;
+                }
+            }
             __planet_console_write (a0, a1);
             for (int i = 0; i < a1; i++) {
                 int w = mmio_read32 ((a0 + i) & ~3);
@@ -33,6 +48,19 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 5) { // SYS_READ_KEY() -> ASCII char or -1
+            if (stdio_in_fd >= 3 && stdio_in_fd < MAX_FDS) {
+                int slot = FD_TABLE_ADDR + stdio_in_fd * 32;
+                if (mmio_read64 (slot) == 2) {
+                    int rslot = mmio_read64 (slot + 8);
+                    int pos = mmio_read64 (slot + 24);
+                    int bbuf = 0x106210;
+                    int nr = Ramfs.read (rslot, pos, bbuf, 1);
+                    if (nr <= 0)
+                        return -2; // EOF
+                    mmio_write64 (slot + 24, pos + 1);
+                    return mmio_read32 (bbuf) & 0xFF;
+                }
+            }
             while (true) {
                 int sc = Keyboard.poll_scancode ();
                 if (sc == -1)
@@ -178,6 +206,22 @@ namespace Planet.Kernel {
         }
         if (num == 18) { // SYS_PS(buf, max_bytes) -> bytes
             return Sched.list_tasks (a0, a1);
+        }
+        if (num == 19) { // SYS_SET_STDIO(in_fd, out_fd)
+            stdio_in_fd = a0;
+            stdio_out_fd = a1;
+            return 0;
+        }
+        if (num == 20) { // SYS_SEEK(fd, offset; -1 = end)
+            if (a0 < 3 || a0 >= MAX_FDS)
+                return -1;
+            int slot = FD_TABLE_ADDR + a0 * 32;
+            if (mmio_read64 (slot) == 0)
+                return -1;
+            int sz = mmio_read64 (slot + 16);
+            int target = (a1 < 0) ? sz : a1;
+            mmio_write64 (slot + 24, target);
+            return target;
         }
         return -1;
     }

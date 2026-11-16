@@ -5,10 +5,11 @@ namespace Planet.Kernel {
     private int exec_depth = 0;
 
     [AsmBody(@"
+        mov %rsi, %rsp
         push %rdi
         ret
     ")]
-    public extern void jump_to_entry (int entry_addr);
+    public extern void jump_to_entry (int entry_addr, int stack_ptr);
 
     [AsmBody(@"
         # exec_trampoline(entry_addr in rdi, child_stack_top in rsi) -> exit_code in rax
@@ -97,7 +98,15 @@ namespace Planet.Kernel {
             int entry = load_image (buf, size);
             if (entry == 0)
                 return false;
-            jump_to_entry (entry);
+            int sp = 0x1FE000;
+            int str = 0x1FE800;
+            mmio_write8 (str + 0, 's');
+            mmio_write8 (str + 1, 'h');
+            mmio_write8 (str + 2, 0);
+            mmio_write64 (sp + 0, 1);   // argc = 1
+            mmio_write64 (sp + 8, str); // argv[0] = "sh"
+            mmio_write64 (sp + 16, 0);  // argv[1] = NULL
+            jump_to_entry (entry, sp);
             return true;
         }
 
