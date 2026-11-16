@@ -276,7 +276,10 @@ The `Planet.Pruebas` package is not a luxury: without it, verification inside th
 | `Planet.Sys` ([stdlib/planet_sys.vala](../../stdlib/planet_sys.vala)) | the only userland `int 0x80` trampoline plus typed wrappers for files, directories, processes, memory and console, validated before the call |
 | `GLib` ([stdlib/glib_compat.vala](../../stdlib/glib_compat.vala)) | `StringBuilder`, `FileUtils`, `Str`, `Environment` and `Gee.ArrayList` |
 | `Gio` ([stdlib/gio_compat.vala](../../stdlib/gio_compat.vala)) | `File`, `FileInfo`, `FileEnumerator`, streams, `Cancellable`, `Application` |
-| `Cairo`/`Gdk` ([stdlib/cairo_gdk_compat.vala](../../stdlib/cairo_gdk_compat.vala)) | surfaces, context, framebuffer blits and mouse/keyboard input |
+| `Cairo` ([stdlib/cairo_compat.vala](../../stdlib/cairo_compat.vala)) | surfaces, context and pixel helpers |
+| `Gdk` ([stdlib/gdk_compat.vala](../../stdlib/gdk_compat.vala)) | events, window, framebuffer blits and mouse/keyboard input |
+| `GObject` ([stdlib/gobject_compat.vala](../../stdlib/gobject_compat.vala)) | `Type` ids, `type_register`/`type_name` and the tagged `Value` container |
+| `GModule` ([stdlib/gmodule_compat.vala](../../stdlib/gmodule_compat.vala)) | `Module` with `NOT_SUPPORTED` for `open()` (no dynamic linker) and a static module/symbol registry |
 
 The compatibility layers sit **above** `Planet.Sys`: they never issue a syscall
 themselves, and `Planet.Sys` depends on nothing but the compiler. Keeping the

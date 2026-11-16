@@ -12,7 +12,7 @@ the syscall boundary validate what userland passes to the kernel.
 |---|---|---|
 | `kernel/cpu.vala` (14) | `cli`/`sti`/`hlt`, GDT/IDT, MSRs, CR3, `cpuid`, `rdtsc`, IRQ stubs | **stays** — privileged instructions (invariant I5) |
 | `kernel/ata.vala` (4), `keyboard.vala` (3), `mouse.vala` (8), `vga.vala` (1), `fb.vala` (7) | `in`/`out`, `rep insw/outsw`, `invlpg`, PCI config, Bochs VBE registers | **stays** — port I/O and MMIO |
-| `kernel/pmm.vala` (3), `cairo_gdk_compat.vala` (4) | `mmio_read/write`, `zero_page_4k`, `fill32`, `poke32`/`peek32`, `peek64` | **stays** — raw physical memory; the dialect has no pointer types |
+| `kernel/pmm.vala` (3), `cairo_compat.vala`/`gdk_compat.vala` (4) | `mmio_read/write`, `zero_page_4k`, `fill32`, `poke32`/`peek32`, `peek64` | **stays** — raw physical memory; the dialect has no pointer types |
 | `kernel/elf_loader.vala` (3), `sched.vala` (2), `keyboard/mouse` IRQ addresses, `spv_demo` `addr_orbit_worker` | stack switch, `iretq`, ISR entry, address of a Vala function | **stays** — no function pointers in the dialect |
 | `planetrt/serial.vala` (6), `boot_mb2.vala` (1) | COM1 port I/O, Multiboot entry, 32→64 bit switch | **stays** — port I/O and boot |
 | `stdlib/glib_compat.vala` (5), `gio_compat.vala` (10), `cairo_gdk_compat.vala` (2 of 6), `user/shell.vala` (7), `spv_demo.vala` (3), `banner.vala` (1), `worker.vala` (1), `cairo_demo.vala` (1), `planc/src/host_planetos.vala` (5) | each re-implemented the `int 0x80` trampoline and pointer arithmetic | **converted** — 35 blocks removed |

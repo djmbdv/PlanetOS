@@ -28,9 +28,11 @@ echo "Building PlanetOS kernel and userland..."
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gio_compat.vala" "$ROOT/user/gio_demo.vala" -o "$OUT/gio_demo.elf"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$OUT/cairo_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/gobject_compat.vala" "$ROOT/user/gobject_demo.vala" -o "$OUT/gobject_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/gmodule_compat.vala" "$ROOT/user/gmodule_demo.vala" -o "$OUT/gmodule_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$OUT/cairo_demo.elf"
 "$PLANC" --target=spirv "$ROOT/user/frag_planet.vala" -o "$OUT/frag.spv"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$OUT/spv_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$OUT/spv_demo.elf"
 "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" --target=planetos --image-base=0xC00000 \
     "$ROOT/stdlib/planet_sys.vala" \
@@ -71,7 +73,8 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/init.elf" "$OUT/shell.elf" "$OUT/planc.elf" "$OUT/banner.elf" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
     "$OUT/spv_demo.elf" "$OUT/gio_demo.elf" \
-    "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala"
+    "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" \
+    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf"
 
 # --headless forces the serial-only mode; --display forces a window. Without a
 # flag: window when a display server exists, headless otherwise. Windows/MSYS2

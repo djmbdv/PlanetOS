@@ -5,6 +5,7 @@ Usage:
     mkdisk.py <disk.img> <init.elf> <shell.elf> <planc.elf> <banner.elf>
               <worker.elf> <wc.elf> <cairo_demo.elf> <frag.spv> <spv_demo.elf>
               <gio_demo.elf> <utf8.vala> <class_basic.vala>
+              <gobject_demo.elf> <gmodule_demo.elf>
 
 Shared by run-qemu.sh and run-qemu.ps1 so both launchers produce the same
 image layout.
@@ -13,7 +14,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 14  # image + 13 files
+ARG_COUNT = 16  # image + 15 files
 
 
 def blk(b):
@@ -38,6 +39,8 @@ def main():
     gd_b = open(sys.argv[11], "rb").read()
     t1_b = open(sys.argv[12], "rb").read()
     t2_b = open(sys.argv[13], "rb").read()
+    go_b = open(sys.argv[14], "rb").read()
+    gm_b = open(sys.argv[15], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -52,8 +55,10 @@ def main():
     b_gd = b_sd + blk(sd_b)
     b_t1 = b_gd + blk(gd_b)
     b_t2 = b_t1 + blk(t1_b)
+    b_go = b_t2 + blk(t2_b)
+    b_gm = b_go + blk(go_b)
     INO_BLK = 1000
-    total_blocks = max(1024, b_t2 + blk(t2_b), INO_BLK + 1)
+    total_blocks = max(1024, b_gm + blk(gm_b), INO_BLK + 1)
     img = bytearray(total_blocks * 4096)
 
     struct.pack_into(">II", img, 0, 0x58465342, 4096)
@@ -86,6 +91,8 @@ def main():
         (b"gio_demo.elf", gd_b, b_gd, 0x81ED),
         (b"utf8.vala", t1_b, b_t1, 0x81A4),
         (b"class_basic.vala", t2_b, b_t2, 0x81A4),
+        (b"gobject_demo.elf", go_b, b_go, 0x81ED),
+        (b"gmodule_demo.elf", gm_b, b_gm, 0x81ED),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

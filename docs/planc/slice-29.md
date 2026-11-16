@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build the graphical foundation for PlanetOS: enable x86-64 SSE/SSE2 for `double`/`float`, add a Bochs/QEMU VBE (`800x600x32` ARGB) linear framebuffer driver and PS/2 mouse (`IRQ12`), and provide a 100% pure-Vala `Cairo` + `Gdk` compatibility layer (`stdlib/cairo_gdk_compat.vala`) with zero C or `.vapi`.
+Build the graphical foundation for PlanetOS: enable x86-64 SSE/SSE2 for `double`/`float`, add a Bochs/QEMU VBE (`800x600x32` ARGB) linear framebuffer driver and PS/2 mouse (`IRQ12`), and provide a 100% pure-Vala `Cairo` + `Gdk` compatibility layer (`stdlib/cairo_compat.vala` + `stdlib/gdk_compat.vala`) with zero C or `.vapi`.
 
 ## Changes
 
@@ -17,7 +17,7 @@ Build the graphical foundation for PlanetOS: enable x86-64 SSE/SSE2 for `double`
   - Added `SYS_FB_INIT` (`21`), `SYS_FB_BLIT` (`22`), `SYS_FB_CLOSE` (`23`), and `SYS_MOUSE_READ` (`24`).
 
 ### 2. Pure-Vala `Cairo` + `Gdk` compatibility & GUI demo
-- [`stdlib/cairo_gdk_compat.vala`](../../stdlib/cairo_gdk_compat.vala):
+- [`stdlib/cairo_compat.vala`](../../stdlib/cairo_compat.vala) and [`stdlib/gdk_compat.vala`](../../stdlib/gdk_compat.vala):
   - `Cairo.ImageSurface`, `Cairo.Context` (`set_source_rgb`/`rgba`, `paint`, `rectangle`, `arc`, `move_to`, `line_to`, `fill` with alpha blending, `stroke`, `show_text` with built-in 5×7 bitmap font).
   - `Gdk.RGBA`, `Gdk.cairo_set_source_rgba`, `Gdk.Display.open_window`, `Gdk.Window` (`present`, `poll_event`, `close`), `Gdk.Event`.
 - [`user/cairo_demo.vala`](../../user/cairo_demo.vala):

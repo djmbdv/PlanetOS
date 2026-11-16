@@ -376,17 +376,17 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
     k_disk="$WORK/planet_disk.img"
     if ! "$PLANC" --target=planetos "$ROOT/user/init.vala" -o "$u_bin" 2>"$WORK/u.err"; then
         ko "freestanding_qemu" "user init compile failed: $(cat "$WORK/u.err")"
-    elif ! "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/user/worker.vala" -o "$w_bin" 2>"$WORK/w.err"; then
+    elif ! "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/worker.vala" -o "$w_bin" 2>"$WORK/w.err"; then
         ko "freestanding_qemu" "user worker compile failed: $(cat "$WORK/w.err")"
-    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
         ko "freestanding_qemu" "user wc compile failed: $(cat "$WORK/wc.err")"
-    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/cairo_gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$cd_bin" 2>"$WORK/cd.err"; then
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$cd_bin" 2>"$WORK/cd.err"; then
         ko "freestanding_qemu" "user cairo_demo compile failed: $(cat "$WORK/cd.err")"
     elif ! "$PLANC" --target=spirv "$ROOT/user/frag_planet.vala" -o "$sp_bin" 2>"$WORK/sp.err"; then
         ko "freestanding_qemu" "frag_planet.vala compile failed: $(cat "$WORK/sp.err")"
-    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/cairo_gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
         ko "freestanding_qemu" "user spv_demo compile failed: $(cat "$WORK/sd.err")"
-    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
+    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
     python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" "$cd_bin" "$sp_bin" "$sd_bin" << 'PYEOF'
@@ -518,7 +518,7 @@ img[sd_start * 4096:sd_start * 4096 + len(sd_bytes)] = sd_bytes
 
 open(sys.argv[1], "wb").write(img)
 PYEOF
-    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/fb.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/mouse.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
+    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/fb.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/mouse.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/vfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
         printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec cairo_demo.elf --once\nexec spv_demo.elf --once\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
@@ -537,7 +537,7 @@ PYEOF
     p_elf="$WORK/planc.elf"
     p_disk="$WORK/planet_planc_disk.img"
     p_ser="$WORK/qemu_planc_serial.log"
-    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
+    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
         ko "planetos_planc_qemu" "planc.elf compile failed: $(cat "$WORK/p_elf.err")"
     else
     python3 - "$p_disk" "$s_bin" "$p_elf" "$HERE/valid/utf8.vala" "$HERE/valid/class_basic.vala" << 'PYEOF'
