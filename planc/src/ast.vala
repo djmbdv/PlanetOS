@@ -206,6 +206,10 @@ namespace Planc {
         public Expr target { get; set; }
     }
 
+    public class YieldExpr : Expr {
+        public Expr? value { get; set; default = null; }
+    }
+
     public class LambdaExpr : Expr {
         public GenericArray<string> param_names { get; private set; }
         public GenericArray<Statement> body { get; private set; }
@@ -462,6 +466,7 @@ namespace Planc {
         public int iface_id { get; set; default = -1; }
         public int iface_slot { get; set; default = -1; }
         public bool has_body { get; set; default = true; }
+        public bool is_async { get; set; default = false; }
         public bool is_asm_body { get; set; default = false; }
         public string asm_body { get; set; default = ""; }
         public int asm_line { get; set; default = 0; }
@@ -484,6 +489,23 @@ namespace Planc {
         }
     }
 
+    public class SignalDecl : Object {
+        public string name { get; set; }
+        public ValaType return_type { get; set; default = ValaType.VOID; }
+        public string return_type_name { get; set; default = ""; }
+        public GenericArray<Param> params { get; private set; }
+        public bool is_virtual { get; set; default = false; }
+        public Function? default_handler { get; set; default = null; }
+        public string handler_delegate_name { get; set; default = ""; }
+        public int slot_index { get; set; default = -1; }
+        public int line { get; set; }
+        public int column { get; set; }
+
+        public SignalDecl () {
+            params = new GenericArray<Param> ();
+        }
+    }
+
     public class ClassField : Object {
         public ValaType field_type { get; set; }
         public string type_name { get; set; default = ""; }
@@ -503,6 +525,7 @@ namespace Planc {
         public GenericArray<string> iface_names { get; private set; }
         public GenericArray<ClassField> fields { get; private set; }
         public GenericArray<Function> methods { get; private set; }
+        public GenericArray<SignalDecl> signals { get; private set; }
         public GenericArray<Function> named_ctors { get; private set; }
         public Function? ctor { get; set; }
         public Function? dtor { get; set; }
@@ -519,6 +542,7 @@ namespace Planc {
             iface_names = new GenericArray<string> ();
             fields = new GenericArray<ClassField> ();
             methods = new GenericArray<Function> ();
+            signals = new GenericArray<SignalDecl> ();
             named_ctors = new GenericArray<Function> ();
             vtable_method_names = new GenericArray<string> ();
             vtable_impl_symbols = new GenericArray<string> ();
@@ -536,6 +560,14 @@ namespace Planc {
             foreach (unowned var f in fields) {
                 if (f.name == fname)
                     return f;
+            }
+            return null;
+        }
+
+        public unowned SignalDecl? find_own_signal (string sname) {
+            foreach (unowned var s in signals) {
+                if (s.name == sname)
+                    return s;
             }
             return null;
         }
@@ -1176,6 +1208,13 @@ namespace Planc {
                     line = o.line, column = o.column
                 };
             }
+            if (e is YieldExpr) {
+                var o = (YieldExpr) e;
+                return new YieldExpr () {
+                    value = (o.value != null) ? clone_expr (o.value, tparams, targs, targ_names) : null,
+                    line = o.line, column = o.column
+                };
+            }
             var lo = (LambdaExpr) e;
             var ln = new LambdaExpr () {
                 expr_body = (lo.expr_body != null) ? clone_expr (lo.expr_body, tparams, targs, targ_names) : null,
@@ -1391,6 +1430,7 @@ namespace Planc {
                 this_ctor_subname = f.this_ctor_subname,
                 owner_class = new_owner,
                 has_body = f.has_body,
+                is_async = f.is_async,
                 is_asm_body = f.is_asm_body,
                 asm_body = f.asm_body,
                 asm_line = f.asm_line,

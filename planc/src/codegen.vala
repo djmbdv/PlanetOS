@@ -50,6 +50,9 @@ namespace Planc {
         private EnumDecl? current_enum = null;
         private bool program_uses_heap = false;
         private int alloc_bss_offset = -1;
+        private int async_bss_offset = -1;
+        private bool in_async_resume = false;
+        private GenericArray<Label> async_resume_labels;
         private GenericArray<string> non_null_vars;
 
         // Per-function local symbol table.
@@ -113,6 +116,7 @@ namespace Planc {
         private bool need_build_args = false;
         private bool need_str_has_prefix = false;
         private bool need_str_has_suffix = false;
+        private bool need_async = false;
         private bool need_str_to_int = false;
         private bool need_double_to_str = false;
         private bool need_str_to_double = false;
@@ -202,7 +206,8 @@ namespace Planc {
             if (main_takes_args)
                 need_build_args = true;
             if (program_uses_heap) {
-                alloc_bss_offset = emitter.add_bss_bytes (96);
+                alloc_bss_offset = emitter.add_bss_bytes (104);
+                async_bss_offset = emitter.add_bss_bytes (64);
                 need_alloc = true;
                 need_ref = true;
                 need_unref = true;
@@ -237,7 +242,7 @@ namespace Planc {
                     return true;
             }
             foreach (var f in program.functions) {
-                if (f.can_throw || f.return_type == ValaType.ARRAY || f.return_type == ValaType.ERROR)
+                if (f.can_throw || f.is_async || f.return_type == ValaType.ARRAY || f.return_type == ValaType.ERROR)
                     return true;
                 foreach (var p in f.params) {
                     if (p.param_type == ValaType.ARRAY || p.param_type == ValaType.ERROR)
@@ -357,7 +362,7 @@ namespace Planc {
         }
 
         private bool scan_expr_heap (Expr e) {
-            if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is LambdaExpr)
+            if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is LambdaExpr || e is YieldExpr)
                 return true;
             if (e is NullLiteral)
                 return false;
@@ -379,7 +384,9 @@ namespace Planc {
             }
             if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
-                if (mc.method_name == "to_string" || mc.method_name == "substring")
+                if (mc.method_name == "to_string" || mc.method_name == "substring" || mc.method_name == "begin")
+                    return true;
+                if (mc.target is VarRef && ((VarRef) mc.target).name == "Async")
                     return true;
                 if (mc.target != null && scan_expr_heap (mc.target))
                     return true;
@@ -1214,6 +1221,9 @@ namespace Planc {
                 emitter.emit_rt_unref (alloc_bss_offset, mem_panic_label);
                 symbols.add (new Symbol ("__planc_unref", start_unref, emitter.here () - start_unref));
             }
+            if (need_async) {
+                emitter.emit_rt_async (async_bss_offset, symbols);
+            }
             if (need_str_concat) {
                 var start = emitter.here ();
                 emitter.emit_rt_str_concat ();
@@ -1857,6 +1867,10 @@ namespace Planc {
                 da_expr (c.right);
             } else if (e is IncDecExpr) {
                 da_expr (((IncDecExpr) e).target);
+            } else if (e is YieldExpr) {
+                var ye = (YieldExpr) e;
+                if (ye.value != null)
+                    da_expr (ye.value);
             } else if (e is LambdaExpr) {
                 var lam = (LambdaExpr) e;
                 // A lambda is its own scope: its captures were assigned in
@@ -3161,7 +3175,28 @@ namespace Planc {
                         need_str_to_int = true;
                     else if (bi_kind == "float_parse" || bi_kind == "double_parse")
                         need_str_to_double = true;
+                    else if (bi_kind == "async_run" || bi_kind == "async_run_parallel")
+                        need_async = true;
                 } else {
+                    Expr? begin_recv = null;
+                    unowned Function? begin_fn = resolve_begin_call (mc, out begin_recv);
+                    if (begin_fn != null) {
+                        if (begin_recv != null)
+                            prepare_expr (begin_recv, ref struct_temps, ref ref_temps);
+                        int p_off = (begin_fn.owner_class != "" && !begin_fn.is_static) ? 1 : 0;
+                        fill_default_args (begin_fn, p_off, mc.args);
+                        for (int ai = 0; ai < mc.args.length && (p_off + ai) < begin_fn.params.length; ai++) {
+                            var p = begin_fn.params[p_off + ai];
+                            bind_delegate_target (mc.args[ai], p.param_type, p.type_name);
+                        }
+                        if (program_uses_heap) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
+                        foreach (var a in mc.args)
+                            prepare_expr (a, ref struct_temps, ref ref_temps);
+                        return;
+                    }
                     if (mc.target != null)
                         prepare_expr (mc.target, ref struct_temps, ref ref_temps);
                     unowned DelegateDecl? md = (mc.target != null && !mc.is_base_call)
@@ -3210,6 +3245,33 @@ namespace Planc {
                             prepare_expr (a, ref struct_temps, ref ref_temps);
                     }
                 }
+            } else if (e is YieldExpr) {
+                var ye = (YieldExpr) e;
+                if (ye.value != null) {
+                    prepare_expr (ye.value, ref struct_temps, ref ref_temps);
+                    string yt_name = "";
+                    var yt = expr_type_full (ye.value, out yt_name);
+                    ValaType inner_t = ValaType.VOID;
+                    string inner_name = "";
+                    if (yt == ValaType.CLASS && parse_async_task_type_name (yt_name, out inner_t, out inner_name)) {
+                        if (program_uses_heap && is_ref_type (inner_t)) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
+                    }
+                    if (ye.value is CallExpr) {
+                        unowned var cf = resolve_call_target (((CallExpr) ye.value).callee);
+                        if (cf != null && cf.can_throw)
+                            check_domains_handled (cf.throws_domains, ye.line, ye.column);
+                    } else if (ye.value is MethodCallExpr) {
+                        var mce = (MethodCallExpr) ye.value;
+                        Expr? dummy_r = null;
+                        unowned var mf = resolve_begin_call (mce, out dummy_r);
+                        if (mf == null) mf = resolve_method_call_fn (mce);
+                        if (mf != null && mf.can_throw)
+                            check_domains_handled (mf.throws_domains, ye.line, ye.column);
+                    }
+                }
             } else if (e is CallExpr) {
                 var ce = (CallExpr) e;
                 if (ce.callee == "__planc_host_read_file" || ce.callee == "__planc_host_write_file") {
@@ -3255,7 +3317,7 @@ namespace Planc {
                                 var p = f.params[param_off + ai];
                                 bind_delegate_target (ce.args[ai], p.param_type, p.type_name);
                             }
-                            if (f.can_throw)
+                            if (f.can_throw && !f.is_async)
                                 check_domains_handled (f.throws_domains, ce.line, ce.column);
                             if (f.return_type == ValaType.STRUCT) {
                                 pending_struct_exprs.add (e);
@@ -3465,7 +3527,176 @@ namespace Planc {
                 fn (ce.right);
             } else if (e is IncDecExpr) {
                 fn (((IncDecExpr) e).target);
+            } else if (e is YieldExpr) {
+                var ye = (YieldExpr) e;
+                if (ye.value != null)
+                    fn (ye.value);
             }
+        }
+
+        private void generate_async_function (Function f) throws SemanticError {
+            need_async = true;
+            current = f;
+            int ref_temp_start = 0;
+            var total_slots = prepare_function (f, out ref_temp_start);
+
+            current_class = (f.owner_class != "") ? program.find_class (f.owner_class) : null;
+            current_struct = (f.owner_class != "") ? program.find_struct (f.owner_class) : null;
+            current_enum = (f.owner_class != "") ? program.find_enum (f.owner_class) : null;
+            cur_ref_temp_start = ref_temp_start;
+            cur_total_slots = total_slots;
+            cur_func_throw_label = emitter.new_label ();
+            need_func_throw = false;
+            unwind_labels = new GenericArray<Label> ();
+            unwind_marks = new GenericArray<int> ();
+            finally_labels = new GenericArray<Label> ();
+            finally_mode_slots = new GenericArray<int> ();
+            finally_ret_slots = new GenericArray<int> ();
+            finally_marks = new GenericArray<int> ();
+            live_stmt_ref_slots = new GenericArray<int> ();
+            active_catch_domains = new GenericArray<string> ();
+            non_null_vars = new GenericArray<string> ();
+            reset_locals ();
+            next_var_slot = 0;
+            push_depth = 0;
+            break_labels = new GenericArray<Label> ();
+            continue_labels = new GenericArray<Label> ();
+            break_scope_marks = new GenericArray<int> ();
+            continue_scope_marks = new GenericArray<int> ();
+
+            // 1. Emit __async_resume_<f.name>(AsyncTask* rdi)
+            var resume_name = @"__async_resume_$(f.name)";
+            in_async_resume = true;
+            async_resume_labels = new GenericArray<Label> ();
+            var l_state0 = emitter.new_label ();
+            async_resume_labels.add (l_state0);
+            var l_dispatch = emitter.new_label ();
+
+            var resume_start = emitter.here ();
+            emitter.push_rbp ();
+            emitter.mov_rsp_to_rbp ();
+            emitter.sub_rsp (16);
+            emitter.mov_rax_rdi ();
+            emitter.store_rbp_disp (-8);
+            emitter.async_task_rbp_offset = -8;
+            emitter.branch (BranchKind.JMP, l_dispatch);
+
+            emitter.bind (l_state0);
+            var param_slots = new int[f.params.length];
+            for (int i = 0; i < f.params.length; i++) {
+                var p = f.params[i];
+                bool by_ref = p.is_ref || p.is_out;
+                if (by_ref)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'async' function '$(f.name)' cannot have 'ref' or 'out' parameters at $(p.line):$(p.column)");
+                param_slots[i] = next_var_slot++;
+                if (p.param_type == ValaType.STRUCT)
+                    next_var_slot += type_slots (ValaType.STRUCT, p.type_name);
+                push_local (p.name, p.param_type, p.type_name, param_slots[i], p.unmanaged, false);
+            }
+            err_prop_slot = next_var_slot++;
+
+            foreach (var s in f.body)
+                gen_statement (s);
+
+            if (program_uses_heap)
+                unref_locals_from (0);
+            if (f.return_type == ValaType.STRING)
+                emitter.lea_rax_rip (emitter.add_string (""));
+            else
+                emitter.xor_eax ();
+            emitter.mov_rsi_rax ();
+            emitter.load_rbp_disp (-8);
+            emitter.mov_rdi_rax ();
+            emitter.xor_edx ();
+            call_aligned ("__planc_async_finish");
+            emitter.leave ();
+            emitter.ret ();
+
+            if (need_func_throw) {
+                emitter.bind (cur_func_throw_label);
+                emitter.load_local (err_prop_slot);
+                emitter.push_rax ();
+                emitter.load_rbp_disp (-8);
+                emitter.mov_rdi_rax ();
+                emitter.xor_eax ();
+                emitter.mov_rsi_rax ();
+                emitter.pop_reg (Reg.RDX);
+                call_aligned ("__planc_async_finish");
+                emitter.leave ();
+                emitter.ret ();
+            }
+
+            emitter.bind (l_dispatch);
+            emitter.load_rbp_disp (-8);
+            emitter.load_rax_disp (24);
+            for (int si = 0; si < async_resume_labels.length; si++) {
+                emitter.mov_rcx_rax ();
+                emitter.mov_rax_imm ((int64) si);
+                emitter.cmp_rax_rcx ();
+                emitter.mov_rax_rcx ();
+                emitter.branch (BranchKind.JE, async_resume_labels[si]);
+            }
+            emitter.leave ();
+            emitter.ret ();
+            symbols.add (new Symbol (resume_name, resume_start, emitter.here () - resume_start));
+
+            emitter.async_task_rbp_offset = 0;
+            in_async_resume = false;
+            int frame_slots = (cur_total_slots > next_var_slot) ? cur_total_slots : next_var_slot;
+
+            // 2. Emit wrapper f.name(params...) -> AsyncTask*
+            var start = emitter.here ();
+            emitter.push_rbp ();
+            emitter.mov_rsp_to_rbp ();
+            int task_slot = f.params.length;
+            emitter.sub_rsp (align16 (8 * (task_slot + 2)));
+
+            int gpr_idx = 0;
+            int xmm_idx = 0;
+            int stack_idx = 0;
+            for (int i = 0; i < f.params.length; i++) {
+                bool is_fp = is_fp_type (f.params[i].param_type);
+                if (is_fp && xmm_idx < 8) {
+                    emitter.movq_rax_xmm (xmm_idx++);
+                    emitter.store_local (i);
+                } else if (!is_fp && gpr_idx < NUM_ARG_REGS) {
+                    emitter.store_local_reg (i, arg_reg (gpr_idx++));
+                } else {
+                    emitter.load_rbp_disp (16 + 8 * stack_idx++);
+                    emitter.store_local (i);
+                }
+            }
+
+            emitter.lea_rax_fn (resume_name);
+            emitter.mov_rdi_rax ();
+            emitter.mov_esi_imm ((uint32) frame_slots);
+            call_aligned ("__planc_async_spawn");
+            emitter.store_local (task_slot);
+
+            for (int i = 0; i < f.params.length; i++) {
+                var p = f.params[i];
+                emitter.load_local (i);
+                if (program_uses_heap && !p.unmanaged && is_ref_type (p.param_type)) {
+                    emitter.mov_rdi_rax ();
+                    call_aligned ("__planc_ref");
+                }
+                emitter.push_rax ();
+                emitter.load_local (task_slot);
+                emitter.mov_rcx_rax ();
+                emitter.pop_rax ();
+                emitter.store_rcx_disp_rax (80 + param_slots[i] * 8);
+            }
+
+            emitter.load_local (task_slot);
+            emitter.mov_rdi_rax ();
+            call_aligned ("__planc_async_enqueue");
+
+            emitter.load_local (task_slot);
+            emitter.xor_edx ();
+            emitter.leave ();
+            emitter.ret ();
+            symbols.add (new Symbol (f.name, start, emitter.here () - start));
         }
 
         private void generate_function (Function f) throws SemanticError {
@@ -3473,6 +3704,10 @@ namespace Planc {
                 var start = emitter.here ();
                 AsmAssembler.assemble (emitter, program, f);
                 symbols.add (new Symbol (f.name, start, emitter.here () - start));
+                return;
+            }
+            if (f.is_async) {
+                generate_async_function (f);
                 return;
             }
             current = f;
@@ -3868,14 +4103,91 @@ namespace Planc {
                 || callee == "__planc_host_write_file";
         }
 
+        private static string make_async_task_type_name (ValaType ret_t, string ret_name) {
+            return @"__AsyncTask:$((int) ret_t):$(ret_name)";
+        }
+
+        private static bool parse_async_task_type_name (string tn, out ValaType ret_t, out string ret_name) {
+            ret_t = ValaType.VOID;
+            ret_name = "";
+            if (!tn.has_prefix ("__AsyncTask:"))
+                return false;
+            int n = tn.length;
+            int second_colon = -1;
+            int code = 0;
+            for (int i = 12; i < n; i++) {
+                uint8 ch = tn[i];
+                if (ch == ':') {
+                    second_colon = i;
+                    break;
+                }
+                if (ch < '0' || ch > '9')
+                    return false;
+                code = code * 10 + (int) (ch - '0');
+            }
+            if (second_colon < 0)
+                return false;
+            switch (code) {
+                case 0: ret_t = ValaType.VOID; break;
+                case 1: ret_t = ValaType.INT; break;
+                case 2: ret_t = ValaType.FLOAT; break;
+                case 3: ret_t = ValaType.DOUBLE; break;
+                case 4: ret_t = ValaType.BOOL; break;
+                case 5: ret_t = ValaType.STRING; break;
+                case 6: ret_t = ValaType.ENUM; break;
+                case 7: ret_t = ValaType.STRUCT; break;
+                case 8: ret_t = ValaType.ARRAY; break;
+                case 9: ret_t = ValaType.CLASS; break;
+                case 10: ret_t = ValaType.INTERFACE; break;
+                case 11: ret_t = ValaType.ERROR; break;
+                case 12: ret_t = ValaType.TYPE_PARAM; break;
+                default: ret_t = ValaType.NULL; break;
+            }
+            ret_name = tn.substring (second_colon + 1);
+            return true;
+        }
+
+        private unowned Function? resolve_begin_call (MethodCallExpr mc, out Expr? recv_target) throws SemanticError {
+            recv_target = null;
+            if (mc.method_name != "begin" || mc.target == null || mc.is_base_call)
+                return null;
+            if (mc.target is VarRef) {
+                var vn = ((VarRef) mc.target).name;
+                unowned var f = resolve_call_target (vn);
+                if (f != null && f.is_async)
+                    return f;
+                return null;
+            }
+            if (mc.target is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) mc.target;
+                var synth = new MethodCallExpr () {
+                    target = ma.target,
+                    method_name = ma.member,
+                    line = mc.line,
+                    column = mc.column
+                };
+                unowned var m = resolve_method_call_fn (synth);
+                if (m != null && m.is_async) {
+                    recv_target = ma.target;
+                    return m;
+                }
+            }
+            return null;
+        }
+
         private bool is_builtin_method_call (MethodCallExpr mc, out string kind, out ValaType ret_t)
                 throws SemanticError {
             kind = "";
             ret_t = ValaType.VOID;
-            if (mc.target == null || mc.is_base_call)
+            if (mc.target == null || mc.is_base_call || mc.method_name == "begin")
                 return false;
             if (mc.target is VarRef) {
                 var vn = ((VarRef) mc.target).name;
+                if (vn == "Async" && (mc.method_name == "run" || mc.method_name == "run_parallel")) {
+                    kind = (mc.method_name == "run") ? "async_run" : "async_run_parallel";
+                    ret_t = ValaType.VOID;
+                    return true;
+                }
                 if (is_int_type_name_cg (vn) && is_type_name (vn) && mc.method_name == "parse") {
                     kind = "int_parse";
                     ret_t = ValaType.INT;
@@ -4144,19 +4456,28 @@ namespace Planc {
                 var b = (BinaryExpr) e;
                 return b.op == "+" && expr_type (b.left) == ValaType.STRING;
             }
+            if (e is YieldExpr) {
+                var ye = (YieldExpr) e;
+                if (ye.value == null)
+                    return false;
+                return is_ref_type (expr_type (ye));
+            }
             if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
                 string bi_kind = "";
                 ValaType bi_ret = ValaType.VOID;
                 if (is_builtin_method_call (mc, out bi_kind, out bi_ret))
                     return is_ref_type (bi_ret);
-                if (mc.target != null && !mc.is_base_call) {
+                Expr? dummy_r = null;
+                if (resolve_begin_call (mc, out dummy_r) != null)
+                    return true;
+                if (mc.target != null && !mc.is_base_call && mc.method_name != "begin") {
                     unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                     if (md != null)
                         return is_ref_type (md.return_type);
                 }
                 unowned var m = resolve_method_call_fn (mc);
-                return m != null && is_ref_type (m.return_type);
+                return m != null && (m.is_async || is_ref_type (m.return_type));
             }
             if (e is CallExpr) {
                 var ce = (CallExpr) e;
@@ -4168,7 +4489,7 @@ namespace Planc {
                 if (dd != null)
                     return is_ref_type (dd.return_type);
                 unowned var f = resolve_call_target (ce.callee);
-                return f != null && is_ref_type (f.return_type);
+                return f != null && (f.is_async || is_ref_type (f.return_type));
             }
             if (e is MemberAccessExpr) {
                 var ma = (MemberAccessExpr) e;
@@ -4445,6 +4766,21 @@ namespace Planc {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"argument $(i + 1) of 'substring' expects int, got $(type_label (at, an)) at $(mc.args[i].line):$(mc.args[i].column)");
                 }
+            } else if (kind == "async_run") {
+                if (mc.args.length != 0)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"Async.run expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                need_async = true;
+            } else if (kind == "async_run_parallel") {
+                if (mc.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"Async.run_parallel expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!is_int_like (at))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of 'Async.run_parallel' expects int, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                need_async = true;
             }
         }
 
@@ -4472,7 +4808,7 @@ namespace Planc {
                     @"cannot call instance method '$(c.callee)' from static method '$(current.method_name)' at $(c.line):$(c.column)");
             }
             int param_off = (f.owner_class != "" && !is_synth_init && !f.is_static) ? 1 : 0;
-            if (want_value && f.is_void)
+            if (want_value && f.is_void && !f.is_async)
                 throw new SemanticError.VOID_IN_EXPRESSION (
                     @"void function '$(c.callee)' cannot be used as a value at $(c.line):$(c.column)");
             check_arg_list (c.callee, f, param_off, c.args, c.line, c.column);
@@ -4485,6 +4821,13 @@ namespace Planc {
             if (is_builtin_method_call (mc, out bi_kind, out bi_ret)) {
                 check_builtin_method_args (mc, bi_kind);
                 return null;
+            }
+            Expr? begin_recv = null;
+            unowned Function? begin_fn = resolve_begin_call (mc, out begin_recv);
+            if (begin_fn != null) {
+                int b_off = (begin_fn.owner_class != "" && !begin_fn.is_static) ? 1 : 0;
+                check_arg_list (begin_fn.name, begin_fn, b_off, mc.args, mc.line, mc.column);
+                return begin_fn;
             }
             if (mc.target != null && !mc.is_base_call) {
                 unowned DelegateDecl? md = resolve_member_delegate (mc.target, mc.method_name);
@@ -4500,7 +4843,7 @@ namespace Planc {
             if (m == null)
                 throw new SemanticError.UNKNOWN_FUNCTION (
                     @"unknown method '$(mc.method_name)' at $(mc.line):$(mc.column)");
-            if (want_value && m.is_void)
+            if (want_value && m.is_void && !m.is_async)
                 throw new SemanticError.VOID_IN_EXPRESSION (
                     @"void method '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
             int param_off = m.is_static ? 0 : 1;
@@ -4696,7 +5039,7 @@ namespace Planc {
                     check_builtin_method_args (mc, bi_kind);
                     return bi_ret;
                 }
-                if (mc.target != null && !mc.is_base_call) {
+                if (mc.target != null && !mc.is_base_call && mc.method_name != "begin") {
                     unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                     if (md != null) {
                         if (md.return_type == ValaType.VOID)
@@ -4708,6 +5051,10 @@ namespace Planc {
                     }
                 }
                 unowned var m = check_method_call (mc, true);
+                if (m.is_async) {
+                    tname = make_async_task_type_name (m.return_type, m.return_type_name);
+                    return ValaType.CLASS;
+                }
                 tname = m.return_type_name;
                 return m.return_type;
             }
@@ -5116,8 +5463,29 @@ namespace Planc {
                     return dd.return_type;
                 }
                 unowned var f = check_call (ce, true);
+                if (f.is_async) {
+                    tname = make_async_task_type_name (f.return_type, f.return_type_name);
+                    return ValaType.CLASS;
+                }
                 tname = f.return_type_name;
                 return f.return_type;
+            }
+            if (e is YieldExpr) {
+                var ye = (YieldExpr) e;
+                if (current == null || !current.is_async)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'yield' is only valid inside an 'async' function at $(ye.line):$(ye.column)");
+                if (ye.value == null)
+                    return ValaType.VOID;
+                string vt_name = "";
+                var vt = expr_type_full (ye.value, out vt_name);
+                ValaType inner_t = ValaType.VOID;
+                string inner_name = "";
+                if (vt != ValaType.CLASS || !parse_async_task_type_name (vt_name, out inner_t, out inner_name))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'yield' expects an async task, got $(type_label (vt, vt_name)) at $(ye.line):$(ye.column)");
+                tname = inner_name;
+                return inner_t;
             }
             if (e is IncDecExpr) {
                 var inc = (IncDecExpr) e;
@@ -5305,7 +5673,7 @@ namespace Planc {
                         var n = type_slots (ValaType.STRUCT, ltname);
                         emitter.lea_rax_rbp_disp (struct_base_disp (local_slots[idx], n));
                     } else {
-                        emitter.lea_rax_rbp_disp (Emitter.slot_offset (local_slots[idx]));
+                        emitter.lea_local (local_slots[idx]);
                     }
                     return;
                 }
@@ -5790,7 +6158,7 @@ namespace Planc {
                             unref_locals_from (0);
                         emitter.pop_rax ();
                         push_depth--;
-                        if (is_fp_type (current.return_type))
+                        if (is_fp_type (current.return_type) && !in_async_resume)
                             emitter.movq_xmm_rax (0);
                     } else {
                         if (!current.is_void)
@@ -5800,7 +6168,15 @@ namespace Planc {
                             unref_locals_from (0);
                         emitter.xor_eax ();
                     }
-                    emitter.xor_edx ();
+                    if (in_async_resume) {
+                        emitter.mov_rsi_rax ();
+                        emitter.load_rbp_disp (-8);
+                        emitter.mov_rdi_rax ();
+                        emitter.xor_edx ();
+                        call_aligned ("__planc_async_finish");
+                    } else {
+                        emitter.xor_edx ();
+                    }
                     emitter.leave ();
                     emitter.ret ();
                 }
@@ -7938,6 +8314,8 @@ namespace Planc {
                         setcc (b.op);
                         break;
                 }
+            } else if (e is YieldExpr) {
+                gen_yield_expr ((YieldExpr) e);
             } else if (e is CallExpr) {
                 gen_call ((CallExpr) e);
             } else if (e is LambdaExpr) {
@@ -8140,6 +8518,19 @@ namespace Planc {
                     emitter.store_local (mc.ref_temp_slot);
                 return;
             }
+            if (kind == "async_run") {
+                need_async = true;
+                emitter.mov_edi (1);
+                call_aligned ("__planc_async_run");
+                return;
+            }
+            if (kind == "async_run_parallel") {
+                need_async = true;
+                gen_expr (mc.args[0]);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_async_run");
+                return;
+            }
             if (kind == "str_has_prefix" || kind == "str_has_suffix") {
                 if (mc.target == null)
                     throw new SemanticError.TYPE_MISMATCH (
@@ -8210,6 +8601,95 @@ namespace Planc {
                 emitter.store_local (mc.ref_temp_slot);
         }
 
+        private void gen_yield_expr (YieldExpr ye) throws SemanticError {
+            if (!in_async_resume)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'yield' is only valid inside an 'async' function at $(ye.line):$(ye.column)");
+            if (push_depth > 0)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'yield' cannot be used inside a compound expression at $(ye.line):$(ye.column)");
+            int next_state = async_resume_labels.length;
+            var l_resume = emitter.new_label ();
+            async_resume_labels.add (l_resume);
+
+            if (ye.value == null) {
+                emitter.load_rbp_disp (-8);
+                emitter.mov_rcx_rax ();
+                emitter.mov_rax_imm ((int64) next_state);
+                emitter.store_rcx_disp_rax (24);
+                emitter.mov_rax_rcx ();
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_async_enqueue");
+                emitter.leave ();
+                emitter.ret ();
+                emitter.bind (l_resume);
+                emitter.xor_eax ();
+                return;
+            }
+
+            string vt_name = "";
+            var vt = expr_type_full (ye.value, out vt_name);
+            ValaType inner_t = ValaType.VOID;
+            string inner_name = "";
+            if (vt != ValaType.CLASS || !parse_async_task_type_name (vt_name, out inner_t, out inner_name))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'yield' expects an async task, got $(type_label (vt, vt_name)) at $(ye.line):$(ye.column)");
+
+            int child_slot = cur_total_slots++;
+            gen_expr (ye.value);
+            if (is_owned_expr (ye.value)) {
+                consume_ref_expr (ye.value);
+            } else {
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_ref");
+            }
+            emitter.store_local (child_slot);
+            cleanup_expr_temps (ye.value);
+
+            emitter.load_local (child_slot);
+            emitter.mov_rdi_rax ();
+            emitter.load_rbp_disp (-8);
+            emitter.mov_rsi_rax ();
+            call_aligned ("__planc_async_await");
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, l_resume);
+
+            emitter.load_rbp_disp (-8);
+            emitter.mov_rcx_rax ();
+            emitter.mov_rax_imm ((int64) next_state);
+            emitter.store_rcx_disp_rax (24);
+            emitter.leave ();
+            emitter.ret ();
+
+            emitter.bind (l_resume);
+            emitter.load_local (child_slot);
+            emitter.zero_local (child_slot);
+            emitter.push_rax ();
+            emitter.load_rax_disp (48);
+            emitter.test_rax_rax ();
+            var l_no_err = emitter.new_label ();
+            emitter.branch (BranchKind.JE, l_no_err);
+            emitter.mov_rdx_rax ();
+            emitter.pop_rax ();
+            emitter.push_reg (Reg.RDX);
+            emitter.mov_rdi_rax ();
+            call_aligned ("__planc_unref");
+            emitter.pop_reg (Reg.RDX);
+            emit_post_call_error_check_flag (true);
+
+            emitter.bind (l_no_err);
+            emitter.pop_rax ();
+            emitter.mov_rdi_rax ();
+            emitter.load_rax_disp (40);
+            emitter.push_rax ();
+            call_aligned ("__planc_unref");
+            emitter.pop_rax ();
+            if (program_uses_heap && ye.ref_temp_slot >= 0 && is_ref_type (inner_t))
+                emitter.store_local (ye.ref_temp_slot);
+            if (is_fp_type (inner_t))
+                emitter.movq_xmm_rax (0);
+        }
+
         private void gen_method_call (MethodCallExpr mc) throws SemanticError {
             string bi_kind = "";
             ValaType bi_ret = ValaType.VOID;
@@ -8217,7 +8697,20 @@ namespace Planc {
                 gen_builtin_method_call (mc, bi_kind);
                 return;
             }
-            if (mc.target != null && !mc.is_base_call) {
+            Expr? begin_recv = null;
+            unowned Function? begin_fn = resolve_begin_call (mc, out begin_recv);
+            if (begin_fn != null) {
+                if (begin_fn.owner_class == "" || begin_fn.is_static) {
+                    emit_static_call (begin_fn, mc.args, mc.temp_slot, mc.ref_temp_slot);
+                } else {
+                    Expr recv = (begin_recv != null) ? begin_recv : new VarRef () {
+                        name = "this", line = mc.line, column = mc.column
+                    };
+                    emit_instance_call (recv, false, false, begin_fn, mc.args, mc.temp_slot, mc.ref_temp_slot);
+                }
+                return;
+            }
+            if (mc.target != null && !mc.is_base_call && mc.method_name != "begin") {
                 unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                 if (md != null) {
                     var del_expr = new MemberAccessExpr () {
@@ -8437,9 +8930,10 @@ namespace Planc {
                 emitter.add_rsp (8);
             }
 
-            emit_post_call_error_check (m);
+            if (!m.is_async)
+                emit_post_call_error_check (m);
 
-            if (m.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
+            if (!m.is_async && m.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
                 var nslots = type_slots (ValaType.STRUCT, m.return_type_name);
                 var base_disp = struct_base_disp (struct_temp_slot, nslots);
                 emitter.lea_rcx_rbp_disp (base_disp);
@@ -8449,7 +8943,7 @@ namespace Planc {
                     emitter.store_local (ref_temp_slot);
                 }
                 emitter.mov_rax_rcx ();
-            } else if (program_uses_heap && is_ref_type (m.return_type) && ref_temp_slot >= 0) {
+            } else if (program_uses_heap && (m.is_async || is_ref_type (m.return_type)) && ref_temp_slot >= 0) {
                 emitter.store_local (ref_temp_slot);
             }
         }
@@ -8671,9 +9165,10 @@ namespace Planc {
                 emitter.add_rsp (8);
             }
 
-            emit_post_call_error_check (f);
+            if (!f.is_async)
+                emit_post_call_error_check (f);
 
-            if (f.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
+            if (!f.is_async && f.return_type == ValaType.STRUCT && struct_temp_slot >= 0) {
                 var nslots = type_slots (ValaType.STRUCT, f.return_type_name);
                 var base_disp = struct_base_disp (struct_temp_slot, nslots);
                 emitter.lea_rcx_rbp_disp (base_disp);
@@ -8683,7 +9178,7 @@ namespace Planc {
                     emitter.store_local (ref_temp_slot);
                 }
                 emitter.mov_rax_rcx ();
-            } else if (program_uses_heap && is_ref_type (f.return_type) && ref_temp_slot >= 0) {
+            } else if (program_uses_heap && (f.is_async || is_ref_type (f.return_type)) && ref_temp_slot >= 0) {
                 emitter.store_local (ref_temp_slot);
             }
         }

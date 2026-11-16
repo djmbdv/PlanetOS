@@ -515,6 +515,11 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7);
         }
 
+        // mov rax, rdi                       48 89 F8
+        public void mov_rax_rdi () {
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xF8);
+        }
+
         // mov rsi, rcx                       48 89 CE
         public void mov_rsi_rcx () {
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xCE);
@@ -623,6 +628,13 @@ namespace Planc {
 
         // mov qword ptr [rbp + d], 0         48 C7 45 d8 00000000 | 48 C7 85 d32 00000000
         public void zero_local (int slot) {
+            if (async_task_rbp_offset != 0) {
+                load_r10_async_task ();
+                code.u8 (0x49); code.u8 (0xC7); code.u8 (0x82);
+                code.u32le ((uint32) (80 + slot * 8));
+                code.u32le (0);
+                return;
+            }
             code.u8 (0x48); code.u8 (0xC7);
             emit_modrm_disp (0, 5, slot_offset (slot));
             code.u32le (0);
@@ -741,6 +753,13 @@ namespace Planc {
         // reach the incoming stack arguments above the return address.
         // ------------------------------------------------------------------
 
+        public int async_task_rbp_offset { get; set; default = 0; }
+
+        private void load_r10_async_task () {
+            code.u8 (0x4C); code.u8 (0x8B);
+            emit_modrm_disp (2, 5, async_task_rbp_offset);
+        }
+
         public static int slot_offset (int slot) {
             return -8 * (slot + 1);
         }
@@ -769,17 +788,48 @@ namespace Planc {
 
         // mov rax, [rbp - d]                 48 8B 45 d8 | 48 8B 85 d32
         public void load_local (int slot) {
+            if (async_task_rbp_offset != 0) {
+                load_r10_async_task ();
+                code.u8 (0x49); code.u8 (0x8B); code.u8 (0x82);
+                code.u32le ((uint32) (80 + slot * 8));
+                return;
+            }
             load_rbp_disp (slot_offset (slot));
         }
 
         // mov [rbp - d], rax                 48 89 45 d8 | 48 89 85 d32
         public void store_local (int slot) {
+            if (async_task_rbp_offset != 0) {
+                load_r10_async_task ();
+                code.u8 (0x49); code.u8 (0x89); code.u8 (0x82);
+                code.u32le ((uint32) (80 + slot * 8));
+                return;
+            }
             store_rbp_disp (slot_offset (slot));
+        }
+
+        public void lea_local (int slot) {
+            if (async_task_rbp_offset != 0) {
+                load_r10_async_task ();
+                code.u8 (0x49); code.u8 (0x8D); code.u8 (0x82);
+                code.u32le ((uint32) (80 + slot * 8));
+                return;
+            }
+            lea_rax_rbp_disp (slot_offset (slot));
         }
 
         // mov [rbp - d], reg: stores an incoming argument register into its
         // slot in the prologue. REX.R covers r8/r9.
         public void store_local_reg (int slot, Reg src) {
+            if (async_task_rbp_offset != 0) {
+                load_r10_async_task ();
+                uint8 rex = (uint8) (0x49 | (Reg.is_extended (src) ? 4 : 0));
+                var src_low = (int) src & 7;
+                code.u8 (rex); code.u8 (0x89);
+                code.u8 ((uint8) (0x80 | (src_low << 3) | 0x02));
+                code.u32le ((uint32) (80 + slot * 8));
+                return;
+            }
             var d = slot_offset (slot);
             uint8 rex = (uint8) (0x48 | (Reg.is_extended (src) ? 4 : 0));
             var src_low = (int) src & 7;
@@ -1156,8 +1206,22 @@ namespace Planc {
             code.u8 (0xB1); code.u8 (0xFF);
             branch (BranchKind.JMP, l_init_header);
 
-            // Small/medium class 0..7: check free_lists[rcx]
+            // Small/medium class 0..7: acquire allocator spinlock [rbx + 96]
             bind (l_found_class);
+            var l_alloc_lock = new_label ();
+            var l_alloc_locked = new_label ();
+            bind (l_alloc_lock);
+            // mov eax, 1; xchg [rbx + 96], eax; test eax, eax; je l_alloc_locked
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x43); code.u8 (0x60);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_alloc_locked);
+            // pause                           F3 90
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_alloc_lock);
+            bind (l_alloc_locked);
+
+            // Check free_lists[rcx]
             // mov rax, [rbx + rcx*8 + 32]     48 8B 44 CB 20
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x44); code.u8 (0xCB); code.u8 (0x20);
             test_rax_rax ();
@@ -1165,6 +1229,8 @@ namespace Planc {
             // Pop block: mov r8, [rax + 8]; mov [rbx + rcx*8 + 32], r8
             code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x40); code.u8 (0x08);
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0x44); code.u8 (0xCB); code.u8 (0x20);
+            // Release spinlock: mov dword ptr [rbx + 96], 0
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0);
             // Zero cap (rdx) bytes of recycled block
             // mov r12, rax; mov r14, rcx; mov rdi, r12; mov rcx, rdx; shr rcx, 3; xor eax, eax; rep stosq
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4);
@@ -1192,8 +1258,9 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x01); code.u8 (0xD0);
             code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC8);
             branch (BranchKind.JA, l_new_slab);
-            // mov [rbx + 16], rax; mov rax, r8; jmp l_init_header
+            // mov [rbx + 16], rax; release spinlock; mov rax, r8; jmp l_init_header
             code.u8 (0x48); code.u8 (0x89); code.u8 (0x43); code.u8 (0x10);
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0);
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC0);
             branch (BranchKind.JMP, l_init_header);
 
@@ -1223,6 +1290,8 @@ namespace Planc {
             code.u8 (0x4D); code.u8 (0x89); code.u8 (0xE1);
             code.u8 (0x49); code.u8 (0x81); code.u8 (0xC1); code.u32le (0x10000);
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0x4B); code.u8 (0x18);
+            // Release spinlock: mov dword ptr [rbx + 96], 0
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x60); code.u32le (0);
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
 
             // Header: refcount=1, elem_ref=r13b, size_class=cl, magic=0x504C
@@ -1390,6 +1459,20 @@ namespace Planc {
             // cmp ecx, 8                      83 F9 08
             code.u8 (0x83); code.u8 (0xF9); code.u8 (0x08);
             branch (BranchKind.JAE, l_ret);
+            // Acquire allocator spinlock [rdx + 96]
+            var l_unref_lock = new_label ();
+            var l_unref_locked = new_label ();
+            bind (l_unref_lock);
+            // mov eax, 1; xchg [rdx + 96], eax; test eax, eax; je l_unref_locked
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x42); code.u8 (0x60);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_unref_locked);
+            // pause
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_unref_lock);
+            bind (l_unref_locked);
+
             // Push block onto free_lists[rcx]
             // mov r8, [rdx + rcx*8 + 32]      4C 8B 44 CA 20
             code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x44); code.u8 (0xCA); code.u8 (0x20);
@@ -1397,6 +1480,8 @@ namespace Planc {
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0x47); code.u8 (0x08);
             // mov [rdx + rcx*8 + 32], rdi     48 89 7C CA 20
             code.u8 (0x48); code.u8 (0x89); code.u8 (0x7C); code.u8 (0xCA); code.u8 (0x20);
+            // Release spinlock: mov dword ptr [rdx + 96], 0
+            code.u8 (0xC7); code.u8 (0x42); code.u8 (0x60); code.u32le (0);
 
             bind (l_ret);
             ret ();
@@ -2725,6 +2810,400 @@ namespace Planc {
             pop_reg (Reg.RBX);
             leave ();
             ret ();
+        }
+
+        // Async/goroutine M:N runtime:
+        // bss_base layout (64 bytes):
+        //   +0  q_head, +8 q_tail, +16 q_lock, +24 active_tasks,
+        //   +32 futex_word, +40 stop_flag, +48 waiters_sleeping
+        // AsyncTask layout (allocated via __planc_alloc(64 + 8*slots, 0)):
+        //   +16 q_next, +24 state_pc, +32 resume_fn, +40 result,
+        //   +48 err, +56 waiter, +64 done_flag, +72 task_lock, +80.. frame
+        public void emit_rt_async (int bss_base, GenericArray<Symbol> symbols) {
+            // 1. void __planc_async_enqueue(AsyncTask* rdi)
+            int fn_start = here ();
+            var l_enq_lock = new_label ();
+            var l_enq_locked = new_label ();
+            var l_enq_empty = new_label ();
+            var l_enq_unlock = new_label ();
+            var l_enq_done = new_label ();
+            // lea rdx, [rip + bss_base]       48 8D 15 disp32
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x15);
+            record_rip (bss_base, PatchSpace.BSS);
+            bind (l_enq_lock);
+            code.u8 (0xB8); code.u32le (1); // mov eax, 1
+            code.u8 (0x87); code.u8 (0x42); code.u8 (0x10); // xchg [rdx + 16], eax
+            code.u8 (0x85); code.u8 (0xC0); // test eax, eax
+            branch (BranchKind.JE, l_enq_locked);
+            code.u8 (0xF3); code.u8 (0x90); // pause
+            branch (BranchKind.JMP, l_enq_lock);
+            bind (l_enq_locked);
+            // mov qword ptr [rdi + 16], 0     48 C7 47 10 00 00 00 00
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x47); code.u8 (0x10); code.u32le (0);
+            // mov r8, [rdx + 8]               4C 8B 42 08
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x42); code.u8 (0x08);
+            // test r8, r8                     4D 85 C0
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_enq_empty);
+            // mov [r8 + 16], rdi              49 89 78 10
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0x78); code.u8 (0x10);
+            // mov [rdx + 8], rdi              48 89 7A 08
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x7A); code.u8 (0x08);
+            branch (BranchKind.JMP, l_enq_unlock);
+            bind (l_enq_empty);
+            // mov [rdx], rdi                  48 89 3A
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x3A);
+            // mov [rdx + 8], rdi              48 89 7A 08
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x7A); code.u8 (0x08);
+            bind (l_enq_unlock);
+            // mov dword ptr [rdx + 16], 0     C7 42 10 00 00 00 00
+            code.u8 (0xC7); code.u8 (0x42); code.u8 (0x10); code.u32le (0);
+            // lock inc dword ptr [rdx + 32]   F0 FF 42 20
+            code.u8 (0xF0); code.u8 (0xFF); code.u8 (0x42); code.u8 (0x20);
+            // cmp qword ptr [rdx + 48], 0     48 83 7A 30 00
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7A); code.u8 (0x30); code.u8 (0x00);
+            branch (BranchKind.JE, l_enq_done);
+            // SYS_futex(&futex_word, FUTEX_WAKE, 1, 0, 0, 0)
+            // lea rdi, [rdx + 32]             48 8D 7A 20
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7A); code.u8 (0x20);
+            mov_esi_imm (1);
+            mov_edx (1);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xD2); // xor r10d, r10d
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0); // xor r8d, r8d
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC9); // xor r9d, r9d
+            mov_eax (202);
+            syscall ();
+            bind (l_enq_done);
+            ret ();
+            symbols.add (new Symbol ("__planc_async_enqueue", fn_start, here () - fn_start));
+
+            // 2. AsyncTask* __planc_async_spawn(void* rdi, int64 rsi)
+            fn_start = here ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            sub_rsp (8);
+            // mov r12, rdi; shl rsi, 3; lea rdi, [rsi + 64]; xor esi, esi
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE6); code.u8 (0x03);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7E); code.u8 (0x40);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            // mov rbx, rax; mov [rbx + 32], r12
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC3);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x63); code.u8 (0x20);
+            // lea rdx, [rip + bss_base]; lock inc qword ptr [rdx + 24]
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x15);
+            record_rip (bss_base, PatchSpace.BSS);
+            code.u8 (0xF0); code.u8 (0x48); code.u8 (0xFF); code.u8 (0x42); code.u8 (0x18);
+            // mov rdi, rbx; call __planc_ref (refcount = 2: caller + scheduler)
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xDF);
+            call_rel32 ("__planc_ref");
+            // mov rax, rbx
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD8);
+            add_rsp (8);
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_async_spawn", fn_start, here () - fn_start));
+
+            // 3. int64 __planc_async_await(AsyncTask* rdi, AsyncTask* rsi)
+            // Returns 1 if suspended, 0 if child already finished.
+            fn_start = here ();
+            var l_aw_lock = new_label ();
+            var l_aw_locked = new_label ();
+            var l_aw_done = new_label ();
+            bind (l_aw_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x47); code.u8 (0x48); // xchg [rdi + 72], eax
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_aw_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_aw_lock);
+            bind (l_aw_locked);
+            // cmp qword ptr [rdi + 64], 0     48 83 7F 40 00
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7F); code.u8 (0x40); code.u8 (0x00);
+            branch (BranchKind.JNE, l_aw_done);
+            // mov [rdi + 56], rsi             48 89 77 38
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x77); code.u8 (0x38);
+            // mov dword ptr [rdi + 72], 0     C7 47 48 00 00 00 00
+            code.u8 (0xC7); code.u8 (0x47); code.u8 (0x48); code.u32le (0);
+            mov_eax (1);
+            ret ();
+            bind (l_aw_done);
+            code.u8 (0xC7); code.u8 (0x47); code.u8 (0x48); code.u32le (0);
+            xor_eax ();
+            ret ();
+            symbols.add (new Symbol ("__planc_async_await", fn_start, here () - fn_start));
+
+            // 4. void __planc_async_finish(AsyncTask* rdi, int64 rsi, void* rdx)
+            fn_start = here ();
+            var l_fin_lock = new_label ();
+            var l_fin_locked = new_label ();
+            var l_fin_no_waiter = new_label ();
+            var l_fin_done = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            // mov rbx, rdi; mov [rbx + 40], rsi; mov [rbx + 48], rdx; mov qword ptr [rbx + 24], -1
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x73); code.u8 (0x28);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x53); code.u8 (0x30);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x18); code.u32le (0xFFFFFFFFu);
+            bind (l_fin_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x43); code.u8 (0x48); // xchg [rbx + 72], eax
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_fin_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_fin_lock);
+            bind (l_fin_locked);
+            // mov qword ptr [rbx + 64], 1     48 C7 43 40 01 00 00 00
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x40); code.u32le (1);
+            // mov r12, [rbx + 56]             4C 8B 63 38
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x63); code.u8 (0x38);
+            // mov qword ptr [rbx + 56], 0     48 C7 43 38 00 00 00 00
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x38); code.u32le (0);
+            // mov dword ptr [rbx + 72], 0     C7 43 48 00 00 00 00
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x48); code.u32le (0);
+            // test r12, r12; je l_fin_no_waiter
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xE4);
+            branch (BranchKind.JE, l_fin_no_waiter);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            call_rel32 ("__planc_async_enqueue");
+            bind (l_fin_no_waiter);
+            // mov rdi, rbx; call __planc_unref
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xDF);
+            call_rel32 ("__planc_unref");
+            // lea rdx, [rip + bss_base]; lock dec qword ptr [rdx + 24]
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x15);
+            record_rip (bss_base, PatchSpace.BSS);
+            code.u8 (0xF0); code.u8 (0x48); code.u8 (0xFF); code.u8 (0x4A); code.u8 (0x18);
+            branch (BranchKind.JNE, l_fin_done);
+            // All tasks finished: stop_flag = 1; futex_word++; wake all waiters
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x42); code.u8 (0x28); code.u32le (1);
+            code.u8 (0xF0); code.u8 (0xFF); code.u8 (0x42); code.u8 (0x20);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7A); code.u8 (0x30); code.u8 (0x00);
+            branch (BranchKind.JE, l_fin_done);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7A); code.u8 (0x20);
+            mov_esi_imm (1);
+            mov_edx (0x7FFFFFFF);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xD2);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC9);
+            mov_eax (202);
+            syscall ();
+            bind (l_fin_done);
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_async_finish", fn_start, here () - fn_start));
+
+            // 5. void __planc_async_worker_loop()
+            fn_start = here ();
+            var l_wk_loop = new_label ();
+            var l_wk_lock = new_label ();
+            var l_wk_locked = new_label ();
+            var l_wk_has_next = new_label ();
+            var l_wk_empty = new_label ();
+            var l_wk_exit = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            sub_rsp (8);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x1D); // lea rbx, [rip + bss_base]
+            record_rip (bss_base, PatchSpace.BSS);
+            bind (l_wk_loop);
+            bind (l_wk_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x43); code.u8 (0x10); // xchg [rbx + 16], eax
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_wk_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_wk_lock);
+            bind (l_wk_locked);
+            // mov rax, [rbx]                  48 8B 03
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x03);
+            test_rax_rax ();
+            branch (BranchKind.JE, l_wk_empty);
+            // mov r8, [rax + 16]; mov [rbx], r8; test r8, r8; jne l_wk_has_next; mov [rbx + 8], 0
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x40); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x03);
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JNE, l_wk_has_next);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x08); code.u32le (0);
+            bind (l_wk_has_next);
+            // mov qword ptr [rax + 16], 0; mov dword ptr [rbx + 16], 0
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x40); code.u8 (0x10); code.u32le (0);
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            // mov rdi, rax; mov r10, [rax + 32]; call r10
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x50); code.u8 (0x20);
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xD2);
+            branch (BranchKind.JMP, l_wk_loop);
+
+            bind (l_wk_empty);
+            // mov dword ptr [rbx + 16], 0
+            code.u8 (0xC7); code.u8 (0x43); code.u8 (0x10); code.u32le (0);
+            // if stop_flag != 0 or active_tasks == 0: exit
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x28); code.u8 (0x00);
+            branch (BranchKind.JNE, l_wk_exit);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x18); code.u8 (0x00);
+            branch (BranchKind.JE, l_wk_exit);
+            // expected = [rbx + 32]; re-check q_head, stop_flag, active_tasks before futex_wait
+            code.u8 (0x8B); code.u8 (0x53); code.u8 (0x20); // mov edx, [rbx + 32]
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x3B); code.u8 (0x00); // cmp qword [rbx], 0
+            branch (BranchKind.JNE, l_wk_loop);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x28); code.u8 (0x00);
+            branch (BranchKind.JNE, l_wk_exit);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x18); code.u8 (0x00);
+            branch (BranchKind.JE, l_wk_exit);
+            // lock inc qword ptr [rbx + 48]
+            code.u8 (0xF0); code.u8 (0x48); code.u8 (0xFF); code.u8 (0x43); code.u8 (0x30);
+            // SYS_futex(&futex_word, FUTEX_WAIT=0, expected=edx, 0, 0, 0)
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7B); code.u8 (0x20);
+            code.u8 (0x31); code.u8 (0xF6); // xor esi, esi
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xD2);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC9);
+            mov_eax (202);
+            syscall ();
+            // lock dec qword ptr [rbx + 48]
+            code.u8 (0xF0); code.u8 (0x48); code.u8 (0xFF); code.u8 (0x4B); code.u8 (0x30);
+            branch (BranchKind.JMP, l_wk_loop);
+
+            bind (l_wk_exit);
+            add_rsp (8);
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_async_worker_loop", fn_start, here () - fn_start));
+
+            // 6. void __planc_async_run(int64 rdi /* workers */)
+            fn_start = here ();
+            var l_run_single = new_label ();
+            var l_run_done = new_label ();
+            var l_run_cap_ok = new_label ();
+            var l_spawn_loop = new_label ();
+            var l_spawn_done = new_label ();
+            var l_parent_next = new_label ();
+            var l_clone_fail = new_label ();
+            var l_join_loop = new_label ();
+            var l_join_wait = new_label ();
+            var l_join_unmap = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            sub_rsp (512);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x1D); // lea rbx, [rip + bss_base]
+            record_rip (bss_base, PatchSpace.BSS);
+            // stop_flag = 0
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x43); code.u8 (0x28); code.u32le (0);
+            // if active_tasks == 0: return
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x18); code.u8 (0x00);
+            branch (BranchKind.JE, l_run_done);
+            // r12 = workers; if r12 <= 1: l_run_single
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
+            code.u8 (0x49); code.u8 (0x83); code.u8 (0xFC); code.u8 (0x01);
+            branch (BranchKind.JLE, l_run_single);
+            // clamp r12 to 64
+            code.u8 (0x49); code.u8 (0x83); code.u8 (0xFC); code.u8 (0x40);
+            branch (BranchKind.JLE, l_run_cap_ok);
+            code.u8 (0x49); code.u8 (0xC7); code.u8 (0xC4); code.u32le (64);
+            bind (l_run_cap_ok);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xCC); // dec r12 (extra workers)
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xED); // xor r13d, r13d (spawned)
+
+            bind (l_spawn_loop);
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xE5); // cmp r13, r12
+            branch (BranchKind.JGE, l_spawn_done);
+            mov_esi_imm (0x10000);
+            emit_mmap_anon_rw ();
+            test_rax_rax ();
+            branch (BranchKind.JS, l_spawn_done);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC6); // mov r14, rax
+            code.u8 (0x41); code.u8 (0xC7); code.u8 (0x06); code.u32le (1); // mov dword [r14], 1
+            // mov [rsp + r13*8], r14        4E 89 34 EC
+            code.u8 (0x4E); code.u8 (0x89); code.u8 (0x34); code.u8 (0xEC);
+            // SYS_clone(0x00210F00, r14 + 0x10000, 0, r14, 0)
+            mov_edi (0x00210F00);
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0xB6); code.u32le (0x10000); // lea rsi, [r14 + 0x10000]
+            code.u8 (0x31); code.u8 (0xD2); // xor edx, edx
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0xF2); // mov r10, r14
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0); // xor r8d, r8d
+            mov_eax (56);
+            syscall ();
+            test_rax_rax ();
+            branch (BranchKind.JS, l_clone_fail);
+            branch (BranchKind.JNE, l_parent_next);
+            // Child thread
+            call_rel32 ("__planc_async_worker_loop");
+            code.u8 (0x31); code.u8 (0xFF); // xor edi, edi
+            mov_eax (60);
+            syscall ();
+
+            bind (l_clone_fail);
+            // munmap(r14, 0x10000)
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7);
+            mov_esi_imm (0x10000);
+            mov_eax (11);
+            syscall ();
+            branch (BranchKind.JMP, l_spawn_done);
+
+            bind (l_parent_next);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC5); // inc r13
+            branch (BranchKind.JMP, l_spawn_loop);
+
+            bind (l_spawn_done);
+            call_rel32 ("__planc_async_worker_loop");
+            // Join all r13 spawned threads
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xE4); // xor r12d, r12d
+            bind (l_join_loop);
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xEC); // cmp r12, r13
+            branch (BranchKind.JGE, l_run_done);
+            // mov r14, [rsp + r12*8]        4E 8B 34 E4
+            code.u8 (0x4E); code.u8 (0x8B); code.u8 (0x34); code.u8 (0xE4);
+            bind (l_join_wait);
+            code.u8 (0x41); code.u8 (0x8B); code.u8 (0x16); // mov edx, [r14]
+            code.u8 (0x85); code.u8 (0xD2); // test edx, edx
+            branch (BranchKind.JE, l_join_unmap);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+            code.u8 (0x31); code.u8 (0xF6); // xor esi, esi (FUTEX_WAIT)
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xD2);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC9);
+            mov_eax (202);
+            syscall ();
+            branch (BranchKind.JMP, l_join_wait);
+            bind (l_join_unmap);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7);
+            mov_esi_imm (0x10000);
+            mov_eax (11);
+            syscall ();
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC4); // inc r12
+            branch (BranchKind.JMP, l_join_loop);
+
+            bind (l_run_single);
+            call_rel32 ("__planc_async_worker_loop");
+
+            bind (l_run_done);
+            add_rsp (512);
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+            symbols.add (new Symbol ("__planc_async_run", fn_start, here () - fn_start));
         }
     }
 }

@@ -86,7 +86,8 @@ namespace Planc {
                 || text == "switch" || text == "case" || text == "default"
                 || text == "break" || text == "continue"
                 || text == "enum" || text == "struct" || text == "class"
-                || text == "interface" || text == "delegate";
+                || text == "interface" || text == "delegate"
+                || text == "async" || text == "yield";
         }
 
         private void consume_gt () throws ParseError, LexError {
@@ -668,11 +669,14 @@ namespace Planc {
             bool is_abstract = false;
             bool is_static = false;
             bool is_extern = false;
+            bool is_async = false;
             while (current.kind == TokenKind.IDENTIFIER
-                   && (current.text == "abstract" || current.text == "static" || current.text == "extern")) {
+                   && (current.text == "abstract" || current.text == "static"
+                       || current.text == "extern" || current.text == "async")) {
                 if (current.text == "abstract") is_abstract = true;
                 else if (current.text == "static") is_static = true;
-                else is_extern = true;
+                else if (current.text == "extern") is_extern = true;
+                else is_async = true;
                 advance ();
             }
 
@@ -681,8 +685,8 @@ namespace Planc {
                     @"expected a declaration at $(current.line):$(current.column)");
 
             if (current.text == "class") {
-                if (is_static)
-                    throw new ParseError.UNEXPECTED_TOKEN (@"top-level class cannot be 'static' at $(current.line):$(current.column)");
+                if (is_static || is_async)
+                    throw new ParseError.UNEXPECTED_TOKEN (@"top-level class cannot be 'static' or 'async' at $(current.line):$(current.column)");
                 parse_class (is_abstract);
                 return;
             }
@@ -691,10 +695,14 @@ namespace Planc {
                     @"'abstract' is only valid on classes at $(current.line):$(current.column)");
             }
             if (current.text == "enum") {
+                if (is_async)
+                    throw new ParseError.UNEXPECTED_TOKEN (@"enum cannot be 'async' at $(current.line):$(current.column)");
                 parse_enum ();
                 return;
             }
             if (current.text == "struct") {
+                if (is_async)
+                    throw new ParseError.UNEXPECTED_TOKEN (@"struct cannot be 'async' at $(current.line):$(current.column)");
                 parse_struct ();
                 return;
             }
@@ -723,14 +731,21 @@ namespace Planc {
             advance ();
 
             if (current.kind == TokenKind.LPAREN) {
+                if (is_async && (is_extern || asm_body != null || name == "main"))
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"'async' is not valid on extern, [AsmBody], or 'main' function '$name' at $(type_line):$(type_column)");
                 var f = parse_function_rest (decl_type, type_name, name, type_line, type_column, asm_body, asm_line, asm_col, is_extern);
                 f.is_static = is_static;
+                f.is_async = is_async;
                 if (has_top_name (name))
                     throw new ParseError.DUPLICATE_FUNCTION (
                         @"duplicate name: $name at $(f.line):$(f.column)");
                 program.functions.add (f);
                 return;
             }
+            if (is_async)
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"'async' is only valid on functions at $(type_line):$(type_column)");
             if (asm_body != null)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"[AsmBody] is only valid on functions at $asm_line:$asm_col");
@@ -1795,23 +1810,108 @@ namespace Planc {
                 bool is_abstract_m = false;
                 bool is_static_m = false;
                 bool is_extern_m = false;
+                bool is_signal = false;
+                bool is_async_m = false;
                 while (current.kind == TokenKind.IDENTIFIER
                        && (current.text == "virtual" || current.text == "override"
                            || current.text == "abstract" || current.text == "static"
-                           || current.text == "extern")) {
+                           || current.text == "extern" || current.text == "signal"
+                           || current.text == "async")) {
                     if (current.text == "virtual") is_virtual = true;
                     else if (current.text == "override") is_override = true;
                     else if (current.text == "abstract") is_abstract_m = true;
                     else if (current.text == "static") is_static_m = true;
-                    else is_extern_m = true;
+                    else if (current.text == "extern") is_extern_m = true;
+                    else if (current.text == "async") is_async_m = true;
+                    else is_signal = true;
                     advance ();
+                }
+
+                if (is_signal) {
+                    if (is_static_m || is_override || is_abstract_m || is_extern_m || is_async_m)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"signal cannot be static, override, abstract, extern, or async at $(current.line):$(current.column)");
+                    ValaType sret = ValaType.VOID;
+                    string sret_name = "";
+                    if (current.kind != TokenKind.IDENTIFIER || !parse_type (current.text, out sret, out sret_name))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected signal return type in class '$(cd.name)' at $(current.line):$(current.column)");
+                    var sl = current.line;
+                    var sc = current.column;
+                    advance ();
+                    parse_type_suffix (ref sret, ref sret_name);
+                    if (current.kind != TokenKind.IDENTIFIER || is_reserved (current.text))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected signal name in class '$(cd.name)' at $(current.line):$(current.column)");
+                    var sname = current.text;
+                    advance ();
+                    var plist = parse_param_list ();
+                    var del_name = @"__sig_del_$(cd.name)_$(sname)";
+                    var sd = new SignalDecl () {
+                        name = sname,
+                        return_type = sret,
+                        return_type_name = sret_name,
+                        is_virtual = is_virtual,
+                        handler_delegate_name = del_name,
+                        line = sl,
+                        column = sc
+                    };
+                    foreach (var p in plist)
+                        sd.params.add (p);
+                    if (current.kind == TokenKind.SEMICOLON) {
+                        advance ();
+                    } else {
+                        var dfn = new Function () {
+                            name = @"$(cd.name)__sig_def_$(sname)",
+                            method_name = sname,
+                            return_type = sret,
+                            return_type_name = sret_name,
+                            owner_class = cd.name,
+                            line = sl,
+                            column = sc
+                        };
+                        dfn.params.add (new Param () {
+                            param_type = ValaType.CLASS,
+                            type_name = cd.name,
+                            name = "this",
+                            line = sl,
+                            column = sc
+                        });
+                        foreach (var p in plist)
+                            dfn.params.add (p);
+                        parse_block_into (dfn.body);
+                        sd.default_handler = dfn;
+                        program.functions.add (dfn);
+                    }
+                    if (cd.find_own_signal (sname) != null || cd.find_own_method (sname) != null || cd.find_own_field (sname) != null)
+                        throw new ParseError.DUPLICATE_FUNCTION (
+                            @"duplicate member '$sname' in class '$(cd.name)' at $sl:$sc");
+                    var dd = new DelegateDecl () {
+                        name = del_name,
+                        return_type = sret,
+                        return_type_name = sret_name,
+                        line = sl,
+                        column = sc
+                    };
+                    dd.params.add (new Param () {
+                        param_type = ValaType.CLASS,
+                        type_name = cd.name,
+                        name = "sender",
+                        line = sl,
+                        column = sc
+                    });
+                    foreach (var p in plist)
+                        dd.params.add (p);
+                    program.delegates.add (dd);
+                    cd.signals.add (sd);
+                    continue;
                 }
 
                 // Destructor: `~ClassName () { ... }`
                 if (current.kind == TokenKind.TILDE) {
                     var dl = current.line;
                     var dc = current.column;
-                    if (is_virtual || is_override || is_abstract_m || is_static_m)
+                    if (is_virtual || is_override || is_abstract_m || is_static_m || is_async_m)
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"destructor cannot have modifiers at $dl:$dc");
                     advance ();
@@ -1848,7 +1948,7 @@ namespace Planc {
                 ValaType ft = ValaType.VOID;
                 string ft_name = "";
 
-                if (!is_virtual && !is_override && !is_abstract_m && !is_static_m && current.text == cd.name) {
+                if (!is_virtual && !is_override && !is_abstract_m && !is_static_m && !is_async_m && current.text == cd.name) {
                     advance ();
                     string ctor_sub = "";
                     bool saw_dot = false;
@@ -1944,6 +2044,9 @@ namespace Planc {
                     if (is_static_m && (is_virtual || is_override || is_abstract_m))
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"static method '$(mname)' cannot be virtual, override, or abstract at $mem_l:$mem_c");
+                    if (is_async_m && (is_abstract_m || is_extern_m || m_asm != null))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"'async' method '$(mname)' cannot be abstract, extern, or [AsmBody] at $mem_l:$mem_c");
                     var plist = parse_param_list ();
                     var mfn = new Function () {
                         name = mname,
@@ -1953,6 +2056,7 @@ namespace Planc {
                         is_override = is_override,
                         is_abstract = is_abstract_m,
                         is_static = is_static_m,
+                        is_async = is_async_m,
                         owner_class = cd.name,
                         line = mem_l,
                         column = mem_c
@@ -1983,7 +2087,7 @@ namespace Planc {
                             @"duplicate member '$mname' in class '$(cd.name)' at $mem_l:$mem_c");
                     cd.methods.add (mfn);
                 } else if (current.kind == TokenKind.LBRACE) {
-                    if (is_static_m || ft == ValaType.VOID)
+                    if (is_static_m || is_async_m || ft == ValaType.VOID)
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"invalid property '$mname' in class '$(cd.name)' at $mem_l:$mem_c");
                     if (is_abstract_m && !cd.is_abstract)
@@ -2023,7 +2127,7 @@ namespace Planc {
                             cd.methods.add (sm);
                     }
                 } else {
-                    if (is_virtual || is_override || is_abstract_m || is_static_m)
+                    if (is_virtual || is_override || is_abstract_m || is_static_m || is_async_m)
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"field '$mname' cannot have method modifiers at $mem_l:$mem_c");
                     if (ft == ValaType.VOID)
@@ -2171,6 +2275,20 @@ namespace Planc {
                 if (name == "continue") {
                     advance ();
                     var s = new ContinueStatement ();
+                    s.line = l;
+                    s.column = c;
+                    expect (TokenKind.SEMICOLON, "';'");
+                    return s;
+                }
+                if (name == "yield") {
+                    advance ();
+                    Expr? v = null;
+                    if (current.kind != TokenKind.SEMICOLON)
+                        v = parse_expr ();
+                    var ye = new YieldExpr () { value = v };
+                    ye.line = l;
+                    ye.column = c;
+                    var s = new ExprStatement () { expr = ye };
                     s.line = l;
                     s.column = c;
                     expect (TokenKind.SEMICOLON, "';'");
@@ -3064,6 +3182,15 @@ namespace Planc {
                 var tok = current;
                 advance ();
                 return parse_template (tok);
+            }
+
+            if (current.kind == TokenKind.IDENTIFIER && current.text == "yield") {
+                advance ();
+                var v = parse_unary ();
+                var ye = new YieldExpr () { value = v };
+                ye.line = l;
+                ye.column = c;
+                return ye;
             }
 
             if (current.kind == TokenKind.LPAREN) {
