@@ -85,6 +85,9 @@ namespace Planet.Kernel {
             if (sc == 0x2D) return 'x';
             if (sc == 0x15) return 'y';
             if (sc == 0x2C) return 'z';
+            if (sc == 0x34) return '.';
+            if (sc == 0x0C) return '-';
+            if (sc == 0x35) return '/';
             return 0;
         }
     }

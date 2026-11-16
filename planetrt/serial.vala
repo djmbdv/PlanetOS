@@ -29,6 +29,21 @@ namespace Planet.Rt {
     public extern void serial_init ();
 
     [AsmBody(@"
+        mov $0x3FD, %dx
+        in %dx, %al
+        and $0x01, %eax
+        jz _ser_rx_empty
+        mov $0x3F8, %dx
+        xor %eax, %eax
+        in %dx, %al
+        ret
+    _ser_rx_empty:
+        mov $-1, %rax
+        ret
+    ")]
+    public extern int serial_try_read ();
+
+    [AsmBody(@"
         mov %rdi, %rcx
     _ser_wait:
         mov $0x3FD, %dx

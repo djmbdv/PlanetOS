@@ -13,6 +13,11 @@ namespace Planet.Kernel {
     public int syscall_dispatch (int num, int a0, int a1, int a2) {
         if (num == 1) { // SYS_CONSOLE_WRITE(buf, len)
             __planet_console_write (a0, a1);
+            for (int i = 0; i < a1; i++) {
+                int w = mmio_read32 ((a0 + i) & ~3);
+                int b = (w >> (((a0 + i) & 3) * 8)) & 0xFF;
+                Vga.write_byte (b);
+            }
             return a1;
         }
         if (num == 2) { // SYS_TICKS()
@@ -25,8 +30,16 @@ namespace Planet.Kernel {
             Pmm.free_frame (a0);
             return 0;
         }
-        if (num == 5) { // SYS_READ_KEY()
-            return Keyboard.poll_scancode ();
+        if (num == 5) { // SYS_READ_KEY() -> ASCII char or -1
+            while (true) {
+                int sc = Keyboard.poll_scancode ();
+                if (sc == -1)
+                    break;
+                int ch = Keyboard.scancode_to_ascii (sc);
+                if (ch != 0)
+                    return ch;
+            }
+            return serial_try_read ();
         }
         if (num == 6) { // SYS_OPEN(name_ptr, name_len)
             int ino = Xfs.lookup_root (a0, a1);
@@ -81,8 +94,18 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 11) { // SYS_EXIT(code)
+            if (exec_depth > 0) {
+                exec_depth = exec_depth - 1;
+                exec_return_to_parent (a0);
+            }
             qemu_debug_exit (a0);
             return 0;
+        }
+        if (num == 12) { // SYS_READDIR(buf, max_bytes)
+            return Xfs.list_root (a0, a1);
+        }
+        if (num == 13) { // SYS_EXEC(name_ptr, name_len)
+            return ElfLoader.exec_from_xfs (a0, a1);
         }
         return -1;
     }

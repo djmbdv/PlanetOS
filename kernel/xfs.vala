@@ -133,6 +133,41 @@ namespace Planet.Kernel {
             return 0;
         }
 
+        public static int list_root (int buf, int max_bytes) {
+            if (!xfs_mounted || max_bytes <= 0)
+                return -1;
+            if (!load_inode (xfs_rootino, xfs_sec_buf))
+                return -1;
+            int off = inode_off (xfs_rootino);
+            int ino_base = xfs_sec_buf + off;
+            int fmt = read_u8 (ino_base + 5);
+            if (fmt != 1)
+                return -1;
+            int ver = read_u8 (ino_base + 4);
+            int df = ino_base + ((ver >= 3) ? 176 : 100);
+            int count = read_u8 (df);
+            int i8count = read_u8 (df + 1);
+            int cur = df + 4 + ((i8count > 0) ? 8 : 4);
+            int pos = 0;
+            for (int i = 0; i < count; i++) {
+                int nlen = read_u8 (cur);
+                int name_addr = cur + 3;
+                int ino_addr = name_addr + nlen;
+                for (int k = 0; k < nlen; k++) {
+                    if (pos < max_bytes) {
+                        mmio_write8 (buf + pos, read_u8 (name_addr + k));
+                        pos = pos + 1;
+                    }
+                }
+                if (pos < max_bytes) {
+                    mmio_write8 (buf + pos, '\n');
+                    pos = pos + 1;
+                }
+                cur = ino_addr + ((i8count > 0) ? 8 : 4);
+            }
+            return pos;
+        }
+
         public static int file_size (int ino) {
             if (!load_inode (ino, xfs_sec_buf))
                 return -1;

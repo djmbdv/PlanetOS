@@ -116,6 +116,7 @@ problems** and **creates six**:
 | [docs/planc/slice-20.md](docs/planc/slice-20.md) | **Implemented slice 20**: kernel PS/2 keyboard (`IRQ1`) and primary ATA PIO LBA28 disk drivers verified in QEMU |
 | [docs/planc/slice-21.md](docs/planc/slice-21.md) | **Implemented slice 21**: read-only XFS filesystem driver over ATA PIO and expanded `int 0x80` runtime syscalls (`open`/`read`/`close`/`file_size`/`yield`/`exit`) |
 | [docs/planc/slice-22.md](docs/planc/slice-22.md) | **Implemented slice 22**: `--target=planetos` userland ELF64 target (`0x800000`, `int 0x80` runtime) and kernel ELF64 loader running `user/init.elf` from XFS in QEMU |
+| [docs/planc/slice-23.md](docs/planc/slice-23.md) | **Implemented slice 23**: VGA `80x25` + COM1 RX drivers, `SYS_READDIR` / `SYS_EXEC`, `--image-base`, and interactive `user/shell.vala` (`help`, `ls`, `cat`, `exec`, `ticks`, `mem`, `exit`) |
 
 ## 5. State of the measurements
 

@@ -22,6 +22,7 @@ namespace Planc {
         var check_leaks = false;
         var freestanding = false;
         var target_planetos = false;
+        uint64 image_base = 0;
 
         for (int i = 1; i < args.length; i++) {
             var a = args[i];
@@ -43,6 +44,26 @@ namespace Planc {
                 freestanding = true;
             } else if (a == "--target=planetos") {
                 target_planetos = true;
+            } else if (a.has_prefix ("--image-base=")) {
+                var val_str = a.substring (13);
+                uint64 parsed = 0;
+                if (val_str.has_prefix ("0x") || val_str.has_prefix ("0X")) {
+                    for (int k = 2; k < val_str.length; k++) {
+                        uint8 c = val_str[k];
+                        uint64 d = 0;
+                        if (c >= '0' && c <= '9') d = (uint64) (c - '0');
+                        else if (c >= 'a' && c <= 'f') d = (uint64) (10 + c - 'a');
+                        else if (c >= 'A' && c <= 'F') d = (uint64) (10 + c - 'A');
+                        parsed = (parsed << 4) | d;
+                    }
+                } else {
+                    for (int k = 0; k < val_str.length; k++) {
+                        uint8 c = val_str[k];
+                        if (c >= '0' && c <= '9')
+                            parsed = parsed * 10 + (uint64) (c - '0');
+                    }
+                }
+                image_base = parsed;
             } else if (a == "-h" || a == "--help") {
                 Host.println (USAGE);
                 return 0;
@@ -107,6 +128,8 @@ namespace Planc {
         var rodata = codegen.emitter.data.to_array ();
         var data = codegen.emitter.init_data.to_array ();
         uint64 base_addr = target_planetos ? (uint64) 0x800000 : Elf.BASE_ADDRESS;
+        if (image_base != 0)
+            base_addr = image_base;
         var layout = Elf.compute (text.length, rodata.length, data.length,
                                   codegen.emitter.bss_size, codegen.symbols, base_addr);
 

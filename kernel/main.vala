@@ -43,6 +43,7 @@ async void logger_task (Channel<int> ch, int target) {
 
 int main () {
     serial_init ();
+    Vga.init ();
     var b = new KernelBanner ("PlanetOS", 0, 1);
     b.announce ();
     Hal.print_cpu_vendor ();
@@ -101,15 +102,28 @@ int main () {
 
     if (xok == 1) {
         int nbuf2 = Pmm.alloc_frame ();
-        mmio_write8 (nbuf2 + 0, 'i');
-        mmio_write8 (nbuf2 + 1, 'n');
-        mmio_write8 (nbuf2 + 2, 'i');
-        mmio_write8 (nbuf2 + 3, 't');
-        mmio_write8 (nbuf2 + 4, '.');
-        mmio_write8 (nbuf2 + 5, 'e');
-        mmio_write8 (nbuf2 + 6, 'l');
-        mmio_write8 (nbuf2 + 7, 'f');
-        int efd = invoke_syscall (6, nbuf2, 8, 0);
+        // Try shell.elf first, then init.elf
+        mmio_write8 (nbuf2 + 0, 's');
+        mmio_write8 (nbuf2 + 1, 'h');
+        mmio_write8 (nbuf2 + 2, 'e');
+        mmio_write8 (nbuf2 + 3, 'l');
+        mmio_write8 (nbuf2 + 4, 'l');
+        mmio_write8 (nbuf2 + 5, '.');
+        mmio_write8 (nbuf2 + 6, 'e');
+        mmio_write8 (nbuf2 + 7, 'l');
+        mmio_write8 (nbuf2 + 8, 'f');
+        int efd = invoke_syscall (6, nbuf2, 9, 0);
+        if (efd < 0) {
+            mmio_write8 (nbuf2 + 0, 'i');
+            mmio_write8 (nbuf2 + 1, 'n');
+            mmio_write8 (nbuf2 + 2, 'i');
+            mmio_write8 (nbuf2 + 3, 't');
+            mmio_write8 (nbuf2 + 4, '.');
+            mmio_write8 (nbuf2 + 5, 'e');
+            mmio_write8 (nbuf2 + 6, 'l');
+            mmio_write8 (nbuf2 + 7, 'f');
+            efd = invoke_syscall (6, nbuf2, 8, 0);
+        }
         Pmm.free_frame (nbuf2);
         if (efd >= 0) {
             int esz = invoke_syscall (9, efd, 0, 0);
