@@ -1,0 +1,296 @@
+# 03 — `planetrt`: runtime and standard library
+
+## 1. Boundary with the compiler
+
+The separation is strict:
+
+| Belongs to `planc` | Belongs to `planetrt` |
+|---|---|
+| Type layout, vtables, itables, *mangling* | Implementation of `ref`/`unref`, type descriptors |
+| Insertion of `ref`/`unref` | Counters, weak reference table |
+| Generated signal dispatch | Handler storage, high-level connection and emission |
+| `async` state machine | Coroutine scheduler, timers |
+| Construction of `PlanetError` in `throw` | `PlanetError` type, domains, formatting |
+| Calls to `alloc`/`free` | Per-profile allocators |
+
+`planc` does **not** contain runtime business logic, and `planetrt` does **not** contain generated code. If a responsibility is in the wrong place, it appears duplicated in the three profiles and the three versions diverge.
+
+## 2. Object model
+
+### 2.1 Instance and descriptor
+
+```
+class instance                        type descriptor
+┌──────────────────────┐              ┌───────────────────────────┐
+│ vtable*              │─────────────▶│ padre*                    │
+│ refcount   uint32    │              │ nombre                    │
+│ banderas   uint32    │              │ tamano_instancia          │
+│ fields…              │              │ interfaz*[]               │
+└──────────────────────┘              │ senal[]                   │
+                                      │ propiedad[]               │
+                                      │ finalizar                 │
+                                      └───────────────────────────┘
+```
+
+- The descriptor is **static**, in `.rodata`. There is no runtime registration.
+- `finalizar` is emitted only if the type declares `~destructor` or has fields that need it.
+- The flags include `COMPACTO`, `SIMPLE`, `TIENE_SENALES`, `TIENE_DEBILES`, which allow the runtime to skip work.
+
+### 2.2 Reference counting
+
+```vala
+public void* planet_ref(void* obj) {
+    if (obj != null) {
+        var i = (Instancia*) obj;
+        atomic_inc(&i->refcount);
+    }
+    return obj;
+}
+
+public void planet_unref(void* obj) {
+    if (obj == null) return;
+    var i = (Instancia*) obj;
+    if (atomic_dec_y_cero(&i->refcount)) {
+        debiles_notificar(i);          // nulls the weak references before freeing
+        if (i->vtable->finalizar != null) i->vtable->finalizar(i);
+        planet_liberar(i);
+    }
+}
+```
+
+Invariants:
+
+- The counter never reaches zero while an `owned` reference exists.
+- `unref` is **not** called with the object's locks held.
+- `debiles_notificar` runs before `finalizar`: a `weak` never sees freed memory.
+- Cycles are filtered out by design (§5 of [02](02-compiler.md#5-memory-model)).
+
+### 2.3 Weak references
+
+Every object with the `TIENE_DEBILES` flag carries a list of slots. On free, they are walked and set to `null`. The operation is O(n) in the number of weak references of the object, not global.
+
+## 3. Text
+
+### 3.1 Strings
+
+```
+string → ┌──────────┬──────────┬──────────┬─────────────────────────────┐
+         │ refcount │ hash     │ length   │ bytes UTF-8 … 0x00          │
+         └──────────┴──────────┴──────────┴─────────────────────────────┘
+```
+
+| Operation | Behaviour |
+|---|---|
+| `+` | concatenation with a new refcount |
+| `longitud` | O(1) read of the header `length` field (`uint64`) |
+| `sub` | new string; never a view over the original |
+| `comparar` | byte by byte, not by *code point* |
+| `hash` | 64-bit FNV-1a, cached in the `hash` field; `0` means "not computed" |
+
+The encoding is UTF-8 and it is validated when constructing from external bytes. A `string` can contain invalid sequences if the programmer forces it; the iteration functions treat them as bytes.
+
+### 3.2 Formatting
+
+Without `va_list` (VL-11), formatting is a **compiler intrinsic**:
+
+```vala
+print(@"hola $nombre, $n elementos");
+```
+
+it is lowered to a sequence of typed calls:
+
+```vala
+salida.escribir("hola ");
+salida.escribir(nombre);
+salida.escribir(", ");
+salida.escribir_entero(n);
+salida.escribir(" elementos");
+```
+
+Consequences:
+
+- There is no format analysis at runtime: a type error is a compile error.
+- There is no `%f`, `%s` or conversion table on the execution path.
+- The only delicate point is **`escribir_flotante`**: correct decimal conversion with exact round-trip (RT-08). It is implemented once, tested against an oracle and shared with introspection.
+
+### 3.3 Unicode
+
+Tables generated at build time from `UnicodeData.txt` (RT-09), with compressed ranges. Character properties and classification are offered. **There is no normalization** (NFC/NFD) and no grapheme segmentation: they are not requirements and their cost is disproportionate.
+
+## 4. Arrays and containers
+
+```
+T[] → ┌──────────┬──────────┬──────────────────────────────┐
+      │ refcount │ longitud │ elementos …                  │
+      └──────────┴──────────┴──────────────────────────────┘
+```
+
+- `longitud` is `size_t` and is queried in O(1).
+- An array can be `unowned`: then the pointer points directly to the elements and the header does not exist. The compiler distinguishes both cases in the type.
+- Array literals are materialized in `.rodata` if they are constant.
+
+Container library, all in Vala on top of the profile allocator:
+
+| Type | Structure | Notes |
+|---|---|---|
+| `Lista<T>` | dynamic array | 1.5× growth, O(1) index |
+| `ListaEnlazada<T>` | doubly linked | no block allocation |
+| `Diccionario<K,V>` | open hash table with *tombstones* | iteration order not defined |
+| `Conjunto<T>` | hash table | — |
+| `Cola<T>` / `Pila<T>` | circular array | — |
+| `BufferBytes` | `uint8` array with length and capacity | I/O |
+
+Hash and equality are resolved at compile time: for types with their own `hash()`/`igual()` those are used; for integers, their value; for strings, FNV-1a.
+
+## 5. Signals
+
+The compiler generates emission (§7 of [02](02-compiler.md#7-signals)); the runtime provides:
+
+```vala
+public class NodoSenal {
+    public void*  codigo;      // typed function pointer
+    public void*  destino;
+    public void*  datos;
+    public uint32 banderas;    // BLOQUEADO, DESCONECTADO_AL_EMITIR, UNO_SOLO
+    public NodoSenal? siguiente;
+}
+```
+
+| Operation | Requirement |
+|---|---|
+| `conectar` | inserts before the `RUN_LAST` ones; returns a stable identifier |
+| `desconectar` during emission | marks `DESCONECTADO_AL_EMITIR`; it is freed when the traversal ends |
+| `bloquear` | prevents the call without altering the order |
+| recursive emission | depth counter per signal, configurable limit |
+| emission without allocating | the traversal does not reserve memory (RT-06) |
+
+## 6. Main loop and coroutines
+
+### 6.1 Event sources
+
+```vala
+public abstract class Fuente : Object {
+    public abstract bool preparar(out int64 timeout_ns);
+    public abstract bool comprobar();
+    public abstract bool despachar();
+}
+```
+
+`Planet.Eventos.Principal` keeps a queue of ready sources and a list of sources with a timer. Its loop is:
+
+```
+while there are sources:
+    prepare all → minimum timeout
+    if there are ready ones: dispatch
+    if not: sleep until the minimum or until an IRQ/channel wakes it up
+```
+
+In the `kernel` profile, sleeping is `sti; hlt`; in `user`, `chan_recv` with a timeout; in `host`, the host's `poll`.
+
+### 6.2 Coroutines
+
+The compiler generates the state machine (§8 of [02](02-compiler.md#8-coroutines-and-errors)); the runtime provides the `Tarea` object, the ready task queue and the integration with sources:
+
+| Piece | Responsibility |
+|---|---|
+| `Tarea` | result, error, continuations, state |
+| `esperar(tarea)` | suspends the current coroutine and resumes it when it completes |
+| `FuenteTarea` | adapts a `Tarea` to a `Fuente` so that it can be awaited in the loop |
+| timer | `FuenteTemporizador` with 1 ms resolution in kernel and `user` |
+
+Without `GTask`, without hidden threads, without thread pools: a coroutine runs on the thread that resumes it.
+
+## 7. Errors
+
+```vala
+public class Error : Object {
+    public string dominio { get; construct; }
+    public int    codigo  { get; construct; }
+    public string mensaje { get; construct; }
+}
+```
+
+As in Vala, an `errordomain` groups codes. The difference is the transport: a hidden out parameter, not `GError**` with a C ABI (§8.2 of [02](02-compiler.md#82-throws)). The type is ours and so is its symbol name.
+
+## 8. Profiles
+
+The profile is selected with `--perfil` and changes only the `planetrt/perfil/` package.
+
+### 8.1 `host`
+
+| Service | Implementation |
+|---|---|
+| allocator | host allocator |
+| locking | host threads |
+| time | host monotonic clock |
+| I/O | host descriptors |
+| startup | host `main` function |
+
+This profile is **for development and testing** (VE-01). It is the only place where the runtime talks to a foreign operating system. The directory is excluded from the `kernel` and `user` builds, and VE-02 fails if a host symbol appears outside it.
+
+### 8.2 `kernel`
+
+| Service | Implementation |
+|---|---|
+| allocator | slab by size + buddy for large blocks |
+| locking | spinlock with local `cli`/`sti` |
+| time | invariant TSC, HPET as fallback |
+| log I/O | 1650 UART and framebuffer |
+| panic | `Asignador` does not return `null`: it panics with a diagnostic |
+
+In this profile **`alloc` never fails silently**. An allocation failure in the kernel is a bug, not a recoverable condition, and it is treated as such.
+
+### 8.3 `user`
+
+| Service | Implementation |
+|---|---|
+| allocator | arena over `mem_brk` + `mem_map` for large blocks |
+| locking | futex on channel |
+| time | `time_mono` |
+| I/O | `file_read`/`file_write` and `chan_*` |
+| startup | `_start` in `[AsmBody]` → `planet_iniciar` |
+
+## 9. Standard library
+
+Everything is Vala compiled by `planc` (RT-07). No third-party binaries, no external headers.
+
+| Package | Content |
+|---|---|
+| `Planet.Nucleo` | `Object`, `ref`/`unref`, descriptors, allocator, panic |
+| `Planet.Texto` | strings, formatting, UTF-8, string builder |
+| `Planet.Colecciones` | lists, dictionaries, sets, queues, buffers |
+| `Planet.Eventos` | sources, main loop, timers |
+| `Planet.Corrutinas` | `Tarea`, `esperar`, adapters |
+| `Planet.Errores` | `Error`, domains, propagation |
+| `Planet.Sistema` | processes, files, channels, environment, time |
+| `Planet.Shell` | command-line parsing, quoting, expansion |
+| `Planet.Config` | reading and writing of key-value manifests |
+| `Planet.Pruebas` | assertions and suite execution, usable inside the system |
+
+The `Planet.Pruebas` package is not a luxury: without it, verification inside the system (VE-05) does not exist.
+
+## 10. Source compatibility with existing Vala
+
+**It is not a requirement.** A Vala program written for GLib uses `GLib.` and `GObject.` and will not compile.
+
+Only one optional path is evaluated, on technical grounds:
+
+| Option | Description | Cost |
+|---|---|---|
+| **No layer** | Only `Planet.*`. New code. | None |
+| **`glib-src.vapi`** | A `.vapi` that declares `GLib.*` and an implementation in Vala that maps whatever has an equivalent form | Only the subset that is used is implemented; there is no ABI involved, only names |
+| **Source translation** | Tool that rewrites `GLib.` to `Planet.` | Fragile; only for mechanical cases |
+
+The middle option is viable precisely because there is no ABI: `GLib.StringBuilder` can be an alias of `Planet.Texto.Constructor` with no binary consequence. It is decided in [07](07-risks-and-decisions.md#4-open-decisions) and it blocks nothing.
+
+## 11. Runtime risks
+
+| Risk | Signal | Mitigation |
+|---|---|---|
+| Refcount imbalance | Objects that are freed too early or never | Exact counters in the `host` profile; `alloc_count == free_count` at the end of each suite (RT-04) |
+| `unref` with a lock held | Sporadic deadlock | The compiler cannot detect it: it is audited in review and the rule is documented |
+| Race in `refcount` | Corruption only with several threads | Stress test; `lock` mandatory unless explicitly annotated |
+| Signal emission allocates memory | Failure in IRQ context | Test with the allocator blocked (RT-06) |
+| Inexact floating-point formatting | Numbers that do not return to their original value | Round-trip test against an oracle (RT-08) |
+| Disproportionate Unicode tables | Bloated binary | Compressed ranges generated at build time (RT-09) |
+| The `host` profile leaks dependencies into the target | Host symbol in a system binary | Per-directory symbol audit (VE-02) |

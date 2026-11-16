@@ -1,0 +1,19 @@
+# planc build output
+/planc/build/
+
+# Experiment temporary outputs
+/experiments/e01-dialect/ejecutables/*
+!/experiments/e01-dialect/ejecutables/.gitkeep
+
+# Vala / C / ELF intermediate and binary artifacts
+*.vala.c
+*.o
+*.a
+*.so
+/build/
+/out/
+
+# Editor and OS files
+*~
+*.swp
+.DS_Store
