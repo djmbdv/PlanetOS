@@ -369,6 +369,8 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
     w_bin="$WORK/worker.elf"
     wc_bin="$WORK/wc.elf"
     cd_bin="$WORK/cairo_demo.elf"
+    sp_bin="$WORK/frag.spv"
+    sd_bin="$WORK/spv_demo.elf"
     s_bin="$WORK/shell.elf"
     k_ser="$WORK/qemu_serial.log"
     k_disk="$WORK/planet_disk.img"
@@ -380,26 +382,36 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
         ko "freestanding_qemu" "user wc compile failed: $(cat "$WORK/wc.err")"
     elif ! "$PLANC" --target=planetos "$ROOT/stdlib/cairo_gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$cd_bin" 2>"$WORK/cd.err"; then
         ko "freestanding_qemu" "user cairo_demo compile failed: $(cat "$WORK/cd.err")"
+    elif ! "$PLANC" --target=spirv "$ROOT/user/frag_planet.vala" -o "$sp_bin" 2>"$WORK/sp.err"; then
+        ko "freestanding_qemu" "frag_planet.vala compile failed: $(cat "$WORK/sp.err")"
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/cairo_gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
+        ko "freestanding_qemu" "user spv_demo compile failed: $(cat "$WORK/sd.err")"
     elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
-    python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" "$cd_bin" << 'PYEOF'
+    python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" "$cd_bin" "$sp_bin" "$sd_bin" << 'PYEOF'
 import struct, sys
 elf_bytes = open(sys.argv[2], "rb").read()
 sh_bytes = open(sys.argv[3], "rb").read()
 wk_bytes = open(sys.argv[4], "rb").read()
 wc_bytes = open(sys.argv[5], "rb").read()
 cd_bytes = open(sys.argv[6], "rb").read()
+sp_bytes = open(sys.argv[7], "rb").read()
+sd_bytes = open(sys.argv[8], "rb").read()
 elf_blocks = (len(elf_bytes) + 4095) // 4096
 sh_blocks = (len(sh_bytes) + 4095) // 4096
 wk_blocks = (len(wk_bytes) + 4095) // 4096
 wc_blocks = (len(wc_bytes) + 4095) // 4096
 cd_blocks = (len(cd_bytes) + 4095) // 4096
+sp_blocks = (len(sp_bytes) + 4095) // 4096
+sd_blocks = (len(sd_bytes) + 4095) // 4096
 sh_start = 6 + elf_blocks
 wk_start = sh_start + sh_blocks
 wc_start = wk_start + wk_blocks
 cd_start = wc_start + wc_blocks
-img = bytearray(max(131072, (cd_start + cd_blocks) * 4096))
+sp_start = cd_start + cd_blocks
+sd_start = sp_start + sp_blocks
+img = bytearray(max(131072, (sd_start + sd_blocks) * 4096))
 # XFS v4 superblock at block 0 (offset 0)
 struct.pack_into(">II", img, 0, 0x58465342, 4096) # magic "XFSB", blocksize=4096
 struct.pack_into(">Q", img, 56, 64)               # rootino = 64 (block 4, index 0)
@@ -414,11 +426,11 @@ struct.pack_into(">HH", img, r, 0x494E, 0x41ED)   # magic "IN", mode dir
 img[r + 4] = 2                                    # version 2
 img[r + 5] = 1                                    # format = 1 (local/shortform)
 df = r + 100
-img[df + 0] = 6                                   # count = 6
+img[df + 0] = 8                                   # count = 8
 img[df + 1] = 0                                   # i8count = 0
 struct.pack_into(">I", img, df + 4, 64)           # parent ino = 64
 ent = df + 8
-for name, child in [(b"hello.txt", 65), (b"init.elf", 66), (b"shell.elf", 67), (b"worker.elf", 68), (b"wc.elf", 69), (b"cairo_demo.elf", 70)]:
+for name, child in [(b"hello.txt", 65), (b"init.elf", 66), (b"shell.elf", 67), (b"worker.elf", 68), (b"wc.elf", 69), (b"cairo_demo.elf", 70), (b"frag.spv", 71), (b"spv_demo.elf", 72)]:
     img[ent] = len(name)
     struct.pack_into(">H", img, ent + 1, 0)
     img[ent + 3:ent + 3 + len(name)] = name
@@ -486,16 +498,34 @@ struct.pack_into(">I", img, f6 + 76, 1)
 struct.pack_into(">QQ", img, f6 + 100, 0, (cd_start << 21) | cd_blocks)
 img[cd_start * 4096:cd_start * 4096 + len(cd_bytes)] = cd_bytes
 
+# Inode 71 (frag.spv) at block 4 + 1792
+f7 = r + 1792
+struct.pack_into(">HH", img, f7, 0x494E, 0x81A4)
+img[f7 + 4] = 2; img[f7 + 5] = 2
+struct.pack_into(">Q", img, f7 + 56, len(sp_bytes))
+struct.pack_into(">I", img, f7 + 76, 1)
+struct.pack_into(">QQ", img, f7 + 100, 0, (sp_start << 21) | sp_blocks)
+img[sp_start * 4096:sp_start * 4096 + len(sp_bytes)] = sp_bytes
+
+# Inode 72 (spv_demo.elf) at block 4 + 2048
+f8 = r + 2048
+struct.pack_into(">HH", img, f8, 0x494E, 0x81ED)
+img[f8 + 4] = 2; img[f8 + 5] = 2
+struct.pack_into(">Q", img, f8 + 56, len(sd_bytes))
+struct.pack_into(">I", img, f8 + 76, 1)
+struct.pack_into(">QQ", img, f8 + 100, 0, (sd_start << 21) | sd_blocks)
+img[sd_start * 4096:sd_start * 4096 + len(sd_bytes)] = sd_bytes
+
 open(sys.argv[1], "wb").write(img)
 PYEOF
     if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/fb.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/mouse.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
-        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec cairo_demo.elf --once\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
+        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec cairo_demo.elf --once\nexec spv_demo.elf --once\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
         qcode=$?
         if [ "$qcode" != "1" ]; then
             ko "freestanding_qemu" "qemu exit $qcode, expected 1"
-        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.2" "$k_ser" || ! grep -q "PlanetOS dash" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "var=planet" "$k_ser" || ! grep -q "ok-and" "$k_ser" || ! grep -q "ok-or" "$k_ser" || ! grep -q "hello.txt: lines=1 words=4 bytes=30 chars=30 \[has PlanetOS\]" "$k_ser" || ! grep -q "cairo_demo: done" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
+        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.2" "$k_ser" || ! grep -q "PlanetOS dash" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "var=planet" "$k_ser" || ! grep -q "ok-and" "$k_ser" || ! grep -q "ok-or" "$k_ser" || ! grep -q "hello.txt: lines=1 words=4 bytes=30 chars=30 \[has PlanetOS\]" "$k_ser" || ! grep -q "cairo_demo: done" "$k_ser" || ! grep -q "spv_demo: frag.spv" "$k_ser" || ! grep -q "rgb=(56,188,247)" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
             ko "freestanding_qemu" "unexpected serial: $(cat "$k_ser")"
         else
             ok "freestanding_qemu"
