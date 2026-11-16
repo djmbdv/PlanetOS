@@ -31,12 +31,28 @@ namespace Planet.Kernel {
     ")]
     public extern int addr_isr_irq1 ();
 
+    [AsmBody(@"
+    _ps2_drain:
+        in $0x64, %al
+        test $0x01, %al
+        jz _ps2_done
+        in $0x60, %al
+        jmp _ps2_drain
+    _ps2_done:
+        ret
+    ")]
+    public extern void ps2_drain ();
+
+    private int kb_shift = 0;
+
     public class Keyboard : Object {
         private const int KB_BUF = 0x106100;
         private const int KB_HEAD = 0x106140;
         private const int KB_TAIL = 0x106148;
 
         public static void init () {
+            ps2_drain ();
+            kb_shift = 0;
             mmio_write32 (KB_HEAD, 0);
             mmio_write32 (KB_TAIL, 0);
             Hal.set_idt_gate_dpl (33, addr_isr_irq1 (), 0);
@@ -54,40 +70,67 @@ namespace Planet.Kernel {
         }
 
         public static int scancode_to_ascii (int sc) {
+            if (sc == 0x2A || sc == 0x36) { kb_shift = 1; return 0; }
+            if (sc == 0xAA || sc == 0xB6) { kb_shift = 0; return 0; }
+            if ((sc & 0x80) != 0) return 0;
             if (sc == 0x1C) return '\n';
             if (sc == 0x39) return ' ';
             if (sc == 0x0E) return 8;
-            if (sc >= 0x02 && sc <= 0x0A) return '1' + (sc - 0x02);
-            if (sc == 0x0B) return '0';
-            if (sc == 0x1E) return 'a';
-            if (sc == 0x30) return 'b';
-            if (sc == 0x2E) return 'c';
-            if (sc == 0x20) return 'd';
-            if (sc == 0x12) return 'e';
-            if (sc == 0x21) return 'f';
-            if (sc == 0x22) return 'g';
-            if (sc == 0x23) return 'h';
-            if (sc == 0x17) return 'i';
-            if (sc == 0x24) return 'j';
-            if (sc == 0x25) return 'k';
-            if (sc == 0x26) return 'l';
-            if (sc == 0x32) return 'm';
-            if (sc == 0x31) return 'n';
-            if (sc == 0x18) return 'o';
-            if (sc == 0x19) return 'p';
-            if (sc == 0x10) return 'q';
-            if (sc == 0x13) return 'r';
-            if (sc == 0x1F) return 's';
-            if (sc == 0x14) return 't';
-            if (sc == 0x16) return 'u';
-            if (sc == 0x2F) return 'v';
-            if (sc == 0x11) return 'w';
-            if (sc == 0x2D) return 'x';
-            if (sc == 0x15) return 'y';
-            if (sc == 0x2C) return 'z';
-            if (sc == 0x34) return '.';
-            if (sc == 0x0C) return '-';
-            if (sc == 0x35) return '/';
+            if (sc == 0x0F) return '\t';
+            if (sc >= 0x02 && sc <= 0x0B) {
+                if (kb_shift != 0) {
+                    if (sc == 0x02) return '!';
+                    if (sc == 0x03) return '@';
+                    if (sc == 0x04) return '#';
+                    if (sc == 0x05) return '$';
+                    if (sc == 0x06) return '%';
+                    if (sc == 0x07) return '^';
+                    if (sc == 0x08) return '&';
+                    if (sc == 0x09) return '*';
+                    if (sc == 0x0A) return '(';
+                    return ')';
+                }
+                return (sc == 0x0B) ? '0' : ('1' + (sc - 0x02));
+            }
+            int ch = 0;
+            if (sc == 0x1E) ch = 'a';
+            else if (sc == 0x30) ch = 'b';
+            else if (sc == 0x2E) ch = 'c';
+            else if (sc == 0x20) ch = 'd';
+            else if (sc == 0x12) ch = 'e';
+            else if (sc == 0x21) ch = 'f';
+            else if (sc == 0x22) ch = 'g';
+            else if (sc == 0x23) ch = 'h';
+            else if (sc == 0x17) ch = 'i';
+            else if (sc == 0x24) ch = 'j';
+            else if (sc == 0x25) ch = 'k';
+            else if (sc == 0x26) ch = 'l';
+            else if (sc == 0x32) ch = 'm';
+            else if (sc == 0x31) ch = 'n';
+            else if (sc == 0x18) ch = 'o';
+            else if (sc == 0x19) ch = 'p';
+            else if (sc == 0x10) ch = 'q';
+            else if (sc == 0x13) ch = 'r';
+            else if (sc == 0x1F) ch = 's';
+            else if (sc == 0x14) ch = 't';
+            else if (sc == 0x16) ch = 'u';
+            else if (sc == 0x2F) ch = 'v';
+            else if (sc == 0x11) ch = 'w';
+            else if (sc == 0x2D) ch = 'x';
+            else if (sc == 0x15) ch = 'y';
+            else if (sc == 0x2C) ch = 'z';
+            if (ch != 0)
+                return (kb_shift != 0) ? (ch - 32) : ch;
+            if (sc == 0x0C) return (kb_shift != 0) ? '_' : '-';
+            if (sc == 0x0D) return (kb_shift != 0) ? '+' : '=';
+            if (sc == 0x1A) return (kb_shift != 0) ? '{' : '[';
+            if (sc == 0x1B) return (kb_shift != 0) ? '}' : ']';
+            if (sc == 0x27) return (kb_shift != 0) ? ':' : ';';
+            if (sc == 0x28) return (kb_shift != 0) ? '"' : '\'';
+            if (sc == 0x33) return (kb_shift != 0) ? '<' : ',';
+            if (sc == 0x34) return (kb_shift != 0) ? '>' : '.';
+            if (sc == 0x35) return (kb_shift != 0) ? '?' : '/';
+            if (sc == 0x2B) return (kb_shift != 0) ? '|' : '\\';
             return 0;
         }
     }

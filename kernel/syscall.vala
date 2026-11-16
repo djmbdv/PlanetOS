@@ -105,6 +105,7 @@ namespace Planet.Kernel {
             return mmio_read64 (slot + 16);
         }
         if (num == 10) { // SYS_YIELD()
+            cpu_sti ();
             cpu_hlt ();
             return 0;
         }

@@ -18,7 +18,7 @@ namespace Planet.Kernel {
         push %r13
         push %r14
         push %r15
-        mov $0x106100, %rax
+        mov $0x106200, %rax
         mov %rsp, (%rax)
         mov %rsi, %rsp
         sti
@@ -30,7 +30,7 @@ namespace Planet.Kernel {
     [AsmBody(@"
         # exec_return_to_parent(exit_code in rdi) -> resumes exec_trampoline caller
         mov %rdi, %rax
-        mov $0x106100, %rdx
+        mov $0x106200, %rdx
         mov (%rdx), %rsp
         pop %r15
         pop %r14
