@@ -181,7 +181,7 @@ if [ -f "$HERE/valid/string_index.vala" ]; then
 fi
 
 echo "== check_leaks =="
-for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib; do
+for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib float_double; do
     src="$HERE/valid/$base_name.vala"
     bin="$WORK/leaks_$base_name"
     case_name="check_leaks_$base_name"

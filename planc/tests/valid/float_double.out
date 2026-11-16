@@ -1,0 +1,7 @@
+b=3.75 c=4
+neg=-2.5 r10=55 fsum=5.5
+rx=6 rsq=36
+nan: eq=false ne=true lt=false gt=false
+trunc=3 g=6 df=true
+vec=4 bx=4.5 ga=3
+parsed=-12.5 150

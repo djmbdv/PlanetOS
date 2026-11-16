@@ -14,6 +14,7 @@ namespace Planc {
         STRING,
         TEMPLATE_STRING,
         INTEGER,
+        FLOAT,
         LBRACE,
         RBRACE,
         LPAREN,
@@ -171,9 +172,9 @@ namespace Planc {
             };
         }
 
-        private Token scan_int_literal (int l, int c) throws LexError {
-            uint64 val = 0;
+        private Token scan_number_literal (int l, int c) throws LexError {
             if (current () == '0' && (peek (1) == 'x' || peek (1) == 'X')) {
+                uint64 val = 0;
                 advance ();
                 advance ();
                 int digits = 0;
@@ -187,7 +188,19 @@ namespace Planc {
                 }
                 if (digits == 0)
                     throw new LexError.UNEXPECTED_CHARACTER (@"invalid hexadecimal literal at $l:$c");
-            } else if (current () == '0' && (peek (1) == 'b' || peek (1) == 'B')) {
+                while (pos < src_len
+                       && (current () == 'u' || current () == 'U'
+                           || current () == 'l' || current () == 'L')) {
+                    advance ();
+                }
+                return Token () {
+                    kind = TokenKind.INTEGER,
+                    text = ((int64) val).to_string (),
+                    line = l, column = c
+                };
+            }
+            if (current () == '0' && (peek (1) == 'b' || peek (1) == 'B')) {
+                uint64 val = 0;
                 advance ();
                 advance ();
                 int digits = 0;
@@ -201,14 +214,74 @@ namespace Planc {
                 }
                 if (digits == 0)
                     throw new LexError.UNEXPECTED_CHARACTER (@"invalid binary literal at $l:$c");
-            } else {
+                while (pos < src_len
+                       && (current () == 'u' || current () == 'U'
+                           || current () == 'l' || current () == 'L')) {
+                    advance ();
+                }
+                return Token () {
+                    kind = TokenKind.INTEGER,
+                    text = ((int64) val).to_string (),
+                    line = l, column = c
+                };
+            }
+
+            var sb = new StrBuilder ();
+            uint64 val = 0;
+            bool is_float = false;
+            while (pos < src_len) {
+                var cur = current ();
+                if (cur == '_') { advance (); continue; }
+                if (!is_digit (cur)) break;
+                val = val * 10 + (uint64) (cur - '0');
+                sb.append_c ((char) cur);
+                advance ();
+            }
+            if (pos < src_len && current () == '.' && is_digit (peek (1))) {
+                is_float = true;
+                sb.append_c ('.');
+                advance ();
                 while (pos < src_len) {
                     var cur = current ();
                     if (cur == '_') { advance (); continue; }
                     if (!is_digit (cur)) break;
-                    val = val * 10 + (uint64) (cur - '0');
+                    sb.append_c ((char) cur);
                     advance ();
                 }
+            }
+            if (pos < src_len && (current () == 'e' || current () == 'E')) {
+                is_float = true;
+                sb.append_c ('e');
+                advance ();
+                if (pos < src_len && (current () == '+' || current () == '-')) {
+                    sb.append_c ((char) current ());
+                    advance ();
+                }
+                int exp_digits = 0;
+                while (pos < src_len) {
+                    var cur = current ();
+                    if (cur == '_') { advance (); continue; }
+                    if (!is_digit (cur)) break;
+                    sb.append_c ((char) cur);
+                    exp_digits++;
+                    advance ();
+                }
+                if (exp_digits == 0)
+                    throw new LexError.UNEXPECTED_CHARACTER (@"invalid float exponent at $l:$c");
+            }
+            if (pos < src_len && (current () == 'f' || current () == 'F')) {
+                is_float = true;
+                sb.append_c ('f');
+                advance ();
+            } else if (is_float && pos < src_len && (current () == 'd' || current () == 'D')) {
+                advance ();
+            }
+            if (is_float) {
+                return Token () {
+                    kind = TokenKind.FLOAT,
+                    text = sb.str,
+                    line = l, column = c
+                };
             }
             while (pos < src_len
                    && (current () == 'u' || current () == 'U'
@@ -245,7 +318,7 @@ namespace Planc {
             }
 
             if (is_digit (ch))
-                return scan_int_literal (l, c);
+                return scan_number_literal (l, c);
 
             if (ch == '\'')
                 return scan_char_literal (l, c);

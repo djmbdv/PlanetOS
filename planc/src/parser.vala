@@ -64,8 +64,12 @@ namespace Planc {
                 || text == "char" || text == "uchar";
         }
 
+        private static bool is_fp_type_name (string text) {
+            return text == "float" || text == "double";
+        }
+
         private static bool is_reserved (string text) {
-            return is_int_type_name (text) || text == "bool" || text == "string"
+            return is_int_type_name (text) || is_fp_type_name (text) || text == "bool" || text == "string"
                 || text == "var" || text == "void" || text == "new"
                 || text == "null" || text == "this" || text == "base"
                 || text == "is" || text == "as"
@@ -218,6 +222,14 @@ namespace Planc {
             }
             if (is_int_type_name (text)) {
                 t = ValaType.INT;
+                return true;
+            }
+            if (text == "float") {
+                t = ValaType.FLOAT;
+                return true;
+            }
+            if (text == "double") {
+                t = ValaType.DOUBLE;
                 return true;
             }
             if (text == "bool") {
@@ -497,6 +509,8 @@ namespace Planc {
             };
             if (ct == ValaType.INT) {
                 cd.int_value = parse_const_int_expr ("const int initializer must be an integer literal");
+            } else if (ct == ValaType.FLOAT || ct == ValaType.DOUBLE) {
+                cd.int_value = parse_signed_fp_bits (ct == ValaType.FLOAT, "const float/double initializer must be a numeric literal");
             } else if (ct == ValaType.BOOL) {
                 if (current.kind == TokenKind.IDENTIFIER && current.text == "true") {
                     cd.int_value = 1;
@@ -688,6 +702,9 @@ namespace Planc {
                 if (decl_type == ValaType.INT) {
                     g.value = parse_signed_int_literal ("a global initializer must be an integer literal");
                     g.initialized = true;
+                } else if (decl_type == ValaType.FLOAT || decl_type == ValaType.DOUBLE) {
+                    g.value = parse_signed_fp_bits (decl_type == ValaType.FLOAT, "a global float/double initializer must be a numeric literal");
+                    g.initialized = true;
                 } else if (decl_type == ValaType.BOOL) {
                     if (current.kind == TokenKind.IDENTIFIER && current.text == "true") {
                         g.value = 1;
@@ -787,6 +804,28 @@ namespace Planc {
                 v = -v;
             advance ();
             return v;
+        }
+
+        private int64 parse_signed_fp_bits (bool as_f32, string msg) throws ParseError, LexError {
+            bool negated = false;
+            if (current.kind == TokenKind.MINUS) {
+                negated = true;
+                advance ();
+            }
+            if (current.kind != TokenKind.FLOAT && current.kind != TokenKind.INTEGER)
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"$msg at $(current.line):$(current.column)");
+            var raw = current.text;
+            if (as_f32 && !raw.has_suffix ("f") && !raw.has_suffix ("F"))
+                raw = raw + "f";
+            else if (!as_f32 && (raw.has_suffix ("f") || raw.has_suffix ("F")))
+                raw = raw.substring (0, raw.length - 1);
+            bool unused = false;
+            uint64 bits = Ieee754.parse_bits (raw, out unused);
+            if (negated)
+                bits ^= as_f32 ? (uint64) 0x80000000 : (uint64) 0x8000000000000000;
+            advance ();
+            return (int64) bits;
         }
 
         private void parse_throws_clause (GenericArray<string> dst) throws ParseError, LexError {
@@ -2352,7 +2391,7 @@ namespace Planc {
 
             ValaType dt = ValaType.VOID;
             string dt_name = "";
-            bool is_builtin_var = (is_int_type_name (name) || name == "bool" || name == "string" || name == "var");
+            bool is_builtin_var = (is_int_type_name (name) || is_fp_type_name (name) || name == "bool" || name == "string" || name == "var");
             bool is_named_type = !is_builtin_var && parse_type (name, out dt, out dt_name)
                                  && dt != ValaType.VOID
                                  && (current.kind == TokenKind.IDENTIFIER
@@ -2367,6 +2406,10 @@ namespace Planc {
                 if (is_int_type_name (name)) {
                     dt = ValaType.INT;
                     last_parsed_type_token = name;
+                } else if (name == "float") {
+                    dt = ValaType.FLOAT;
+                } else if (name == "double") {
+                    dt = ValaType.DOUBLE;
                 } else if (name == "bool") {
                     dt = ValaType.BOOL;
                 } else if (name == "string") {
@@ -2907,6 +2950,20 @@ namespace Planc {
                 return e;
             }
 
+            if (current.kind == TokenKind.FLOAT) {
+                bool is_f32 = false;
+                var bits = Ieee754.parse_bits (current.text, out is_f32);
+                var e = new FloatLiteral () {
+                    bits = bits,
+                    is_float32 = is_f32,
+                    raw_text = current.text
+                };
+                e.line = l;
+                e.column = c;
+                advance ();
+                return e;
+            }
+
             if (current.kind == TokenKind.STRING) {
                 var e = new StringLiteral () { value = current.text };
                 e.line = l;
@@ -2939,9 +2996,9 @@ namespace Planc {
                             advance ();
                         }
                         if (pending_gt == 0 && current.kind == TokenKind.RPAREN
-                            && (ct == ValaType.CLASS || ct == ValaType.INTERFACE || is_int_type_name (raw_name))) {
+                            && (ct == ValaType.CLASS || ct == ValaType.INTERFACE || is_int_type_name (raw_name) || is_fp_type_name (raw_name))) {
                             advance (); // ')'
-                            if (ct == ValaType.INT)
+                            if (ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE)
                                 ct_name = raw_name;
                             var tc = new TypeCheckExpr () {
                                 op = "cast",
@@ -3117,7 +3174,7 @@ namespace Planc {
                     an.column = c;
                     return an;
                 }
-                if (is_int_type_name (current.text)) {
+                if (is_int_type_name (current.text) || is_fp_type_name (current.text)) {
                     var plx = lexer.clone_state ();
                     var nxt = plx.next ();
                     if (nxt.kind == TokenKind.DOT) {

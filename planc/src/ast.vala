@@ -9,6 +9,8 @@ namespace Planc {
     public enum ValaType {
         VOID,
         INT,
+        FLOAT,
+        DOUBLE,
         BOOL,
         STRING,
         ENUM,
@@ -24,6 +26,8 @@ namespace Planc {
             switch (this) {
                 case VOID:       return "void";
                 case INT:        return "int";
+                case FLOAT:      return "float";
+                case DOUBLE:     return "double";
                 case BOOL:       return "bool";
                 case STRING:     return "string";
                 case ENUM:       return "enum";
@@ -52,6 +56,12 @@ namespace Planc {
 
     public class IntLiteral : Expr {
         public int64 value { get; set; }
+    }
+
+    public class FloatLiteral : Expr {
+        public uint64 bits { get; set; }
+        public bool is_float32 { get; set; }
+        public string raw_text { get; set; default = ""; }
     }
 
     public class BoolLiteral : Expr {
@@ -977,6 +987,13 @@ namespace Planc {
                 var o = (IntLiteral) e;
                 return new IntLiteral () { value = o.value, line = o.line, column = o.column };
             }
+            if (e is FloatLiteral) {
+                var o = (FloatLiteral) e;
+                return new FloatLiteral () {
+                    bits = o.bits, is_float32 = o.is_float32, raw_text = o.raw_text,
+                    line = o.line, column = o.column
+                };
+            }
             if (e is BoolLiteral) {
                 var o = (BoolLiteral) e;
                 return new BoolLiteral () { value = o.value, line = o.line, column = o.column };
@@ -1763,5 +1780,279 @@ namespace Planc {
         public bool initialized { get; set; }   // false: zero (.bss) for int/bool/enum/struct, "" for string
         public int line { get; set; }
         public int column { get; set; }
+    }
+
+    // Pure-integer IEEE-754 decimal-to-binary32/binary64 converter so float
+    // literal bit patterns are deterministic across stage 0 and self-hosted stages.
+    public class Ieee754 : Object {
+        private const int64 LIMB_BASE = 268435456; // 2^28
+        private const int LIMB_BITS = 28;
+
+        private static int trim_len (int64[] a, int len) {
+            while (len > 1 && a[len - 1] == 0)
+                len--;
+            return len;
+        }
+
+        private static int cmp_limbs (int64[] a, int alen, int64[] b, int blen) {
+            alen = trim_len (a, alen);
+            blen = trim_len (b, blen);
+            if (alen != blen)
+                return (alen > blen) ? 1 : -1;
+            for (int i = alen - 1; i >= 0; i--) {
+                if (a[i] != b[i])
+                    return (a[i] > b[i]) ? 1 : -1;
+            }
+            return 0;
+        }
+
+        private static int bit_len (int64[] a, int len) {
+            len = trim_len (a, len);
+            int64 top = a[len - 1];
+            if (top == 0)
+                return 0;
+            int b = (len - 1) * LIMB_BITS;
+            while (top > 0) {
+                b++;
+                top >>= 1;
+            }
+            return b;
+        }
+
+        private static void ensure_cap (ref int64[] a, int need) {
+            if (a.length >= need)
+                return;
+            var nc = a.length * 2;
+            while (nc < need)
+                nc *= 2;
+            var na = new int64[nc];
+            for (int i = 0; i < a.length; i++)
+                na[i] = a[i];
+            a = na;
+        }
+
+        private static void mul_add_small (ref int64[] a, ref int len, int64 mul, int64 add) {
+            int64 carry = add;
+            for (int i = 0; i < len; i++) {
+                int64 v = a[i] * mul + carry;
+                a[i] = v % LIMB_BASE;
+                carry = v / LIMB_BASE;
+            }
+            while (carry > 0) {
+                ensure_cap (ref a, len + 1);
+                a[len++] = carry % LIMB_BASE;
+                carry /= LIMB_BASE;
+            }
+        }
+
+        private static void shl_limbs (ref int64[] a, ref int len, int bits) {
+            if (bits <= 0)
+                return;
+            int word_shift = bits / LIMB_BITS;
+            int bit_shift = bits % LIMB_BITS;
+            int new_len = len + word_shift + 1;
+            ensure_cap (ref a, new_len);
+            if (word_shift > 0) {
+                for (int i = len - 1; i >= 0; i--)
+                    a[i + word_shift] = a[i];
+                for (int i = 0; i < word_shift; i++)
+                    a[i] = 0;
+                len += word_shift;
+            }
+            if (bit_shift > 0) {
+                int64 carry = 0;
+                int64 mask = LIMB_BASE - 1;
+                int rshift = LIMB_BITS - bit_shift;
+                for (int i = word_shift; i < len; i++) {
+                    int64 cur = a[i];
+                    a[i] = ((cur << bit_shift) & mask) | carry;
+                    carry = cur >> rshift;
+                }
+                if (carry > 0) {
+                    ensure_cap (ref a, len + 1);
+                    a[len++] = carry;
+                }
+            }
+            len = trim_len (a, len);
+        }
+
+        private static void sub_limbs (int64[] a, ref int alen, int64[] b, int blen) {
+            int64 borrow = 0;
+            for (int i = 0; i < alen; i++) {
+                int64 bv = (i < blen) ? b[i] : 0;
+                int64 diff = a[i] - bv - borrow;
+                if (diff < 0) {
+                    diff += LIMB_BASE;
+                    borrow = 1;
+                } else {
+                    borrow = 0;
+                }
+                a[i] = diff;
+            }
+            alen = trim_len (a, alen);
+        }
+
+        private static int64[] clone_limbs (int64[] a, int len, out int out_len) {
+            var r = new int64[len + 4];
+            for (int i = 0; i < len; i++)
+                r[i] = a[i];
+            out_len = len;
+            return r;
+        }
+
+        private static void mul_pow10 (ref int64[] a, ref int len, int exp) {
+            while (exp >= 8) {
+                mul_add_small (ref a, ref len, 100000000, 0);
+                exp -= 8;
+            }
+            int64 p = 1;
+            while (exp > 0) {
+                p *= 10;
+                exp--;
+            }
+            if (p > 1)
+                mul_add_small (ref a, ref len, p, 0);
+        }
+
+        public static uint64 parse_bits (string raw, out bool is_f32) {
+            int n = raw.length;
+            is_f32 = false;
+            if (n > 0 && (raw[n - 1] == 'f' || raw[n - 1] == 'F')) {
+                is_f32 = true;
+                n--;
+            }
+
+            var num = new int64[16];
+            int num_len = 1;
+            int exp10 = 0;
+            bool seen_dot = false;
+            int sig_digits = 0;
+            int i = 0;
+            while (i < n && raw[i] != 'e' && raw[i] != 'E') {
+                uint8 ch = raw[i];
+                if (ch == '.') {
+                    seen_dot = true;
+                } else if (ch >= '0' && ch <= '9') {
+                    int d = (int) (ch - '0');
+                    if (sig_digits > 0 || d != 0) {
+                        if (sig_digits < 38) {
+                            mul_add_small (ref num, ref num_len, 10, d);
+                            sig_digits++;
+                            if (seen_dot)
+                                exp10--;
+                        } else if (!seen_dot) {
+                            exp10++;
+                        }
+                    } else if (seen_dot) {
+                        exp10--;
+                    }
+                }
+                i++;
+            }
+            if (i < n && (raw[i] == 'e' || raw[i] == 'E')) {
+                i++;
+                bool neg_e = false;
+                if (i < n && (raw[i] == '+' || raw[i] == '-')) {
+                    neg_e = (raw[i] == '-');
+                    i++;
+                }
+                int ev = 0;
+                while (i < n) {
+                    uint8 ch = raw[i];
+                    if (ch >= '0' && ch <= '9') {
+                        if (ev < 100000)
+                            ev = ev * 10 + (int) (ch - '0');
+                    }
+                    i++;
+                }
+                exp10 += neg_e ? -ev : ev;
+            }
+
+            if (sig_digits == 0)
+                return 0;
+
+            int p = is_f32 ? 24 : 53;
+            int bias = is_f32 ? 127 : 1023;
+            int min_exp = is_f32 ? -126 : -1022;
+            int max_exp = is_f32 ? 127 : 1023;
+            uint64 inf_bits = is_f32 ? (uint64) 0x7F800000 : (uint64) 0x7FF0000000000000;
+
+            int total_exp10 = exp10 + sig_digits;
+            if (total_exp10 > (is_f32 ? 42 : 315))
+                return inf_bits;
+            if (total_exp10 < (is_f32 ? -50 : -330))
+                return 0;
+
+            var den = new int64[16];
+            den[0] = 1;
+            int den_len = 1;
+            if (exp10 > 0)
+                mul_pow10 (ref num, ref num_len, exp10);
+            else if (exp10 < 0)
+                mul_pow10 (ref den, ref den_len, -exp10);
+
+            int exp2 = bit_len (num, num_len) - bit_len (den, den_len);
+            if (exp2 < min_exp)
+                exp2 = min_exp;
+            if (exp2 > max_exp + 1)
+                return inf_bits;
+
+            int shift = (p - 1) - exp2;
+            if (shift > 0)
+                shl_limbs (ref num, ref num_len, shift);
+            else if (shift < 0)
+                shl_limbs (ref den, ref den_len, -shift);
+
+            // Adjust exp2 by at most 1 so 2^(p-1) <= num/den < 2^p (when not subnormal).
+            int top_cmp_len = 0;
+            var den_p = clone_limbs (den, den_len, out top_cmp_len);
+            shl_limbs (ref den_p, ref top_cmp_len, p);
+            while (cmp_limbs (num, num_len, den_p, top_cmp_len) >= 0) {
+                shl_limbs (ref den, ref den_len, 1);
+                shl_limbs (ref den_p, ref top_cmp_len, 1);
+                exp2++;
+                if (exp2 > max_exp)
+                    return inf_bits;
+            }
+            if (exp2 > min_exp) {
+                int lo_len = 0;
+                var den_lo = clone_limbs (den, den_len, out lo_len);
+                shl_limbs (ref den_lo, ref lo_len, p - 1);
+                while (exp2 > min_exp && cmp_limbs (num, num_len, den_lo, lo_len) < 0) {
+                    shl_limbs (ref num, ref num_len, 1);
+                    exp2--;
+                }
+            }
+
+            // Long division for `p` quotient bits: num / den < 2^p.
+            int64 q = 0;
+            for (int bit = p - 1; bit >= 0; bit--) {
+                int slen = 0;
+                var shifted = clone_limbs (den, den_len, out slen);
+                shl_limbs (ref shifted, ref slen, bit);
+                if (cmp_limbs (num, num_len, shifted, slen) >= 0) {
+                    sub_limbs (num, ref num_len, shifted, slen);
+                    q |= ((int64) 1 << bit);
+                }
+            }
+
+            // Round to nearest, ties to even.
+            shl_limbs (ref num, ref num_len, 1);
+            int rc = cmp_limbs (num, num_len, den, den_len);
+            if (rc > 0 || (rc == 0 && (q & 1) != 0))
+                q++;
+            int64 limit = ((int64) 1 << p);
+            if (q >= limit) {
+                q >>= 1;
+                exp2++;
+            }
+            if (exp2 > max_exp)
+                return inf_bits;
+
+            int64 norm_bit = ((int64) 1 << (p - 1));
+            int64 biased_exp = (q < norm_bit) ? 0 : (int64) (exp2 + bias);
+            int64 mant = q & (norm_bit - 1);
+            return ((uint64) biased_exp << (p - 1)) | (uint64) mant;
+        }
     }
 }

@@ -68,7 +68,10 @@ namespace Planc {
         JAE,   // 0F 83 rel32   jump if !CF (unsigned >=)
         JBE,   // 0F 86 rel32   jump if CF || ZF (unsigned <=)
         JA,    // 0F 87 rel32   jump if !CF && !ZF (unsigned >)
-        JS     // 0F 88 rel32   jump if SF (signed < 0)
+        JB,    // 0F 82 rel32   jump if CF (unsigned <)
+        JS,    // 0F 88 rel32   jump if SF (signed < 0)
+        JNS,   // 0F 89 rel32   jump if !SF (signed >= 0)
+        JP     // 0F 8A rel32   jump if PF (parity / NaN)
     }
 
     public class BranchPatch : Object {
@@ -356,9 +359,21 @@ namespace Planc {
                     p.displacement = code.length + 2;
                     code.u8 (0x0F); code.u8 (0x87);
                     break;
+                case BranchKind.JB:
+                    p.displacement = code.length + 2;
+                    code.u8 (0x0F); code.u8 (0x82);
+                    break;
                 case BranchKind.JS:
                     p.displacement = code.length + 2;
                     code.u8 (0x0F); code.u8 (0x88);
+                    break;
+                case BranchKind.JNS:
+                    p.displacement = code.length + 2;
+                    code.u8 (0x0F); code.u8 (0x89);
+                    break;
+                case BranchKind.JP:
+                    p.displacement = code.length + 2;
+                    code.u8 (0x0F); code.u8 (0x8A);
                     break;
             }
             code.u32le (0);
@@ -2131,6 +2146,579 @@ namespace Planc {
             bind (l_ret);
             add_rsp (8);
             code.u8 (0x41); code.u8 (0x5F); // pop r15
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
+        // ------------------------------------------------------------------
+        // x86-64-v3 / SSE2 scalar float & double encoders.
+        // ------------------------------------------------------------------
+
+        public void movq_xmm_rax (int xmm) {
+            code.u8 (0x66); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x6E);
+            code.u8 ((uint8) (0xC0 + (xmm & 7) * 8));
+        }
+
+        public void movq_rax_xmm (int xmm) {
+            code.u8 (0x66); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x7E);
+            code.u8 ((uint8) (0xC0 + (xmm & 7) * 8));
+        }
+
+        public void movq_xmm1_rcx () {
+            code.u8 (0x66); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC9);
+        }
+
+        public void push_xmm0 () {
+            sub_rsp (8);
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x11); code.u8 (0x04); code.u8 (0x24);
+        }
+
+        public void pop_xmm1 () {
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x10); code.u8 (0x0C); code.u8 (0x24);
+            add_rsp (8);
+        }
+
+        public void pop_xmm0 () {
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x10); code.u8 (0x04); code.u8 (0x24);
+            add_rsp (8);
+        }
+
+        public void movsd_mem_rax_xmm0 () {
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x11); code.u8 (0x00);
+        }
+
+        public void movsd_xmm0_mem_rax () {
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x10); code.u8 (0x00);
+        }
+
+        public void movss_mem_rax_xmm0 () {
+            code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x11); code.u8 (0x00);
+        }
+
+        public void movss_xmm0_mem_rax () {
+            code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x10); code.u8 (0x00);
+        }
+
+        public void addsd_xmm0_xmm1 () { code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x58); code.u8 (0xC1); }
+        public void subsd_xmm0_xmm1 () { code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x5C); code.u8 (0xC1); }
+        public void mulsd_xmm0_xmm1 () { code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x59); code.u8 (0xC1); }
+        public void divsd_xmm0_xmm1 () { code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x5E); code.u8 (0xC1); }
+
+        public void addss_xmm0_xmm1 () { code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x58); code.u8 (0xC1); }
+        public void subss_xmm0_xmm1 () { code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x5C); code.u8 (0xC1); }
+        public void mulss_xmm0_xmm1 () { code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x59); code.u8 (0xC1); }
+        public void divss_xmm0_xmm1 () { code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x5E); code.u8 (0xC1); }
+
+        public void pxor_xmm0_xmm1 ()  { code.u8 (0x66); code.u8 (0x0F); code.u8 (0xEF); code.u8 (0xC1); }
+
+        public void ucomisd_xmm0_xmm1 () { code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC1); }
+        public void ucomisd_xmm1_xmm0 () { code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC8); }
+        public void ucomiss_xmm0_xmm1 () { code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC1); }
+        public void ucomiss_xmm1_xmm0 () { code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC8); }
+
+        public void setcc_cl (uint8 cc) { code.u8 (0x0F); code.u8 (cc); code.u8 (0xC1); }
+        public void and_al_cl () { code.u8 (0x20); code.u8 (0xC8); }
+        public void or_al_cl ()  { code.u8 (0x08); code.u8 (0xC8); }
+
+        public void cvtsi2sd_xmm0_rax () { code.u8 (0xF2); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x2A); code.u8 (0xC0); }
+        public void cvtsi2ss_xmm0_rax () { code.u8 (0xF3); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x2A); code.u8 (0xC0); }
+        public void cvttsd2si_rax_xmm0 () { code.u8 (0xF2); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x2C); code.u8 (0xC0); }
+        public void cvttss2si_rax_xmm0 () { code.u8 (0xF3); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x2C); code.u8 (0xC0); }
+        public void cvtss2sd_xmm0_xmm0 () { code.u8 (0xF3); code.u8 (0x0F); code.u8 (0x5A); code.u8 (0xC0); }
+        public void cvtsd2ss_xmm0_xmm0 () { code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x5A); code.u8 (0xC0); }
+
+        // double __planc_str_to_double(string* rdi) -> xmm0
+        public void emit_rt_str_to_double () {
+            var l_skip_ws = new_label ();
+            var l_ws_done = new_label ();
+            var l_check_sign = new_label ();
+            var l_int_loop = new_label ();
+            var l_check_dot = new_label ();
+            var l_frac_loop = new_label ();
+            var l_check_exp = new_label ();
+            var l_exp_loop = new_label ();
+            var l_scale = new_label ();
+            var l_mul10 = new_label ();
+            var l_div10 = new_label ();
+            var l_apply_sign = new_label ();
+            var l_zero = new_label ();
+            var l_ret = new_label ();
+
+            // test rdi, rdi; je l_zero
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_zero);
+            // rcx = [rdi + 8] (len), rsi = rdi + 16 (ptr), rdx = rsi + rcx (end)
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4F); code.u8 (0x08);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x77); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x14); code.u8 (0x0E);
+
+            bind (l_skip_ws);
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6); // cmp rsi, rdx
+            branch (BranchKind.JAE, l_zero);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06); // movzx eax, byte [rsi]
+            code.u8 (0x3C); code.u8 (0x20); // ' '
+            branch (BranchKind.JE, l_ws_done);
+            code.u8 (0x3C); code.u8 (0x09); // '\t'
+            branch (BranchKind.JE, l_ws_done);
+            code.u8 (0x3C); code.u8 (0x0A); // '\n'
+            branch (BranchKind.JE, l_ws_done);
+            code.u8 (0x3C); code.u8 (0x0D); // '\r'
+            branch (BranchKind.JE, l_ws_done);
+            branch (BranchKind.JMP, l_check_sign);
+            bind (l_ws_done);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            branch (BranchKind.JMP, l_skip_ws);
+
+            bind (l_check_sign);
+            // r10d = neg (0/1), r8 = mantissa, r9 = exp10, r11d = sig_digits
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xD2); // xor r10d, r10d
+            code.u8 (0x4D); code.u8 (0x31); code.u8 (0xC0); // xor r8, r8
+            code.u8 (0x4D); code.u8 (0x31); code.u8 (0xC9); // xor r9, r9
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xDB); // xor r11d, r11d
+            code.u8 (0x3C); code.u8 (0x2D); // '-'
+            var l_not_minus = new_label ();
+            branch (BranchKind.JNE, l_not_minus);
+            code.u8 (0x41); code.u8 (0xB2); code.u8 (0x01); // mov r10b, 1
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            branch (BranchKind.JMP, l_int_loop);
+            bind (l_not_minus);
+            code.u8 (0x3C); code.u8 (0x2B); // '+'
+            branch (BranchKind.JNE, l_int_loop);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+
+            bind (l_int_loop);
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6); // cmp rsi, rdx
+            branch (BranchKind.JAE, l_scale);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06); // movzx eax, byte [rsi]
+            code.u8 (0x2C); code.u8 (0x30); // sub al, '0'
+            code.u8 (0x3C); code.u8 (0x09); // cmp al, 9
+            branch (BranchKind.JA, l_check_dot);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            // if r11d < 18: r8 = r8 * 10 + rax; r11d++ else r9++
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xFB); code.u8 (0x12);
+            var l_int_over = new_label ();
+            branch (BranchKind.JAE, l_int_over);
+            code.u8 (0x4D); code.u8 (0x6B); code.u8 (0xC0); code.u8 (0x0A); // imul r8, r8, 10
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xC0); // add r8, rax
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xC3); // inc r11d
+            branch (BranchKind.JMP, l_int_loop);
+            bind (l_int_over);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC1); // inc r9
+            branch (BranchKind.JMP, l_int_loop);
+
+            bind (l_check_dot);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06); // movzx eax, byte [rsi]
+            code.u8 (0x3C); code.u8 (0x2E); // '.'
+            branch (BranchKind.JNE, l_check_exp);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+
+            bind (l_frac_loop);
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6);
+            branch (BranchKind.JAE, l_scale);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06);
+            code.u8 (0x2C); code.u8 (0x30);
+            code.u8 (0x3C); code.u8 (0x09);
+            branch (BranchKind.JA, l_check_exp);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xFB); code.u8 (0x12);
+            branch (BranchKind.JAE, l_frac_loop);
+            code.u8 (0x4D); code.u8 (0x6B); code.u8 (0xC0); code.u8 (0x0A); // imul r8, r8, 10
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xC0); // add r8, rax
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xC3); // inc r11d
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC9); // dec r9
+            branch (BranchKind.JMP, l_frac_loop);
+
+            bind (l_check_exp);
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6);
+            branch (BranchKind.JAE, l_scale);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06);
+            code.u8 (0x0C); code.u8 (0x20); // or al, 0x20 (lowercase)
+            code.u8 (0x3C); code.u8 (0x65); // 'e'
+            branch (BranchKind.JNE, l_scale);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            // rcx = exp_neg (0/1), r11 = exp_val
+            code.u8 (0x31); code.u8 (0xC9); // xor ecx, ecx
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xDB); // xor r11d, r11d
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6);
+            branch (BranchKind.JAE, l_scale);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06);
+            code.u8 (0x3C); code.u8 (0x2D); // '-'
+            var l_exp_not_minus = new_label ();
+            branch (BranchKind.JNE, l_exp_not_minus);
+            code.u8 (0xB1); code.u8 (0x01); // mov cl, 1
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6);
+            branch (BranchKind.JMP, l_exp_loop);
+            bind (l_exp_not_minus);
+            code.u8 (0x3C); code.u8 (0x2B); // '+'
+            branch (BranchKind.JNE, l_exp_loop);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6);
+
+            bind (l_exp_loop);
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xD6);
+            var l_exp_done = new_label ();
+            branch (BranchKind.JAE, l_exp_done);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06);
+            code.u8 (0x2C); code.u8 (0x30);
+            code.u8 (0x3C); code.u8 (0x09);
+            branch (BranchKind.JA, l_exp_done);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6);
+            // if r11 < 1000: r11 = r11 * 10 + rax
+            code.u8 (0x49); code.u8 (0x81); code.u8 (0xFB); code.u32le (1000);
+            branch (BranchKind.JAE, l_exp_loop);
+            code.u8 (0x4D); code.u8 (0x6B); code.u8 (0xDB); code.u8 (0x0A); // imul r11, r11, 10
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xC3); // add r11, rax
+            branch (BranchKind.JMP, l_exp_loop);
+
+            bind (l_exp_done);
+            code.u8 (0x84); code.u8 (0xC9); // test cl, cl
+            var l_exp_add = new_label ();
+            branch (BranchKind.JE, l_exp_add);
+            code.u8 (0x4D); code.u8 (0x29); code.u8 (0xD9); // sub r9, r11
+            branch (BranchKind.JMP, l_scale);
+            bind (l_exp_add);
+            code.u8 (0x4D); code.u8 (0x01); code.u8 (0xD9); // add r9, r11
+
+            bind (l_scale);
+            // cvtsi2sd xmm0, r8
+            code.u8 (0xF2); code.u8 (0x49); code.u8 (0x0F); code.u8 (0x2A); code.u8 (0xC0);
+            mov_rax_imm (0x4024000000000000); // 10.0
+            movq_xmm_rax (1);
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC9); // test r9, r9
+            branch (BranchKind.JE, l_apply_sign);
+            branch (BranchKind.JS, l_div10);
+
+            bind (l_mul10);
+            mulsd_xmm0_xmm1 ();
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC9); // dec r9
+            branch (BranchKind.JNE, l_mul10);
+            branch (BranchKind.JMP, l_apply_sign);
+
+            bind (l_div10);
+            divsd_xmm0_xmm1 ();
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC1); // inc r9
+            branch (BranchKind.JNE, l_div10);
+
+            bind (l_apply_sign);
+            code.u8 (0x45); code.u8 (0x84); code.u8 (0xD2); // test r10b, r10b
+            branch (BranchKind.JE, l_ret);
+            mov_rax_imm ((int64) 0x8000000000000000);
+            movq_xmm_rax (1);
+            pxor_xmm0_xmm1 ();
+            branch (BranchKind.JMP, l_ret);
+
+            bind (l_zero);
+            code.u8 (0x66); code.u8 (0x0F); code.u8 (0x57); code.u8 (0xC0); // xorpd xmm0, xmm0
+            bind (l_ret);
+            ret ();
+        }
+
+        // string* __planc_double_to_str(double xmm0) -> rax
+        public void emit_rt_double_to_str () {
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            sub_rsp (64);
+
+            // r14 = write cursor at [rsp], r13 = digits buffer at [rsp + 32]
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x34); code.u8 (0x24); // lea r14, [rsp]
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x6C); code.u8 (0x24); code.u8 (0x20); // lea r13, [rsp + 32]
+
+            var l_nan = new_label ();
+            var l_pos = new_label ();
+            var l_inf = new_label ();
+            var l_zero = new_label ();
+            var l_scale_up = new_label ();
+            var l_scale_down = new_label ();
+            var l_digits = new_label ();
+            var l_digit_loop = new_label ();
+            var l_round_done = new_label ();
+            var l_trim_loop = new_label ();
+            var l_format = new_label ();
+            var l_sci = new_label ();
+            var l_alloc = new_label ();
+
+            // NaN check: ucomisd xmm0, xmm0; jp l_nan
+            code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC0);
+            branch (BranchKind.JP, l_nan);
+
+            // Sign bit check
+            movq_rax_xmm (0);
+            test_rax_rax ();
+            branch (BranchKind.JNS, l_pos);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x2D); // mov byte [r14], '-'
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6); // inc r14
+            code.u8 (0x48); code.u8 (0xB9); code.u64le (0x7FFFFFFFFFFFFFFF); // mov rcx, imm64
+            code.u8 (0x48); code.u8 (0x21); code.u8 (0xC8); // and rax, rcx
+            movq_xmm_rax (0);
+
+            bind (l_pos);
+            code.u8 (0x48); code.u8 (0xB9); code.u64le (0x7FF0000000000000); // mov rcx, imm64
+            cmp_rax_rcx ();
+            branch (BranchKind.JE, l_inf);
+            test_rax_rax ();
+            branch (BranchKind.JE, l_zero);
+
+            // Scale xmm0 into [1.0, 10.0) with r12d = exp10
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xE4); // xor r12d, r12d
+            mov_rax_imm (0x4024000000000000); // 10.0 in xmm1
+            movq_xmm_rax (1);
+            mov_rax_imm (0x3FF0000000000000); // 1.0 in xmm2
+            movq_xmm_rax (2);
+
+            bind (l_scale_up);
+            ucomisd_xmm0_xmm1 ();
+            branch (BranchKind.JB, l_scale_down);
+            divsd_xmm0_xmm1 ();
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xC4); // inc r12d
+            branch (BranchKind.JMP, l_scale_up);
+
+            bind (l_scale_down);
+            // ucomisd xmm0, xmm2 (1.0)
+            code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC2);
+            branch (BranchKind.JAE, l_digits);
+            mulsd_xmm0_xmm1 ();
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xCC); // dec r12d
+            branch (BranchKind.JMP, l_scale_down);
+
+            bind (l_digits);
+            // Extract 15 digits into [r13 + 0..14]
+            code.u8 (0x31); code.u8 (0xC9); // xor ecx, ecx
+            bind (l_digit_loop);
+            code.u8 (0x83); code.u8 (0xF9); code.u8 (0x0F); // cmp ecx, 15
+            var l_digits_done = new_label ();
+            branch (BranchKind.JAE, l_digits_done);
+            cvttsd2si_rax_xmm0 ();
+            code.u8 (0x83); code.u8 (0xF8); code.u8 (0x09); // cmp eax, 9
+            var l_d_ok = new_label ();
+            branch (BranchKind.JBE, l_d_ok);
+            mov_eax (9);
+            bind (l_d_ok);
+            // cvtsi2sd xmm3, rax
+            code.u8 (0xF2); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x2A); code.u8 (0xD8);
+            // subsd xmm0, xmm3
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x5C); code.u8 (0xC3);
+            mulsd_xmm0_xmm1 (); // * 10.0
+            code.u8 (0x04); code.u8 (0x30); // add al, '0'
+            code.u8 (0x41); code.u8 (0x88); code.u8 (0x44); code.u8 (0x0D); code.u8 (0x00); // mov [r13 + rcx], al
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1); // inc rcx
+            branch (BranchKind.JMP, l_digit_loop);
+
+            bind (l_digits_done);
+            // Round using remaining fractional * 10 in xmm0 against 5.0
+            mov_rax_imm (0x4014000000000000); // 5.0 in xmm3
+            movq_xmm_rax (3);
+            code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC3); // ucomisd xmm0, xmm3
+            branch (BranchKind.JB, l_round_done);
+            mov_eax (14); // rcx = 14
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC1);
+            var l_carry_loop = new_label ();
+            bind (l_carry_loop);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);
+            var l_carry_top = new_label ();
+            branch (BranchKind.JS, l_carry_top);
+            code.u8 (0x41); code.u8 (0xFE); code.u8 (0x44); code.u8 (0x0D); code.u8 (0x00); // inc byte [r13 + rcx]
+            code.u8 (0x41); code.u8 (0x80); code.u8 (0x7C); code.u8 (0x0D); code.u8 (0x00); code.u8 (0x3A); // cmp byte [r13 + rcx], '9'+1
+            branch (BranchKind.JB, l_round_done);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x44); code.u8 (0x0D); code.u8 (0x00); code.u8 (0x30); // mov byte [r13 + rcx], '0'
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9); // dec rcx
+            branch (BranchKind.JMP, l_carry_loop);
+            bind (l_carry_top);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x45); code.u8 (0x00); code.u8 (0x31); // mov byte [r13], '1'
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xC4); // inc r12d
+
+            bind (l_round_done);
+            // rbx = len_d = 15, trim trailing '0' down to 1
+            mov_eax (15);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC3); // mov rbx, rax
+            bind (l_trim_loop);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xFB); code.u8 (0x01); // cmp rbx, 1
+            branch (BranchKind.JBE, l_format);
+            code.u8 (0x41); code.u8 (0x80); code.u8 (0x7C); code.u8 (0x1D); code.u8 (0xFF); code.u8 (0x30); // cmp byte [r13 + rbx - 1], '0'
+            branch (BranchKind.JNE, l_format);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xCB); // dec rbx
+            branch (BranchKind.JMP, l_trim_loop);
+
+            bind (l_format);
+            // Check -4 <= r12d < 15
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xFC); code.u8 (0xFC); // cmp r12d, -4
+            branch (BranchKind.JL, l_sci);
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xFC); code.u8 (0x0F); // cmp r12d, 15
+            branch (BranchKind.JGE, l_sci);
+
+            // Fixed notation:
+            code.u8 (0x45); code.u8 (0x85); code.u8 (0xE4); // test r12d, r12d
+            var l_fix_ge0 = new_label ();
+            branch (BranchKind.JNS, l_fix_ge0);
+            // exp < 0: "0." + (-exp - 1)*'0' + digits[0..rbx]
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x30); // '0'
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x01); code.u8 (0x2E); // '.'
+            code.u8 (0x49); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x02); // add r14, 2
+            // ecx = -r12d - 1
+            code.u8 (0x44); code.u8 (0x89); code.u8 (0xE1); // mov ecx, r12d
+            code.u8 (0xF7); code.u8 (0xD9); // neg ecx
+            code.u8 (0xFF); code.u8 (0xC9); // dec ecx
+            var l_fz_loop = new_label ();
+            var l_fz_done = new_label ();
+            bind (l_fz_loop);
+            code.u8 (0x85); code.u8 (0xC9); // test ecx, ecx
+            branch (BranchKind.JLE, l_fz_done);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x30);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0xFF); code.u8 (0xC9);
+            branch (BranchKind.JMP, l_fz_loop);
+            bind (l_fz_done);
+            // copy rbx bytes from r13 to r14
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEE); // mov rsi, r13
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD9); // mov rcx, rbx
+            code.u8 (0xF3); code.u8 (0xA4); // rep movsb
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xDE); // add r14, rbx
+            branch (BranchKind.JMP, l_alloc);
+
+            bind (l_fix_ge0);
+            // int_digits = r12d + 1
+            code.u8 (0x45); code.u8 (0x8D); code.u8 (0x44); code.u8 (0x24); code.u8 (0x01); // lea r8d, [r12 + 1]
+            // copy min(r8, rbx) digits
+            code.u8 (0x4D); code.u8 (0x63); code.u8 (0xC0); // movsxd r8, r8d
+            code.u8 (0x49); code.u8 (0x39); code.u8 (0xD8); // cmp r8, rbx
+            var l_pad_int = new_label ();
+            branch (BranchKind.JA, l_pad_int);
+            // r8 <= rbx: copy r8 bytes
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEE); // mov rsi, r13
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC1); // mov rcx, r8
+            code.u8 (0xF3); code.u8 (0xA4);
+            code.u8 (0x4D); code.u8 (0x01); code.u8 (0xC6); // add r14, r8
+            // if r8 < rbx: emit '.' and remaining (rbx - r8) bytes
+            code.u8 (0x49); code.u8 (0x39); code.u8 (0xD8);
+            branch (BranchKind.JAE, l_alloc);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x2E); // '.'
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEE); // mov rsi, r13
+            code.u8 (0x4C); code.u8 (0x01); code.u8 (0xC6); // add rsi, r8
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD9); // rcx = rbx
+            code.u8 (0x4C); code.u8 (0x29); code.u8 (0xC1); // sub rcx, r8
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xCE); // add r14, rcx
+            code.u8 (0xF3); code.u8 (0xA4);                 // rep movsb
+            branch (BranchKind.JMP, l_alloc);
+
+            bind (l_pad_int);
+            // r8 > rbx: copy rbx bytes, then (r8 - rbx) '0's
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEE);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD9);
+            code.u8 (0xF3); code.u8 (0xA4);
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xDE); // add r14, rbx
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC1); // mov rcx, r8
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xD9); // sub rcx, rbx
+            var l_pad0 = new_label ();
+            bind (l_pad0);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JLE, l_alloc);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x30);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9);
+            branch (BranchKind.JMP, l_pad0);
+
+            bind (l_sci);
+            // Scientific: d[0] + (if rbx > 1: '.' + d[1..]) + 'e' + [+-] + digits
+            code.u8 (0x41); code.u8 (0x8A); code.u8 (0x45); code.u8 (0x00); // mov al, [r13]
+            code.u8 (0x41); code.u8 (0x88); code.u8 (0x06); // mov [r14], al
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xFB); code.u8 (0x01);
+            var l_sci_exp = new_label ();
+            branch (BranchKind.JBE, l_sci_exp);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x2E); // '.'
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0x4D); code.u8 (0x8D); code.u8 (0x75); code.u8 (0x01); // lea rsi, [r13 + 1]
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x4B); code.u8 (0xFF); // lea rcx, [rbx - 1]
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xCE); // add r14, rcx (before rep movsb clobbers rcx)
+            code.u8 (0xF3); code.u8 (0xA4);
+
+            bind (l_sci_exp);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x65); // 'e'
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0x45); code.u8 (0x85); code.u8 (0xE4); // test r12d, r12d
+            var l_sci_pos = new_label ();
+            branch (BranchKind.JNS, l_sci_pos);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x2D); // '-'
+            code.u8 (0x41); code.u8 (0xF7); code.u8 (0xDC); // neg r12d
+            var l_sci_digits = new_label ();
+            branch (BranchKind.JMP, l_sci_digits);
+            bind (l_sci_pos);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x2B); // '+'
+            bind (l_sci_digits);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            // Format r12d (>= 0) into 2 or 3 digits via division by 10
+            code.u8 (0x44); code.u8 (0x89); code.u8 (0xE0); // mov eax, r12d
+            code.u8 (0xB9); code.u32le (10); // mov ecx, 10
+            code.u8 (0x31); code.u8 (0xDB); // xor ebx, ebx (count)
+            var l_ediv = new_label ();
+            bind (l_ediv);
+            code.u8 (0x31); code.u8 (0xD2); // xor edx, edx
+            code.u8 (0xF7); code.u8 (0xF1); // div ecx
+            code.u8 (0x80); code.u8 (0xC2); code.u8 (0x30); // add dl, '0'
+            code.u8 (0x52); // push rdx
+            code.u8 (0xFF); code.u8 (0xC3); // inc ebx
+            test_rax_rax ();
+            branch (BranchKind.JNE, l_ediv);
+            // Pad at least 2 digits
+            code.u8 (0x83); code.u8 (0xFB); code.u8 (0x02);
+            var l_epop = new_label ();
+            branch (BranchKind.JAE, l_epop);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x30);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            bind (l_epop);
+            code.u8 (0x85); code.u8 (0xDB);
+            branch (BranchKind.JLE, l_alloc);
+            code.u8 (0x58); // pop rax
+            code.u8 (0x41); code.u8 (0x88); code.u8 (0x06);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+            code.u8 (0xFF); code.u8 (0xCB);
+            branch (BranchKind.JMP, l_epop);
+
+            bind (l_nan);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x6E); // 'n'
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x01); code.u8 (0x61); // 'a'
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x02); code.u8 (0x6E); // 'n'
+            code.u8 (0x49); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x03);
+            branch (BranchKind.JMP, l_alloc);
+
+            bind (l_inf);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x69); // 'i'
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x01); code.u8 (0x6E); // 'n'
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x02); code.u8 (0x66); // 'f'
+            code.u8 (0x49); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x03);
+            branch (BranchKind.JMP, l_alloc);
+
+            bind (l_zero);
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x06); code.u8 (0x30); // '0'
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC6);
+
+            bind (l_alloc);
+            // rbx = len = r14 - rsp
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF3); // mov rbx, r14
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xE3); // sub rbx, rsp
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7B); code.u8 (0x01); // lea rdi, [rbx + 1]
+            mov_esi_imm (0);
+            call_rel32 ("__planc_alloc");
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x58); code.u8 (0x08); // mov [rax + 8], rbx
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xE6); // mov rsi, rsp
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x78); code.u8 (0x10); // lea rdi, [rax + 16]
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD9); // mov rcx, rbx
+            code.u8 (0xF3); code.u8 (0xA4); // rep movsb
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00); // mov byte [rdi], 0
+
+            add_rsp (64);
             code.u8 (0x41); code.u8 (0x5E); // pop r14
             code.u8 (0x41); code.u8 (0x5D); // pop r13
             code.u8 (0x41); code.u8 (0x5C); // pop r12
