@@ -213,6 +213,36 @@ compiler with itself to a byte-identical fixed point and runs the full suite
 under the result. See [docs/planc/slice-9.md](docs/planc/slice-9.md) and
 [docs/planc/slice-10.md](docs/planc/slice-10.md).
 
+### Running PlanetOS in QEMU
+
+Both launchers build the kernel, the userland and `planc.elf` with `planc`,
+generate the XFS boot image with [tools/mkdisk.py](tools/mkdisk.py) and start
+QEMU. A window opens by default; the serial console goes to a log file so the
+terminal stays free.
+
+```sh
+# Linux / macOS / MSYS2
+./run-qemu.sh              # QEMU window
+./run-qemu.sh --headless   # serial-only, the shell uses this terminal
+```
+
+```powershell
+# Windows PowerShell (finds MSYS2 UCRT64 automatically)
+.\run-qemu.ps1             # QEMU window
+.\run-qemu.ps1 -Headless   # serial-only
+.\run-qemu.ps1 -NoBuild    # reuse the artifacts from the last build
+```
+
+If the execution policy blocks the script:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-qemu.ps1
+```
+
+Type `exit` in the guest shell (or close the QEMU window) to shut the machine
+down. The window-mode serial log is `<msys64>\tmp\planetos-qemu\serial.log`
+(`/tmp/planetos-qemu/serial.log` from bash).
+
 ## 6. Changes from the previous revision
 
 | Before | Now |
