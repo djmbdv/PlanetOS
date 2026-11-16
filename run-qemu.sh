@@ -10,6 +10,11 @@ fi
 OUT="/tmp/planetos-qemu"
 mkdir -p "$OUT"
 
+BUILD_ONLY=0
+case "${1:-}" in
+    --build-only) BUILD_ONLY=1 ;;
+esac
+
 if [ ! -x "$PLANC" ]; then
     "$ROOT/planc/build.sh"
     if [ ! -x "$PLANC" ] && [ -x "$PLANC.exe" ]; then
@@ -70,6 +75,13 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
 # --headless forces the serial-only mode; --display forces a window. Without a
 # flag: window when a display server exists, headless otherwise. Windows/MSYS2
 # always has one even though $DISPLAY is unset.
+if [ "$BUILD_ONLY" = "1" ]; then
+    echo "PLANETOS_OUT=$OUT"
+    echo "PLANETOS_QEMU=qemu-system-x86_64"
+    echo "Build complete (build-only)."
+    exit 0
+fi
+
 DISPLAY_MODE="window"
 case "${1:-}" in
     --headless) DISPLAY_MODE="none" ;;

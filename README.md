@@ -245,6 +245,22 @@ Type `exit` in the guest shell (or close the QEMU window) to shut the machine
 down. The window-mode serial log is `<msys64>\tmp\planetos-qemu\serial.log`
 (`/tmp/planetos-qemu/serial.log` from bash).
 
+### Tests
+
+```sh
+python tests/qemu.py             # build once, then boot once per case
+python tests/qemu.py --no-build  # reuse the last build
+python tests/qemu.py --case gio  # a single case
+python tests/qemu.py --list      # list the cases
+```
+
+Each case is a pair of files in [tests/cases](tests/cases): a `.sh` with the
+commands typed into the guest shell and a `.expect` with the assertions
+(`text` substring in order, `=text` whole line, `!text` must be absent,
+`~regex`). The harness builds through `run-qemu.sh --build-only` /
+`run-qemu.ps1 -BuildOnly`, boots headless with COM1 on stdio and reports the
+serial log when a case fails.
+
 ## 6. Changes from the previous revision
 
 | Before | Now |

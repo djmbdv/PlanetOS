@@ -98,6 +98,30 @@ exit "$STATUS"
 
 The kernel writes to port `0xf4` with `(code << 1) | 1` to terminate. Code 0 means success; any other code identifies the test that failed.
 
+### 4.1 Implemented harness (`tests/qemu.py`)
+
+The repository ships a working subset of the above. `tests/qemu.py` builds the
+system once through the launchers (`run-qemu.sh --build-only`,
+`run-qemu.ps1 -BuildOnly`), then boots the kernel headless for every case in
+`tests/cases/`, types the case script into the shell over COM1 and checks the
+serial output against `<case>.expect`.
+
+| Case | What it proves |
+|---|---|
+| `directories` | `mkdir`/`cd`/`pwd`, `ls -l`, path-relative `write`/`cat`/`mv`/`rm`, empty-directory deletion |
+| `gio` | the Gio layer runs twice in one boot at 51/51 |
+| `exec` | bare, case-insensitive and `exec` command resolution |
+| `errors` | XFS stays read-only and a failed `mkdir` does not shadow a disk file |
+
+Assertions: `text` (substring, in order), `=text` (whole line), `!text`
+(absent) and `~regex`.
+
+```sh
+python tests/qemu.py                # build + every case
+python tests/qemu.py --no-build     # reuse the last build
+python tests/qemu.py --case gio     # one case
+```
+
 Tests that require QEMU, and only those:
 
 | Test | What it proves |

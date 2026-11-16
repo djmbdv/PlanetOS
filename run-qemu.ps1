@@ -22,6 +22,10 @@
 .PARAMETER NoBuild
     Skips compiling and reuses the artifacts in <msys64>\tmp\planetos-qemu.
 
+.PARAMETER BuildOnly
+    Compiles everything and stops before starting QEMU. Prints the build
+    directory so tests/qemu.py can reuse the artifacts.
+
 .EXAMPLE
     .\run-qemu.ps1
 
@@ -36,7 +40,8 @@
 param(
     [switch]$Headless,
     [switch]$Display,
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$BuildOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -226,6 +231,13 @@ $kernelPath = Out-Path 'planet-kernel'
 $diskPath = Out-Path 'disk.img'
 if (-not (Test-Path $kernelPath)) { Fail ('missing ' + $kernelPath + ' (run without -NoBuild)') }
 if (-not (Test-Path $diskPath)) { Fail ('missing ' + $diskPath + ' (run without -NoBuild)') }
+
+if ($BuildOnly) {
+    Write-Host ('PLANETOS_OUT=' + $Out)
+    Write-Host ('PLANETOS_QEMU=' + $Qemu)
+    Write-Host 'Build complete (build-only).'
+    exit 0
+}
 
 # --- QEMU -----------------------------------------------------------------
 
