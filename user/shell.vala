@@ -151,9 +151,14 @@ namespace UserShell {
                 }
             } else if (buf_eq (cmd_ptr, cmd_len, "exec")) {
                 if (arg_len == 0) {
-                    print ("usage: exec <file>\n");
+                    print ("usage: exec <file> [args...]\n");
                 } else {
-                    int code = sys (13, arg_ptr, arg_len, 0);
+                    int sp2 = arg_start;
+                    while (sp2 < end && peek8 (line_buf + sp2) != ' ')
+                        sp2 = sp2 + 1;
+                    int fn_len = sp2 - arg_start;
+                    poke8 (line_buf + end, 0);
+                    int code = sys (13, arg_ptr, fn_len, arg_ptr);
                     print (@"exec: exit=$code\n");
                 }
             } else if (buf_eq (cmd_ptr, cmd_len, "ticks")) {

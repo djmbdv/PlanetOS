@@ -23,7 +23,9 @@ namespace Planet.Kernel {
         if (num == 2) { // SYS_TICKS()
             return Hal.ticks ();
         }
-        if (num == 3) { // SYS_ALLOC_PAGE()
+        if (num == 3) { // SYS_ALLOC_PAGE(num_pages)
+            if (a0 > 1)
+                return Pmm.alloc_contiguous (a0);
             return Pmm.alloc_frame ();
         }
         if (num == 4) { // SYS_FREE_PAGE(phys)
@@ -121,8 +123,8 @@ namespace Planet.Kernel {
             int n2 = Ramfs.list (a0 + n1, a1 - n1);
             return n1 + n2;
         }
-        if (num == 13) { // SYS_EXEC(name_ptr, name_len)
-            return ElfLoader.exec_from_xfs (a0, a1);
+        if (num == 13) { // SYS_EXEC(name_ptr, name_len, cmdline_ptr)
+            return ElfLoader.exec_from_xfs (a0, a1, a2);
         }
         if (num == 14) { // SYS_CREATE(name_ptr, name_len) -> fd
             int rslot = Ramfs.create (a0, a1);

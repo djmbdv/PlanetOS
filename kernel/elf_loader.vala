@@ -101,7 +101,7 @@ namespace Planet.Kernel {
             return true;
         }
 
-        public static int exec_from_xfs (int name_ptr, int name_len) {
+        public static int exec_from_xfs (int name_ptr, int name_len, int cmdline_ptr) {
             int rslot = Ramfs.find (name_ptr, name_len);
             int ino = (rslot >= 0) ? 0 : Xfs.lookup_root (name_ptr, name_len);
             if (rslot < 0 && ino <= 0)
@@ -121,13 +121,56 @@ namespace Planet.Kernel {
             if (entry == 0)
                 return -1;
 
-            int stack_pages = 4;
+            int stack_pages = 16;
             int child_stack = Pmm.alloc_contiguous (stack_pages);
             if (child_stack == 0)
                 return -1;
 
+            // Build Linux-compatible argc/argv[] at top of child_stack
+            int stack_top = child_stack + stack_pages * 4096;
+            int str_base = stack_top - 1024;
+            int argc = 0;
+            int ptr_base = str_base - 256; // up to 31 args
+            int s_pos = 0;
+            if (cmdline_ptr != 0) {
+                int i = 0;
+                while (i < 1000) {
+                    int b = read_u8 (cmdline_ptr + i);
+                    if (b == 0)
+                        break;
+                    while (b == ' ') {
+                        i = i + 1;
+                        b = read_u8 (cmdline_ptr + i);
+                    }
+                    if (b == 0)
+                        break;
+                    if (argc < 30) {
+                        mmio_write64 (ptr_base + 8 + argc * 8, str_base + s_pos);
+                        argc = argc + 1;
+                    }
+                    while (b != 0 && b != ' ' && s_pos < 1020) {
+                        mmio_write8 (str_base + s_pos, b);
+                        s_pos = s_pos + 1;
+                        i = i + 1;
+                        b = read_u8 (cmdline_ptr + i);
+                    }
+                    mmio_write8 (str_base + s_pos, 0);
+                    s_pos = s_pos + 1;
+                }
+            }
+            if (argc == 0) {
+                mmio_write64 (ptr_base + 8, str_base);
+                for (int k = 0; k < name_len && k < 250; k++) {
+                    mmio_write8 (str_base + k, read_u8 (name_ptr + k));
+                }
+                mmio_write8 (str_base + name_len, 0);
+                argc = 1;
+            }
+            mmio_write64 (ptr_base + 0, argc);
+            mmio_write64 (ptr_base + 8 + argc * 8, 0);
+
             exec_depth = exec_depth + 1;
-            int code = exec_trampoline (entry, child_stack + stack_pages * 4096);
+            int code = exec_trampoline (entry, ptr_base);
             for (int p = 0; p < stack_pages; p++) {
                 Pmm.free_frame (child_stack + p * 4096);
             }

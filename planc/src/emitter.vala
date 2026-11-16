@@ -1238,6 +1238,19 @@ namespace Planc {
             code.u8 (0x83); code.u8 (0xF9); code.u8 (0x08);
             branch (BranchKind.JL, l_class_loop);
 
+            // Large allocation (> 4096)
+            if (target_planetos) {
+                // rdi = (r14 + 4095) >> 12 (num_pages)
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+                code.u8 (0x48); code.u8 (0x81); code.u8 (0xC7); code.u32le (4095);
+                code.u8 (0x48); code.u8 (0xC1); code.u8 (0xEF); code.u8 (0x0C); // shr rdi, 12
+                mov_eax (3);
+                int80 ();
+                test_rax_rax ();
+                branch (BranchKind.JE, mem_panic_lbl);
+                code.u8 (0xB1); code.u8 (0xFF); // mov cl, 255
+                branch (BranchKind.JMP, l_init_header);
+            } else {
             // Large allocation (> 4096): mmap(align4k(total) + 4096) + PROT_NONE guard
             // mov rdi, r14                    4C 89 F7
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7);
@@ -1268,6 +1281,7 @@ namespace Planc {
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
             code.u8 (0xB1); code.u8 (0xFF);
             branch (BranchKind.JMP, l_init_header);
+            }
 
             // Small/medium class 0..7: acquire allocator spinlock [rbx + 96]
             bind (l_found_class);
@@ -1348,6 +1362,7 @@ namespace Planc {
                 // PlanetOS userland: allocate 4 KiB page via SYS_ALLOC_PAGE (3)
                 push_reg (Reg.RCX);
                 push_reg (Reg.RDX);
+                code.u8 (0xBF); code.u32le (1); // mov edi, 1
                 mov_eax (3);
                 int80 ();
                 pop_reg (Reg.RDX);

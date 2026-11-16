@@ -118,6 +118,7 @@ problems** and **creates six**:
 | [docs/planc/slice-22.md](docs/planc/slice-22.md) | **Implemented slice 22**: `--target=planetos` userland ELF64 target (`0x800000`, `int 0x80` runtime) and kernel ELF64 loader running `user/init.elf` from XFS in QEMU |
 | [docs/planc/slice-23.md](docs/planc/slice-23.md) | **Implemented slice 23**: VGA `80x25` + COM1 RX drivers, `SYS_READDIR` / `SYS_EXEC`, `--image-base`, and interactive `user/shell.vala` (`help`, `ls`, `cat`, `exec`, `ticks`, `mem`, `exit`) |
 | [docs/planc/slice-24.md](docs/planc/slice-24.md) | **Implemented slice 24**: native UTF-8 in `planc` (`unichar`, `\u`/`\U`, `char_count`, `get_char`, `validate`) and PlanetOS (VGA UTF-8→CP437, shell backspace), plus writable PMM-backed RAMFS (`SYS_CREATE`, `SYS_WRITE`) |
+| [docs/planc/slice-25.md](docs/planc/slice-25.md) | **Implemented slice 25**: `host_planetos.vala`, multi-page `SYS_ALLOC_PAGE`, `argc`/`argv` in `SYS_EXEC`, and `planc.elf` compiling & running tests inside PlanetOS/QEMU |
 
 ## 5. State of the measurements
 

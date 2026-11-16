@@ -454,6 +454,76 @@ PYEOF
         fi
     fi
     fi
+
+    echo "== planetos_planc_qemu =="
+    p_elf="$WORK/planc.elf"
+    p_disk="$WORK/planet_planc_disk.img"
+    p_ser="$WORK/qemu_planc_serial.log"
+    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
+        ko "planetos_planc_qemu" "planc.elf compile failed: $(cat "$WORK/p_elf.err")"
+    else
+    python3 - "$p_disk" "$s_bin" "$p_elf" "$HERE/valid/utf8.vala" "$HERE/valid/class_basic.vala" << 'PYEOF'
+import struct, sys
+sh_bytes = open(sys.argv[2], "rb").read()
+pl_bytes = open(sys.argv[3], "rb").read()
+t1_bytes = open(sys.argv[4], "rb").read()
+t2_bytes = open(sys.argv[5], "rb").read()
+
+def blk(b): return (len(b) + 4095) // 4096
+b_hello = 5
+b_shell = 6
+b_planc = b_shell + blk(sh_bytes)
+b_t1 = b_planc + blk(pl_bytes)
+b_t2 = b_t1 + blk(t1_bytes)
+total_blocks = max(1024, b_t2 + blk(t2_bytes))
+img = bytearray(total_blocks * 4096)
+
+struct.pack_into(">II", img, 0, 0x58465342, 4096)
+struct.pack_into(">Q", img, 56, 64)
+struct.pack_into(">I", img, 84, total_blocks)
+struct.pack_into(">H", img, 104, 256)
+img[123] = 4; img[124] = 10
+
+r = 4 * 4096
+struct.pack_into(">HH", img, r, 0x494E, 0x41ED)
+img[r + 4] = 2; img[r + 5] = 1
+df = r + 100
+entries = [
+    (b"hello.txt", 65, b"xfs:hello\n", b_hello, 0x81A4),
+    (b"shell.elf", 66, sh_bytes, b_shell, 0x81ED),
+    (b"planc.elf", 67, pl_bytes, b_planc, 0x81ED),
+    (b"utf8.vala", 68, t1_bytes, b_t1, 0x81A4),
+    (b"class_basic.vala", 69, t2_bytes, b_t2, 0x81A4),
+]
+img[df + 0] = len(entries); img[df + 1] = 0
+struct.pack_into(">I", img, df + 4, 64)
+ent = df + 8
+for name, child, data, sblk, mode in entries:
+    img[ent] = len(name); struct.pack_into(">H", img, ent + 1, 0)
+    img[ent + 3:ent + 3 + len(name)] = name
+    struct.pack_into(">I", img, ent + 3 + len(name), child)
+    ent = ent + 3 + len(name) + 4
+    fi = r + (child - 64) * 256
+    struct.pack_into(">HH", img, fi, 0x494E, mode)
+    img[fi + 4] = 2; img[fi + 5] = 2
+    struct.pack_into(">Q", img, fi + 56, len(data))
+    struct.pack_into(">I", img, fi + 76, 1)
+    bc = blk(data)
+    struct.pack_into(">QQ", img, fi + 100, 0, (sblk << 21) | bc)
+    img[sblk * 4096:sblk * 4096 + len(data)] = data
+
+open(sys.argv[1], "wb").write(img)
+PYEOF
+    printf '\nexec planc.elf --target=planetos utf8.vala -o utf8.elf\nexec utf8.elf\nexec planc.elf --target=planetos class_basic.vala -o cls.elf\nexec cls.elf\nexit\n' | timeout 15 qemu-system-x86_64 -kernel "$k_bin" -drive file="$p_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$p_ser" 2>/dev/null
+    qcode=$?
+    if [ "$qcode" != "1" ]; then
+        ko "planetos_planc_qemu" "qemu exit $qcode, expected 1 ($(tail -n 10 "$p_ser"))"
+    elif ! grep -q "chars=5 valid=1" "$p_ser" || ! grep -q "cp0=0xF1 cp1=0x20AC cp2=0x1F680" "$p_ser" || ! grep -q "exec: exit=0" "$p_ser"; then
+        ko "planetos_planc_qemu" "unexpected serial: $(cat "$p_ser")"
+    else
+        ok "planetos_planc_qemu"
+    fi
+    fi
 fi
 
 echo
