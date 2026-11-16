@@ -82,19 +82,37 @@ namespace Gdk {
             Sys.sys (22, surface.buf_addr, width, height);
         }
 
-        public int pointer_x () {
-            Sys.sys (24, mouse_buf, 0, 0);
-            return __g_peek64 (mouse_buf + 0);
+        // Blits one dirty rectangle instead of the whole surface (SYS_FB_BLIT_RECT).
+        public void present_rect (int x, int y, int w, int h) {
+            if (w <= 0 || h <= 0 || x < 0 || y < 0)
+                return;
+            if (x + w > width) w = width - x;
+            if (y + h > height) h = height - y;
+            if (w <= 0 || h <= 0)
+                return;
+            Sys.sys (26, surface.buf_addr, (x << 16) | (y & 0xFFFF), (w << 16) | (h & 0xFFFF));
         }
 
-        public int pointer_y () {
+        private int cur_x = 0;
+        private int cur_y = 0;
+        private int cur_mask = 0;
+
+        // Refreshes the cached pointer state (one SYS_MOUSE_READ).
+        private void refresh_pointer () {
             Sys.sys (24, mouse_buf, 0, 0);
-            return __g_peek64 (mouse_buf + 8);
+            cur_x = __g_peek64 (mouse_buf + 0);
+            cur_y = __g_peek64 (mouse_buf + 8);
+            cur_mask = __g_peek64 (mouse_buf + 16);
         }
 
-        public int pointer_mask () {
-            Sys.sys (24, mouse_buf, 0, 0);
-            return __g_peek64 (mouse_buf + 16);
+        // Cached pointer position/mask, refreshed by poll_event() or an
+        // explicit read_pointer(). Avoids a syscall per query.
+        public int pointer_x () { return cur_x; }
+        public int pointer_y () { return cur_y; }
+        public int pointer_mask () { return cur_mask; }
+
+        public void read_pointer () {
+            refresh_pointer ();
         }
 
         public Event poll_event () {
@@ -105,10 +123,10 @@ namespace Gdk {
                 ev.keyval = key;
                 return ev;
             }
-            Sys.sys (24, mouse_buf, 0, 0);
-            int mx = __g_peek64 (mouse_buf + 0);
-            int my = __g_peek64 (mouse_buf + 8);
-            int mb = __g_peek64 (mouse_buf + 16);
+            refresh_pointer ();
+            int mx = cur_x;
+            int my = cur_y;
+            int mb = cur_mask;
             if (mb != 0 && last_mb == 0) {
                 last_mb = mb;
                 last_mx = mx;

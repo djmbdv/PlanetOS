@@ -5,7 +5,7 @@ Usage:
     mkdisk.py <disk.img> <init.elf> <shell.elf> <planc.elf> <banner.elf>
               <worker.elf> <wc.elf> <cairo_demo.elf> <frag.spv> <spv_demo.elf>
               <gio_demo.elf> <utf8.vala> <class_basic.vala>
-              <gobject_demo.elf> <gmodule_demo.elf> <mainloop_demo.elf> <compositor.elf>
+              <gobject_demo.elf> <gmodule_demo.elf> <mainloop_demo.elf> <compositor.elf> <pango_demo.elf> <frag_pattern.spv>
 
 Shared by run-qemu.sh and run-qemu.ps1 so both launchers produce the same
 image layout.
@@ -14,7 +14,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 18  # image + 17 files
+ARG_COUNT = 20  # image + 19 files
 
 
 def blk(b):
@@ -43,6 +43,8 @@ def main():
     gm_b = open(sys.argv[15], "rb").read()
     ml_b = open(sys.argv[16], "rb").read()
     cp_b = open(sys.argv[17], "rb").read()
+    pg_b = open(sys.argv[18], "rb").read()
+    fp_b = open(sys.argv[19], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -61,8 +63,10 @@ def main():
     b_gm = b_go + blk(go_b)
     b_ml = b_gm + blk(gm_b)
     b_cp = b_ml + blk(ml_b)
+    b_pg = b_cp + blk(cp_b)
+    b_fp = b_pg + blk(pg_b)
     INO_BLK = 1000
-    total_blocks = max(1024, b_cp + blk(cp_b), INO_BLK + 2)
+    total_blocks = max(1024, b_fp + blk(fp_b), INO_BLK + 2)
     img = bytearray(total_blocks * 4096)
 
     struct.pack_into(">II", img, 0, 0x58465342, 4096)
@@ -99,6 +103,8 @@ def main():
         (b"gmodule_demo.elf", gm_b, b_gm, 0x81ED),
         (b"mainloop_demo.elf", ml_b, b_ml, 0x81ED),
         (b"compositor.elf", cp_b, b_cp, 0x81ED),
+        (b"pango_demo.elf", pg_b, b_pg, 0x81ED),
+        (b"frag_pattern.spv", fp_b, b_fp, 0x81A4),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

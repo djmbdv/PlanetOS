@@ -280,6 +280,7 @@ The `Planet.Pruebas` package is not a luxury: without it, verification inside th
 | `Gdk` ([stdlib/gdk_compat.vala](../../stdlib/gdk_compat.vala)) | events, window, framebuffer blits and mouse/keyboard input |
 | `GObject` ([stdlib/gobject_compat.vala](../../stdlib/gobject_compat.vala)) | `Type` ids, `type_register`/`type_name` and the tagged `Value` container |
 | `Spv` ([stdlib/spirv_compat.vala](../../stdlib/spirv_compat.vala)) | SPIR-V 1.0 module loader and pure-Vala SSA evaluator: fragment color plus word/insn counts |
+| `Pango` + `PangoCairo` ([stdlib/pango_compat.vala](../../stdlib/pango_compat.vala)) | font descriptions, layout metrics, word wrap, ellipsize, alignment and text drawing |
 | `GModule` ([stdlib/gmodule_compat.vala](../../stdlib/gmodule_compat.vala)) | `Module` with `NOT_SUPPORTED` for `open()` (no dynamic linker) and a static module/symbol registry |
 
 The compatibility layers sit **above** `Planet.Sys`: they never issue a syscall

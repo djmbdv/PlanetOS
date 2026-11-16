@@ -15,6 +15,8 @@
 
 using GLib;
 using Planet;
+using Pango;
+using PangoCairo;
 using Spv;
 using Cairo;
 using Gdk;
@@ -46,6 +48,14 @@ namespace Wm {
     public const int BACKEND_CAIRO = 0;
     public const int BACKEND_VULKAN = 1;
 
+    public const int LAYOUT_NORMAL = 0;
+    public const int LAYOUT_MAX = 1;
+    public const int LAYOUT_LEFT = 2;
+    public const int LAYOUT_RIGHT = 3;
+
+    public const int DMG_RECTS = 32;
+    public const int PAT_STEP = 8;
+
     public enum Kind { TERMINAL, CLOCK, SHADER, NOTES }
 
     public class Win : Object {
@@ -59,6 +69,7 @@ namespace Wm {
         public int z;
         public bool alive = true;
         public bool maximized = false;
+        public int layout_state = 0;
         public int rx;
         public int ry;
         public int rw;
@@ -116,16 +127,46 @@ namespace Wm {
         private int drag_oy = 0;
         private bool quit = false;
         private int frames = 0;
+        private int flush_ticks = 0;
+        private int blit_ticks = 0;
+        private int dirty_frames = 0;
+        private int last_sec = -1;
         private Module shader;
         private bool shader_ok = false;
         private int backend_id = 0;
         private double acc_r = 0.227;
         private double acc_g = 0.518;
         private double acc_b = 0.882;
+        private int[] dmg;
+        private int[] last;
+        private int last_n = 0;
+        private bool last_full = true;
+        private int ndmg = 0;
+        private bool dmg_full = true;
+        private int mods = 0;
+        private int last_mx = -100;
+        private int last_my = -100;
+        private Module pattern;
+        private bool pattern_ok = false;
+        private int[] pat;
+        private int pat_w = 0;
+        private int pat_h = 0;
+        private PangoContext pctx;
+        private Layout title_lay;
+        private Layout dock_lay;
 
         public Compositor () {
             wins = new GenericArray<Win> ();
             shader = new Module ();
+            pattern = new Module ();
+            dmg = new int[DMG_RECTS * 4];
+            last = new int[DMG_RECTS * 4];
+            pctx = new PangoContext ();
+            title_lay = new Layout (pctx);
+            dock_lay = new Layout (pctx);
+            dock_lay.set_width (DOCK_BTN_W - 18);
+            dock_lay.set_ellipsize (EllipsizeMode.END);
+            pat = new int[1];
         }
 
         // --- plumbing -------------------------------------------------
@@ -141,12 +182,13 @@ namespace Wm {
         }
 
         public bool frame () {
+            mods = Sys.key_mods ();
             for (int i = 0; i < 16; i++) {
                 var ev = screen.poll_event ();
                 if (ev.type == EventType.NONE)
                     break;
                 if (ev.type == EventType.KEY_PRESS) {
-                    key_press (ev.keyval);
+                    key_press_mod (ev.keyval, mods);
                 } else if (ev.type == EventType.BUTTON_PRESS) {
                     pointer_press (ev.x, ev.y);
                 } else if (ev.type == EventType.MOTION_NOTIFY) {
@@ -160,14 +202,158 @@ namespace Wm {
                 else
                     drag_to (screen.pointer_x (), screen.pointer_y ());
             }
+            int mx = screen.pointer_x ();
+            int my = screen.pointer_y ();
+            animate_damage (mx, my);
+            bool was_full = dmg_full;
+            last_n = ndmg;
+            last_full = was_full;
+            for (int i = 0; i < ndmg * 4; i++)
+                last[i] = dmg[i];
+            if (last_full || last_n > 0)
+                dirty_frames = dirty_frames + 1;
+            int t_flush0 = Sys.ticks ();
             var cr = new Context (screen.surface);
-            render (cr, screen.pointer_x (), screen.pointer_y ());
-            screen.present ();
+            flush (cr, mx, my);
+            flush_ticks = flush_ticks + (Sys.ticks () - t_flush0);
+            int t_blit0 = Sys.ticks ();
+            if (was_full) {
+                screen.present ();
+            } else {
+                for (int i = 0; i < last_n; i++)
+                    screen.present_rect (last[i * 4 + 0], last[i * 4 + 1], last[i * 4 + 2], last[i * 4 + 3]);
+            }
+            blit_ticks = blit_ticks + (Sys.ticks () - t_blit0);
             frames = frames + 1;
             return !quit;
         }
 
+        // --- damage tracking ------------------------------------------
+
+        public void damage (int x, int y, int w, int h) {
+            if (dmg_full || w <= 0 || h <= 0)
+                return;
+            if (x < 0) {
+                w = w + x;
+                x = 0;
+            }
+            if (y < 0) {
+                h = h + y;
+                y = 0;
+            }
+            if (x + w > SCREEN_W)
+                w = SCREEN_W - x;
+            if (y + h > SCREEN_H)
+                h = SCREEN_H - y;
+            if (w <= 0 || h <= 0)
+                return;
+            if (ndmg >= DMG_RECTS - 1) {
+                dmg_full = true;
+                ndmg = 0;
+                return;
+            }
+            dmg[ndmg * 4 + 0] = x;
+            dmg[ndmg * 4 + 1] = y;
+            dmg[ndmg * 4 + 2] = w;
+            dmg[ndmg * 4 + 3] = h;
+            ndmg = ndmg + 1;
+        }
+
+        public void damage_window (int id) {
+            var w = find (id);
+            if (w == null)
+                return;
+            damage (w.x - 1, w.y - 1, w.w + SHADOW + 2, w.h + SHADOW + 2);
+        }
+
+        public void damage_full () {
+            dmg_full = true;
+            ndmg = 0;
+        }
+
+        public bool damage_is_full () { return dmg_full; }
+        public int damage_count () { return ndmg; }
+
+        private void clear_damage () {
+            ndmg = 0;
+            dmg_full = false;
+        }
+
+        public int damage_pixels () {
+            if (dmg_full)
+                return SCREEN_W * SCREEN_H;
+            int total = 0;
+            for (int i = 0; i < ndmg; i++)
+                total = total + dmg[i * 4 + 2] * dmg[i * 4 + 3];
+            return total;
+        }
+
+        // Repaints only the pending damage regions; every draw is clipped, so
+        // the cost of a frame is proportional to what actually changed.
+        public void flush (Context cr, int mx, int my) {
+            if (dmg_full) {
+                cr.reset_clip ();
+                render (cr, mx, my);
+                clear_damage ();
+                return;
+            }
+            for (int i = 0; i < ndmg; i++) {
+                int x = dmg[i * 4 + 0];
+                int y = dmg[i * 4 + 1];
+                int w = dmg[i * 4 + 2];
+                int h = dmg[i * 4 + 3];
+                cr.rectangle (x, y, w, h);
+                cr.clip ();
+                render (cr, mx, my);
+                cr.reset_clip ();
+            }
+            clear_damage ();
+        }
+
+        private void animate_damage (int mx, int my) {
+            if (mx != last_mx || my != last_my) {
+                damage (last_mx - 2, last_my - 2, 16, 22);
+                damage (mx - 2, my - 2, 16, 22);
+                last_mx = mx;
+                last_my = my;
+            }
+            // The analog clock and the seconds readout only change once per
+            // second, so an idle desktop produces no damage at all.
+            int sec = Sys.ticks () / 100;
+            if (sec == last_sec)
+                return;
+            last_sec = sec;
+            for (int i = 0; i < wins.length; i++) {
+                var w = wins[i];
+                if (!w.alive || w.kind != Kind.CLOCK)
+                    continue;
+                int cx = w.x + BORDER;
+                int cy = w.content_y ();
+                int cw = w.w - 2 * BORDER;
+                int ch = w.content_h ();
+                int rad = clock_radius (cw, ch);
+                int ccx = cx + cw / 2;
+                int ccy = cy + ch / 2;
+                damage (ccx - rad - 2, ccy - rad - 2, rad * 2 + 4, rad * 2 + 4);
+                damage (cx, cy + ch - 30, cw, 30);
+            }
+            damage (SCREEN_W - 200, 0, 200, TOP_H);
+        }
+
+        // Culling: a window (or a bar) that does not touch the current clip is
+        // skipped entirely, so repainting one damage rect costs only that rect.
+        private static bool rect_hits (Context cr, int x, int y, int w, int h) {
+            if (x + w <= cr.clip_left () || x >= cr.clip_right ())
+                return false;
+            if (y + h <= cr.clip_top () || y >= cr.clip_bottom ())
+                return false;
+            return true;
+        }
+
         public int frame_count () { return frames; }
+        public int dirty_frame_count () { return dirty_frames; }
+        public int avg_flush_ms () { return (dirty_frames > 0) ? (flush_ticks * 10 / dirty_frames) : 0; }
+        public int avg_blit_ms () { return (dirty_frames > 0) ? (blit_ticks * 10 / dirty_frames) : 0; }
         public bool quit_requested () { return quit; }
         public bool dragging_active () { return dragging; }
         public int focus_id () { return focused_id; }
@@ -256,6 +442,7 @@ namespace Wm {
             win.z = ztop;
             wins.add (win);
             focused_id = win.id;
+            damage_full ();
             return win.id;
         }
 
@@ -265,6 +452,7 @@ namespace Wm {
                 return;
             ztop = ztop + 1;
             w.z = ztop;
+            damage_full ();
         }
 
         public void focus (int id) {
@@ -285,6 +473,7 @@ namespace Wm {
                 if (t != null)
                     focused_id = t.id;
             }
+            damage_full ();
         }
 
         public void cycle () {
@@ -325,23 +514,67 @@ namespace Wm {
             var w = find (id);
             if (w == null)
                 return;
-            if (!w.maximized) {
+            if (w.layout_state == LAYOUT_MAX) {
+                restore_layout (id);
+                return;
+            }
+            if (w.layout_state == LAYOUT_NORMAL) {
                 w.rx = w.x;
                 w.ry = w.y;
                 w.rw = w.w;
                 w.rh = w.h;
-                w.x = 0;
-                w.y = TOP_H;
-                w.w = SCREEN_W;
-                w.h = WORK_H;
-                w.maximized = true;
-            } else {
-                w.x = w.rx;
-                w.y = w.ry;
-                w.w = w.rw;
-                w.h = w.rh;
-                w.maximized = false;
             }
+            w.x = 0;
+            w.y = TOP_H;
+            w.w = SCREEN_W;
+            w.h = WORK_H;
+            w.maximized = true;
+            w.layout_state = LAYOUT_MAX;
+            damage_full ();
+        }
+
+        // Gala/GNOME-style tiling: Super+Left/Right fill half the work area.
+        public void snap (int id, int side) {
+            var w = find (id);
+            if (w == null)
+                return;
+            if (w.layout_state == side) {
+                restore_layout (id);
+                return;
+            }
+            if (w.layout_state == LAYOUT_NORMAL) {
+                w.rx = w.x;
+                w.ry = w.y;
+                w.rw = w.w;
+                w.rh = w.h;
+            }
+            w.w = SCREEN_W / 2;
+            w.h = WORK_H;
+            w.y = TOP_H;
+            w.x = (side == LAYOUT_RIGHT) ? SCREEN_W / 2 : 0;
+            w.maximized = true;
+            w.layout_state = side;
+            damage_full ();
+        }
+
+        public void restore_layout (int id) {
+            var w = find (id);
+            if (w == null)
+                return;
+            if (w.layout_state == LAYOUT_NORMAL)
+                return;
+            w.x = w.rx;
+            w.y = w.ry;
+            w.w = w.rw;
+            w.h = w.rh;
+            w.maximized = false;
+            w.layout_state = LAYOUT_NORMAL;
+            damage_full ();
+        }
+
+        public int layout_of (int id) {
+            var w = find (id);
+            return (w != null) ? w.layout_state : LAYOUT_NORMAL;
         }
 
         public int clamp_x (int x, int w) {
@@ -365,8 +598,10 @@ namespace Wm {
             var w = find (id);
             if (w == null || w.maximized)
                 return;
+            damage_window (id);
             w.x = clamp_x (w.x + dx, w.w);
             w.y = clamp_y (w.y + dy, w.h);
+            damage_window (id);
         }
 
         // --- input ----------------------------------------------------
@@ -406,8 +641,10 @@ namespace Wm {
                 dragging = false;
                 return;
             }
+            damage_window (drag_id);
             w.x = clamp_x (px - drag_ox, w.w);
             w.y = clamp_y (py - drag_oy, w.h);
+            damage_window (drag_id);
         }
 
         public void pointer_motion (int px, int py) {
@@ -442,6 +679,41 @@ namespace Wm {
         }
 
         public void key_press (int k) {
+            key_press_mod (k, mods);
+        }
+
+        // Alt+Tab cycles, Alt+Q closes, Super+arrows maximize/tile/restore.
+        public void key_press_mod (int k, int m) {
+            bool alt = (m & Sys.MOD_ALT) != 0;
+            bool super = (m & Sys.MOD_SUPER) != 0;
+            if (super && (k == 0x83 || k == 'h')) {
+                if (focused_id != 0)
+                    snap (focused_id, LAYOUT_LEFT);
+                return;
+            }
+            if (super && (k == 0x84 || k == 'l')) {
+                if (focused_id != 0)
+                    snap (focused_id, LAYOUT_RIGHT);
+                return;
+            }
+            if (super && (k == 0x81 || k == 'k')) {
+                if (focused_id != 0)
+                    maximize (focused_id);
+                return;
+            }
+            if (super && (k == 0x82 || k == 'j')) {
+                if (focused_id != 0)
+                    restore_layout (focused_id);
+                return;
+            }
+            if (alt && k == 9) {
+                cycle ();
+                return;
+            }
+            if (alt && (k == 'q' || k == 'Q')) {
+                close_win (focused_id);
+                return;
+            }
             if (k == 27 || k == 'q' || k == 'Q') {
                 quit = true;
                 return;
@@ -457,6 +729,10 @@ namespace Wm {
             if (k == 'm' || k == 'M') {
                 if (focused_id != 0)
                     maximize (focused_id);
+                return;
+            }
+            if (k == 'n' || k == 'N') {
+                add_demo ();
                 return;
             }
             if (k >= '1' && k <= '9') {
@@ -494,6 +770,43 @@ namespace Wm {
             acc_g = shader.g;
             acc_b = shader.b;
             return true;
+        }
+
+        // Bakes the per-pixel shader into coarse PAT_STEP blocks. The fragment
+        // stage runs on the CPU (no ICD), so evaluating 100x75 samples once is
+        // the practical equivalent of a full-screen Vulkan draw.
+        public bool load_pattern (string path) {
+            pattern = Module.load (path);
+            if (!pattern.valid || !pattern.has_input ())
+                return false;
+            pat_w = (SCREEN_W + PAT_STEP - 1) / PAT_STEP;
+            pat_h = (SCREEN_H + PAT_STEP - 1) / PAT_STEP;
+            pat = new int[pat_w * pat_h];
+            for (int by = 0; by < pat_h; by++) {
+                for (int bx = 0; bx < pat_w; bx++) {
+                    pattern.pixel (bx * PAT_STEP + PAT_STEP / 2, by * PAT_STEP + PAT_STEP / 2);
+                    int rr = pattern.ir ();
+                    int gg = pattern.ig ();
+                    int bb = pattern.ib ();
+                    pat[by * pat_w + bx] = (rr << 16) | (gg << 8) | bb;
+                }
+            }
+            pattern_ok = true;
+            damage_full ();
+            return true;
+        }
+
+        public bool has_pattern () { return pattern_ok; }
+        public int pattern_samples () { return pattern_ok ? (pat_w * pat_h) : 0; }
+
+        public int pattern_at (int x, int y) {
+            if (!pattern_ok)
+                return 0;
+            int bx = x / PAT_STEP;
+            int by = y / PAT_STEP;
+            if (bx < 0 || by < 0 || bx >= pat_w || by >= pat_h)
+                return 0;
+            return pat[by * pat_w + bx];
         }
 
         // --- scene ----------------------------------------------------
@@ -538,6 +851,10 @@ namespace Wm {
         }
 
         private void draw_background (Context cr) {
+            if (pattern_ok) {
+                draw_pattern (cr);
+                return;
+            }
             int bands = 24;
             for (int i = 0; i < bands; i++) {
                 double t = (double) i / (double) (bands - 1);
@@ -554,7 +871,39 @@ namespace Wm {
             cr.fill ();
         }
 
+        // Blits the baked shader pattern, visiting only the blocks that fall
+        // inside the current clip (a damage rect) instead of the whole screen.
+        private void draw_pattern (Context cr) {
+            int x0 = cr.clip_left ();
+            int y0 = cr.clip_top ();
+            int x1 = cr.clip_right ();
+            int y1 = cr.clip_bottom ();
+            int by = y0 / PAT_STEP;
+            while (by * PAT_STEP < y1) {
+                if (by >= 0 && by < pat_h) {
+                    int bx = x0 / PAT_STEP;
+                    while (bx * PAT_STEP < x1) {
+                        if (bx >= 0 && bx < pat_w) {
+                            int col = pat[by * pat_w + bx];
+                            cr.set_source_rgb ((double) ((col >> 16) & 0xFF) / 255.0,
+                                               (double) ((col >> 8) & 0xFF) / 255.0,
+                                               (double) (col & 0xFF) / 255.0);
+                            cr.rectangle (bx * PAT_STEP, by * PAT_STEP, PAT_STEP, PAT_STEP);
+                            cr.fill ();
+                        }
+                        bx = bx + 1;
+                    }
+                }
+                by = by + 1;
+            }
+            cr.set_source_rgba (acc_r, acc_g, acc_b, 0.14);
+            cr.rectangle (0, TOP_H, SCREEN_W, 2);
+            cr.fill ();
+        }
+
         private void draw_top_bar (Context cr) {
+            if (!rect_hits (cr, 0, 0, SCREEN_W, TOP_H))
+                return;
             cr.set_source_rgb (0.071, 0.086, 0.125);
             cr.rectangle (0, 0, SCREEN_W, TOP_H);
             cr.fill ();
@@ -578,8 +927,9 @@ namespace Wm {
             cr.set_source_rgb (0.55, 0.62, 0.73);
             cr.move_to (SCREEN_W - 190, 6);
             cr.show_text (@"$(count ()) win");
+            int total = Sys.ticks () / 100;
             cr.move_to (SCREEN_W - 120, 6);
-            cr.show_text (@"t=$(Sys.ticks ())");
+            cr.show_text (@"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))");
         }
 
         private void draw_windows (Context cr) {
@@ -600,7 +950,8 @@ namespace Wm {
                 }
                 if (pick == null)
                     break;
-                draw_window (cr, pick);
+                if (rect_hits (cr, pick.x - 1, pick.y - 1, pick.w + SHADOW + 2, pick.h + SHADOW + 2))
+                    draw_window (cr, pick);
                 lastz = pickz;
                 drawn = drawn + 1;
             }
@@ -643,11 +994,7 @@ namespace Wm {
                 cr.set_source_rgb (0.97, 0.98, 1.0);
             else
                 cr.set_source_rgb (0.71, 0.76, 0.84);
-            int maxc = (w.w - 96) / 12;
-            if (maxc < 4)
-                maxc = 4;
-            cr.move_to (w.x + 10, w.y + BORDER + 7);
-            cr.show_text_n (w.title, maxc);
+            draw_title (cr, w, w.x + 10, w.y + BORDER + 7);
 
             int by = w.btn_y ();
             cr.set_source_rgba (1.0, 1.0, 1.0, 0.12);
@@ -670,12 +1017,41 @@ namespace Wm {
             cr.stroke ();
         }
 
+        private static int clock_radius (int cw, int ch) {
+            int rad = ch / 2 - 18;
+            if (rad > cw / 2 - 16)
+                rad = cw / 2 - 16;
+            if (rad < 20)
+                rad = 20;
+            return rad;
+        }
+
+        // Pango layout cache: reflow only when the text or the width changes.
+        private void draw_title (Context cr, Win w, int x, int y) {
+            int tw = w.w - 96;
+            if (tw < 40)
+                tw = 40;
+            if (title_lay.current_width () != tw)
+                title_lay.set_width (tw);
+            if (title_lay.current_text () != w.title)
+                title_lay.set_text (w.title);
+            show_layout_at (cr, title_lay, x, y);
+        }
+
+        private void draw_dock_label (Context cr, string title, int x, int y) {
+            if (dock_lay.current_text () != title)
+                dock_lay.set_text (title);
+            show_layout_at (cr, dock_lay, x, y);
+        }
+
         private void draw_content (Context cr, Win w) {
             int cx = w.x + BORDER;
             int cy = w.content_y ();
             int cw = w.w - 2 * BORDER;
             int ch = w.content_h ();
             if (ch <= 0 || cw <= 0)
+                return;
+            if (!rect_hits (cr, cx, cy, cw, ch))
                 return;
 
             if (w.kind == Kind.TERMINAL) {
@@ -702,11 +1078,7 @@ namespace Wm {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
-                int rad = ch / 2 - 18;
-                if (rad > cw / 2 - 16)
-                    rad = cw / 2 - 16;
-                if (rad < 20)
-                    rad = 20;
+                int rad = clock_radius (cw, ch);
                 int ccx = cx + cw / 2;
                 int ccy = cy + ch / 2;
                 cr.set_source_rgb (0.20, 0.24, 0.31);
@@ -825,6 +1197,8 @@ namespace Wm {
 
         private void draw_dock (Context cr) {
             int y0 = SCREEN_H - DOCK_H;
+            if (!rect_hits (cr, 0, y0, SCREEN_W, DOCK_H))
+                return;
             cr.set_source_rgb (0.031, 0.039, 0.059);
             cr.rectangle (0, y0, SCREEN_W, DOCK_H);
             cr.fill ();
@@ -856,8 +1230,7 @@ namespace Wm {
                     cr.set_source_rgb (0.96, 0.98, 1.0);
                 else
                     cr.set_source_rgb (0.68, 0.74, 0.83);
-                cr.move_to (bx + 10, by + 5);
-                cr.show_text_n (w.title, 18);
+                draw_dock_label (cr, w.title, bx + 10, by + 5);
             }
         }
 
@@ -1000,6 +1373,51 @@ private int self_test_run (Compositor comp) {
     check (!comp.select_backend (BACKEND_VULKAN), "vulkan-needs-icd");
     check (comp.select_backend (BACKEND_CAIRO) && comp.backend () == BACKEND_CAIRO, "cairo-backend");
 
+    // per-pixel SPIR-V background (gl_FragCoord) baked into PAT_STEP blocks
+    check (comp.has_pattern (), "pattern-valid");
+    check (comp.pattern_samples () == (SCREEN_W / PAT_STEP) * (SCREEN_H / PAT_STEP), "pattern-samples");
+    check (comp.pattern_at (100, 100) != comp.pattern_at (700, 500), "pattern-varies-per-pixel");
+
+    // damage tracking: only the dirty region is repainted
+    var dmgc = new Compositor ();
+    dmgc.add ("d", 200, 200, 200, 150, Kind.NOTES);
+    check (dmgc.damage_is_full (), "add-damages-all");
+    var surf2 = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    check (surf2.buf_addr != 0, "damage-surface-alloc");
+    var cr2 = new Context (surf2);
+    dmgc.flush (cr2, 0, 0);
+    check (!dmgc.damage_is_full () && dmgc.damage_count () == 0, "flush-clears-damage");
+    cr2.set_source_rgb (1.0, 0.0, 1.0);
+    cr2.paint ();
+    dmgc.damage (300, 300, 40, 40);
+    check (dmgc.damage_count () == 1 && dmgc.damage_pixels () == 1600, "damage-recorded");
+    dmgc.flush (cr2, 0, 0);
+    check (cr2.pixel_at (310, 310) != ((255 << 24) | (255 << 16) | (0 << 8) | 255), "damage-repaints-inside");
+    check (cr2.pixel_at (700, 100) == ((255 << 24) | (255 << 16) | (0 << 8) | 255), "damage-keeps-outside");
+
+    // modifiers: Alt+Tab, Alt+Q and Super+arrows
+    var mod = new Compositor ();
+    int m1 = mod.add ("m1", 40, 40, 260, 180, Kind.TERMINAL);
+    int m2 = mod.add ("m2", 340, 60, 260, 180, Kind.CLOCK);
+    int m3 = mod.add ("m3", 120, 300, 260, 160, Kind.NOTES);
+    check (mod.focus_id () == m3, "mods-focus-last");
+    mod.key_press_mod (9, Sys.MOD_ALT);
+    check (mod.focus_id () != m3, "alt-tab-cycles");
+    mod.focus_nth (1);
+    check (mod.focus_id () == m2, "focus-second-window");
+    mod.key_press_mod (0x84, Sys.MOD_SUPER);
+    check (mod.layout_of (m2) == LAYOUT_RIGHT, "super-right-tiles");
+    check (mod.ww (m2) == SCREEN_W / 2 && mod.wx (m2) == SCREEN_W / 2, "super-right-geometry");
+    mod.key_press_mod (0x83, Sys.MOD_SUPER);
+    check (mod.layout_of (m2) == LAYOUT_LEFT && mod.wx (m2) == 0, "super-left-tiles");
+    mod.key_press_mod (0x81, Sys.MOD_SUPER);
+    check (mod.layout_of (m2) == LAYOUT_MAX && mod.ww (m2) == SCREEN_W, "super-up-maximizes");
+    mod.key_press_mod (0x82, Sys.MOD_SUPER);
+    check (mod.layout_of (m2) == LAYOUT_NORMAL && mod.ww (m2) == 260, "super-down-restores");
+    mod.key_press_mod ('q', Sys.MOD_ALT);
+    check (!mod.alive (m2), "alt-q-closes-focused");
+    check (mod.focus_id () != m2, "alt-q-moves-focus");
+
     // quit handling
     var qq = new Compositor ();
     qq.add ("x", 10, 40, 200, 150, Kind.NOTES);
@@ -1030,7 +1448,7 @@ private int interactive (Compositor comp) {
     });
     loop.run ();
     comp.shutdown ();
-    print (@"compositor: frames=$(comp.frame_count ()) windows=$(comp.count ())\n");
+    print (@"compositor: frames=$(comp.frame_count ()) windows=$(comp.count ()) dirty=$(comp.dirty_frame_count ()) flush_ms=$(comp.avg_flush_ms ()) blit_ms=$(comp.avg_blit_ms ())\n");
     return 0;
 }
 
@@ -1038,14 +1456,23 @@ int main (string[] args) {
     bool self_test = false;
     bool want_shader = true;
     bool want_vulkan = false;
+    bool want_pattern = true;
     string shader_path = "frag.spv";
+    string pattern_path = "frag_pattern.spv";
     for (int i = 1; i < args.length; i++) {
         if (args[i] == "--self-test") {
             self_test = true;
         } else if (args[i] == "--no-shader") {
             want_shader = false;
+        } else if (args[i] == "--no-pattern") {
+            want_pattern = false;
         } else if (args[i] == "--vulkan") {
             want_vulkan = true;
+        } else if (args[i] == "--pattern") {
+            if (i + 1 < args.length) {
+                i = i + 1;
+                pattern_path = args[i];
+            }
         } else if (args[i] == "--shader") {
             if (i + 1 < args.length) {
                 i = i + 1;
@@ -1064,6 +1491,10 @@ int main (string[] args) {
     if (want_vulkan) {
         bool ok = comp.select_backend (BACKEND_VULKAN);
         print (@"compositor: backend=vulkan ok=$(ok ? 1 : 0) (no ICD yet, cairo fallback)\n");
+    }
+    if (want_pattern) {
+        bool pok = comp.load_pattern (pattern_path);
+        print (@"compositor: pattern=$pattern_path ok=$(pok ? 1 : 0) samples=$(comp.pattern_samples ())\n");
     }
     if (self_test)
         return self_test_run (comp);

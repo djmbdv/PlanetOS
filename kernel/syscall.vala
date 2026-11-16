@@ -368,6 +368,9 @@ namespace Planet.Kernel {
                 return 1;
             return 0;
         }
+        if (num == 33) { // SYS_KEY_MODS() -> shift|ctrl<<1|alt<<2|super<<3
+            return Keyboard.modifiers ();
+        }
         return -1;
     }
 

@@ -167,8 +167,10 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $StdDir 'gio_compat.vala'), (Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf'))
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf'))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_planet.vala'), '-o', (Out-Path 'frag.spv'))
+    Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_pattern.vala'), '-o', (Out-Path 'frag_pattern.spv'))
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf'))
-    Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'compositor.vala'), '-o', (Out-Path 'compositor.elf'))
+    Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'compositor.vala'), '-o', (Out-Path 'compositor.elf'))
+    Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf'))
     Invoke-Planc @('--target=planetos', '--image-base=0xA00000', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf'))
 
     Invoke-Planc @(
@@ -228,7 +230,9 @@ if (-not $NoBuild) {
         (Out-Path 'gobject_demo.elf') `
         (Out-Path 'gmodule_demo.elf') `
         (Out-Path 'mainloop_demo.elf') `
-        (Out-Path 'compositor.elf')
+        (Out-Path 'compositor.elf') `
+        (Out-Path 'pango_demo.elf') `
+        (Out-Path 'frag_pattern.spv')
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'
     }

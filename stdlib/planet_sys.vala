@@ -82,6 +82,21 @@ namespace Planet {
             return __sys4 (5, 0, 0, 0, 0);
         }
 
+        // --- keyboard modifiers -------------------------------------------
+
+        public const int MOD_SHIFT = 1;
+        public const int MOD_CTRL = 2;
+        public const int MOD_ALT = 4;
+        public const int MOD_SUPER = 8;
+
+        public static int key_mods () {
+            return __sys4 (33, 0, 0, 0, 0);
+        }
+
+        public static bool mod_alt () { return (key_mods () & MOD_ALT) != 0; }
+        public static bool mod_super () { return (key_mods () & MOD_SUPER) != 0; }
+        public static bool mod_ctrl () { return (key_mods () & MOD_CTRL) != 0; }
+
         // --- memory --------------------------------------------------------
 
         public static int alloc_pages (int pages) {

@@ -76,6 +76,15 @@ namespace Cairo {
         private int cur_y = 0;
         private int font_scale = 2;
 
+        // Drawing clip. Extension of this small Cairo subset: clip() intersects
+        // the current rectangle path with the drawing area and reset_clip()
+        // clears it, so damage tracking can repaint single regions.
+        private int clip_x0 = 0;
+        private int clip_y0 = 0;
+        private int clip_x1 = 0;
+        private int clip_y1 = 0;
+        private bool clip_on = false;
+
         public Context (ImageSurface target) {
             surf = target;
         }
@@ -116,6 +125,8 @@ namespace Cairo {
         private void put_px (int x, int y) {
             if (x < 0 || y < 0 || x >= surf.width || y >= surf.height)
                 return;
+            if (clip_on && (x < clip_x0 || y < clip_y0 || x >= clip_x1 || y >= clip_y1))
+                return;
             int addr = surf.buf_addr + (y * surf.width + x) * 4;
             if (src_a == 255) {
                 int col = (255 << 24) | (src_r << 16) | (src_g << 8) | src_b;
@@ -136,16 +147,75 @@ namespace Cairo {
         }
 
         public void paint () {
+            int x0 = clip_on ? clip_x0 : 0;
+            int y0 = clip_on ? clip_y0 : 0;
+            int x1 = clip_on ? clip_x1 : surf.width;
+            int y1 = clip_on ? clip_y1 : surf.height;
+            if (x1 > surf.width) x1 = surf.width;
+            if (y1 > surf.height) y1 = surf.height;
+            if (x1 <= x0 || y1 <= y0)
+                return;
             if (src_a == 255) {
                 int col = (255 << 24) | (src_r << 16) | (src_g << 8) | src_b;
-                __c_fill32 (surf.buf_addr, col, surf.width * surf.height);
+                int span = x1 - x0;
+                for (int y = y0; y < y1; y++) {
+                    __c_fill32 (surf.buf_addr + (y * surf.width + x0) * 4, col, span);
+                }
                 return;
             }
-            for (int y = 0; y < surf.height; y++) {
-                for (int x = 0; x < surf.width; x++) {
+            for (int y = y0; y < y1; y++) {
+                for (int x = x0; x < x1; x++) {
                     put_px (x, y);
                 }
             }
+        }
+
+        public void clip () {
+            if (path_kind != 1) {
+                path_kind = 0;
+                return;
+            }
+            int x0 = (px < 0) ? 0 : px;
+            int y0 = (py < 0) ? 0 : py;
+            int x1 = px + pw;
+            int y1 = py + ph;
+            if (x1 > surf.width) x1 = surf.width;
+            if (y1 > surf.height) y1 = surf.height;
+            if (clip_on) {
+                if (x0 < clip_x0) x0 = clip_x0;
+                if (y0 < clip_y0) y0 = clip_y0;
+                if (x1 > clip_x1) x1 = clip_x1;
+                if (y1 > clip_y1) y1 = clip_y1;
+            }
+            clip_x0 = x0;
+            clip_y0 = y0;
+            clip_x1 = x1;
+            clip_y1 = y1;
+            clip_on = true;
+            path_kind = 0;
+        }
+
+        public void reset_clip () {
+            clip_on = false;
+        }
+
+        public bool has_clip () {
+            return clip_on;
+        }
+
+        public int clip_left () { return clip_on ? clip_x0 : 0; }
+        public int clip_top () { return clip_on ? clip_y0 : 0; }
+        public int clip_right () { return clip_on ? clip_x1 : surf.width; }
+        public int clip_bottom () { return clip_on ? clip_y1 : surf.height; }
+
+        public int current_x () { return cur_x; }
+        public int current_y () { return cur_y; }
+
+        // Reads a pixel back (0xAARRGGBB), for tests and damage bookkeeping.
+        public int pixel_at (int x, int y) {
+            if (x < 0 || y < 0 || x >= surf.width || y >= surf.height)
+                return 0;
+            return __c_peek32 (surf.buf_addr + (y * surf.width + x) * 4);
         }
 
         public void rectangle (double x, double y, double w, double h) {
@@ -184,6 +254,12 @@ namespace Cairo {
                 int y0 = (py < 0) ? 0 : py;
                 int x1 = (px + pw > surf.width) ? surf.width : (px + pw);
                 int y1 = (py + ph > surf.height) ? surf.height : (py + ph);
+                if (clip_on) {
+                    if (x0 < clip_x0) x0 = clip_x0;
+                    if (y0 < clip_y0) y0 = clip_y0;
+                    if (x1 > clip_x1) x1 = clip_x1;
+                    if (y1 > clip_y1) y1 = clip_y1;
+                }
                 if (src_a == 255 && x1 > x0) {
                     int col = (255 << 24) | (src_r << 16) | (src_g << 8) | src_b;
                     int span = x1 - x0;
@@ -312,17 +388,28 @@ namespace Cairo {
         }
 
         public void show_text (string text) {
-            show_text_n (text, text.length);
+            show_text_range (text, 0, text.length);
         }
 
         // Draws at most max_chars glyphs, for text that must stay inside a widget.
         public void show_text_n (string text, int max_chars) {
+            show_text_range (text, 0, max_chars);
+        }
+
+        // Draws count glyphs starting at start, advancing the current point.
+        public void show_text_range (string text, int start, int count) {
             int cx = cur_x;
             int cy = cur_y;
             int s = font_scale;
-            int n = (text.length < max_chars) ? text.length : max_chars;
+            int n = count;
+            if (start < 0)
+                start = 0;
+            if (start + n > text.length)
+                n = text.length - start;
+            if (n < 0)
+                n = 0;
             for (int i = 0; i < n; i++) {
-                int ch = (int) text[i];
+                int ch = (int) text[start + i];
                 if (ch < 0x80) {
                     for (int r = 0; r < 7; r++) {
                         int bits = glyph_row (ch, r);

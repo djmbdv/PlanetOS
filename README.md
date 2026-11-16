@@ -132,6 +132,7 @@ problems** and **creates six**:
 | [docs/planc/slice-36.md](docs/planc/slice-36.md) | **Implemented slice 36**: Cairo/Gdk split ([stdlib/cairo_compat.vala](stdlib/cairo_compat.vala), [stdlib/gdk_compat.vala](stdlib/gdk_compat.vala)), [GObject](stdlib/gobject_compat.vala) `Type`/`Value` layer and [GModule](stdlib/gmodule_compat.vala) with a static module registry |
 | [docs/planc/slice-37.md](docs/planc/slice-37.md) | **Implemented slice 37**: GLib main loop — `MainContext`, `idle_add`/`timeout_add`/`source_remove`, `MainLoop`, and a `Gio.Application.run()` that drives it while `hold()` is active |
 | [docs/planc/slice-38.md](docs/planc/slice-38.md) | **Implemented slice 38**: compositor — Openbox-style window model and Gala-style visuals in 100% Vala ([user/compositor.vala](user/compositor.vala)), SPIR-V accent through the shared [Spv.Module](stdlib/spirv_compat.vala), Vulkan backend seam, and the 1024-page framebuffer limit fix |
+| [docs/planc/slice-39.md](docs/planc/slice-39.md) | **Implemented slice 39**: Pango/PangoCairo text layout ([stdlib/pango_compat.vala](stdlib/pango_compat.vala)), damage tracking with rect blits in the compositor, keyboard modifiers (`SYS_KEY_MODS`) with Alt+Tab and Super+arrows tiling, and a per-pixel SPIR-V shader using `gl_FragCoord` ([user/frag_pattern.vala](user/frag_pattern.vala)) |
 
 ## 5. State of the measurements
 
@@ -163,7 +164,8 @@ the system.
 ### What the toolchain does today
 
 ```sh
-./planc/build.sh
+./planc/build.sh                     # needs the Vala oracle (Linux)
+./tools/build-planc-host.sh          # or: rebuild with the MSYS2 UCRT64 valac
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI

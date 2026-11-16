@@ -23,6 +23,7 @@ namespace Planc {
         private const uint16 OP_LOAD                = 61;
         private const uint16 OP_STORE               = 62;
         private const uint16 OP_COMPOSITE_CONSTRUCT = 80;
+        private const uint16 OP_COMPOSITE_EXTRACT   = 81;
         private const uint16 OP_CONVERT_S_TO_F      = 111;
         private const uint16 OP_S_NEGATE            = 126;
         private const uint16 OP_F_NEGATE            = 127;
@@ -55,10 +56,12 @@ namespace Planc {
         private uint32 ty_i32 = 0;
         private uint32 ty_v4f32 = 0;
         private uint32 ty_ptr_out_v4 = 0;
+        private uint32 ty_ptr_in_v4 = 0;
         private uint32 ty_ptr_fn_f32 = 0;
         private uint32 ty_ptr_fn_i32 = 0;
         private uint32 ty_ptr_fn_v4 = 0;
         private uint32 out_color_id = 0;
+        private uint32 in_coord_id = 0;
         private uint32 main_fn_id = 0;
 
         private uint32 alloc_id () {
@@ -191,6 +194,21 @@ namespace Planc {
             }
             if (e is CallExpr) {
                 var ce = (CallExpr) e;
+                if ((ce.callee == "frag_coord_x" || ce.callee == "frag_coord_y"
+                     || ce.callee == "frag_coord_z" || ce.callee == "frag_coord_w")
+                    && ce.args.length == 0) {
+                    uint32 loaded = alloc_id ();
+                    emit_op (fn_words, OP_LOAD, new uint32[] { ty_v4f32, loaded, in_coord_id });
+                    int comp = 0;
+                    if (ce.callee == "frag_coord_y") comp = 1;
+                    else if (ce.callee == "frag_coord_z") comp = 2;
+                    else if (ce.callee == "frag_coord_w") comp = 3;
+                    uint32 res = alloc_id ();
+                    out_ty = ty_f32;
+                    emit_op (fn_words, OP_COMPOSITE_EXTRACT,
+                        new uint32[] { ty_f32, res, loaded, (uint32) comp });
+                    return res;
+                }
                 if (ce.callee == "vec4" && ce.args.length == 4) {
                     var comps = new uint32[4];
                     for (int k = 0; k < 4; k++) {
@@ -315,10 +333,12 @@ namespace Planc {
             ty_i32 = alloc_id ();
             ty_v4f32 = alloc_id ();
             ty_ptr_out_v4 = alloc_id ();
+            ty_ptr_in_v4 = alloc_id ();
             ty_ptr_fn_f32 = alloc_id ();
             ty_ptr_fn_i32 = alloc_id ();
             ty_ptr_fn_v4 = alloc_id ();
             out_color_id = alloc_id ();
+            in_coord_id = alloc_id ();
             main_fn_id = alloc_id ();
             uint32 entry_lbl = alloc_id ();
 
@@ -328,10 +348,13 @@ namespace Planc {
             emit_op (type_words, OP_TYPE_INT, new uint32[] { ty_i32, 32, 1 });
             emit_op (type_words, OP_TYPE_VECTOR, new uint32[] { ty_v4f32, ty_f32, 4 });
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_out_v4, 3, ty_v4f32 });  // Output=3
+            emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_in_v4, 1, ty_v4f32 });   // Input=1
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_fn_f32, 7, ty_f32 });   // Function=7
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_fn_i32, 7, ty_i32 });
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_fn_v4, 7, ty_v4f32 });
             emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_out_v4, out_color_id, 3 });
+            // gl_FragCoord: built-in input, usable through frag_coord_x()/y()
+            emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_in_v4, in_coord_id, 1 });
 
             bool has_ret = false;
             for (int i = 0; i < main_fn.body.length; i++) {
@@ -356,16 +379,18 @@ namespace Planc {
             // OpEntryPoint Fragment %main "main" %out_color
             var ep_str_words = new GenericArray<uint32> ();
             emit_str_words (ep_str_words, "main");
-            uint32 ep_wc = (uint32) (4 + ep_str_words.length);
+            uint32 ep_wc = (uint32) (5 + ep_str_words.length);
             words.add ((ep_wc << 16) | (uint32) OP_ENTRY_POINT);
             words.add (4); // Fragment
             words.add (main_fn_id);
             for (int i = 0; i < ep_str_words.length; i++)
                 words.add (ep_str_words[i]);
             words.add (out_color_id);
+            words.add (in_coord_id);
 
             emit_op (words, OP_EXECUTION_MODE, new uint32[] { main_fn_id, 7 }); // OriginUpperLeft
             emit_op (words, OP_DECORATE, new uint32[] { out_color_id, 30, 0 }); // Location 0
+            emit_op (words, OP_DECORATE, new uint32[] { in_coord_id, 11, 15 }); // BuiltIn FragCoord
 
             for (int i = 0; i < type_words.length; i++)
                 words.add (type_words[i]);

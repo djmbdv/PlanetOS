@@ -45,6 +45,9 @@ namespace Planet.Kernel {
 
     private int kb_shift = 0;
     private int kb_ext = 0;
+    private int kb_ctrl = 0;
+    private int kb_alt = 0;
+    private int kb_super = 0;
 
     public class Keyboard : Object {
         private const int KB_BUF = 0x106100;
@@ -54,6 +57,10 @@ namespace Planet.Kernel {
         public static void init () {
             ps2_drain ();
             kb_shift = 0;
+            kb_ext = 0;
+            kb_ctrl = 0;
+            kb_alt = 0;
+            kb_super = 0;
             mmio_write32 (KB_HEAD, 0);
             mmio_write32 (KB_TAIL, 0);
             Hal.set_idt_gate_dpl (33, addr_isr_irq1 (), 0);
@@ -70,10 +77,26 @@ namespace Planet.Kernel {
             return v;
         }
 
+        // Modifier state for the last decoded key (bit0 shift, bit1 ctrl,
+        // bit2 alt, bit3 super), read by SYS_KEY_MODS so userland can bind
+        // Alt+Tab / Super+arrows without modifier-encoded key values.
+        public static int modifiers () {
+            int m = 0;
+            if (kb_shift != 0) m = m | 1;
+            if (kb_ctrl != 0) m = m | 2;
+            if (kb_alt != 0) m = m | 4;
+            if (kb_super != 0) m = m | 8;
+            return m;
+        }
+
         public static int scancode_to_ascii (int sc) {
             if (sc == 0xE0) { kb_ext = 1; return 0; }
             if (kb_ext != 0) {
                 kb_ext = 0;
+                if (sc == 0x5B) { kb_super = 1; return 0; }
+                if (sc == 0xDB) { kb_super = 0; return 0; }
+                if (sc == 0x38) { kb_alt = 1; return 0; }
+                if (sc == 0xB8) { kb_alt = 0; return 0; }
                 if ((sc & 0x80) != 0)
                     return 0;
                 // Extended keys are reported as KEY_UP/DOWN/LEFT/RIGHT (0x81..0x84)
@@ -87,6 +110,10 @@ namespace Planet.Kernel {
             }
             if (sc == 0x2A || sc == 0x36) { kb_shift = 1; return 0; }
             if (sc == 0xAA || sc == 0xB6) { kb_shift = 0; return 0; }
+            if (sc == 0x1D) { kb_ctrl = 1; return 0; }
+            if (sc == 0x9D) { kb_ctrl = 0; return 0; }
+            if (sc == 0x38) { kb_alt = 1; return 0; }
+            if (sc == 0xB8) { kb_alt = 0; return 0; }
             if ((sc & 0x80) != 0) return 0;
             if (sc == 0x1C) return '\n';
             if (sc == 0x39) return ' ';
