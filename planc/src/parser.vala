@@ -59,7 +59,7 @@ namespace Planc {
         private static bool is_int_type_name (string text) {
             return text == "int" || text == "int64" || text == "int32"
                 || text == "int16" || text == "int8"
-                || text == "uint64" || text == "uint32" || text == "uint16"
+                || text == "uint64" || text == "uint32" || text == "uint16" || text == "unichar"
                 || text == "uint8" || text == "size_t" || text == "ssize_t"
                 || text == "char" || text == "uchar";
         }

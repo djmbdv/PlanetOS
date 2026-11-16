@@ -499,6 +499,60 @@ namespace Planc {
                         case '\\': sb.append_c ('\\'); break;
                         case '"':  sb.append_c ('"'); break;
                         case '0':  sb.append_c ('\0'); break;
+                        case 'x': {
+                            advance ();
+                            uint32 v = 0;
+                            for (int hi = 0; hi < 2; hi++) {
+                                if (pos >= src_len)
+                                    throw new LexError.UNKNOWN_ESCAPE (@"truncated \\x escape at $l:$c");
+                                uint8 hc = current ();
+                                uint32 d = 0;
+                                if (hc >= '0' && hc <= '9') d = hc - '0';
+                                else if (hc >= 'a' && hc <= 'f') d = 10 + hc - 'a';
+                                else if (hc >= 'A' && hc <= 'F') d = 10 + hc - 'A';
+                                else throw new LexError.UNKNOWN_ESCAPE (@"invalid hex in \\x escape at $l:$c");
+                                v = (v << 4) | d;
+                                advance ();
+                            }
+                            sb.append_c ((char) (uint8) v);
+                            continue;
+                        }
+                        case 'u':
+                        case 'U': {
+                            int digits = (e == 'u') ? 4 : 8;
+                            advance ();
+                            uint32 cp = 0;
+                            for (int hi = 0; hi < digits; hi++) {
+                                if (pos >= src_len)
+                                    throw new LexError.UNKNOWN_ESCAPE (@"truncated unicode escape at $l:$c");
+                                uint8 hc = current ();
+                                uint32 d = 0;
+                                if (hc >= '0' && hc <= '9') d = hc - '0';
+                                else if (hc >= 'a' && hc <= 'f') d = 10 + hc - 'a';
+                                else if (hc >= 'A' && hc <= 'F') d = 10 + hc - 'A';
+                                else throw new LexError.UNKNOWN_ESCAPE (@"invalid hex in unicode escape at $l:$c");
+                                cp = (cp << 4) | d;
+                                advance ();
+                            }
+                            if (cp <= 0x7F) {
+                                sb.append_c ((char) (uint8) cp);
+                            } else if (cp <= 0x7FF) {
+                                sb.append_c ((char) (uint8) (0xC0 | (cp >> 6)));
+                                sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
+                            } else if (cp <= 0xFFFF) {
+                                sb.append_c ((char) (uint8) (0xE0 | (cp >> 12)));
+                                sb.append_c ((char) (uint8) (0x80 | ((cp >> 6) & 0x3F)));
+                                sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
+                            } else if (cp <= 0x10FFFF) {
+                                sb.append_c ((char) (uint8) (0xF0 | (cp >> 18)));
+                                sb.append_c ((char) (uint8) (0x80 | ((cp >> 12) & 0x3F)));
+                                sb.append_c ((char) (uint8) (0x80 | ((cp >> 6) & 0x3F)));
+                                sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
+                            } else {
+                                throw new LexError.UNKNOWN_ESCAPE (@"unicode codepoint out of range at $l:$c");
+                            }
+                            continue;
+                        }
                         default:
                             throw new LexError.UNKNOWN_ESCAPE (
                                 @"unknown escape at $l:$c");

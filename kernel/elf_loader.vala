@@ -102,17 +102,18 @@ namespace Planet.Kernel {
         }
 
         public static int exec_from_xfs (int name_ptr, int name_len) {
-            int ino = Xfs.lookup_root (name_ptr, name_len);
-            if (ino <= 0)
+            int rslot = Ramfs.find (name_ptr, name_len);
+            int ino = (rslot >= 0) ? 0 : Xfs.lookup_root (name_ptr, name_len);
+            if (rslot < 0 && ino <= 0)
                 return -1;
-            int esz = Xfs.file_size (ino);
+            int esz = (rslot >= 0) ? Ramfs.file_size (rslot) : Xfs.file_size (ino);
             if (esz < 64)
                 return -1;
             int pages = (esz + 4095) / 4096;
             int ebuf = Pmm.alloc_contiguous (pages);
             if (ebuf == 0)
                 return -1;
-            int got = Xfs.read_file (ino, ebuf, esz);
+            int got = (rslot >= 0) ? Ramfs.read (rslot, 0, ebuf, esz) : Xfs.read_file (ino, ebuf, esz);
             int entry = (got == esz) ? load_image (ebuf, esz) : 0;
             for (int p = 0; p < pages; p++) {
                 Pmm.free_frame (ebuf + p * 4096);

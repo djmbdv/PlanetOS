@@ -1963,6 +1963,197 @@ namespace Planc {
             ret ();
         }
 
+        // int64 __planc_utf8_char_count(string* rdi)
+        public void emit_rt_utf8_char_count () {
+            var l_loop = new_label ();
+            var l_cont = new_label ();
+            var l_done = new_label ();
+            xor_eax ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_done);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08); // mov r8, [rdi + 8]
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x77); code.u8 (0x10); // lea rsi, [rdi + 16]
+            code.u8 (0x31); code.u8 (0xC9); // xor ecx, ecx
+            bind (l_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC1); // cmp rcx, r8
+            branch (BranchKind.JGE, l_done);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x14); code.u8 (0x0E); // movzx edx, [rsi + rcx]
+            code.u8 (0x80); code.u8 (0xE2); code.u8 (0xC0); // and dl, 0xC0
+            code.u8 (0x80); code.u8 (0xFA); code.u8 (0x80); // cmp dl, 0x80
+            branch (BranchKind.JE, l_cont);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC0); // inc rax
+            bind (l_cont);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1); // inc rcx
+            branch (BranchKind.JMP, l_loop);
+            bind (l_done);
+            ret ();
+        }
+
+        // uint32 __planc_utf8_get_char(string* rdi, int64 rsi)
+        public void emit_rt_utf8_get_char () {
+            var l_try3 = new_label ();
+            var l_try4 = new_label ();
+            var l_bad = new_label ();
+            var l_ret = new_label ();
+            xor_eax ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_ret);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08); // mov r8, [rdi + 8]
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6); // test rsi, rsi
+            branch (BranchKind.JL, l_ret);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC6); // cmp rsi, r8
+            branch (BranchKind.JGE, l_ret);
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x4C); code.u8 (0x37); code.u8 (0x10); // lea r9, [rdi + rsi + 16]
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x01); // movzx eax, [r9]
+            code.u8 (0x3D); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00); // cmp eax, 0x80
+            branch (BranchKind.JB, l_ret);
+            // 2-byte
+            code.u8 (0x89); code.u8 (0xC2); // mov edx, eax
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xE0); // and edx, 0xE0
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0xC0); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_try3);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x56); code.u8 (0x01); // lea rdx, [rsi + 1]
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2); // cmp rdx, r8
+            branch (BranchKind.JGE, l_bad);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x49); code.u8 (0x01); // movzx ecx, [r9 + 1]
+            code.u8 (0x89); code.u8 (0xCA); // mov edx, ecx
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xC0); // and edx, 0xC0
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_bad);
+            code.u8 (0x83); code.u8 (0xE0); code.u8 (0x1F); // and eax, 0x1F
+            code.u8 (0xC1); code.u8 (0xE0); code.u8 (0x06); // shl eax, 6
+            code.u8 (0x83); code.u8 (0xE1); code.u8 (0x3F); // and ecx, 0x3F
+            code.u8 (0x09); code.u8 (0xC8); // or eax, ecx
+            ret ();
+            // 3-byte
+            bind (l_try3);
+            code.u8 (0x89); code.u8 (0xC2);
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xF0);
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0xE0); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_try4);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x56); code.u8 (0x02);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2);
+            branch (BranchKind.JGE, l_bad);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x49); code.u8 (0x01); // ecx=[r9+1]
+            code.u8 (0x45); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x51); code.u8 (0x02); // r10d=[r9+2]
+            code.u8 (0x83); code.u8 (0xE0); code.u8 (0x0F);
+            code.u8 (0xC1); code.u8 (0xE0); code.u8 (0x0C);
+            code.u8 (0x83); code.u8 (0xE1); code.u8 (0x3F);
+            code.u8 (0xC1); code.u8 (0xE1); code.u8 (0x06);
+            code.u8 (0x09); code.u8 (0xC8);
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xE2); code.u8 (0x3F);
+            code.u8 (0x44); code.u8 (0x09); code.u8 (0xD0);
+            ret ();
+            // 4-byte
+            bind (l_try4);
+            code.u8 (0x89); code.u8 (0xC2);
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xF8);
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0xF0); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_bad);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x56); code.u8 (0x03);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2);
+            branch (BranchKind.JGE, l_bad);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x49); code.u8 (0x01); // ecx=[r9+1]
+            code.u8 (0x45); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x51); code.u8 (0x02); // r10d=[r9+2]
+            code.u8 (0x45); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x59); code.u8 (0x03); // r11d=[r9+3]
+            code.u8 (0x83); code.u8 (0xE0); code.u8 (0x07);
+            code.u8 (0xC1); code.u8 (0xE0); code.u8 (0x12);
+            code.u8 (0x83); code.u8 (0xE1); code.u8 (0x3F);
+            code.u8 (0xC1); code.u8 (0xE1); code.u8 (0x0C);
+            code.u8 (0x09); code.u8 (0xC8);
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xE2); code.u8 (0x3F);
+            code.u8 (0x41); code.u8 (0xC1); code.u8 (0xE2); code.u8 (0x06);
+            code.u8 (0x44); code.u8 (0x09); code.u8 (0xD0);
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xE3); code.u8 (0x3F);
+            code.u8 (0x44); code.u8 (0x09); code.u8 (0xD8);
+            ret ();
+            bind (l_bad);
+            mov_eax (0xFFFD);
+            bind (l_ret);
+            ret ();
+        }
+
+        // bool __planc_utf8_validate(string* rdi)
+        public void emit_rt_utf8_validate () {
+            var l_loop = new_label ();
+            var l_try2 = new_label ();
+            var l_try3 = new_label ();
+            var l_try4 = new_label ();
+            var l_ok = new_label ();
+            var l_bad = new_label ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_bad);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08); // mov r8, [rdi + 8]
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x4F); code.u8 (0x10); // lea r9, [rdi + 16]
+            code.u8 (0x31); code.u8 (0xC9); // xor ecx, ecx
+            bind (l_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC1); // cmp rcx, r8
+            branch (BranchKind.JGE, l_ok);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x09); // movzx eax, [r9 + rcx]
+            code.u8 (0x3D); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JAE, l_try2);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1); // inc rcx
+            branch (BranchKind.JMP, l_loop);
+            bind (l_try2);
+            code.u8 (0x89); code.u8 (0xC2);
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xE0);
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0xC0); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_try3);
+            code.u8 (0x3D); code.u8 (0xC2); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00); // cmp eax, 0xC2
+            branch (BranchKind.JB, l_bad);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x51); code.u8 (0x01); // lea rdx, [rcx + 1]
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2);
+            branch (BranchKind.JGE, l_bad);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x11); // movzx eax, [r9 + rdx]
+            code.u8 (0x83); code.u8 (0xE0); code.u8 (0xC0);
+            code.u8 (0x3D); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_bad);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC1); code.u8 (0x02); // add rcx, 2
+            branch (BranchKind.JMP, l_loop);
+            bind (l_try3);
+            code.u8 (0x89); code.u8 (0xC2);
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xF0);
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0xE0); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_try4);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x51); code.u8 (0x02); // lea rdx, [rcx + 2]
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2);
+            branch (BranchKind.JGE, l_bad);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x44); code.u8 (0x09); code.u8 (0x01); // [r9+rcx+1]
+            code.u8 (0x83); code.u8 (0xE0); code.u8 (0xC0);
+            code.u8 (0x3D); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_bad);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x44); code.u8 (0x09); code.u8 (0x02); // [r9+rcx+2]
+            code.u8 (0x83); code.u8 (0xE0); code.u8 (0xC0);
+            code.u8 (0x3D); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_bad);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC1); code.u8 (0x03);
+            branch (BranchKind.JMP, l_loop);
+            bind (l_try4);
+            code.u8 (0x89); code.u8 (0xC2);
+            code.u8 (0x83); code.u8 (0xE2); code.u8 (0xF8);
+            code.u8 (0x81); code.u8 (0xFA); code.u8 (0xF0); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            branch (BranchKind.JNE, l_bad);
+            code.u8 (0x3D); code.u8 (0xF4); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00); // cmp eax, 0xF4
+            branch (BranchKind.JA, l_bad);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x51); code.u8 (0x03); // lea rdx, [rcx + 3]
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2);
+            branch (BranchKind.JGE, l_bad);
+            for (int off_b = 1; off_b <= 3; off_b++) {
+                code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x44); code.u8 (0x09); code.u8 ((uint8) off_b);
+                code.u8 (0x83); code.u8 (0xE0); code.u8 (0xC0);
+                code.u8 (0x3D); code.u8 (0x80); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+                branch (BranchKind.JNE, l_bad);
+            }
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC1); code.u8 (0x04);
+            branch (BranchKind.JMP, l_loop);
+            bind (l_ok);
+            mov_eax (1);
+            ret ();
+            bind (l_bad);
+            xor_eax ();
+            ret ();
+        }
+
         // int64 __planc_str_to_int(string* rdi)
         public void emit_rt_str_to_int () {
             var l_ws = new_label ();

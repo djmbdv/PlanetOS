@@ -49,6 +49,7 @@ int main () {
     Hal.print_cpu_vendor ();
     Hal.init_interrupts ();
     Pmm.init ();
+    Ramfs.init ();
     Syscalls.init ();
     Keyboard.init ();
 

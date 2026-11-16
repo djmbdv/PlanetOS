@@ -122,6 +122,9 @@ namespace Planc {
         private bool need_build_args = false;
         private bool need_str_has_prefix = false;
         private bool need_str_has_suffix = false;
+        private bool need_utf8_char_count = false;
+        private bool need_utf8_get_char = false;
+        private bool need_utf8_validate = false;
         private bool need_async = false;
         private bool need_signal = false;
         private bool need_sync = false;
@@ -1311,6 +1314,21 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_str_has_suffix ();
                 symbols.add (new Symbol ("__planc_str_has_suffix", start, emitter.here () - start));
+            }
+            if (need_utf8_char_count) {
+                var start = emitter.here ();
+                emitter.emit_rt_utf8_char_count ();
+                symbols.add (new Symbol ("__planc_utf8_char_count", start, emitter.here () - start));
+            }
+            if (need_utf8_get_char) {
+                var start = emitter.here ();
+                emitter.emit_rt_utf8_get_char ();
+                symbols.add (new Symbol ("__planc_utf8_get_char", start, emitter.here () - start));
+            }
+            if (need_utf8_validate) {
+                var start = emitter.here ();
+                emitter.emit_rt_utf8_validate ();
+                symbols.add (new Symbol ("__planc_utf8_validate", start, emitter.here () - start));
             }
             if (need_str_to_int) {
                 var start = emitter.here ();
@@ -3246,6 +3264,12 @@ namespace Planc {
                         need_str_has_suffix = true;
                     else if (bi_kind == "str_substring")
                         need_str_slice = true;
+                    else if (bi_kind == "str_char_count")
+                        need_utf8_char_count = true;
+                    else if (bi_kind == "str_get_char")
+                        need_utf8_get_char = true;
+                    else if (bi_kind == "str_validate")
+                        need_utf8_validate = true;
                     else if (bi_kind == "int_parse")
                         need_str_to_int = true;
                     else if (bi_kind == "float_parse" || bi_kind == "double_parse")
@@ -4128,7 +4152,7 @@ namespace Planc {
         private static bool is_int_type_name_cg (string name) {
             return name == "int" || name == "int64" || name == "int32"
                 || name == "int16" || name == "int8"
-                || name == "uint64" || name == "uint32" || name == "uint16"
+                || name == "uint64" || name == "uint32" || name == "uint16" || name == "unichar"
                 || name == "uint8" || name == "size_t" || name == "ssize_t"
                 || name == "char" || name == "uchar";
         }
@@ -4192,7 +4216,7 @@ namespace Planc {
                 if (tname == "int32" || tname == "int") { val = -2147483648; return true; }
                 if (tname == "int64" || tname == "ssize_t") { val = -9223372036854775807 - 1; return true; }
                 if (tname == "uint8" || tname == "uchar" || tname == "char"
-                    || tname == "uint16" || tname == "uint32" || tname == "uint64" || tname == "size_t") {
+                    || tname == "uint16" || tname == "uint32" || tname == "unichar" || tname == "uint64" || tname == "size_t") {
                     val = 0; return true;
                 }
                 return false;
@@ -4203,7 +4227,7 @@ namespace Planc {
                 if (tname == "int16") { val = 32767; return true; }
                 if (tname == "uint16") { val = 65535; return true; }
                 if (tname == "int32" || tname == "int") { val = 2147483647; return true; }
-                if (tname == "uint32") { val = 4294967295; return true; }
+                if (tname == "uint32" || tname == "unichar") { val = 4294967295; return true; }
                 if (tname == "int64" || tname == "ssize_t") { val = 9223372036854775807; return true; }
                 return false;
             }
@@ -4429,6 +4453,21 @@ namespace Planc {
                 if (mc.method_name == "substring") {
                     kind = "str_substring";
                     ret_t = ValaType.STRING;
+                    return true;
+                }
+                if (mc.method_name == "char_count") {
+                    kind = "str_char_count";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "get_char") {
+                    kind = "str_get_char";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "validate") {
+                    kind = "str_validate";
+                    ret_t = ValaType.BOOL;
                     return true;
                 }
             }
@@ -4964,6 +5003,21 @@ namespace Planc {
                 if (!type_compatible (ValaType.STRING, "", at, an))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument 1 of '$(mc.method_name)' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+            } else if (kind == "str_char_count" || kind == "str_validate") {
+                if (mc.args.length != 0)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(mc.method_name) expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+            } else if (kind == "str_get_char") {
+                if (mc.args.length > 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"get_char expects 0 or 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                if (mc.args.length == 1) {
+                    string an = "";
+                    var at = expr_type_full (mc.args[0], out an);
+                    if (!is_int_like (at))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument 1 of 'get_char' expects int, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                }
             } else if (kind == "str_substring") {
                 if (mc.args.length != 1 && mc.args.length != 2)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -7711,7 +7765,7 @@ namespace Planc {
                         emitter.mov_rcx_rax ();
                         emitter.mov_rax_imm (0xffff);
                         emitter.and_rax_rcx ();
-                    } else if (tn == "uint32") {
+                    } else if (tn == "uint32" || tn == "unichar") {
                         emitter.mov_rcx_rax ();
                         emitter.mov_rax_imm (0xffffffff);
                         emitter.and_rax_rcx ();
@@ -8992,6 +9046,47 @@ namespace Planc {
                     need_str_has_suffix = true;
                     call_aligned ("__planc_str_has_suffix");
                 }
+                return;
+            }
+            if (kind == "str_char_count" || kind == "str_validate") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'$(mc.method_name)()' requires a string receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.STRING, tn);
+                emitter.mov_rdi_rax ();
+                if (kind == "str_char_count") {
+                    need_utf8_char_count = true;
+                    call_aligned ("__planc_utf8_char_count");
+                } else {
+                    need_utf8_validate = true;
+                    call_aligned ("__planc_utf8_validate");
+                }
+                return;
+            }
+            if (kind == "str_get_char") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'get_char()' requires a string receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.STRING, tn);
+                if (mc.args.length == 0) {
+                    emitter.mov_rdi_rax ();
+                    emitter.mov_esi_imm (0);
+                } else {
+                    emitter.push_rax ();
+                    push_depth++;
+                    gen_expr (mc.args[0]);
+                    emitter.mov_rsi_rax ();
+                    emitter.pop_reg (Reg.RDI);
+                    push_depth--;
+                }
+                need_utf8_get_char = true;
+                call_aligned ("__planc_utf8_get_char");
                 return;
             }
             // str_substring

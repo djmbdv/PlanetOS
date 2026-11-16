@@ -15,6 +15,10 @@ namespace UserInit {
         var c = new Counter (41);
         var n = c.next ();
         print (@"user/init.elf: Counter.next() = $n\n");
+        string u = "ñandú";
+        int uc = u.char_count ();
+        int uv = u.validate () ? 1 : 0;
+        print (@"user/init.elf: utf8 '$u' chars=$uc valid=$uv\n");
         return 0;
     }
 }

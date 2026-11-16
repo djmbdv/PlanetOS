@@ -62,7 +62,11 @@ namespace UserShell {
                 }
                 if (ch == 8 || ch == 127) {
                     if (len > 0) {
-                        len = len - 1;
+                        // Pop UTF-8 continuation bytes (0x80..0xBF) + leading byte
+                        while (len > 0 && (peek8 (line_buf + len - 1) & 0xC0) == 0x80)
+                            len = len - 1;
+                        if (len > 0)
+                            len = len - 1;
                         write_char (ch_buf, 8);
                         write_char (ch_buf, ' ');
                         write_char (ch_buf, 8);
@@ -100,7 +104,30 @@ namespace UserShell {
             int arg_len = end - arg_start;
 
             if (buf_eq (cmd_ptr, cmd_len, "help")) {
-                print ("commands: help, ls, cat <file>, exec <file>, ticks, mem, exit\n");
+                print ("commands: help, ls, cat <file>, write <file> <text>, exec <file>, ticks, mem, exit\n");
+            } else if (buf_eq (cmd_ptr, cmd_len, "write")) {
+                if (arg_len == 0) {
+                    print ("usage: write <file> <text>\n");
+                } else {
+                    int sp2 = arg_start;
+                    while (sp2 < end && peek8 (line_buf + sp2) != ' ')
+                        sp2 = sp2 + 1;
+                    int fn_len = sp2 - arg_start;
+                    int txt_start = sp2;
+                    while (txt_start < end && peek8 (line_buf + txt_start) == ' ')
+                        txt_start = txt_start + 1;
+                    int txt_len = end - txt_start;
+                    int fd = sys (14, arg_ptr, fn_len, 0);
+                    if (fd < 0) {
+                        print ("write: failed\n");
+                    } else {
+                        if (txt_len > 0)
+                            sys (15, fd, line_buf + txt_start, txt_len);
+                        poke8 (ch_buf, '\n');
+                        sys (15, fd, ch_buf, 1);
+                        sys (8, fd, 0, 0);
+                    }
+                }
             } else if (buf_eq (cmd_ptr, cmd_len, "ls")) {
                 int n = sys (12, io_buf, 3584, 0);
                 if (n > 0)

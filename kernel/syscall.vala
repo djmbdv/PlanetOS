@@ -42,15 +42,27 @@ namespace Planet.Kernel {
             return serial_try_read ();
         }
         if (num == 6) { // SYS_OPEN(name_ptr, name_len)
-            int ino = Xfs.lookup_root (a0, a1);
-            if (ino <= 0)
-                return -1;
-            int fsz = Xfs.file_size (ino);
+            int rslot = Ramfs.find (a0, a1);
+            int kind = 0;
+            int id = 0;
+            int fsz = 0;
+            if (rslot >= 0) {
+                kind = 2;
+                id = rslot;
+                fsz = Ramfs.file_size (rslot);
+            } else {
+                int ino = Xfs.lookup_root (a0, a1);
+                if (ino <= 0)
+                    return -1;
+                kind = 1;
+                id = ino;
+                fsz = Xfs.file_size (ino);
+            }
             for (int fd = 3; fd < MAX_FDS; fd++) {
                 int slot = FD_TABLE_ADDR + fd * 32;
                 if (mmio_read64 (slot) == 0) {
-                    mmio_write64 (slot + 0, 1);
-                    mmio_write64 (slot + 8, ino);
+                    mmio_write64 (slot + 0, kind);
+                    mmio_write64 (slot + 8, id);
                     mmio_write64 (slot + 16, fsz);
                     mmio_write64 (slot + 24, 0);
                     return fd;
@@ -62,14 +74,15 @@ namespace Planet.Kernel {
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
             int slot = FD_TABLE_ADDR + a0 * 32;
-            if (mmio_read64 (slot) == 0)
+            int kind = mmio_read64 (slot);
+            if (kind == 0)
                 return -1;
-            int ino = mmio_read64 (slot + 8);
+            int id = mmio_read64 (slot + 8);
             int fsz = mmio_read64 (slot + 16);
             int pos = mmio_read64 (slot + 24);
             if (pos >= fsz)
                 return 0;
-            int n = Xfs.read_file (ino, a1, a2);
+            int n = (kind == 2) ? Ramfs.read (id, pos, a1, a2) : Xfs.read_file (id, a1, a2);
             if (n > 0)
                 mmio_write64 (slot + 24, pos + n);
             return n;
@@ -102,10 +115,54 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 12) { // SYS_READDIR(buf, max_bytes)
-            return Xfs.list_root (a0, a1);
+            int n1 = Xfs.list_root (a0, a1);
+            if (n1 < 0)
+                n1 = 0;
+            int n2 = Ramfs.list (a0 + n1, a1 - n1);
+            return n1 + n2;
         }
         if (num == 13) { // SYS_EXEC(name_ptr, name_len)
             return ElfLoader.exec_from_xfs (a0, a1);
+        }
+        if (num == 14) { // SYS_CREATE(name_ptr, name_len) -> fd
+            int rslot = Ramfs.create (a0, a1);
+            if (rslot < 0)
+                return -1;
+            for (int fd = 3; fd < MAX_FDS; fd++) {
+                int slot = FD_TABLE_ADDR + fd * 32;
+                if (mmio_read64 (slot) == 0) {
+                    mmio_write64 (slot + 0, 2);
+                    mmio_write64 (slot + 8, rslot);
+                    mmio_write64 (slot + 16, 0);
+                    mmio_write64 (slot + 24, 0);
+                    return fd;
+                }
+            }
+            return -1;
+        }
+        if (num == 15) { // SYS_WRITE(fd, buf, len)
+            if (a0 == 1 || a0 == 2) {
+                __planet_console_write (a1, a2);
+                for (int i = 0; i < a2; i++) {
+                    int w = mmio_read32 ((a1 + i) & ~3);
+                    int b = (w >> (((a1 + i) & 3) * 8)) & 0xFF;
+                    Vga.write_byte (b);
+                }
+                return a2;
+            }
+            if (a0 < 3 || a0 >= MAX_FDS)
+                return -1;
+            int slot = FD_TABLE_ADDR + a0 * 32;
+            if (mmio_read64 (slot) != 2)
+                return -1;
+            int rslot = mmio_read64 (slot + 8);
+            int pos = mmio_read64 (slot + 24);
+            int nw = Ramfs.write (rslot, pos, a1, a2);
+            if (nw > 0) {
+                mmio_write64 (slot + 24, pos + nw);
+                mmio_write64 (slot + 16, Ramfs.file_size (rslot));
+            }
+            return nw;
         }
         return -1;
     }
