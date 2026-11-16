@@ -14,8 +14,16 @@ valac \
     --pkg=glib-2.0 \
     --target-glib=2.56 \
     -X -Wall -X -Wextra \
-    "$HERE"/src/*.vala \
+    "$HERE"/src/buffer.vala \
+    "$HERE"/src/lexer.vala \
+    "$HERE"/src/ast.vala \
+    "$HERE"/src/parser.vala \
+    "$HERE"/src/emitter.vala \
+    "$HERE"/src/elf.vala \
+    "$HERE"/src/codegen.vala \
+    "$HERE"/src/main.vala \
+    "$HERE"/stage0/host_stage0.vala \
     -o "$OUT"
-rm -f "$HERE"/src/*.vala.c
+rm -f "$HERE"/src/*.vala.c "$HERE"/stage0/*.vala.c
 
 echo "built: $OUT"

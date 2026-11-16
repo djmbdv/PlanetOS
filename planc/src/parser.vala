@@ -52,6 +52,7 @@ namespace Planc {
         private Program program;
         private int pending_gt = 0;
         private GenericArray<string> current_type_params = new GenericArray<string> ();
+        private string last_parsed_type_token = "";
 
         private string source_text;
 
@@ -177,8 +178,18 @@ namespace Planc {
                         @"unsupported array element type at $(current.line):$(current.column)");
                 advance ();
                 expect (TokenKind.RBRACKET, "']'");
-                tname = (t == ValaType.ENUM || t == ValaType.CLASS || t == ValaType.INTERFACE
-                         || t == ValaType.ERROR || t == ValaType.TYPE_PARAM) ? tname : t.label ();
+                if (t == ValaType.INT) {
+                    if (last_parsed_type_token == "uint8" || last_parsed_type_token == "uchar"
+                        || last_parsed_type_token == "char")
+                        tname = "uint8";
+                    else if (last_parsed_type_token == "int8")
+                        tname = "int8";
+                    else
+                        tname = t.label ();
+                } else {
+                    tname = (t == ValaType.ENUM || t == ValaType.CLASS || t == ValaType.INTERFACE
+                             || t == ValaType.ERROR || t == ValaType.TYPE_PARAM) ? tname : t.label ();
+                }
                 t = ValaType.ARRAY;
             }
             if (current.kind == TokenKind.QUESTION) {
@@ -193,6 +204,7 @@ namespace Planc {
 
         private bool parse_type (string text, out ValaType t, out string tname) {
             tname = "";
+            last_parsed_type_token = text;
             for (int i = 0; i < current_type_params.length; i++) {
                 if (current_type_params[i] == text) {
                     t = ValaType.TYPE_PARAM;
@@ -484,7 +496,7 @@ namespace Planc {
                 column = cc
             };
             if (ct == ValaType.INT) {
-                cd.int_value = parse_signed_int_literal ("const int initializer must be an integer literal");
+                cd.int_value = parse_const_int_expr ("const int initializer must be an integer literal");
             } else if (ct == ValaType.BOOL) {
                 if (current.kind == TokenKind.IDENTIFIER && current.text == "true") {
                     cd.int_value = 1;
@@ -729,6 +741,36 @@ namespace Planc {
                 throw new ParseError.DUPLICATE_FUNCTION (
                     @"duplicate name: $name at $(g.line):$(g.column)");
             program.globals.add (g);
+        }
+
+        private int64 parse_const_atom (string msg) throws ParseError, LexError {
+            if (current.kind == TokenKind.LPAREN) {
+                advance ();
+                var inner = parse_const_int_expr (msg);
+                expect (TokenKind.RPAREN, "')'");
+                return inner;
+            }
+            return parse_signed_int_literal (msg);
+        }
+
+        private int64 parse_const_int_expr (string msg) throws ParseError, LexError {
+            var v = parse_const_atom (msg);
+            while (current.kind == TokenKind.PLUS || current.kind == TokenKind.MINUS
+                   || current.kind == TokenKind.STAR || current.kind == TokenKind.PIPE
+                   || current.kind == TokenKind.AMP || current.kind == TokenKind.SHL
+                   || current.kind == TokenKind.SHR) {
+                var k = current.kind;
+                advance ();
+                var rhs = parse_const_atom (msg);
+                if (k == TokenKind.PLUS) v = v + rhs;
+                else if (k == TokenKind.MINUS) v = v - rhs;
+                else if (k == TokenKind.STAR) v = v * rhs;
+                else if (k == TokenKind.PIPE) v = v | rhs;
+                else if (k == TokenKind.AMP) v = v & rhs;
+                else if (k == TokenKind.SHL) v = v << rhs;
+                else v = v >> rhs;
+            }
+            return v;
         }
 
         private int64 parse_signed_int_literal (string msg) throws ParseError, LexError {
@@ -1637,6 +1679,24 @@ namespace Planc {
                     parse_const_decl (cd.name);
                     continue;
                 }
+                if (current.kind == TokenKind.IDENTIFIER && current.text == "struct") {
+                    var saved_tp = current_type_params;
+                    current_type_params = new GenericArray<string> ();
+                    parse_struct ();
+                    current_type_params = saved_tp;
+                    continue;
+                }
+                if (current.kind == TokenKind.IDENTIFIER && current.text == "enum") {
+                    parse_enum ();
+                    continue;
+                }
+                if (current.kind == TokenKind.IDENTIFIER && current.text == "delegate") {
+                    var saved_tp = current_type_params;
+                    current_type_params = new GenericArray<string> ();
+                    parse_delegate ();
+                    current_type_params = saved_tp;
+                    continue;
+                }
 
                 bool is_virtual = false;
                 bool is_override = false;
@@ -2217,11 +2277,56 @@ namespace Planc {
             return s;
         }
 
+        private bool match_assign_op (out string op) throws ParseError, LexError {
+            op = "";
+            switch (current.kind) {
+                case TokenKind.ASSIGN:    op = "="; break;
+                case TokenKind.PLUSEQ:    op = "+"; break;
+                case TokenKind.MINUSEQ:   op = "-"; break;
+                case TokenKind.STAREQ:    op = "*"; break;
+                case TokenKind.SLASHEQ:   op = "/"; break;
+                case TokenKind.PERCENTEQ: op = "%"; break;
+                case TokenKind.AMPEQ:     op = "&"; break;
+                case TokenKind.PIPEEQ:    op = "|"; break;
+                case TokenKind.CARETEQ:   op = "^"; break;
+                case TokenKind.SHLEQ:     op = "<<"; break;
+                case TokenKind.SHREQ:     op = ">>"; break;
+                default: return false;
+            }
+            advance ();
+            return true;
+        }
+
         private Statement parse_simple_statement_no_semi () throws ParseError, LexError {
             if (current.kind != TokenKind.IDENTIFIER
                 || current.text == "true" || current.text == "false"
                 || current.text == "null" || current.text == "new") {
                 var e = parse_expr ();
+                string op = "";
+                if (e is MemberAccessExpr && match_assign_op (out op)) {
+                    var m = (MemberAccessExpr) e;
+                    var fa = new FieldAssignStatement () {
+                        target = m.target,
+                        field_name = m.member,
+                        op = op,
+                        value = parse_expr ()
+                    };
+                    fa.line = e.line;
+                    fa.column = e.column;
+                    return fa;
+                }
+                if (e is IndexExpr && match_assign_op (out op)) {
+                    var ix = (IndexExpr) e;
+                    var ia = new IndexAssignStatement () {
+                        target = ix.target,
+                        index = ix.index,
+                        op = op,
+                        value = parse_expr ()
+                    };
+                    ia.line = e.line;
+                    ia.column = e.column;
+                    return ia;
+                }
                 var s = new ExprStatement () { expr = e };
                 s.line = e.line;
                 s.column = e.column;
@@ -2259,9 +2364,14 @@ namespace Planc {
                                      || (dt != ValaType.STRUCT && current.kind == TokenKind.LBRACKET));
 
             if (is_builtin_var || is_named_type) {
-                if (is_int_type_name (name)) dt = ValaType.INT;
-                else if (name == "bool") dt = ValaType.BOOL;
-                else if (name == "string") dt = ValaType.STRING;
+                if (is_int_type_name (name)) {
+                    dt = ValaType.INT;
+                    last_parsed_type_token = name;
+                } else if (name == "bool") {
+                    dt = ValaType.BOOL;
+                } else if (name == "string") {
+                    dt = ValaType.STRING;
+                }
                 if (name != "var")
                     parse_type_suffix (ref dt, ref dt_name);
                 if (current.kind != TokenKind.IDENTIFIER)
@@ -2325,23 +2435,19 @@ namespace Planc {
                         @"unexpected keyword '$name' at $l:$c");
                 }
 
-                if (current.kind == TokenKind.ASSIGN) {
-                    advance ();
-                    var a = new AssignStatement () { name = name, value = parse_expr () };
-                    a.line = l;
-                    a.column = c;
-                    return a;
-                }
-                if (current.kind == TokenKind.PLUSEQ || current.kind == TokenKind.MINUSEQ) {
-                    var op = (current.kind == TokenKind.PLUSEQ) ? "+" : "-";
-                    advance ();
-                    var vref = new VarRef () { name = name };
-                    vref.line = l;
-                    vref.column = c;
-                    var bin = new BinaryExpr () { op = op, left = vref, right = parse_expr () };
-                    bin.line = l;
-                    bin.column = c;
-                    var a = new AssignStatement () { name = name, value = bin };
+                string a_op = "";
+                if (match_assign_op (out a_op)) {
+                    Expr rhs = parse_expr ();
+                    if (a_op != "=") {
+                        var vref = new VarRef () { name = name };
+                        vref.line = l;
+                        vref.column = c;
+                        var bin = new BinaryExpr () { op = a_op, left = vref, right = rhs };
+                        bin.line = l;
+                        bin.column = c;
+                        rhs = bin;
+                    }
+                    var a = new AssignStatement () { name = name, value = rhs };
                     a.line = l;
                     a.column = c;
                     return a;
@@ -2389,42 +2495,13 @@ namespace Planc {
             var post = parse_postfix (atom);
             if (post is MemberAccessExpr) {
                 var m = (MemberAccessExpr) post;
-                if (current.kind == TokenKind.ASSIGN) {
-                    advance ();
+                string fop = "";
+                if (match_assign_op (out fop)) {
                     var fa = new FieldAssignStatement () {
                         target = m.target,
                         field_name = m.member,
-                        op = "=",
+                        op = fop,
                         value = parse_expr ()
-                    };
-                    fa.line = l;
-                    fa.column = c;
-                    return fa;
-                }
-                if (current.kind == TokenKind.PLUSEQ || current.kind == TokenKind.MINUSEQ) {
-                    var op = (current.kind == TokenKind.PLUSEQ) ? "+" : "-";
-                    advance ();
-                    var fa = new FieldAssignStatement () {
-                        target = m.target,
-                        field_name = m.member,
-                        op = op,
-                        value = parse_expr ()
-                    };
-                    fa.line = l;
-                    fa.column = c;
-                    return fa;
-                }
-                if (current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS) {
-                    var op = (current.kind == TokenKind.PLUSPLUS) ? "+" : "-";
-                    advance ();
-                    var one = new IntLiteral () { value = 1 };
-                    one.line = l;
-                    one.column = c;
-                    var fa = new FieldAssignStatement () {
-                        target = m.target,
-                        field_name = m.member,
-                        op = op,
-                        value = one
                     };
                     fa.line = l;
                     fa.column = c;
@@ -2433,42 +2510,13 @@ namespace Planc {
             }
             if (post is IndexExpr) {
                 var ix = (IndexExpr) post;
-                if (current.kind == TokenKind.ASSIGN) {
-                    advance ();
+                string iop = "";
+                if (match_assign_op (out iop)) {
                     var ia = new IndexAssignStatement () {
                         target = ix.target,
                         index = ix.index,
-                        op = "=",
+                        op = iop,
                         value = parse_expr ()
-                    };
-                    ia.line = l;
-                    ia.column = c;
-                    return ia;
-                }
-                if (current.kind == TokenKind.PLUSEQ || current.kind == TokenKind.MINUSEQ) {
-                    var op = (current.kind == TokenKind.PLUSEQ) ? "+" : "-";
-                    advance ();
-                    var ia = new IndexAssignStatement () {
-                        target = ix.target,
-                        index = ix.index,
-                        op = op,
-                        value = parse_expr ()
-                    };
-                    ia.line = l;
-                    ia.column = c;
-                    return ia;
-                }
-                if (current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS) {
-                    var op = (current.kind == TokenKind.PLUSPLUS) ? "+" : "-";
-                    advance ();
-                    var one = new IntLiteral () { value = 1 };
-                    one.line = l;
-                    one.column = c;
-                    var ia = new IndexAssignStatement () {
-                        target = ix.target,
-                        index = ix.index,
-                        op = op,
-                        value = one
                     };
                     ia.line = l;
                     ia.column = c;
@@ -2704,14 +2752,41 @@ namespace Planc {
                 e.column = c;
                 return e;
             }
+            if (current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS) {
+                var l = current.line;
+                var c = current.column;
+                var op = (current.kind == TokenKind.PLUSPLUS) ? "++" : "--";
+                advance ();
+                var inc = new IncDecExpr () {
+                    is_prefix = true,
+                    op = op,
+                    target = parse_unary (),
+                    line = l,
+                    column = c
+                };
+                return inc;
+            }
             return parse_postfix (parse_primary ());
         }
 
         private Expr parse_postfix (Expr expr) throws ParseError, LexError {
             var e = expr;
-            while (current.kind == TokenKind.DOT || current.kind == TokenKind.LBRACKET) {
+            while (current.kind == TokenKind.DOT || current.kind == TokenKind.LBRACKET
+                   || current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS) {
                 var l = current.line;
                 var c = current.column;
+                if (current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS) {
+                    var op = (current.kind == TokenKind.PLUSPLUS) ? "++" : "--";
+                    advance ();
+                    e = new IncDecExpr () {
+                        is_prefix = false,
+                        op = op,
+                        target = e,
+                        line = l,
+                        column = c
+                    };
+                    continue;
+                }
                 if (current.kind == TokenKind.DOT) {
                     advance ();
                     if (current.kind != TokenKind.IDENTIFIER)
@@ -2953,11 +3028,18 @@ namespace Planc {
                     advance ();
                     ValaType et = ValaType.VOID;
                     string et_name = "";
+                    string raw_elem = (current.kind == TokenKind.IDENTIFIER) ? current.text : "";
                     if (current.kind != TokenKind.IDENTIFIER
-                        || !parse_type (current.text, out et, out et_name)
+                        || !parse_type (raw_elem, out et, out et_name)
                         || et == ValaType.VOID || et == ValaType.STRUCT) {
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"expected class or array element type after 'new' at $(current.line):$(current.column)");
+                    }
+                    if (et == ValaType.INT) {
+                        if (raw_elem == "uint8" || raw_elem == "uchar" || raw_elem == "char")
+                            et_name = "uint8";
+                        else if (raw_elem == "int8")
+                            et_name = "int8";
                     }
                     advance ();
                     parse_generic_type_args (ref et, ref et_name);
@@ -3002,6 +3084,28 @@ namespace Planc {
                         return cn;
                     }
                     expect (TokenKind.LBRACKET, "'['");
+                    if (current.kind == TokenKind.RBRACKET) {
+                        advance (); // ']'
+                        expect (TokenKind.LBRACE, "'{'");
+                        var arr = new ArrayLiteralExpr ();
+                        arr.elem_type = et;
+                        arr.elem_type_name = et_name;
+                        arr.line = l;
+                        arr.column = c;
+                        while (current.kind != TokenKind.RBRACE) {
+                            arr.elements.add (parse_expr ());
+                            if (current.kind == TokenKind.COMMA) {
+                                advance ();
+                                continue;
+                            }
+                            break;
+                        }
+                        if (arr.elements.length == 0)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"empty array literal '{}' is not supported; use 'new T[0]' at $l:$c");
+                        expect (TokenKind.RBRACE, "'}'");
+                        return arr;
+                    }
                     var len_expr = parse_expr ();
                     expect (TokenKind.RBRACKET, "']'");
                     var an = new ArrayNewExpr () {
@@ -3012,6 +3116,18 @@ namespace Planc {
                     an.line = l;
                     an.column = c;
                     return an;
+                }
+                if (is_int_type_name (current.text)) {
+                    var plx = lexer.clone_state ();
+                    var nxt = plx.next ();
+                    if (nxt.kind == TokenKind.DOT) {
+                        var tname = current.text;
+                        advance ();
+                        var vr = new VarRef () { name = tname };
+                        vr.line = l;
+                        vr.column = c;
+                        return vr;
+                    }
                 }
                 if (is_reserved (current.text))
                     throw new ParseError.UNEXPECTED_TOKEN (
@@ -3139,6 +3255,8 @@ namespace Planc {
                 var ce = (CoalesceExpr) e;
                 rebase_expr (ce.left, line, col);
                 rebase_expr (ce.right, line, col);
+            } else if (e is IncDecExpr) {
+                rebase_expr (((IncDecExpr) e).target, line, col);
             } else if (e is MemberAccessExpr) {
                 rebase_expr (((MemberAccessExpr) e).target, line, col);
             } else if (e is IndexExpr) {
@@ -3174,6 +3292,15 @@ namespace Planc {
             return e;
         }
 
+        private static bool is_blank_str (string s) {
+            for (int i = 0; i < s.length; i++) {
+                var c = s[i];
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n')
+                    return false;
+            }
+            return true;
+        }
+
         private Expr parse_template (Token tok) throws ParseError, LexError {
             var tpl = new TemplateExpr ();
             tpl.line = tok.line;
@@ -3181,7 +3308,7 @@ namespace Planc {
 
             var s = tok.text;
             var n = s.length;
-            var lit = new StringBuilder ();
+            var lit = new StrBuilder ();
             int i = 0;
 
             while (i < n) {
@@ -3198,17 +3325,17 @@ namespace Planc {
                     continue;
                 }
 
-                if (lit.len > 0) {
+                if (lit.length > 0) {
                     var sl = new StringLiteral () { value = lit.str };
                     sl.line = tok.line;
                     sl.column = tok.column;
                     tpl.parts.add (sl);
-                    lit = new StringBuilder ();
+                    lit = new StrBuilder ();
                 }
 
                 if (i + 1 >= n)
                     throw new ParseError.UNEXPECTED_TOKEN (
-                        "dangling '$' in template string at %d:%d".printf (tok.line, tok.column));
+                        @"dangling '$$' in template string at $(tok.line):$(tok.column)");
 
                 if (s[i + 1] == '(') {
                     int j = i + 2;
@@ -3226,7 +3353,16 @@ namespace Planc {
                         } else {
                             if (x == '"')
                                 in_str = true;
-                            else if (x == '(')
+                            else if (x == '\'') {
+                                j++;
+                                if (j < n && s[j] == '\\')
+                                    j++;
+                                if (j < n)
+                                    j++;
+                                if (j < n && s[j] == '\'')
+                                    j++;
+                                continue;
+                            } else if (x == '(')
                                 depth++;
                             else if (x == ')')
                                 depth--;
@@ -3235,9 +3371,9 @@ namespace Planc {
                     }
                     if (depth != 0)
                         throw new ParseError.UNEXPECTED_TOKEN (
-                            "unterminated '$(' in template string at %d:%d".printf (tok.line, tok.column));
+                            @"unterminated '$$(' in template string at $(tok.line):$(tok.column)");
                     var inner = s[i + 2 : j - 1];
-                    if (inner.strip () == "")
+                    if (is_blank_str (inner))
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"empty interpolation in template string at $(tok.line):$(tok.column)");
                     try {
@@ -3266,11 +3402,11 @@ namespace Planc {
                     i = j;
                 } else {
                     throw new ParseError.UNEXPECTED_TOKEN (
-                        "invalid '$' interpolation in template string at %d:%d".printf (tok.line, tok.column));
+                        @"invalid '$$' interpolation in template string at $(tok.line):$(tok.column)");
                 }
             }
 
-            if (lit.len > 0) {
+            if (lit.length > 0) {
                 var sl = new StringLiteral () { value = lit.str };
                 sl.line = tok.line;
                 sl.column = tok.column;

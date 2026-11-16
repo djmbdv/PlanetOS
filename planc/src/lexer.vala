@@ -34,6 +34,14 @@ namespace Planc {
         MINUSMINUS,  // --
         PLUSEQ,      // +=
         MINUSEQ,     // -=
+        STAREQ,      // *=
+        SLASHEQ,     // /=
+        PERCENTEQ,   // %=
+        AMPEQ,       // &=
+        PIPEEQ,      // |=
+        CARETEQ,     // ^=
+        SHLEQ,       // <<=
+        SHREQ,       // >>=
         STAR,        // *
         SLASH,       // /
         PERCENT,     // %
@@ -71,12 +79,14 @@ namespace Planc {
     public class Lexer : Object {
 
         private string source;
+        private int src_len = 0;
         private int pos = 0;
         private int line = 1;
         private int column = 1;
 
         public Lexer (string source) {
             this.source = source;
+            this.src_len = source.length;
         }
 
         public Lexer clone_state () {
@@ -88,16 +98,16 @@ namespace Planc {
         }
 
         private uint8 current () {
-            return pos < source.length ? source[pos] : 0;
+            return pos < src_len ? source[pos] : 0;
         }
 
         private uint8 peek (int distance) {
             var p = pos + distance;
-            return p < source.length ? source[p] : 0;
+            return p < src_len ? source[p] : 0;
         }
 
         private void advance () {
-            if (pos >= source.length)
+            if (pos >= src_len)
                 return;
             if (source[pos] == '\n') {
                 line++;
@@ -128,14 +138,14 @@ namespace Planc {
 
         private Token scan_char_literal (int l, int c) throws LexError {
             advance (); // skip opening '\''
-            if (pos >= source.length)
+            if (pos >= src_len)
                 throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
             uint8 val = current ();
             if (val == '\'')
                 throw new LexError.UNEXPECTED_CHARACTER (@"empty character literal at $l:$c");
             if (val == '\\') {
                 advance ();
-                if (pos >= source.length)
+                if (pos >= src_len)
                     throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
                 var e = current ();
                 switch (e) {
@@ -151,7 +161,7 @@ namespace Planc {
                 }
             }
             advance ();
-            if (pos >= source.length || current () != '\'')
+            if (pos >= src_len || current () != '\'')
                 throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
             advance ();
             return Token () {
@@ -167,7 +177,7 @@ namespace Planc {
                 advance ();
                 advance ();
                 int digits = 0;
-                while (pos < source.length) {
+                while (pos < src_len) {
                     var cur = current ();
                     if (cur == '_') { advance (); continue; }
                     if (!is_hex_digit (cur)) break;
@@ -181,7 +191,7 @@ namespace Planc {
                 advance ();
                 advance ();
                 int digits = 0;
-                while (pos < source.length) {
+                while (pos < src_len) {
                     var cur = current ();
                     if (cur == '_') { advance (); continue; }
                     if (cur != '0' && cur != '1') break;
@@ -192,7 +202,7 @@ namespace Planc {
                 if (digits == 0)
                     throw new LexError.UNEXPECTED_CHARACTER (@"invalid binary literal at $l:$c");
             } else {
-                while (pos < source.length) {
+                while (pos < src_len) {
                     var cur = current ();
                     if (cur == '_') { advance (); continue; }
                     if (!is_digit (cur)) break;
@@ -200,7 +210,7 @@ namespace Planc {
                     advance ();
                 }
             }
-            while (pos < source.length
+            while (pos < src_len
                    && (current () == 'u' || current () == 'U'
                        || current () == 'l' || current () == 'L')) {
                 advance ();
@@ -218,14 +228,14 @@ namespace Planc {
             var l = line;
             var c = column;
 
-            if (pos >= source.length)
+            if (pos >= src_len)
                 return Token () { kind = TokenKind.EOF, text = "", line = l, column = c };
 
             var ch = current ();
 
             if (is_letter (ch)) {
                 var start = pos;
-                while (pos < source.length && (is_letter (current ()) || is_digit (current ())))
+                while (pos < src_len && (is_letter (current ()) || is_digit (current ())))
                     advance ();
                 return Token () {
                     kind = TokenKind.IDENTIFIER,
@@ -250,7 +260,7 @@ namespace Planc {
                 advance ();
                 return Token () {
                     kind = TokenKind.STRING,
-                    text = scan_string_body (l, c),
+                    text = scan_string_body (l, c, false),
                     line = l, column = c
                 };
             }
@@ -260,15 +270,18 @@ namespace Planc {
                 advance ();
                 return Token () {
                     kind = TokenKind.TEMPLATE_STRING,
-                    text = scan_string_body (l, c),
+                    text = scan_string_body (l, c, true),
                     line = l, column = c
                 };
             }
 
-            // Multi-character operators first: == != <= >= << >> && || ++ -- += -=
+            // Multi-character operators first: <<= >>= == => != <= >= << >> && || ++ -- += -= *= /= %= &= |= ^=
             if (ch == '=' || ch == '!' || ch == '<' || ch == '>'
-                || ch == '&' || ch == '|' || ch == '+' || ch == '-') {
+                || ch == '&' || ch == '|' || ch == '+' || ch == '-'
+                || ch == '*' || ch == '/' || ch == '%' || ch == '^') {
                 var n = peek (1);
+                if (ch == '<' && n == '<' && peek (2) == '=') { advance (); advance (); advance (); return three_char (TokenKind.SHLEQ, l, c); }
+                if (ch == '>' && n == '>' && peek (2) == '=') { advance (); advance (); advance (); return three_char (TokenKind.SHREQ, l, c); }
                 if (ch == '=' && n == '=') { advance (); advance (); return two_char (TokenKind.EQ, l, c); }
                 if (ch == '=' && n == '>') { advance (); advance (); return two_char (TokenKind.ARROW, l, c); }
                 if (ch == '!' && n == '=') { advance (); advance (); return two_char (TokenKind.NE, l, c); }
@@ -282,6 +295,12 @@ namespace Planc {
                 if (ch == '-' && n == '-') { advance (); advance (); return two_char (TokenKind.MINUSMINUS, l, c); }
                 if (ch == '+' && n == '=') { advance (); advance (); return two_char (TokenKind.PLUSEQ, l, c); }
                 if (ch == '-' && n == '=') { advance (); advance (); return two_char (TokenKind.MINUSEQ, l, c); }
+                if (ch == '*' && n == '=') { advance (); advance (); return two_char (TokenKind.STAREQ, l, c); }
+                if (ch == '/' && n == '=') { advance (); advance (); return two_char (TokenKind.SLASHEQ, l, c); }
+                if (ch == '%' && n == '=') { advance (); advance (); return two_char (TokenKind.PERCENTEQ, l, c); }
+                if (ch == '&' && n == '=') { advance (); advance (); return two_char (TokenKind.AMPEQ, l, c); }
+                if (ch == '|' && n == '=') { advance (); advance (); return two_char (TokenKind.PIPEEQ, l, c); }
+                if (ch == '^' && n == '=') { advance (); advance (); return two_char (TokenKind.CARETEQ, l, c); }
                 if (ch == '=') { advance (); return Token () { kind = TokenKind.ASSIGN, text = "=", line = l, column = c }; }
                 if (ch == '!') { advance (); return Token () { kind = TokenKind.NOT, text = "!", line = l, column = c }; }
                 if (ch == '<') { advance (); return Token () { kind = TokenKind.LT, text = "<", line = l, column = c }; }
@@ -290,6 +309,10 @@ namespace Planc {
                 if (ch == '|') { advance (); return Token () { kind = TokenKind.PIPE, text = "|", line = l, column = c }; }
                 if (ch == '+') { advance (); return Token () { kind = TokenKind.PLUS, text = "+", line = l, column = c }; }
                 if (ch == '-') { advance (); return Token () { kind = TokenKind.MINUS, text = "-", line = l, column = c }; }
+                if (ch == '*') { advance (); return Token () { kind = TokenKind.STAR, text = "*", line = l, column = c }; }
+                if (ch == '/') { advance (); return Token () { kind = TokenKind.SLASH, text = "/", line = l, column = c }; }
+                if (ch == '%') { advance (); return Token () { kind = TokenKind.PERCENT, text = "%", line = l, column = c }; }
+                if (ch == '^') { advance (); return Token () { kind = TokenKind.CARET, text = "^", line = l, column = c }; }
             }
 
             TokenKind kind;
@@ -305,14 +328,10 @@ namespace Planc {
                 case '.': kind = TokenKind.DOT; break;
                 case ':': kind = TokenKind.COLON; break;
                 case '?': kind = TokenKind.QUESTION; break;
-                case '*': kind = TokenKind.STAR; break;
-                case '/': kind = TokenKind.SLASH; break;
-                case '%': kind = TokenKind.PERCENT; break;
-                case '^': kind = TokenKind.CARET; break;
                 case '~': kind = TokenKind.TILDE; break;
                 default:
                     throw new LexError.UNEXPECTED_CHARACTER (
-                        @"unexpected character 0x%02x at $l:$c".printf (ch));
+                        @"unexpected character 0x$(Host.hex_u8 (ch)) at $l:$c");
             }
             advance ();
             return Token () {
@@ -320,16 +339,82 @@ namespace Planc {
             };
         }
 
-        private string scan_string_body (int l, int c) throws LexError {
-            var sb = new StringBuilder ();
+        private string scan_string_body (int l, int c, bool is_template = false) throws LexError {
+            var sb = new StrBuilder ();
+            int interp_depth = 0;
+            bool in_inner_str = false;
             while (true) {
-                if (pos >= source.length)
+                if (pos >= src_len)
                     throw new LexError.UNTERMINATED_STRING (
                         @"unterminated string at $l:$c");
                 var x = current ();
+                if (interp_depth > 0) {
+                    if (in_inner_str) {
+                        if (x == '\\' && pos + 1 < src_len) {
+                            sb.append_c ('\\');
+                            sb.append_c ((char) peek (1));
+                            advance ();
+                            advance ();
+                            continue;
+                        }
+                        if (x == '"')
+                            in_inner_str = false;
+                        sb.append_c ((char) x);
+                        advance ();
+                        continue;
+                    }
+                    if (x == '"') {
+                        in_inner_str = true;
+                        sb.append_c ('"');
+                        advance ();
+                        continue;
+                    }
+                    if (x == '\'') {
+                        sb.append_c ('\'');
+                        advance ();
+                        if (pos < src_len && current () == '\\') {
+                            sb.append_c ('\\');
+                            advance ();
+                        }
+                        if (pos < src_len) {
+                            sb.append_c ((char) current ());
+                            advance ();
+                        }
+                        if (pos < src_len && current () == '\'') {
+                            sb.append_c ('\'');
+                            advance ();
+                        }
+                        continue;
+                    }
+                    if (x == '(')
+                        interp_depth++;
+                    else if (x == ')')
+                        interp_depth--;
+                    sb.append_c ((char) x);
+                    advance ();
+                    continue;
+                }
                 if (x == '"') {
                     advance ();
                     break;
+                }
+                if (is_template && x == '$') {
+                    var nxt = peek (1);
+                    if (nxt == '$') {
+                        sb.append_c ('$');
+                        sb.append_c ('$');
+                        advance ();
+                        advance ();
+                        continue;
+                    }
+                    if (nxt == '(') {
+                        sb.append_c ('$');
+                        sb.append_c ('(');
+                        advance ();
+                        advance ();
+                        interp_depth = 1;
+                        continue;
+                    }
                 }
                 if (x == '\\') {
                     advance ();
@@ -358,15 +443,19 @@ namespace Planc {
             return Token () { kind = kind, text = source[pos - 2:pos], line = l, column = c };
         }
 
+        private Token three_char (TokenKind kind, int l, int c) {
+            return Token () { kind = kind, text = source[pos - 3:pos], line = l, column = c };
+        }
+
         private void skip_whitespace () throws LexError {
-            while (pos < source.length) {
+            while (pos < src_len) {
                 var c = current ();
                 if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
                     advance ();
                     continue;
                 }
                 if (c == '/' && peek (1) == '/') {
-                    while (pos < source.length && current () != '\n')
+                    while (pos < src_len && current () != '\n')
                         advance ();
                     continue;
                 }
@@ -376,7 +465,7 @@ namespace Planc {
                     advance ();
                     advance ();
                     bool closed = false;
-                    while (pos < source.length) {
+                    while (pos < src_len) {
                         if (current () == '*' && peek (1) == '/') {
                             advance ();
                             advance ();

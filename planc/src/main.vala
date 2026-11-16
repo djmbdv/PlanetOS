@@ -25,7 +25,7 @@ namespace Planc {
             var a = args[i];
             if (a == "-o") {
                 if (i + 1 >= args.length) {
-                    stderr.printf ("%s\n", USAGE);
+                    Host.eprintln (USAGE);
                     return 2;
                 }
                 output_path = args[++i];
@@ -38,10 +38,11 @@ namespace Planc {
             } else if (a == "--check-leaks") {
                 check_leaks = true;
             } else if (a == "-h" || a == "--help") {
-                stdout.printf ("%s\n", USAGE);
+                Host.println (USAGE);
                 return 0;
             } else if (a.has_prefix ("-")) {
-                stderr.printf ("unknown option: %s\n%s\n", a, USAGE);
+                Host.eprintln (@"unknown option: $a");
+                Host.eprintln (USAGE);
                 return 2;
             } else {
                 source_paths.add (a);
@@ -49,7 +50,7 @@ namespace Planc {
         }
 
         if (source_paths.length == 0 || output_path == "") {
-            stderr.printf ("%s\n", USAGE);
+            Host.eprintln (USAGE);
             return 2;
         }
 
@@ -57,9 +58,9 @@ namespace Planc {
         for (int i = 0; i < source_paths.length; i++) {
             string src;
             try {
-                FileUtils.get_contents (source_paths[i], out src);
+                src = Host.read_file (source_paths[i]);
             } catch (FileError e) {
-                stderr.printf ("planc: cannot read %s: %s\n", source_paths[i], e.message);
+                Host.eprintln (@"planc: cannot read $(source_paths[i]): $(e.message)");
                 return 1;
             }
             sources.add (src);
@@ -77,10 +78,10 @@ namespace Planc {
             if (program.find ("main") == null)
                 throw new ParseError.MISSING_MAIN ("the program does not define main");
         } catch (LexError e) {
-            stderr.printf ("planc: lexical error: %s\n", e.message);
+            Host.eprintln (@"planc: lexical error: $(e.message)");
             return 1;
         } catch (ParseError e) {
-            stderr.printf ("planc: syntax error: %s\n", e.message);
+            Host.eprintln (@"planc: syntax error: $(e.message)");
             return 1;
         }
 
@@ -91,7 +92,7 @@ namespace Planc {
         try {
             codegen.generate (program);
         } catch (SemanticError e) {
-            stderr.printf ("planc: semantic error: %s\n", e.message);
+            Host.eprintln (@"planc: semantic error: $(e.message)");
             return 1;
         }
         var text = codegen.emitter.code.to_array ();
@@ -119,7 +120,7 @@ namespace Planc {
             }
             var delta = (int64) target - (int64) next;
             if (delta < int32.MIN || delta > int32.MAX) {
-                stderr.printf ("planc: reference out of range at 0x%x\n", patch.displacement);
+                Host.eprintln (@"planc: reference out of range at 0x$(Host.hex_u32 ((uint32) patch.displacement))");
                 return 1;
             }
             var value = (uint32) (int32) delta;
@@ -137,8 +138,7 @@ namespace Planc {
                 }
             }
             if (delta < int32.MIN || delta > int32.MAX) {
-                stderr.printf ("planc: call target out of range for %s at 0x%x\n",
-                               patch.callee, patch.displacement);
+                Host.eprintln (@"planc: call target out of range for $(patch.callee) at 0x$(Host.hex_u32 ((uint32) patch.displacement))");
                 return 1;
             }
             var value = (uint32) (int32) delta;
@@ -149,11 +149,13 @@ namespace Planc {
         // Relocation pass 3: conditional and unconditional branches. Both
         // ends live in .text, so the delta is offset-to-offset.
         foreach (var patch in codegen.emitter.branches) {
-            if (patch.label.target < 0)
-                error ("unbound label at 0x%x", patch.displacement);
+            if (patch.label.target < 0) {
+                Host.panic (@"unbound label at 0x$(Host.hex_u32 ((uint32) patch.displacement))");
+                return 1;
+            }
             var delta = (int64) patch.label.target - (int64) (patch.displacement + 4);
             if (delta < int32.MIN || delta > int32.MAX) {
-                stderr.printf ("planc: branch out of range at 0x%x\n", patch.displacement);
+                Host.eprintln (@"planc: branch out of range at 0x$(Host.hex_u32 ((uint32) patch.displacement))");
                 return 1;
             }
             var value = (uint32) (int32) delta;
@@ -180,8 +182,10 @@ namespace Planc {
                         break;
                     }
                 }
-                if (!found_sym)
-                    error ("unresolved rodata text target '%s'", patch.text_symbol);
+                if (!found_sym) {
+                    Host.panic (@"unresolved rodata text target '$(patch.text_symbol)'");
+                    return 1;
+                }
             } else {
                 target = layout.rodata_vaddr + (uint64) patch.rodata_target;
             }
@@ -190,22 +194,22 @@ namespace Planc {
         }
 
         if (dump) {
-            stderr.printf (".text: %d bytes\n", text.length);
+            Host.eprintln (@".text: $(text.length) bytes");
             for (int i = 0; i < text.length; i++)
-                stderr.printf ("%02x%s", text[i], (i % 16 == 15) ? "\n" : " ");
-            stderr.printf (".rodata: %d bytes\n", rodata.length);
+                Host.eprint (@"$(Host.hex_u8 (text[i]))$((i % 16 == 15) ? "\n" : " ")");
+            Host.eprintln (@".rodata: $(rodata.length) bytes");
         }
 
         var image = Elf.build (text, rodata, data, codegen.symbols, layout);
 
         try {
-            FileUtils.set_contents (output_path, (string) image, image.length);
+            Host.write_file (output_path, image);
         } catch (FileError e) {
-            stderr.printf ("planc: cannot write %s: %s\n", output_path, e.message);
+            Host.eprintln (@"planc: cannot write $output_path: $(e.message)");
             return 1;
         }
 
-        FileUtils.chmod (output_path, 0755);
+        Host.chmod_755 (output_path);
         return 0;
     }
 }

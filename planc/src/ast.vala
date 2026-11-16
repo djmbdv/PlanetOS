@@ -190,6 +190,12 @@ namespace Planc {
         public Expr right { get; set; }
     }
 
+    public class IncDecExpr : Expr {
+        public bool is_prefix { get; set; }
+        public string op { get; set; }   // "++" or "--"
+        public Expr target { get; set; }
+    }
+
     public class LambdaExpr : Expr {
         public GenericArray<string> param_names { get; private set; }
         public GenericArray<Statement> body { get; private set; }
@@ -764,7 +770,7 @@ namespace Planc {
         }
 
         private static string sanitize_ident (string s) {
-            var sb = new StringBuilder ();
+            var sb = new StrBuilder ();
             for (int i = 0; i < s.length; i++) {
                 var ch = (char) s[i];
                 if (ch == '?')
@@ -816,7 +822,7 @@ namespace Planc {
             }
 
             if (!has_tp) {
-                var sb = new StringBuilder (template_name);
+                var sb = new StrBuilder (template_name);
                 for (int i = 0; i < arg_types.length; i++) {
                     sb.append ("__");
                     sb.append (mangle_type_arg (arg_types[i], arg_type_names[i]));
@@ -1137,6 +1143,15 @@ namespace Planc {
                 return new CoalesceExpr () {
                     left = clone_expr (o.left, tparams, targs, targ_names),
                     right = clone_expr (o.right, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is IncDecExpr) {
+                var o = (IncDecExpr) e;
+                return new IncDecExpr () {
+                    is_prefix = o.is_prefix,
+                    op = o.op,
+                    target = clone_expr (o.target, tparams, targs, targ_names),
                     line = o.line, column = o.column
                 };
             }
@@ -1552,6 +1567,107 @@ namespace Planc {
                 }
             });
             cd.methods.add (add_m);
+
+            var rem_m = new Function () {
+                name = "remove_index",
+                return_type = ValaType.VOID,
+                owner_class = inst.mangled_name
+            };
+            rem_m.params.add (new Param () {
+                param_type = ValaType.INT,
+                type_name = "",
+                name = "index"
+            });
+            var rem_loop = new ForStatement () {
+                init = new VarDeclStatement () {
+                    decl_type = ValaType.INT,
+                    name = "i",
+                    init = new VarRef () { name = "index" }
+                },
+                condition = new BinaryExpr () {
+                    op = "<",
+                    left = new BinaryExpr () {
+                        op = "+",
+                        left = new VarRef () { name = "i" },
+                        right = new IntLiteral () { value = 1 }
+                    },
+                    right = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    }
+                },
+                step = new AssignStatement () {
+                    name = "i",
+                    value = new BinaryExpr () {
+                        op = "+",
+                        left = new VarRef () { name = "i" },
+                        right = new IntLiteral () { value = 1 }
+                    }
+                }
+            };
+            var rem_body = new BlockStatement ();
+            rem_body.statements.add (new IndexAssignStatement () {
+                target = new MemberAccessExpr () {
+                    target = new VarRef () { name = "this" },
+                    member = "data"
+                },
+                index = new VarRef () { name = "i" },
+                op = "=",
+                value = new IndexExpr () {
+                    target = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "data"
+                    },
+                    index = new BinaryExpr () {
+                        op = "+",
+                        left = new VarRef () { name = "i" },
+                        right = new IntLiteral () { value = 1 }
+                    }
+                }
+            });
+            rem_loop.body = rem_body;
+            rem_m.body.add (rem_loop);
+            rem_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" },
+                field_name = "length",
+                op = "=",
+                value = new BinaryExpr () {
+                    op = "-",
+                    left = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    },
+                    right = new IntLiteral () { value = 1 }
+                }
+            });
+            if (et == ValaType.STRING && !en.has_suffix ("?")) {
+                rem_m.body.add (new IndexAssignStatement () {
+                    target = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "data"
+                    },
+                    index = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    },
+                    op = "=",
+                    value = new StringLiteral () { value = "" }
+                });
+            } else if ((et == ValaType.CLASS || et == ValaType.INTERFACE || et == ValaType.ARRAY || et == ValaType.ERROR || et == ValaType.STRING) && en.has_suffix ("?")) {
+                rem_m.body.add (new IndexAssignStatement () {
+                    target = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "data"
+                    },
+                    index = new MemberAccessExpr () {
+                        target = new VarRef () { name = "this" },
+                        member = "length"
+                    },
+                    op = "=",
+                    value = new NullLiteral ()
+                });
+            }
+            cd.methods.add (rem_m);
             classes.add (cd);
         }
 

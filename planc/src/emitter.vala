@@ -655,6 +655,22 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x8D); code.u8 (0x44); code.u8 (0xC8); code.u8 (0x10);
         }
 
+        // lea rax, [rax + rcx + 16]          48 8D 44 08 10
+        public void lea_rax_rax_rcx_1_16 () {
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x44); code.u8 (0x08); code.u8 (0x10);
+        }
+
+        // mov byte ptr [rcx + disp], al      88 41 d8 | 88 81 d32
+        public void store_rcx_disp_byte_al (int disp) {
+            code.u8 (0x88);
+            emit_modrm_disp (0, 1, disp);
+        }
+
+        // movzx eax, byte ptr [rdx]          0F B6 02
+        public void load_rdx_byte_to_zx_rax () {
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x02);
+        }
+
         // mov [rax + 8], rcx                 48 89 48 08
         public void store_rax_8_rcx () {
             code.u8 (0x48); code.u8 (0x89); code.u8 (0x48); code.u8 (0x08);
@@ -1673,6 +1689,448 @@ namespace Planc {
             bind (l_done);
             // mov rax, r14                    4C 89 F0
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
+        // bool __planc_str_has_prefix(string* rdi, string* rsi)
+        public void emit_rt_str_has_prefix () {
+            var l_true = new_label ();
+            var l_false = new_label ();
+            // test rdi, rdi; je l_false
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_false);
+            // test rsi, rsi; je l_false
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6);
+            branch (BranchKind.JE, l_false);
+            // mov r8, [rdi + 8]; mov r9, [rsi + 8]
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x4E); code.u8 (0x08);
+            // cmp r9, r8; ja l_false
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xC1);
+            branch (BranchKind.JA, l_false);
+            // test r9, r9; je l_true
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JE, l_true);
+            // add rdi, 16; add rsi, 16; mov rcx, r9; xor eax, eax; repe cmpsb; sete al; ret
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC9);
+            xor_eax ();
+            code.u8 (0xF3); code.u8 (0xA6);
+            code.u8 (0x0F); code.u8 (0x94); code.u8 (0xC0);
+            ret ();
+            bind (l_true);
+            mov_eax (1);
+            ret ();
+            bind (l_false);
+            xor_eax ();
+            ret ();
+        }
+
+        // bool __planc_str_has_suffix(string* rdi, string* rsi)
+        public void emit_rt_str_has_suffix () {
+            var l_true = new_label ();
+            var l_false = new_label ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_false);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6);
+            branch (BranchKind.JE, l_false);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x4E); code.u8 (0x08);
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xC1);
+            branch (BranchKind.JA, l_false);
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC9);
+            branch (BranchKind.JE, l_true);
+            // sub r8, r9; lea rdi, [rdi + r8 + 16]; add rsi, 16; mov rcx, r9; xor eax, eax; repe cmpsb; sete al; ret
+            code.u8 (0x4D); code.u8 (0x29); code.u8 (0xC8);
+            code.u8 (0x4A); code.u8 (0x8D); code.u8 (0x7C); code.u8 (0x07); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC9);
+            xor_eax ();
+            code.u8 (0xF3); code.u8 (0xA6);
+            code.u8 (0x0F); code.u8 (0x94); code.u8 (0xC0);
+            ret ();
+            bind (l_true);
+            mov_eax (1);
+            ret ();
+            bind (l_false);
+            xor_eax ();
+            ret ();
+        }
+
+        // int64 __planc_str_to_int(string* rdi)
+        public void emit_rt_str_to_int () {
+            var l_ws = new_label ();
+            var l_ws_next = new_label ();
+            var l_sign = new_label ();
+            var l_plus = new_label ();
+            var l_digits = new_label ();
+            var l_done = new_label ();
+            var l_zero = new_label ();
+
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_zero);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4F); code.u8 (0x08); // mov rcx, [rdi + 8]
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10); // add rdi, 16
+            bind (l_ws);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9); // test rcx, rcx
+            branch (BranchKind.JLE, l_zero);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x07); // movzx eax, byte ptr [rdi]
+            code.u8 (0x83); code.u8 (0xF8); code.u8 (32);   // cmp eax, ' '
+            branch (BranchKind.JE, l_ws_next);
+            code.u8 (0x83); code.u8 (0xF8); code.u8 (9);    // cmp eax, '\t'
+            branch (BranchKind.JE, l_ws_next);
+            branch (BranchKind.JMP, l_sign);
+            bind (l_ws_next);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7); // inc rdi
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9); // dec rcx
+            branch (BranchKind.JMP, l_ws);
+
+            bind (l_sign);
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0); // xor r8d, r8d
+            code.u8 (0x80); code.u8 (0x3F); code.u8 (0x2D); // cmp byte ptr [rdi], '-'
+            branch (BranchKind.JNE, l_plus);
+            code.u8 (0x41); code.u8 (0xB8); code.u32le (1); // mov r8d, 1
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7); // inc rdi
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9); // dec rcx
+            xor_eax ();
+            branch (BranchKind.JMP, l_digits);
+
+            bind (l_plus);
+            code.u8 (0x80); code.u8 (0x3F); code.u8 (0x2B); // cmp byte ptr [rdi], '+'
+            code.u8 (0x75); code.u8 (0x06);                 // jne +6
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7); // inc rdi
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9); // dec rcx
+            xor_eax ();
+
+            bind (l_digits);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9); // test rcx, rcx
+            branch (BranchKind.JLE, l_done);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x17); // movzx edx, byte ptr [rdi]
+            code.u8 (0x83); code.u8 (0xEA); code.u8 (48);   // sub edx, '0'
+            code.u8 (0x83); code.u8 (0xFA); code.u8 (9);    // cmp edx, 9
+            branch (BranchKind.JA, l_done);
+            code.u8 (0x48); code.u8 (0x6B); code.u8 (0xC0); code.u8 (0x0A); // imul rax, rax, 10
+            code.u8 (0x48); code.u8 (0x01); code.u8 (0xD0); // add rax, rdx
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7); // inc rdi
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9); // dec rcx
+            branch (BranchKind.JMP, l_digits);
+
+            bind (l_done);
+            code.u8 (0x45); code.u8 (0x85); code.u8 (0xC0); // test r8d, r8d
+            code.u8 (0x74); code.u8 (0x03);                 // je +3
+            neg_rax ();
+            ret ();
+
+            bind (l_zero);
+            xor_eax ();
+            ret ();
+        }
+
+        // string* __planc_bytes_to_str(uint8[]* rdi, int64 rsi_len)
+        public void emit_rt_bytes_to_str () {
+            var l_alloc = new_label ();
+            var l_done = new_label ();
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13 (16-byte aligned)
+
+            // mov r12, rdi; mov r13, rsi
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF5);
+            // test r12, r12; jz zero_len
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xE4);
+            code.u8 (0x74); code.u8 (0x12);
+            // test r13, r13; js zero_len
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xED);
+            code.u8 (0x78); code.u8 (0x0D);
+            // clamp r13 to [r12 + 8]
+            code.u8 (0x49); code.u8 (0x8B); code.u8 (0x44); code.u8 (0x24); code.u8 (0x08); // mov rax, [r12 + 8]
+            code.u8 (0x49); code.u8 (0x39); code.u8 (0xC5); // cmp r13, rax
+            branch (BranchKind.JBE, l_alloc);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC5); // mov r13, rax
+            branch (BranchKind.JMP, l_alloc);
+            // zero_len: xor r13d, r13d
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xED);
+
+            bind (l_alloc);
+            // lea rdi, [r13 + 1]; xor esi, esi; call __planc_alloc
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x7D); code.u8 (0x01);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            // [rax + 8] = r13
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x68); code.u8 (0x08);
+            // lea rdi, [rax + 16]
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x78); code.u8 (0x10);
+            // test r13, r13; je l_done
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xED);
+            branch (BranchKind.JE, l_done);
+            // lea rsi, [r12 + 16]; mov rcx, r13; rep movsb
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x74); code.u8 (0x24); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE9);
+            code.u8 (0xF3); code.u8 (0xA4);
+
+            bind (l_done);
+            // mov byte ptr [rdi], 0
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00);
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            leave ();
+            ret ();
+        }
+
+        // void __planc_eprint(string* rdi)
+        public void emit_rt_eprint () {
+            var l_done = new_label ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_done);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x57); code.u8 (0x08); // mov rdx, [rdi + 8]
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2); // test rdx, rdx
+            branch (BranchKind.JLE, l_done);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x77); code.u8 (0x10); // lea rsi, [rdi + 16]
+            mov_edi (2);
+            mov_eax (1);
+            syscall ();
+            bind (l_done);
+            ret ();
+        }
+
+        // void __planc_chmod(string* rdi_path, int64 rsi_mode)
+        public void emit_rt_chmod () {
+            var l_done = new_label ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_done);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10); // add rdi, 16
+            mov_eax (90);
+            syscall ();
+            bind (l_done);
+            ret ();
+        }
+
+        // (string* rax, Error* rdx) __planc_read_file(string* rdi_path)
+        public void emit_rt_read_file (int err_msg_off, int domain_id) {
+            var l_rd_loop = new_label ();
+            var l_rd_done = new_label ();
+            var l_err_free = new_label ();
+            var l_err_close = new_label ();
+            var l_err = new_label ();
+            var l_ret = new_label ();
+
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            code.u8 (0x41); code.u8 (0x57); // push r15
+            sub_rsp (8); // 16-byte aligned
+
+            code.u8 (0x49); code.u8 (0xC7); code.u8 (0xC4); code.u32le (0xFFFFFFFFu); // mov r12, -1
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_err);
+
+            // open(path + 16, O_RDONLY=0, 0)
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10);
+            code.u8 (0x31); code.u8 (0xF6);
+            code.u8 (0x31); code.u8 (0xD2);
+            mov_eax (2);
+            syscall ();
+            test_rax_rax ();
+            branch (BranchKind.JS, l_err);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4); // mov r12, rax (fd)
+
+            // size = lseek(fd, 0, SEEK_END=2)
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            code.u8 (0x31); code.u8 (0xF6);
+            mov_edx (2);
+            mov_eax (8);
+            syscall ();
+            test_rax_rax ();
+            branch (BranchKind.JS, l_err_close);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC5); // mov r13, rax (size)
+
+            // lseek(fd, 0, SEEK_SET=0)
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
+            code.u8 (0x31); code.u8 (0xF6);
+            code.u8 (0x31); code.u8 (0xD2);
+            mov_eax (8);
+            syscall ();
+            test_rax_rax ();
+            branch (BranchKind.JS, l_err_close);
+
+            // str = __planc_alloc(size + 1, 0)
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x7D); code.u8 (0x01); // lea rdi, [r13 + 1]
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC6); // mov r14, rax
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0x6E); code.u8 (0x08); // mov [r14 + 8], r13
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x10); code.u8 (0x00); // mov byte ptr [r14 + 16], 0
+
+            code.u8 (0x31); code.u8 (0xDB); // xor ebx, ebx
+            bind (l_rd_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xEB); // cmp rbx, r13
+            branch (BranchKind.JAE, l_rd_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            // lea rsi, [r14 + rbx + 16] -> 49 8D 74 1E 10
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x74); code.u8 (0x1E); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEA); // mov rdx, r13
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xDA); // sub rdx, rbx
+            xor_eax ();
+            syscall ();
+            // cmp rax, -4 (EINTR)
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xF8); code.u8 (0xFC);
+            branch (BranchKind.JE, l_rd_loop);
+            test_rax_rax ();
+            branch (BranchKind.JS, l_err_free);
+            branch (BranchKind.JE, l_rd_done);
+            code.u8 (0x48); code.u8 (0x01); code.u8 (0xC3); // add rbx, rax
+            branch (BranchKind.JMP, l_rd_loop);
+
+            bind (l_rd_done);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0x5E); code.u8 (0x08); // mov [r14 + 8], rbx
+            // lea rdi, [r14 + rbx + 16]; mov byte ptr [rdi], 0
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x7C); code.u8 (0x1E); code.u8 (0x10);
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00);
+            // close(fd)
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
+            mov_eax (3);
+            syscall ();
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0); // mov rax, r14
+            xor_edx ();
+            branch (BranchKind.JMP, l_ret);
+
+            bind (l_err_free);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+            call_rel32 ("__planc_unref");
+
+            bind (l_err_close);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            mov_eax (3);
+            syscall ();
+
+            bind (l_err);
+            mov_rdi_imm (24);
+            mov_esi_imm (1);
+            call_rel32 ("__planc_alloc");
+            mov_rcx_rax ();
+            mov_rax_imm (1);
+            store_rcx_disp_rax (8);
+            lea_rax_rip (err_msg_off);
+            store_rcx_disp_rax (16);
+            mov_rax_imm ((int64) domain_id);
+            store_rcx_disp_rax (24);
+            mov_rax_imm (1);
+            store_rcx_disp_rax (32);
+            mov_rdx_rcx_copy ();
+            xor_eax ();
+
+            bind (l_ret);
+            add_rsp (8);
+            code.u8 (0x41); code.u8 (0x5F); // pop r15
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
+        // mov rdx, rcx                       48 89 CA
+        private void mov_rdx_rcx_copy () {
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xCA);
+        }
+
+        // (int64 rax, Error* rdx) __planc_write_file(string* rdi_path, uint8[]* rsi_data)
+        public void emit_rt_write_file (int err_msg_off, int domain_id) {
+            var l_wr_loop = new_label ();
+            var l_wr_done = new_label ();
+            var l_err_close = new_label ();
+            var l_err = new_label ();
+            var l_ret = new_label ();
+
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            code.u8 (0x41); code.u8 (0x57); // push r15
+            sub_rsp (8); // 16-byte aligned
+
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_err);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6); // test rsi, rsi
+            branch (BranchKind.JE, l_err);
+
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF6); // mov r14, rsi
+            code.u8 (0x4D); code.u8 (0x8B); code.u8 (0x6E); code.u8 (0x08); // mov r13, [r14 + 8]
+            code.u8 (0x31); code.u8 (0xDB); // xor ebx, ebx
+
+            // open(path + 16, O_WRONLY|O_CREAT|O_TRUNC = 0x241, 0644 = 420)
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10);
+            mov_esi_imm (0x241);
+            mov_edx (420);
+            mov_eax (2);
+            syscall ();
+            test_rax_rax ();
+            branch (BranchKind.JS, l_err);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4); // mov r12, rax
+
+            bind (l_wr_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xEB); // cmp rbx, r13
+            branch (BranchKind.JAE, l_wr_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            // lea rsi, [r14 + rbx + 16]
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x74); code.u8 (0x1E); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEA); // mov rdx, r13
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xDA); // sub rdx, rbx
+            mov_eax (1);
+            syscall ();
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xF8); code.u8 (0xFC); // cmp rax, -4
+            branch (BranchKind.JE, l_wr_loop);
+            test_rax_rax ();
+            branch (BranchKind.JLE, l_err_close);
+            code.u8 (0x48); code.u8 (0x01); code.u8 (0xC3); // add rbx, rax
+            branch (BranchKind.JMP, l_wr_loop);
+
+            bind (l_wr_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            mov_eax (3);
+            syscall ();
+            xor_eax ();
+            xor_edx ();
+            branch (BranchKind.JMP, l_ret);
+
+            bind (l_err_close);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
+            mov_eax (3);
+            syscall ();
+
+            bind (l_err);
+            mov_rdi_imm (24);
+            mov_esi_imm (1);
+            call_rel32 ("__planc_alloc");
+            mov_rcx_rax ();
+            mov_rax_imm (1);
+            store_rcx_disp_rax (8);
+            lea_rax_rip (err_msg_off);
+            store_rcx_disp_rax (16);
+            mov_rax_imm ((int64) domain_id);
+            store_rcx_disp_rax (24);
+            mov_rax_imm (1);
+            store_rcx_disp_rax (32);
+            mov_rdx_rcx_copy ();
+            xor_eax ();
+
+            bind (l_ret);
+            add_rsp (8);
+            code.u8 (0x41); code.u8 (0x5F); // pop r15
             code.u8 (0x41); code.u8 (0x5E); // pop r14
             code.u8 (0x41); code.u8 (0x5D); // pop r13
             code.u8 (0x41); code.u8 (0x5C); // pop r12

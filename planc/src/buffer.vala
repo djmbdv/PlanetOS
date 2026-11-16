@@ -1,10 +1,62 @@
-// Byte buffer with little-endian writers.
+// Byte buffer, string builder, and shared host formatting utilities.
 //
-// Deliberately not GLib.ByteArray: this is the same type the self-hosted
-// compiler will need, and nothing below depends on GLib beyond the language
-// itself.
+// Deliberately avoids GLib classes so the compiler builds cleanly both in
+// Stage 0 (valac + host_stage0) and Stages 1-3 (planc + host_native).
 
 namespace Planc {
+
+    public errordomain FileError {
+        FAILED
+    }
+
+    public class StrBuilder : Object {
+
+        private uint8[] buf;
+        private int used = 0;
+
+        public StrBuilder (string init = "") {
+            buf = new uint8[64];
+            if (init != "")
+                append (init);
+        }
+
+        public int length {
+            get { return used; }
+        }
+
+        public string str {
+            owned get { return Host.bytes_to_string (buf, used); }
+        }
+
+        private void ensure (int extra) {
+            if (used + extra <= buf.length)
+                return;
+            int cap = buf.length;
+            while (cap < used + extra)
+                cap = cap * 2;
+            var bigger = new uint8[cap];
+            for (int i = 0; i < used; i++)
+                bigger[i] = buf[i];
+            buf = bigger;
+        }
+
+        public void append (string s) {
+            var slen = s.length;
+            if (slen == 0)
+                return;
+            ensure (slen);
+            for (int i = 0; i < slen; i++) {
+                buf[used] = s[i];
+                used++;
+            }
+        }
+
+        public void append_c (char c) {
+            ensure (1);
+            buf[used] = (uint8) c;
+            used++;
+        }
+    }
 
     public class Buffer : Object {
 
@@ -59,7 +111,12 @@ namespace Planc {
 
         // Raw bytes of a UTF-8 string, without the terminating NUL.
         public void ascii (string s) {
-            bytes (s.data);
+            var slen = s.length;
+            reserve (slen);
+            for (int i = 0; i < slen; i++) {
+                storage[used] = s[i];
+                used++;
+            }
         }
 
         public void zeroes (int count) {
@@ -68,8 +125,10 @@ namespace Planc {
         }
 
         public void patch_u32le (int position, uint32 v) {
-            if (position + 4 > used)
-                error ("patch outside buffer: %d", position);
+            if (position + 4 > used) {
+                Host.panic (@"patch outside buffer: $position");
+                return;
+            }
             for (int i = 0; i < 4; i++)
                 storage[position + i] = (uint8) ((v >> (8 * i)) & 0xff);
         }

@@ -1,0 +1,6 @@
+u8=199:250:11:0 pre=11 post=200
+lit.len=4 sum=342
+sig=-5:120:-128 ssum=-13
+ops=22
+bounds=-2147483648:2147483647 parsed=-12345
+str=true:true:hello:planetos

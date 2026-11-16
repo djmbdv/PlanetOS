@@ -148,7 +148,8 @@ namespace Planc {
                 if (s.name == name)
                     return l.text_vaddr + (uint64) s.offset;
             }
-            error ("no symbol named %s to use as entry point", name);
+            Host.panic (@"no symbol named $name to use as entry point");
+            return 0;
         }
 
         public static uint8[] build (uint8[] text, uint8[] rodata, uint8[] data,
@@ -210,7 +211,7 @@ namespace Planc {
 
         private static void expect_length (Buffer f, int expected, string what) {
             if (f.length != expected)
-                error ("%s at 0x%x, layout says 0x%x", what, f.length, expected);
+                Host.panic (@"$what at 0x$(Host.hex_u32 ((uint32) f.length)), layout says 0x$(Host.hex_u32 ((uint32) expected))");
         }
 
         private static void write_header (Buffer f, Layout l, uint64 entry) {
