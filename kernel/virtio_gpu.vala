@@ -430,8 +430,10 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 28, FMT_B8G8R8X8_UNORM);
             mmio_write32 (vgpu_cmd_page + 32, w);
             mmio_write32 (vgpu_cmd_page + 36, h);
-            if (!send_cmd (40, 24) || resp_type () != RESP_OK_NODATA)
+            if (!send_cmd (40, 24) || resp_type () != RESP_OK_NODATA) {
+                print (@"virtio_gpu: create_2d failed resp=$(resp_type ())\n");
                 return 0;
+            }
 
             // 2. RESOURCE_ATTACH_BACKING (48 bytes)
             clear_cmd (48);
@@ -440,8 +442,10 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 28, 1);
             mmio_write64 (vgpu_cmd_page + 32, vgpu_fb_pa);
             mmio_write32 (vgpu_cmd_page + 40, fb_bytes);
-            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA)
+            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
+                print (@"virtio_gpu: attach_backing failed resp=$(resp_type ())\n");
                 return 0;
+            }
 
             // 3. SET_SCANOUT (48 bytes)
             clear_cmd (48);
@@ -450,8 +454,10 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 36, h);
             mmio_write32 (vgpu_cmd_page + 40, 0); // scanout_id
             mmio_write32 (vgpu_cmd_page + 44, RES_SCANOUT);
-            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA)
+            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
+                print (@"virtio_gpu: set_scanout failed resp=$(resp_type ())\n");
                 return 0;
+            }
 
             vgpu_scanout_w = w;
             vgpu_scanout_h = h;
@@ -905,14 +911,14 @@ namespace Planet.Kernel {
             int fg = cursor ? 0xFF0F131A : vga_fg_rgb (attr);
             int bg = cursor ? 0xFF38BDF8 : 0xFF0F131A;
             int bits = font8x8 (ch & 0xFF);
-            int x0 = 80 + col * 8;
-            int y0 = 100 + row * 16;
+            int x0 = 320 + col * 8;
+            int y0 = 160 + row * 16;
             for (int r = 0; r < 8; r++) {
                 int rbits = (bits >> ((7 - r) * 8)) & 0xFF;
                 int py0 = y0 + r * 2;
                 int py1 = py0 + 1;
-                int off0 = (py0 * 800 + x0) * 4;
-                int off1 = (py1 * 800 + x0) * 4;
+                int off0 = (py0 * 1280 + x0) * 4;
+                int off1 = (py1 * 1280 + x0) * 4;
                 for (int c = 0; c < 8; c++) {
                     int px = ((rbits & (1 << (7 - c))) != 0) ? fg : bg;
                     mmio_write32 (vgpu_fb_pa + off0 + c * 4, px);
@@ -934,7 +940,7 @@ namespace Planet.Kernel {
             }
             vgpu_con_cur_r = cur_r;
             vgpu_con_cur_c = cur_c;
-            flush_scanout_rect (80, 100, 640, 400);
+            flush_scanout_rect (320, 160, 640, 400);
         }
 
         public static void console_flush_dirty () {
@@ -946,7 +952,7 @@ namespace Planet.Kernel {
             if (r1 >= 25) r1 = 24;
             vgpu_con_dirty_r0 = 25;
             vgpu_con_dirty_r1 = -1;
-            flush_scanout_rect (80, 100 + r0 * 16, 640, (r1 - r0 + 1) * 16);
+            flush_scanout_rect (320, 160 + r0 * 16, 640, (r1 - r0 + 1) * 16);
         }
 
         private static void mark_dirty_row (int r) {
@@ -989,12 +995,12 @@ namespace Planet.Kernel {
         public static void init_console (int cur_r, int cur_c) {
             if (vgpu_found == 0)
                 return;
-            if (init_scanout (800, 600) == 0)
+            if (init_scanout (1280, 720) == 0)
                 return;
-            for (int i = 0; i < 800 * 600 * 4; i += 4)
+            for (int i = 0; i < 1280 * 720 * 4; i += 4)
                 mmio_write32 (vgpu_fb_pa + i, 0xFF0F131A);
             vgpu_con_active = 1;
-            flush_scanout_rect (0, 0, 800, 600);
+            flush_scanout_rect (0, 0, 1280, 720);
             console_redraw_all (cur_r, cur_c);
         }
     }
