@@ -249,7 +249,8 @@ if (-not $NoBuild) {
         (Out-Path 'frag_pattern.spv') `
         (Out-Path 'gtk_demo.elf') `
         (Out-Path 'vk_demo.elf') `
-        (Join-Path $Root 'assets' 'Ubuntu-Regular.ttf')
+        (Join-Path $Root 'assets' 'LiberationSans-Regular.ttf') `
+        (Join-Path $Root 'assets' 'LiberationMono-Regular.ttf')
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'
     }

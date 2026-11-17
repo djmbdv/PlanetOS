@@ -1,4 +1,4 @@
-// TrueType (libschrift) glyph cache and text helper for Gtk.
+// TrueType (libschrift) glyph cache and text helper for Gtk (Sans + Mono).
 using Planet;
 using Cairo;
 using Schrift;
@@ -13,21 +13,26 @@ namespace Gtk {
         public int y_off = 0;
     }
 
-    private SftFont? gtk_ttf_font;
-    private GenericArray<GlyphEntry>? gtk_glyph_cache;
-    private double gtk_cached_asc = 14.0;
-    private double gtk_cached_desc = -3.0;
-    private int gtk_cached_size = 0;
+    private class FontSlot : Object {
+        public SftFont? font = null;
+        public GenericArray<GlyphEntry>? cache = null;
+        public double cached_asc = 14.0;
+        public double cached_desc = -3.0;
+        public int cached_size = 0;
+    }
+
+    private FontSlot? gtk_sans_slot;
+    private FontSlot? gtk_mono_slot;
 
     public class TextHelper : Object {
-        public static bool load_ttf (string path) {
+        private static FontSlot? load_slot (string path) {
             int fd = Sys.open (path);
             if (fd < 0)
-                return false;
+                return null;
             int sz = Sys.file_size (fd);
             if (sz < 12) {
                 Sys.close (fd);
-                return false;
+                return null;
             }
             var buf = new uint8[sz];
             int got = 0;
@@ -45,34 +50,47 @@ namespace Gtk {
             }
             Sys.close (fd);
             if (got != sz)
-                return false;
-            gtk_ttf_font = SftFont.load_mem (buf, sz);
-            gtk_glyph_cache = new GenericArray<GlyphEntry> ();
-            gtk_cached_size = 0;
-            return gtk_ttf_font != null;
+                return null;
+            var f = SftFont.load_mem (buf, sz);
+            if (f == null)
+                return null;
+            var s = new FontSlot ();
+            s.font = f;
+            s.cache = new GenericArray<GlyphEntry> ();
+            return s;
         }
 
-        private static GlyphEntry? get_glyph (int cp, int size_px) {
-            if (gtk_ttf_font == null)
+        public static bool load_ttf (string path) {
+            gtk_sans_slot = load_slot (path);
+            return gtk_sans_slot != null;
+        }
+
+        public static bool load_mono_ttf (string path) {
+            gtk_mono_slot = load_slot (path);
+            return gtk_mono_slot != null;
+        }
+
+        private static GlyphEntry? get_glyph_from (FontSlot? slot, int cp, int size_px) {
+            if (slot == null || slot.font == null)
                 return null;
-            if (gtk_glyph_cache == null)
-                gtk_glyph_cache = new GenericArray<GlyphEntry> ();
+            if (slot.cache == null)
+                slot.cache = new GenericArray<GlyphEntry> ();
             int key = (cp << 12) | (size_px & 0xFFF);
-            for (int i = 0; i < gtk_glyph_cache.length; i++) {
-                if (gtk_glyph_cache[i].key == key)
-                    return gtk_glyph_cache[i];
+            for (int i = 0; i < slot.cache.length; i++) {
+                if (slot.cache[i].key == key)
+                    return slot.cache[i];
             }
             var sft = new Sft ();
-            sft.font = gtk_ttf_font;
+            sft.font = slot.font;
             sft.x_scale = (double) size_px;
             sft.y_scale = (double) size_px;
             sft.flags = SFT_DOWNWARD_Y;
-            if (gtk_cached_size != size_px) {
+            if (slot.cached_size != size_px) {
                 var lm = new SftLMetrics ();
                 if (sft.lmetrics (lm) == 0) {
-                    gtk_cached_asc = lm.ascender;
-                    gtk_cached_desc = lm.descender;
-                    gtk_cached_size = size_px;
+                    slot.cached_asc = lm.ascender;
+                    slot.cached_desc = lm.descender;
+                    slot.cached_size = size_px;
                 }
             }
             int gid = 0;
@@ -91,21 +109,21 @@ namespace Gtk {
                 if (sft.render (gid, img) == 0)
                     ge.img = img;
             }
-            if (gtk_glyph_cache.length < 512)
-                gtk_glyph_cache.add (ge);
+            if (slot.cache.length < 512)
+                slot.cache.add (ge);
             return ge;
         }
 
-        public static void measure_text (string text, double size_px, out int out_w, out int out_h) {
+        private static void measure_slot (FontSlot? slot, string text, double size_px, out int out_w, out int out_h) {
             int px = (int) size_px;
-            if (gtk_ttf_font != null) {
+            if (slot != null && slot.font != null) {
                 int cx = 0;
                 for (int i = 0; i < text.length; i++) {
-                    var ge = get_glyph ((int) text[i], px);
+                    var ge = get_glyph_from (slot, (int) text[i], px);
                     cx += (ge != null) ? ge.adv : (px / 2);
                 }
                 out_w = cx + 2;
-                int lh = (int) (gtk_cached_asc - gtk_cached_desc + 1.0);
+                int lh = (int) (slot.cached_asc - slot.cached_desc + 1.0);
                 out_h = (lh > px) ? lh : px;
                 return;
             }
@@ -116,16 +134,16 @@ namespace Gtk {
             out_h = 7 * sc;
         }
 
-        public static void draw_text (Context cr, string text, int x, int y, double size_px) {
+        private static void draw_slot (FontSlot? slot, Context cr, string text, int x, int y, double size_px) {
             int px = (int) size_px;
-            if (gtk_ttf_font != null) {
+            if (slot != null && slot.font != null) {
                 int cx = x;
                 for (int i = 0; i < text.length; i++) {
-                    var ge = get_glyph ((int) text[i], px);
+                    var ge = get_glyph_from (slot, (int) text[i], px);
                     if (ge != null) {
                         if (ge.img != null) {
                             int gx = cx + ge.lsb;
-                            int gy = y + (int) gtk_cached_asc + ge.y_off;
+                            int gy = y + (int) slot.cached_asc + ge.y_off;
                             cr.blit_alpha_mask (ge.img.pixels, ge.img.width, ge.img.height, gx, gy);
                         }
                         cx += ge.adv;
@@ -138,6 +156,24 @@ namespace Gtk {
             cr.set_font_size (size_px);
             cr.move_to ((double) x, (double) y);
             cr.show_text (text);
+        }
+
+        public static void measure_text (string text, double size_px, out int out_w, out int out_h) {
+            measure_slot (gtk_sans_slot, text, size_px, out out_w, out out_h);
+        }
+
+        public static void draw_text (Context cr, string text, int x, int y, double size_px) {
+            draw_slot (gtk_sans_slot, cr, text, x, y, size_px);
+        }
+
+        public static void measure_mono (string text, double size_px, out int out_w, out int out_h) {
+            FontSlot? s = (gtk_mono_slot != null) ? gtk_mono_slot : gtk_sans_slot;
+            measure_slot (s, text, size_px, out out_w, out out_h);
+        }
+
+        public static void draw_mono (Context cr, string text, int x, int y, double size_px) {
+            FontSlot? s = (gtk_mono_slot != null) ? gtk_mono_slot : gtk_sans_slot;
+            draw_slot (s, cr, text, x, y, size_px);
         }
     }
 }

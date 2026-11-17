@@ -14,7 +14,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 26  # image + 25 files
+ARG_COUNT = 27  # image + 26 files
 
 
 def blk(b):
@@ -50,7 +50,8 @@ def main():
     fp_b = open(sys.argv[22], "rb").read()
     gt_b = open(sys.argv[23], "rb").read()
     vk_b = open(sys.argv[24], "rb").read()
-    ttf_b = open(sys.argv[25], "rb").read()
+    lsans_b = open(sys.argv[25], "rb").read()
+    lmono_b = open(sys.argv[26], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -76,8 +77,9 @@ def main():
     b_fp = b_ac + blk(ac_b)
     b_gt = b_fp + blk(fp_b)
     b_vk = b_gt + blk(gt_b)
-    b_ttf = b_vk + blk(vk_b)
-    INO_BLK = max(1000, b_ttf + blk(ttf_b) + 4)
+    b_lsans = b_vk + blk(vk_b)
+    b_lmono = b_lsans + blk(lsans_b)
+    INO_BLK = max(1000, b_lmono + blk(lmono_b) + 4)
     total_blocks = max(1024, INO_BLK + 4)
     img = bytearray(total_blocks * 4096)
 
@@ -86,7 +88,7 @@ def main():
     struct.pack_into(">I", img, 84, total_blocks)
     struct.pack_into(">H", img, 104, 256)
     img[123] = 4
-    img[124] = 10
+    img[124] = max(10, (total_blocks - 1).bit_length())
 
     r = 4 * 4096
     struct.pack_into(">HH", img, r, 0x494E, 0x41ED)
@@ -122,7 +124,8 @@ def main():
         (b"frag_pattern.spv", fp_b, b_fp, 0x81A4),
         (b"gtk_demo.elf", gt_b, b_gt, 0x81ED),
         (b"vk_demo.elf", vk_b, b_vk, 0x81ED),
-        (b"Ubuntu-Regular.ttf", ttf_b, b_ttf, 0x81A4),
+        (b"LiberationSans-Regular.ttf", lsans_b, b_lsans, 0x81A4),
+        (b"LiberationMono-Regular.ttf", lmono_b, b_lmono, 0x81A4),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

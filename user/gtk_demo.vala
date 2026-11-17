@@ -14,7 +14,8 @@ int main (string[] args) {
     }
 
     init (args);
-    bool ttf_ok = load_ttf ("Ubuntu-Regular.ttf");
+    bool ttf_ok = load_ttf ("LiberationSans-Regular.ttf");
+    TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
     print (@"gtk_demo: ttf=$(ttf_ok ? 1 : 0)\n");
 
     var win = new GtkWindow (1280, 720);

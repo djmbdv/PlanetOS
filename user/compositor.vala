@@ -196,12 +196,12 @@ namespace Wm {
             int y = cy + 8;
             cr.set_source_rgb (0.78, 0.83, 0.90);
             for (int i = start; i < lines.length; i++) {
-                TextHelper.draw_text (cr, lines[i], cx + 10, y, 14.0);
+                TextHelper.draw_mono (cr, lines[i], cx + 10, y, 14.0);
                 y += row_h;
             }
             cr.set_source_rgb (ar, ag, ab);
             string prompt = "planet> " + input + (focused ? "_" : "");
-            TextHelper.draw_text (cr, prompt, cx + 10, y, 14.0);
+            TextHelper.draw_mono (cr, prompt, cx + 10, y, 14.0);
         }
     }
 
@@ -1195,7 +1195,8 @@ namespace Wm {
         // --- scene ----------------------------------------------------
 
         public void seed () {
-            TextHelper.load_ttf ("Ubuntu-Regular.ttf");
+            TextHelper.load_ttf ("LiberationSans-Regular.ttf");
+            TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
             add ("terminal", 48, 56, 420, 260, Kind.TERMINAL);
             add ("shader", 500, 56, 360, 230, Kind.SHADER);
             add ("clock", 900, 56, 320, 230, Kind.CLOCK);
@@ -1318,9 +1319,9 @@ namespace Wm {
             TextHelper.draw_text (cr, t, 110, 6, 15.0);
 
             cr.set_source_rgb (0.55, 0.62, 0.73);
-            TextHelper.draw_text (cr, @"$(count ()) win", SCREEN_W - 190, 6, 14.0);
+            TextHelper.draw_mono (cr, @"$(count ()) win", SCREEN_W - 190, 6, 14.0);
             int total = Sys.ticks () / 100;
-            TextHelper.draw_text (cr, @"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))", SCREEN_W - 110, 6, 14.0);
+            TextHelper.draw_mono (cr, @"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))", SCREEN_W - 110, 6, 14.0);
         }
 
         private void draw_windows (Context cr) {
@@ -1525,7 +1526,7 @@ namespace Wm {
                 cr.fill ();
 
                 cr.set_source_rgb (0.72, 0.78, 0.86);
-                TextHelper.draw_text (cr, @"T+$(pad2 (min)):$(pad2 (sec))", cx + 12, cy + ch - 28, 15.0);
+                TextHelper.draw_mono (cr, @"T+$(pad2 (min)):$(pad2 (sec))", cx + 12, cy + ch - 28, 15.0);
             } else if (w.kind == Kind.SHADER) {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
@@ -1542,15 +1543,15 @@ namespace Wm {
                 TextHelper.draw_text (cr, "spir-v frag", cx + 84, cy + 18, 16.0);
                 cr.set_source_rgb (0.66, 0.72, 0.81);
                 if (shader_ok)
-                    TextHelper.draw_text (cr, @"words $(shader.words)", cx + 84, cy + 38, 14.0);
+                    TextHelper.draw_mono (cr, @"words $(shader.words)", cx + 84, cy + 38, 14.0);
                 else
-                    TextHelper.draw_text (cr, "no module", cx + 84, cy + 38, 14.0);
+                    TextHelper.draw_mono (cr, "no module", cx + 84, cy + 38, 14.0);
                 if (shader_ok)
-                    TextHelper.draw_text (cr, @"insns $(shader.insns)", cx + 84, cy + 56, 14.0);
+                    TextHelper.draw_mono (cr, @"insns $(shader.insns)", cx + 84, cy + 56, 14.0);
                 else
-                    TextHelper.draw_text (cr, "cpu accent", cx + 84, cy + 56, 14.0);
+                    TextHelper.draw_mono (cr, "cpu accent", cx + 84, cy + 56, 14.0);
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
-                TextHelper.draw_text (cr, @"rgba $(accent_ir ()) $(accent_ig ()) $(accent_ib ())", cx + 14, cy + 92, 14.0);
+                TextHelper.draw_mono (cr, @"rgba $(accent_ir ()) $(accent_ig ()) $(accent_ib ())", cx + 14, cy + 92, 14.0);
                 cr.set_source_rgb (0.45, 0.52, 0.62);
                 int gcaps = Sys.gpu_info ();
                 string gmsg = "gpu: bga + spv/simd (no virtio)";
@@ -1560,7 +1561,7 @@ namespace Wm {
                     gmsg = "gpu: virtio-gpu 3d (virgl) + spv";
                 else if ((gcaps & 1) != 0)
                     gmsg = "gpu: virtio-gpu 2d + spv/simd";
-                TextHelper.draw_text (cr, gmsg, cx + 14, cy + 116, 14.0);
+                TextHelper.draw_mono (cr, gmsg, cx + 14, cy + 116, 14.0);
             } else if (w.kind == Kind.GTK && w.gtk_root != null) {
                 cr.set_source_rgb (0.09, 0.11, 0.14);
                 cr.rectangle (cx, cy, cw, ch);
