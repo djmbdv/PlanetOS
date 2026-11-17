@@ -1540,7 +1540,15 @@ namespace Wm {
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
                 TextHelper.draw_text (cr, @"rgba $(accent_ir ()) $(accent_ig ()) $(accent_ib ())", cx + 14, cy + 92, 14.0);
                 cr.set_source_rgb (0.45, 0.52, 0.62);
-                TextHelper.draw_text (cr, "vulkan backend: pending", cx + 14, cy + 116, 14.0);
+                int gcaps = Sys.gpu_info ();
+                string gmsg = "gpu: bga + spv/simd (no virtio)";
+                if ((gcaps & 16) != 0)
+                    gmsg = "gpu: virtio-gpu venus (CAPSET_VENUS)";
+                else if ((gcaps & 2) != 0)
+                    gmsg = "gpu: virtio-gpu 3d (virgl) + spv";
+                else if ((gcaps & 1) != 0)
+                    gmsg = "gpu: virtio-gpu 2d + spv/simd";
+                TextHelper.draw_text (cr, gmsg, cx + 14, cy + 116, 14.0);
             } else if (w.kind == Kind.GTK && w.gtk_root != null) {
                 cr.set_source_rgb (0.09, 0.11, 0.14);
                 cr.rectangle (cx, cy, cw, ch);
