@@ -161,6 +161,42 @@ namespace Planet.Kernel {
             }
         }
 
+        // All-or-nothing variant of map_user_range: returns the number of 4 KiB
+        // pages mapped, or 0 when any of them could not be mapped (the pages it
+        // already touched are unmapped again). A caller that gets 0 must free the
+        // frames it just allocated - an unmapped buffer must never reach userland,
+        // because the first write to it would be a #PF instead of an error code.
+        public static int map_user_range_checked (int cr3, int start, int size) {
+            if (cr3 == 0 || cr3 == KERNEL_CR3 || size <= 0)
+                return 0;
+            int first = start & ~0xFFF;
+            int last = (start + size - 1) & ~0xFFF;
+            int mapped = 0;
+            for (int p = first; p <= last; p += 4096) {
+                if (!map_user_4k_checked (cr3, p)) {
+                    for (int q = first; q < p; q += 4096)
+                        unmap_user_4k (cr3, q);
+                    return 0;
+                }
+                mapped = mapped + 1;
+            }
+            return mapped;
+        }
+
+        private static bool map_user_4k_checked (int cr3, int addr) {
+            int aligned = addr & ~0xFFF;
+            int pdpt = mmio_read64 (cr3) & ~0xFFF;
+            int pd = mmio_read64 (pdpt) & ~0xFFF;
+            int pt_base = 0;
+            if (!ensure_pt_in_pd (pd, aligned, true, out pt_base))
+                return false;
+            int pt_idx = (aligned >> 12) & 0x1FF;
+            mmio_write64 (pt_base + pt_idx * 8, aligned | 0x07);
+            if (vmm_read_cr3 () == cr3)
+                vmm_invlpg (aligned);
+            return true;
+        }
+
         public static void unmap_4k (int addr) {
             int aligned = addr & ~0xFFF;
             int pt_base = 0;

@@ -70,7 +70,14 @@ namespace Planet.Kernel {
             if (phys != 0) {
                 int ucr3 = Sched.current_cr3 ();
                 if (ucr3 != 0) {
-                    Vmm.map_user_range (ucr3, phys, count * 4096);
+                    // A block that cannot be mapped in full is not a buffer: give
+                    // the frames back and report failure instead of handing
+                    // userland memory whose first write would page fault.
+                    if (Vmm.map_user_range_checked (ucr3, phys, count * 4096) == 0) {
+                        for (int i = 0; i < count; i++)
+                            Pmm.free_frame (phys + i * 4096);
+                        return 0;
+                    }
                 }
             }
             return phys;
