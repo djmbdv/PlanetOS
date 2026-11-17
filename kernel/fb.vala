@@ -132,6 +132,7 @@ namespace Planet.Kernel {
     private int fb_height = 0;
     private int fb_page = 0;
     private int fb_backend = 0; // 1 = BGA, 2 = VirtIO-GPU
+    private int fb_has_avx2 = -1;
     private int vga_saved = 0;
     private int vga_misc = 0;
     private int vga_state_buf = 0;
@@ -310,11 +311,17 @@ namespace Planet.Kernel {
             return (fb_width << 16) | fb_height;
         }
 
-        private static void copy_pixels (int dst, int src, int count) {
-            if (Hal.has_avx2 ())
+        public static void copy_fast (int dst, int src, int count) {
+            if (fb_has_avx2 < 0)
+                fb_has_avx2 = Hal.has_avx2 () ? 1 : 0;
+            if (fb_has_avx2 != 0)
                 fb_copy_dwords_avx2 (dst, src, count);
             else
                 fb_copy_dwords (dst, src, count);
+        }
+
+        private static void copy_pixels (int dst, int src, int count) {
+            copy_fast (dst, src, count);
         }
 
         public static void blit (int src_buf, int w, int h) {

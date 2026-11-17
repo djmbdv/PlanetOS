@@ -437,6 +437,86 @@ namespace Planet.Kernel {
             return vgpu_fb_pa;
         }
 
+        private static void flush_scanout_rect (int rx, int ry, int rw, int rh) {
+            if (vgpu_vq_page == 0 || vgpu_cmd_page == 0)
+                return;
+            // Batch TRANSFER_TO_HOST_2D (req0 at +0, resp0 at +2048) and
+            // RESOURCE_FLUSH (req1 at +128, resp1 at +2112) in one doorbell.
+            int req0 = vgpu_cmd_page;
+            int req1 = vgpu_cmd_page + 128;
+            int resp0 = vgpu_cmd_page + 2048;
+            int resp1 = vgpu_cmd_page + 2112;
+            for (int i = 0; i < 64; i += 4) {
+                mmio_write32 (req0 + i, 0);
+                mmio_write32 (req1 + i, 0);
+            }
+            for (int i = 0; i < 24; i += 4) {
+                mmio_write32 (resp0 + i, 0);
+                mmio_write32 (resp1 + i, 0);
+            }
+
+            mmio_write32 (req0 + 0, CMD_TRANSFER_TO_HOST_2D);
+            mmio_write32 (req0 + 24, rx);
+            mmio_write32 (req0 + 28, ry);
+            mmio_write32 (req0 + 32, rw);
+            mmio_write32 (req0 + 36, rh);
+            mmio_write64 (req0 + 40, (ry * vgpu_scanout_w + rx) * 4);
+            mmio_write32 (req0 + 48, RES_SCANOUT);
+
+            mmio_write32 (req1 + 0, CMD_RESOURCE_FLUSH);
+            mmio_write32 (req1 + 24, rx);
+            mmio_write32 (req1 + 28, ry);
+            mmio_write32 (req1 + 32, rw);
+            mmio_write32 (req1 + 36, rh);
+            mmio_write32 (req1 + 40, RES_SCANOUT);
+
+            int desc_base = vgpu_vq_page;
+            int avail_base = vgpu_vq_page + 512;
+            int used_base = vgpu_vq_page + 1024;
+
+            // Chain 0: TRANSFER_TO_HOST_2D (desc 0 -> desc 1)
+            mmio_write64 (desc_base + 0, req0);
+            mmio_write32 (desc_base + 8, 56);
+            mmio_write16 (desc_base + 12, 0x01);
+            mmio_write16 (desc_base + 14, 1);
+
+            mmio_write64 (desc_base + 16, resp0);
+            mmio_write32 (desc_base + 24, 24);
+            mmio_write16 (desc_base + 28, 0x02);
+            mmio_write16 (desc_base + 30, 0);
+
+            // Chain 1: RESOURCE_FLUSH (desc 2 -> desc 3)
+            mmio_write64 (desc_base + 32, req1);
+            mmio_write32 (desc_base + 40, 48);
+            mmio_write16 (desc_base + 44, 0x01);
+            mmio_write16 (desc_base + 46, 3);
+
+            mmio_write64 (desc_base + 48, resp1);
+            mmio_write32 (desc_base + 56, 24);
+            mmio_write16 (desc_base + 60, 0x02);
+            mmio_write16 (desc_base + 62, 0);
+
+            int target_used = (vgpu_last_used + 2) & 0xFFFF;
+            int s0 = vgpu_avail_idx % vgpu_qsize;
+            mmio_write16 (avail_base + 4 + s0 * 2, 0);
+            vgpu_avail_idx++;
+            int s1 = vgpu_avail_idx % vgpu_qsize;
+            mmio_write16 (avail_base + 4 + s1 * 2, 2);
+            vgpu_avail_idx++;
+            mmio_write16 (avail_base + 2, vgpu_avail_idx & 0xFFFF);
+
+            mmio_write16 (vgpu_notify_base + vgpu_q_notify_off * vgpu_notify_mult, 0);
+
+            for (int spin = 0; spin < 2000000; spin++) {
+                int uidx = mmio_read32 (used_base) >> 16;
+                if ((uidx & 0xFFFF) == target_used) {
+                    vgpu_last_used = target_used;
+                    return;
+                }
+            }
+            vgpu_last_used = mmio_read32 (used_base) >> 16;
+        }
+
         public static void present_rect (int src_buf, int rx, int ry, int rw, int rh) {
             if (vgpu_fb_pa == 0 || src_buf == 0 || vgpu_scanout_w <= 0)
                 return;
@@ -447,37 +527,35 @@ namespace Planet.Kernel {
             if (rw <= 0 || rh <= 0)
                 return;
 
-            for (int row = 0; row < rh; row++) {
-                int off = ((ry + row) * vgpu_scanout_w + rx) * 4;
-                fb_copy_dwords (vgpu_fb_pa + off, src_buf + off, rw);
+            if (rx == 0 && rw == vgpu_scanout_w) {
+                Fb.copy_fast (vgpu_fb_pa + ry * vgpu_scanout_w * 4,
+                              src_buf + ry * vgpu_scanout_w * 4,
+                              rw * rh);
+            } else {
+                for (int row = 0; row < rh; row++) {
+                    int off = ((ry + row) * vgpu_scanout_w + rx) * 4;
+                    Fb.copy_fast (vgpu_fb_pa + off, src_buf + off, rw);
+                }
             }
 
-            // TRANSFER_TO_HOST_2D (56 bytes)
-            clear_cmd (56);
-            mmio_write32 (vgpu_cmd_page + 0, CMD_TRANSFER_TO_HOST_2D);
-            mmio_write32 (vgpu_cmd_page + 24, rx);
-            mmio_write32 (vgpu_cmd_page + 28, ry);
-            mmio_write32 (vgpu_cmd_page + 32, rw);
-            mmio_write32 (vgpu_cmd_page + 36, rh);
-            mmio_write64 (vgpu_cmd_page + 40, (ry * vgpu_scanout_w + rx) * 4);
-            mmio_write32 (vgpu_cmd_page + 48, RES_SCANOUT);
-            send_cmd (56, 24);
-
-            // RESOURCE_FLUSH (48 bytes)
-            clear_cmd (48);
-            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_FLUSH);
-            mmio_write32 (vgpu_cmd_page + 24, rx);
-            mmio_write32 (vgpu_cmd_page + 28, ry);
-            mmio_write32 (vgpu_cmd_page + 32, rw);
-            mmio_write32 (vgpu_cmd_page + 36, rh);
-            mmio_write32 (vgpu_cmd_page + 40, RES_SCANOUT);
-            send_cmd (48, 24);
+            flush_scanout_rect (rx, ry, rw, rh);
         }
 
         public static void present_full (int src_buf, int w, int h) {
+            if (vgpu_fb_pa == 0 || src_buf == 0 || vgpu_scanout_w <= 0)
+                return;
             int cw = (w < vgpu_scanout_w) ? w : vgpu_scanout_w;
             int ch = (h < vgpu_scanout_h) ? h : vgpu_scanout_h;
-            present_rect (src_buf, 0, 0, cw, ch);
+            if (cw <= 0 || ch <= 0)
+                return;
+            if (w == vgpu_scanout_w) {
+                Fb.copy_fast (vgpu_fb_pa, src_buf, cw * ch);
+            } else {
+                for (int row = 0; row < ch; row++) {
+                    Fb.copy_fast (vgpu_fb_pa + row * vgpu_scanout_w * 4, src_buf + row * w * 4, cw);
+                }
+            }
+            flush_scanout_rect (0, 0, cw, ch);
         }
 
         public static void close_scanout () {

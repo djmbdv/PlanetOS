@@ -300,7 +300,9 @@ if ($Headless) {
     $qemuArgs += @('-display', $disp, '-serial', 'mon:stdio')
 } else {
     if ($VirtioGl) {
-        $qemuArgs += @('-display', 'gtk,gl=on')
+        $qemuArgs += @('-display', 'gtk,gl=on,grab-on-hover=on')
+    } elseif ($Virtio) {
+        $qemuArgs += @('-display', 'gtk,grab-on-hover=on')
     }
     $serialLog = Out-Path 'serial.log'
     $qemuArgs += @('-serial', ('file:' + (To-QemuPath $serialLog)))
