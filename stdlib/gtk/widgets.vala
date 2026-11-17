@@ -65,22 +65,20 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible)
                 return;
-            if (pressed) {
-                cr.fill_gradient_v ((double) x, (double) y, (double) width, (double) height,
-                                    0.14, 0.36, 0.62, 0.10, 0.28, 0.50);
-            } else if (hovered) {
-                cr.fill_gradient_v ((double) x, (double) y, (double) width, (double) height,
-                                    0.26, 0.52, 0.82, 0.19, 0.42, 0.70);
-            } else {
-                cr.fill_gradient_v ((double) x, (double) y, (double) width, (double) height,
-                                    0.20, 0.24, 0.31, 0.15, 0.18, 0.24);
-            }
+            if (pressed)
+                cr.set_source_rgb (0.14, 0.25, 0.40);
+            else if (hovered)
+                cr.set_source_rgb (0.19, 0.24, 0.31);
+            else
+                cr.set_source_rgb (0.15, 0.18, 0.24);
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
+            cr.fill ();
             cr.set_line_width (1.0);
             if (hovered || pressed)
-                cr.set_source_rgb (0.45, 0.72, 0.98);
+                cr.set_source_rgb (0.29, 0.49, 0.72);
             else
-                cr.set_source_rgb (0.34, 0.39, 0.48);
-            cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 6.0);
+                cr.set_source_rgb (0.24, 0.28, 0.35);
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
 
             int tw = 0;
@@ -141,15 +139,15 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible)
                 return;
-            cr.set_source_rgb (0.10, 0.12, 0.16);
-            cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 5.0);
+            cr.set_source_rgb (0.08, 0.10, 0.13);
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
-            cr.set_line_width (focused ? 2.0 : 1.0);
+            cr.set_line_width (1.0);
             if (focused)
-                cr.set_source_rgb (0.35, 0.65, 0.98);
+                cr.set_source_rgb (0.29, 0.49, 0.72);
             else
-                cr.set_source_rgb (0.30, 0.35, 0.43);
-            cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 5.0);
+                cr.set_source_rgb (0.22, 0.26, 0.33);
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
 
             int tw = 0;
@@ -249,10 +247,10 @@ namespace Gtk {
             int bx = x + 2;
             int by = y + (height - 18) / 2;
             if (active) {
-                cr.set_source_rgb (0.24, 0.54, 0.88);
-                cr.rounded_rectangle ((double) bx, (double) by, 18.0, 18.0, 4.0);
+                cr.set_source_rgb (0.23, 0.45, 0.70);
+                cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.fill ();
-                cr.set_source_rgb (0.97, 0.98, 1.0);
+                cr.set_source_rgb (0.95, 0.97, 0.99);
                 cr.set_line_width (2.0);
                 cr.move_to ((double) (bx + 4), (double) (by + 9));
                 cr.line_to ((double) (bx + 8), (double) (by + 13));
@@ -261,15 +259,15 @@ namespace Gtk {
                 cr.line_to ((double) (bx + 14), (double) (by + 5));
                 cr.stroke ();
             } else {
-                cr.set_source_rgb (0.12, 0.14, 0.19);
-                cr.rounded_rectangle ((double) bx, (double) by, 18.0, 18.0, 4.0);
+                cr.set_source_rgb (0.09, 0.11, 0.15);
+                cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.fill ();
                 cr.set_line_width (1.0);
                 if (hovered)
-                    cr.set_source_rgb (0.45, 0.72, 0.98);
+                    cr.set_source_rgb (0.29, 0.49, 0.72);
                 else
-                    cr.set_source_rgb (0.34, 0.39, 0.48);
-                cr.rounded_rectangle ((double) bx, (double) by, 18.0, 18.0, 4.0);
+                    cr.set_source_rgb (0.24, 0.28, 0.35);
+                cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.stroke ();
             }
             int tw = 0;
@@ -328,17 +326,18 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible)
                 return;
-            cr.set_source_rgb (0.10, 0.12, 0.16);
-            cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 6.0);
+            cr.set_source_rgb (0.08, 0.10, 0.13);
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
             int fw = (int) ((double) (width - 2) * fraction);
-            if (fw > 4) {
-                cr.fill_gradient_v ((double) (x + 1), (double) (y + 1), (double) fw, (double) (height - 2),
-                                    0.25, 0.56, 0.90, 0.18, 0.42, 0.74);
+            if (fw > 2) {
+                cr.set_source_rgb (0.23, 0.45, 0.70);
+                cr.rectangle ((double) (x + 1), (double) (y + 1), (double) fw, (double) (height - 2));
+                cr.fill ();
             }
             cr.set_line_width (1.0);
-            cr.set_source_rgb (0.30, 0.35, 0.43);
-            cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 6.0);
+            cr.set_source_rgb (0.22, 0.26, 0.33);
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
             if (text.length > 0) {
                 int tw = 0;

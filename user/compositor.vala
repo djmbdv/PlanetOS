@@ -30,7 +30,7 @@ namespace Wm {
     public const int DOCK_H = 34;
     public const int TITLE_H = 26;
     public const int BORDER = 1;
-    public const int SHADOW = 6;
+    public const int SHADOW = 2;
     public const int BTN = 16;
     public const int BTN_GAP = 4;
     public const int DOCK_X0 = 10;
@@ -1229,7 +1229,16 @@ namespace Wm {
 
         public void render (Context cr, int mx, int my) {
             occluded_skips = 0;
-            draw_background (cr);
+            bool bg_occluded = false;
+            for (int i = 0; i < wins.length; i++) {
+                var w = wins[i];
+                if (w.alive && w.maximized) {
+                    bg_occluded = true;
+                    break;
+                }
+            }
+            if (!bg_occluded)
+                draw_background (cr);
             draw_windows (cr);
             draw_dock (cr);
             draw_top_bar (cr);
@@ -1369,57 +1378,60 @@ namespace Wm {
         private void draw_window (Context cr, Win w) {
             bool foc = (w.id == focused_id);
 
-            // Shadow only along the right/bottom bands so we don't blend hidden interior pixels
-            cr.set_source_rgba (0.0, 0.0, 0.0, 0.35);
-            cr.rectangle (w.x + w.w, w.y + SHADOW, SHADOW, w.h - 4);
+            // Subtle flat 2px drop shadow (opaque for fast SSE2 fill)
+            cr.set_source_rgb (0.045, 0.055, 0.075);
+            cr.rectangle (w.x + w.w, w.y + SHADOW, SHADOW, w.h);
             cr.fill ();
-            cr.rectangle (w.x + SHADOW, w.y + w.h, w.w - 4, SHADOW);
-            cr.fill ();
-
-            // Rounded window body
-            cr.set_source_rgb (0.113, 0.133, 0.176);
-            cr.rounded_rectangle (w.x, w.y, w.w, w.h, 8.0);
+            cr.rectangle (w.x + SHADOW, w.y + w.h, w.w, SHADOW);
             cr.fill ();
 
-            // Clip content cleanly inside rounded bottom
+            // Enterprise flat window body
+            cr.set_source_rgb (0.094, 0.110, 0.141);
+            cr.rectangle (w.x, w.y, w.w, w.h);
+            cr.fill ();
+
+            // Clip content cleanly inside window frame
             cr.save ();
-            cr.rectangle (w.x + BORDER, w.content_y (), w.w - 2 * BORDER, w.content_h () - 4);
+            cr.rectangle (w.x + BORDER, w.content_y (), w.w - 2 * BORDER, w.content_h ());
             cr.clip ();
             draw_content (cr, w);
             cr.restore ();
 
-            // Rounded title bar
+            // Subtle minimalist title bar
             if (foc) {
-                cr.set_source_rgb (acc_r * 0.36 + 0.06, acc_g * 0.36 + 0.07, acc_b * 0.36 + 0.11);
+                cr.set_source_rgb (0.129, 0.157, 0.204);
             } else {
-                cr.set_source_rgb (0.15, 0.17, 0.22);
+                cr.set_source_rgb (0.082, 0.098, 0.125);
             }
-            cr.rounded_rectangle (w.x + 2, w.y + 2, w.w - 4, TITLE_H, 6.0);
+            cr.rectangle (w.x + 1, w.y + 1, w.w - 2, TITLE_H);
             cr.fill ();
-            cr.rectangle (w.x + 2, w.y + TITLE_H - 4, w.w - 4, 6);
+
+            // Subtle 1px titlebar bottom separator
+            cr.set_source_rgb (0.173, 0.204, 0.259);
+            cr.rectangle (w.x + 1, w.y + TITLE_H, w.w - 2, 1);
             cr.fill ();
 
             if (foc)
-                cr.set_source_rgb (0.97, 0.98, 1.0);
+                cr.set_source_rgb (0.93, 0.95, 0.98);
             else
-                cr.set_source_rgb (0.71, 0.76, 0.84);
+                cr.set_source_rgb (0.62, 0.67, 0.75);
             TextHelper.draw_text (cr, w.title, w.x + 12, w.y + BORDER + 4, 15.0);
 
             int by = w.btn_y ();
-            cr.set_source_rgba (1.0, 1.0, 1.0, 0.14);
-            cr.rounded_rectangle (w.max_x (), by, BTN, BTN, 4.0);
+            cr.set_source_rgb (0.18, 0.21, 0.27);
+            cr.rectangle (w.max_x (), by, BTN, BTN);
             cr.fill ();
-            cr.set_source_rgba (0.88, 0.32, 0.34, 0.85);
-            cr.rounded_rectangle (w.close_x (), by, BTN, BTN, 4.0);
+            cr.set_source_rgb (0.58, 0.23, 0.25);
+            cr.rectangle (w.close_x (), by, BTN, BTN);
             cr.fill ();
 
-            // Outer rounded 1px border drawn last so corners stay crisp
+            // Crisp 1px enterprise border
             if (foc)
-                cr.set_source_rgb (acc_r, acc_g, acc_b);
+                cr.set_source_rgb (0.29, 0.49, 0.72);
             else
-                cr.set_source_rgb (0.243, 0.275, 0.341);
+                cr.set_source_rgb (0.19, 0.22, 0.28);
             cr.set_line_width (1);
-            cr.rounded_rectangle (w.x, w.y, w.w, w.h, 8.0);
+            cr.rectangle (w.x, w.y, w.w, w.h);
             cr.stroke ();
             cr.set_source_rgb (0.90, 0.93, 0.97);
             cr.set_line_width (1);
@@ -1518,12 +1530,12 @@ namespace Wm {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
-                cr.set_source_rgba (acc_r, acc_g, acc_b, 1.0);
-                cr.rounded_rectangle (cx + 14, cy + 16, 56, 56, 6.0);
+                cr.set_source_rgb (acc_r, acc_g, acc_b);
+                cr.rectangle (cx + 14, cy + 16, 56, 56);
                 cr.fill ();
                 cr.set_line_width (1);
-                cr.set_source_rgb (0.30, 0.34, 0.42);
-                cr.rounded_rectangle (cx + 14, cy + 16, 56, 56, 6.0);
+                cr.set_source_rgb (0.24, 0.28, 0.35);
+                cr.rectangle (cx + 14, cy + 16, 56, 56);
                 cr.stroke ();
 
                 cr.set_source_rgb (0.90, 0.93, 0.97);
@@ -1591,10 +1603,10 @@ namespace Wm {
             int y0 = SCREEN_H - DOCK_H;
             if (!rect_hits (cr, 0, y0, SCREEN_W, DOCK_H))
                 return;
-            cr.set_source_rgb (0.031, 0.039, 0.059);
+            cr.set_source_rgb (0.067, 0.082, 0.110);
             cr.rectangle (0, y0, SCREEN_W, DOCK_H);
             cr.fill ();
-            cr.set_source_rgba (acc_r, acc_g, acc_b, 0.30);
+            cr.set_source_rgb (0.173, 0.204, 0.259);
             cr.rectangle (0, y0, SCREEN_W, 1);
             cr.fill ();
 
@@ -1607,13 +1619,13 @@ namespace Wm {
                 int bx = DOCK_X0 + i * (DOCK_BTN_W + DOCK_BTN_GAP);
                 int by = y0 + 5;
                 if (foc)
-                    cr.set_source_rgba (acc_r, acc_g, acc_b, 0.24);
+                    cr.set_source_rgb (0.145, 0.184, 0.247);
                 else
-                    cr.set_source_rgba (1.0, 1.0, 1.0, 0.07);
-                cr.rounded_rectangle (bx, by, DOCK_BTN_W, DOCK_H - 10, 6.0);
+                    cr.set_source_rgb (0.098, 0.118, 0.157);
+                cr.rectangle (bx, by, DOCK_BTN_W, DOCK_H - 10);
                 cr.fill ();
                 if (foc) {
-                    cr.set_source_rgb (acc_r, acc_g, acc_b);
+                    cr.set_source_rgb (0.29, 0.49, 0.72);
                     cr.rectangle (bx, by + DOCK_H - 12, DOCK_BTN_W, 2);
                     cr.fill ();
                 }
