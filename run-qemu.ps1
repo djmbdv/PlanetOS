@@ -41,7 +41,9 @@ param(
     [switch]$Headless,
     [switch]$Display,
     [switch]$NoBuild,
-    [switch]$BuildOnly
+    [switch]$BuildOnly,
+    [switch]$Virtio,
+    [switch]$VirtioGl
 )
 
 $ErrorActionPreference = 'Stop'
@@ -273,18 +275,33 @@ if ($Headless -and $Display) {
     Fail 'use either -Headless or -Display, not both'
 }
 
+if ($Virtio -and $VirtioGl) {
+    Fail 'use either -Virtio or -VirtioGl, not both'
+}
+
+$vgaArgs = @('-vga', 'std')
+if ($Virtio) {
+    $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-pci')
+} elseif ($VirtioGl) {
+    $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,blob=on,hostmem=256M')
+}
+
 $qemuArgs = @(
     '-cpu', 'max',
     '-kernel', (To-QemuPath $kernelPath),
-    '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide'),
-    '-vga', 'std',
+    '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide')
+) + $vgaArgs + @(
     '-no-reboot',
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04'
 )
 
 if ($Headless) {
-    $qemuArgs += @('-display', 'none', '-serial', 'mon:stdio')
+    $disp = if ($VirtioGl) { 'egl-headless' } else { 'none' }
+    $qemuArgs += @('-display', $disp, '-serial', 'mon:stdio')
 } else {
+    if ($VirtioGl) {
+        $qemuArgs += @('-display', 'gtk,gl=on')
+    }
     $serialLog = Out-Path 'serial.log'
     $qemuArgs += @('-serial', ('file:' + (To-QemuPath $serialLog)))
     Write-Host ('Serial log: ' + $serialLog)

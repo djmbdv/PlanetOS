@@ -11,9 +11,17 @@ OUT="/tmp/planetos-qemu"
 mkdir -p "$OUT"
 
 BUILD_ONLY=0
-case "${1:-}" in
-    --build-only) BUILD_ONLY=1 ;;
-esac
+DISPLAY_MODE="window"
+GPU_MODE="std"
+for arg in "$@"; do
+    case "$arg" in
+        --build-only) BUILD_ONLY=1 ;;
+        --headless)   DISPLAY_MODE="none" ;;
+        --display)    DISPLAY_MODE="gtk" ;;
+        --virtio)     GPU_MODE="virtio" ;;
+        --virtio-gl)  GPU_MODE="virtio-gl" ;;
+    esac
+done
 
 if [ ! -x "$PLANC" ]; then
     "$ROOT/planc/build.sh"
@@ -101,21 +109,31 @@ if [ "$BUILD_ONLY" = "1" ]; then
     exit 0
 fi
 
-DISPLAY_MODE="window"
-case "${1:-}" in
-    --headless) DISPLAY_MODE="none" ;;
-    --display)  DISPLAY_MODE="gtk" ;;
-esac
 if [ "$DISPLAY_MODE" = "window" ] \
     && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${MSYSTEM:-}" ]; then
     DISPLAY_MODE="none"
 fi
+GPU_ARGS=(-vga std)
+if [ "$GPU_MODE" = "virtio" ]; then
+    GPU_ARGS=(-vga none -device virtio-gpu-pci)
+elif [ "$GPU_MODE" = "virtio-gl" ]; then
+    GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,blob=on,hostmem=256M)
+fi
 DISP_ARGS=()
 SER_ARGS=()
 if [ "$DISPLAY_MODE" = "none" ]; then
-    DISP_ARGS=(-display none)
+    if [ "$GPU_MODE" = "virtio-gl" ]; then
+        DISP_ARGS=(-display egl-headless)
+    else
+        DISP_ARGS=(-display none)
+    fi
     SER_ARGS=(-serial mon:stdio)
 else
+    if [ "$GPU_MODE" = "virtio-gl" ]; then
+        DISP_ARGS=(-display gtk,gl=on)
+    elif [ "$DISPLAY_MODE" = "gtk" ]; then
+        DISP_ARGS=(-display gtk)
+    fi
     # Keep the serial console out of the terminal: QEMU's stdio backend is
     # unreliable under mintty, and the guest already draws to the VGA window.
     SER_LOG="$OUT/serial.log"
@@ -131,7 +149,7 @@ exec qemu-system-x86_64 \
     -cpu max \
     -kernel "$OUT/planet-kernel" \
     -drive file="$OUT/disk.img",format=raw,if=ide \
-    -vga std \
+    "${GPU_ARGS[@]}" \
     "${DISP_ARGS[@]}" \
     "${SER_ARGS[@]}" \
     -no-reboot \
