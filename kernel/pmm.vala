@@ -110,6 +110,8 @@ namespace Planet.Kernel {
                 clear_bit (f);
                 pmm_free_count = pmm_free_count + 1;
             }
+            // Reserve 8..16 MiB for static userland ELF load bases (0x800000..0x1000000)
+            reserve_range (0x800000, 0x800000);
         }
 
         public static int alloc_frame () {

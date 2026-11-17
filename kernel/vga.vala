@@ -55,6 +55,13 @@ namespace Planet.Kernel {
         public static void init () {
             clear ();
             vga_ready = 1;
+            if (VirtioGpu.is_present ())
+                VirtioGpu.init_console (vga_row, vga_col);
+        }
+
+        public static void activate_virtio_console () {
+            if (VirtioGpu.is_present ())
+                VirtioGpu.init_console (vga_row, vga_col);
         }
 
         private static void scroll_up () {
@@ -72,6 +79,8 @@ namespace Planet.Kernel {
                 mmio_write16 (VGA_BASE + ((ROWS - 1) * COLS + c) * 2, blank);
             }
             vga_row = ROWS - 1;
+            if (VirtioGpu.is_console_active ())
+                VirtioGpu.console_redraw_all (vga_row, vga_col);
         }
 
         private static int cp437_from_unicode (int cp) {
@@ -114,14 +123,20 @@ namespace Planet.Kernel {
         }
 
         private static void put_glyph (int glyph) {
-            mmio_write16 (VGA_BASE + (vga_row * COLS + vga_col) * 2, (vga_attr << 8) | (glyph & 0xFF));
+            int r0 = vga_row;
+            int c0 = vga_col;
+            mmio_write16 (VGA_BASE + (r0 * COLS + c0) * 2, (vga_attr << 8) | (glyph & 0xFF));
             vga_col = vga_col + 1;
             if (vga_col >= COLS) {
                 vga_col = 0;
                 vga_row = vga_row + 1;
             }
-            if (vga_row >= ROWS)
+            if (vga_row >= ROWS) {
                 scroll_up ();
+            } else if (VirtioGpu.is_console_active ()) {
+                VirtioGpu.console_flush_cell (r0, c0, vga_row, vga_col,
+                    (glyph == '>' || glyph == ' ' || glyph == ':' || glyph == '?'));
+            }
             update_cursor ();
         }
 
@@ -163,6 +178,8 @@ namespace Planet.Kernel {
                     if (vga_col > 0) {
                         vga_col = vga_col - 1;
                         mmio_write16 (VGA_BASE + (vga_row * COLS + vga_col) * 2, (ATTR << 8) | ' ');
+                        if (VirtioGpu.is_console_active ())
+                            VirtioGpu.console_flush_cell (vga_row, vga_col, vga_row, vga_col, true);
                     }
                 } else {
                     put_glyph (b);
@@ -170,6 +187,8 @@ namespace Planet.Kernel {
                 }
                 if (vga_row >= ROWS)
                     scroll_up ();
+                else if (VirtioGpu.is_console_active ())
+                    VirtioGpu.console_flush_cell (-1, -1, vga_row, vga_col, true);
                 update_cursor ();
                 return;
             }

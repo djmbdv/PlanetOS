@@ -53,6 +53,9 @@ namespace Planet.Kernel {
     private int vgpu_scanout_h = 0;
     private int vgpu_fb_pa = 0;
     private int vgpu_fb_pages = 0;
+    private int vgpu_con_active = 0;
+    private int vgpu_con_cur_r = -1;
+    private int vgpu_con_cur_c = -1;
     private int vgpu_fence_seq = 1;
 
     public class VirtioGpu : Object {
@@ -758,6 +761,215 @@ namespace Planet.Kernel {
             if (has_ctx_init ()) f |= 8;
             if (has_venus ()) f |= 16;
             return f | ((vgpu_disp_w & 0xFFFF) << 16) | ((vgpu_disp_h & 0xFFFF) << 32);
+        }
+
+        // --- Phase 2b: VirtIO-GPU 80x25 Text Console Mirror (for -vga none) ---
+
+        // Compact 8x8 ASCII 32..126 font packed as 64-bit MSB-first bitmaps (row 0 in top byte)
+        private static int font8x8 (int ch) {
+            if (ch == ' ') return 0x0000000000000000;
+            if (ch == '!') return 0x1818181818001800;
+            if (ch == '"') return 0x6666660000000000;
+            if (ch == '#') return 0x6666FF66FF666600;
+            if (ch == '$') return 0x183E603C067C1800;
+            if (ch == '%') return 0x6264081026460000;
+            if (ch == '&') return 0x384C386C4C463B00;
+            if (ch == '\'') return 0x1818300000000000;
+            if (ch == '(') return 0x0C18303030180C00;
+            if (ch == ')') return 0x30180C0C0C183000;
+            if (ch == '*') return 0x00663CFF3C660000;
+            if (ch == '+') return 0x0018187E18180000;
+            if (ch == ',') return 0x0000000000181830;
+            if (ch == '-') return 0x0000007E00000000;
+            if (ch == '.') return 0x0000000000181800;
+            if (ch == '/') return 0x0204081020408000;
+            if (ch == '0') return 0x3C666E7666663C00;
+            if (ch == '1') return 0x1838181818187E00;
+            if (ch == '2') return 0x3C66060C18307E00;
+            if (ch == '3') return 0x3C66061C06663C00;
+            if (ch == '4') return 0x0C1C3C6C7E0C0C00;
+            if (ch == '5') return 0x7E607C0606663C00;
+            if (ch == '6') return 0x1C30607C66663C00;
+            if (ch == '7') return 0x7E060C1830303000;
+            if (ch == '8') return 0x3C66663C66663C00;
+            if (ch == '9') return 0x3C66663E060C3800;
+            if (ch == ':') return 0x0018180018180000;
+            if (ch == ';') return 0x0018180018183000;
+            if (ch == '<') return 0x0C18306030180C00;
+            if (ch == '=') return 0x00007E007E000000;
+            if (ch == '>') return 0x6030180C18306000;
+            if (ch == '?') return 0x3C66061C18001800;
+            if (ch == '@') return 0x3C666E6A6E603C00;
+            if (ch == 'A') return 0x183C66667E666600;
+            if (ch == 'B') return 0x7C66667C66667C00;
+            if (ch == 'C') return 0x3C66606060663C00;
+            if (ch == 'D') return 0x786C6666666C7800;
+            if (ch == 'E') return 0x7E60607860607E00;
+            if (ch == 'F') return 0x7E60607860606000;
+            if (ch == 'G') return 0x3C66606E66663E00;
+            if (ch == 'H') return 0x6666667E66666600;
+            if (ch == 'I') return 0x3C18181818183C00;
+            if (ch == 'J') return 0x1E0C0C0C0C6C3800;
+            if (ch == 'K') return 0x666C7870786C6600;
+            if (ch == 'L') return 0x6060606060607E00;
+            if (ch == 'M') return 0x63777F6B63636300;
+            if (ch == 'N') return 0x66767E7E6E666600;
+            if (ch == 'O') return 0x3C66666666663C00;
+            if (ch == 'P') return 0x7C66667C60606000;
+            if (ch == 'Q') return 0x3C6666666A6C3600;
+            if (ch == 'R') return 0x7C66667C6C666600;
+            if (ch == 'S') return 0x3C66603C06663C00;
+            if (ch == 'T') return 0x7E18181818181800;
+            if (ch == 'U') return 0x6666666666663C00;
+            if (ch == 'V') return 0x66666666663C1800;
+            if (ch == 'W') return 0x6363636B7F776300;
+            if (ch == 'X') return 0x66663C183C666600;
+            if (ch == 'Y') return 0x6666663C18181800;
+            if (ch == 'Z') return 0x7E060C1830607E00;
+            if (ch == '[') return 0x3C30303030303C00;
+            if (ch == '\\') return 0x4020100804020000;
+            if (ch == ']') return 0x3C0C0C0C0C0C3C00;
+            if (ch == '^') return 0x183C660000000000;
+            if (ch == '_') return 0x000000000000FF00;
+            if (ch == '`') return 0x30180C0000000000;
+            if (ch == 'a') return 0x00003C063E663E00;
+            if (ch == 'b') return 0x60607C6666667C00;
+            if (ch == 'c') return 0x00003C6660663C00;
+            if (ch == 'd') return 0x06063E6666663E00;
+            if (ch == 'e') return 0x00003C667E603C00;
+            if (ch == 'f') return 0x1C307C3030303000;
+            if (ch == 'g') return 0x00003E66663E063C;
+            if (ch == 'h') return 0x60607C6666666600;
+            if (ch == 'i') return 0x1800381818183C00;
+            if (ch == 'j') return 0x0C001C0C0C0C6C38;
+            if (ch == 'k') return 0x6060666C786C6600;
+            if (ch == 'l') return 0x3818181818183C00;
+            if (ch == 'm') return 0x0000667F7F6B6300;
+            if (ch == 'n') return 0x00007C6666666600;
+            if (ch == 'o') return 0x00003C6666663C00;
+            if (ch == 'p') return 0x00007C66667C6060;
+            if (ch == 'q') return 0x00003E66663E0606;
+            if (ch == 'r') return 0x00007C6660606000;
+            if (ch == 's') return 0x00003E603C067C00;
+            if (ch == 't') return 0x30307C3030301C00;
+            if (ch == 'u') return 0x0000666666663E00;
+            if (ch == 'v') return 0x00006666663C1800;
+            if (ch == 'w') return 0x000063636B7F3600;
+            if (ch == 'x') return 0x0000663C183C6600;
+            if (ch == 'y') return 0x00006666663E063C;
+            if (ch == 'z') return 0x00007E0C18307E00;
+            if (ch == '{') return 0x1C30306030301C00;
+            if (ch == '|') return 0x1818181818181800;
+            if (ch == '}') return 0x380C0C060C0C3800;
+            if (ch == '~') return 0x0000366C00000000;
+            return 0x7E42424242427E00;
+        }
+
+        private static int vga_fg_rgb (int attr) {
+            int c = attr & 0x0F;
+            if (c == 0) return 0xFF0F131A;
+            if (c == 1) return 0xFF3B82F6;
+            if (c == 2) return 0xFF22C55E;
+            if (c == 3) return 0xFF38BDF8;
+            if (c == 4) return 0xFFEF4444;
+            if (c == 5) return 0xFFA855F7;
+            if (c == 6) return 0xFFF59E0B;
+            if (c == 8) return 0xFF64748B;
+            if (c == 9) return 0xFF60A5FA;
+            if (c == 10) return 0xFF4ADE80;
+            if (c == 11) return 0xFF7DD3FC;
+            if (c == 12) return 0xFFF87171;
+            if (c == 14) return 0xFFFBBF24;
+            if (c == 15) return 0xFFF8FAFC;
+            return 0xFFE2E8F0;
+        }
+
+        public static void set_console_active (bool on) {
+            vgpu_con_active = on ? 1 : 0;
+        }
+
+        public static bool is_console_active () {
+            return vgpu_con_active != 0;
+        }
+
+        public static void console_draw_cell (int row, int col, int ch, int attr, bool cursor) {
+            if (vgpu_con_active == 0 || vgpu_fb_pa == 0 || row < 0 || row >= 25 || col < 0 || col >= 80)
+                return;
+            int fg = cursor ? 0xFF0F131A : vga_fg_rgb (attr);
+            int bg = cursor ? 0xFF38BDF8 : 0xFF0F131A;
+            int bits = font8x8 (ch & 0xFF);
+            int x0 = 80 + col * 8;
+            int y0 = 100 + row * 16;
+            for (int r = 0; r < 8; r++) {
+                int rbits = (bits >> ((7 - r) * 8)) & 0xFF;
+                int py0 = y0 + r * 2;
+                int py1 = py0 + 1;
+                int off0 = (py0 * 800 + x0) * 4;
+                int off1 = (py1 * 800 + x0) * 4;
+                for (int c = 0; c < 8; c++) {
+                    int px = ((rbits & (1 << (7 - c))) != 0) ? fg : bg;
+                    mmio_write32 (vgpu_fb_pa + off0 + c * 4, px);
+                    mmio_write32 (vgpu_fb_pa + off1 + c * 4, px);
+                }
+            }
+        }
+
+        public static void console_redraw_all (int cur_r, int cur_c) {
+            if (vgpu_con_active == 0 || vgpu_fb_pa == 0)
+                return;
+            for (int r = 0; r < 25; r++) {
+                for (int c = 0; c < 80; c++) {
+                    int addr = 0xB8000 + (r * 80 + c) * 2;
+                    int w = mmio_read32 (addr & ~3);
+                    int cell = ((addr & 2) != 0) ? ((w >> 16) & 0xFFFF) : (w & 0xFFFF);
+                    console_draw_cell (r, c, cell & 0xFF, (cell >> 8) & 0xFF, (r == cur_r && c == cur_c));
+                }
+            }
+            vgpu_con_cur_r = cur_r;
+            vgpu_con_cur_c = cur_c;
+            flush_scanout_rect (80, 100, 640, 400);
+        }
+
+        public static void console_flush_cell (int row, int col, int cur_r, int cur_c, bool flush_now) {
+            if (vgpu_con_active == 0 || vgpu_fb_pa == 0)
+                return;
+            if (vgpu_con_cur_r >= 0 && vgpu_con_cur_c >= 0 && (vgpu_con_cur_r != cur_r || vgpu_con_cur_c != cur_c)) {
+                int oa = 0xB8000 + (vgpu_con_cur_r * 80 + vgpu_con_cur_c) * 2;
+                int ow = mmio_read32 (oa & ~3);
+                int oc = ((oa & 2) != 0) ? ((ow >> 16) & 0xFFFF) : (ow & 0xFFFF);
+                console_draw_cell (vgpu_con_cur_r, vgpu_con_cur_c, oc & 0xFF, (oc >> 8) & 0xFF, false);
+                if (flush_now)
+                    flush_scanout_rect (80 + vgpu_con_cur_c * 8, 100 + vgpu_con_cur_r * 16, 8, 16);
+            }
+            vgpu_con_cur_r = cur_r;
+            vgpu_con_cur_c = cur_c;
+            if (row >= 0 && row < 25 && col >= 0 && col < 80) {
+                int addr = 0xB8000 + (row * 80 + col) * 2;
+                int w = mmio_read32 (addr & ~3);
+                int cell = ((addr & 2) != 0) ? ((w >> 16) & 0xFFFF) : (w & 0xFFFF);
+                console_draw_cell (row, col, cell & 0xFF, (cell >> 8) & 0xFF, (row == cur_r && col == cur_c));
+                if (flush_now)
+                    flush_scanout_rect (80 + col * 8, 100 + row * 16, 8, 16);
+            }
+            if (flush_now && cur_r >= 0 && cur_r < 25 && cur_c >= 0 && cur_c < 80) {
+                int ca = 0xB8000 + (cur_r * 80 + cur_c) * 2;
+                int cw = mmio_read32 (ca & ~3);
+                int cc = ((ca & 2) != 0) ? ((cw >> 16) & 0xFFFF) : (cw & 0xFFFF);
+                console_draw_cell (cur_r, cur_c, cc & 0xFF, (cc >> 8) & 0xFF, true);
+                flush_scanout_rect (80 + cur_c * 8, 100 + cur_r * 16, 8, 16);
+            }
+        }
+
+        public static void init_console (int cur_r, int cur_c) {
+            if (vgpu_found == 0)
+                return;
+            if (init_scanout (800, 600) == 0)
+                return;
+            for (int i = 0; i < 800 * 600 * 4; i += 4)
+                mmio_write32 (vgpu_fb_pa + i, 0xFF0F131A);
+            vgpu_con_active = 1;
+            flush_scanout_rect (0, 0, 800, 600);
+            console_redraw_all (cur_r, cur_c);
         }
     }
 }

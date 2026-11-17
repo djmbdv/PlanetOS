@@ -265,6 +265,7 @@ namespace Planet.Kernel {
 
         public static int init (int w, int h) {
             if (VirtioGpu.is_present ()) {
+                VirtioGpu.set_console_active (false);
                 int vfb = VirtioGpu.init_scanout (w, h);
                 if (vfb != 0) {
                     fb_backend = 2;
