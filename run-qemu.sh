@@ -131,7 +131,7 @@ if [ "$DISPLAY_MODE" = "none" ]; then
     SER_ARGS=(-serial mon:stdio)
 else
     if [ "$GPU_MODE" = "virtio-gl" ]; then
-        DISP_ARGS=(-display gtk,gl=on,grab-on-hover=on)
+        DISP_ARGS=(-display sdl,gl=on)
     elif [ "$GPU_MODE" = "virtio" ] || [ "$DISPLAY_MODE" = "gtk" ]; then
         DISP_ARGS=(-display gtk,grab-on-hover=on)
     fi
