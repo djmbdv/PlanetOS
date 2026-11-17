@@ -164,6 +164,77 @@ namespace Venus {
         }
     }
 
+    // Phase-3 probe: creates a VirGL2 context, submits a one-dword NOP,
+    // creates/attaches/destroys a GUEST blob when the device advertises one,
+    // and finally destroys the context. It goes through the same syscalls the
+    // compositor will use, so a green probe means the lifetime rules and the
+    // wire format agree with the host.
+    public class ProbeResult : Object {
+        public bool present { get; private set; }
+        public bool virgl { get; private set; }
+        public bool context { get; private set; }
+        public bool submit { get; private set; }
+        public bool blob { get; private set; }
+        public bool venus_ctx { get; private set; }
+        public bool cleanup { get; private set; }
+
+        public ProbeResult () {
+            var caps = new GpuCaps ();
+            present = caps.present;
+            virgl = caps.virgl;
+            if (!present || !virgl)
+                return;
+            cleanup = true;
+
+            int ctx_id = 1;
+            if (Sys.gpu_ctx_create (ctx_id, CAPSET_VIRGL2) != 0)
+                return;
+            context = true;
+
+            var nop = new uint8[4]; // VIRGL_CCMD_NOP: hdr 0, length 0
+            if (Sys.gpu_submit_3d (ctx_id, nop, 4) == 0)
+                submit = true;
+
+            if (caps.blob) {
+                int res_id = 0x100;
+                int size = 4096;
+                int pa = Sys.gpu_blob_create (ctx_id, res_id, size);
+                if (pa != 0) {
+                    blob = true;
+                    if (Sys.gpu_blob_destroy (ctx_id, res_id, pa, size) != 0)
+                        cleanup = false;
+                }
+            }
+
+            if (caps.venus) {
+                int venus_id = 2;
+                if (Sys.gpu_ctx_create (venus_id, CAPSET_VENUS) == 0) {
+                    venus_ctx = true;
+                    if (Sys.gpu_ctx_destroy (venus_id) != 0)
+                        cleanup = false;
+                }
+            }
+
+            if (Sys.gpu_ctx_destroy (ctx_id) != 0)
+                cleanup = false;
+        }
+
+        public string summary () {
+            if (!present)
+                return "skipped (no virtio-gpu)";
+            if (!virgl)
+                return "skipped (no virgl)";
+            return @"ctx=$(context ? 1 : 0) submit=$(submit ? 1 : 0) blob=$(blob ? 1 : 0) venus=$(venus_ctx ? 1 : 0) cleanup=$(cleanup ? 1 : 0)";
+        }
+
+        // A device without VirGL has nothing to probe, so skipping is success.
+        public bool ok () {
+            if (!present || !virgl)
+                return true;
+            return context && submit && cleanup;
+        }
+    }
+
     public class GpuContext : Object {
         public int ctx_id { get; private set; }
         public int capset_id { get; private set; }

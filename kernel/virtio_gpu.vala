@@ -61,6 +61,16 @@ namespace Planet.Kernel {
     private int vgpu_con_dirty_r1 = -1;
     private int vgpu_fence_seq = 1;
 
+    // Phase 3 resource table: one frame of 64 x 32-byte entries that records
+    // which contexts and blobs a process owns, so a destroy request can only
+    // release what this kernel handed out.
+    //   +0 used  +4 kind  +8 id  +12 owner  +16 ctx_id  +20 pa  +24 size  +28 pages
+    private int vgpu_res_table = 0;
+    private const int GPU_RES_ENTRIES = 64;
+    private const int GPU_RES_STRIDE = 32;
+    private const int GPU_RES_CTX = 1;
+    private const int GPU_RES_BLOB = 2;
+
     public class VirtioGpu : Object {
         private const int VENDOR_VIRTIO = 0x1AF4;
         private const int DEV_GPU       = 0x1050;
@@ -91,6 +101,7 @@ namespace Planet.Kernel {
         private const int CMD_CTX_CREATE              = 0x0200;
         private const int CMD_CTX_DESTROY             = 0x0201;
         private const int CMD_CTX_ATTACH_RESOURCE     = 0x0202;
+        private const int CMD_CTX_DETACH_RESOURCE     = 0x0203;
         private const int CMD_SUBMIT_3D               = 0x0207;
         private const int CMD_UPDATE_CURSOR           = 0x0300;
         private const int CMD_MOVE_CURSOR             = 0x0301;
@@ -98,6 +109,17 @@ namespace Planet.Kernel {
         private const int RESP_OK_NODATA       = 0x1100;
         private const int RESP_OK_DISPLAY_INFO = 0x1101;
         private const int RESP_OK_CAPSET_INFO  = 0x1102;
+
+        // Error responses, for diagnostics in klog
+        private const int RESP_ERR_UNSPEC           = 0x1200;
+        private const int RESP_ERR_OUT_OF_MEMORY    = 0x1201;
+        private const int RESP_ERR_INVALID_SCANOUT  = 0x1202;
+        private const int RESP_ERR_INVALID_RESOURCE = 0x1203;
+        private const int RESP_ERR_INVALID_CONTEXT  = 0x1204;
+        private const int RESP_ERR_INVALID_PARAM    = 0x1205;
+
+        private const int BLOB_MEM_GUEST        = 1;
+        private const int BLOB_FLAG_USE_MAPPABLE = 1;
 
         private const int FMT_B8G8R8A8_UNORM = 1;
         private const int FMT_B8G8R8X8_UNORM = 2;
@@ -290,6 +312,79 @@ namespace Planet.Kernel {
             return mmio_read32 (vgpu_cmd_page + 2048);
         }
 
+        // --- Phase 3 ownership table ---------------------------------------
+
+        private static int res_table () {
+            if (vgpu_res_table == 0) {
+                int page = Pmm.alloc_frame ();
+                if (page == 0)
+                    return 0;
+                for (int i = 0; i < 4096; i += 4)
+                    mmio_write32 (page + i, 0);
+                vgpu_res_table = page;
+            }
+            return vgpu_res_table;
+        }
+
+        private static int res_slot (int index) {
+            return vgpu_res_table + index * GPU_RES_STRIDE;
+        }
+
+        private static int res_alloc (int kind, int id, int ctx_id, int pa, int size, int pages) {
+            if (res_table () == 0)
+                return -1;
+            for (int i = 0; i < GPU_RES_ENTRIES; i++) {
+                int slot = res_slot (i);
+                if (mmio_read32 (slot + 0) == 0) {
+                    mmio_write32 (slot + 0, 1);
+                    mmio_write32 (slot + 4, kind);
+                    mmio_write32 (slot + 8, id);
+                    mmio_write32 (slot + 12, Sched.current_tid ());
+                    mmio_write32 (slot + 16, ctx_id);
+                    mmio_write32 (slot + 20, pa);
+                    mmio_write32 (slot + 24, size);
+                    mmio_write32 (slot + 28, pages);
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private static int res_find (int kind, int id) {
+            if (vgpu_res_table == 0)
+                return -1;
+            for (int i = 0; i < GPU_RES_ENTRIES; i++) {
+                int slot = res_slot (i);
+                if (mmio_read32 (slot + 0) != 0 && mmio_read32 (slot + 4) == kind
+                    && mmio_read32 (slot + 8) == id)
+                    return i;
+            }
+            return -1;
+        }
+
+        private static void res_clear (int index) {
+            if (index < 0 || vgpu_res_table == 0)
+                return;
+            int slot = res_slot (index);
+            for (int o = 0; o < GPU_RES_STRIDE; o += 4)
+                mmio_write32 (slot + o, 0);
+        }
+
+        private static int align_page (int size) {
+            return ((size + 4095) / 4096) * 4096;
+        }
+
+        private static string resp_name (int resp) {
+            if (resp == RESP_OK_NODATA) return "ok";
+            if (resp == RESP_ERR_UNSPEC) return "unspec";
+            if (resp == RESP_ERR_OUT_OF_MEMORY) return "out-of-memory";
+            if (resp == RESP_ERR_INVALID_SCANOUT) return "bad-scanout";
+            if (resp == RESP_ERR_INVALID_RESOURCE) return "bad-resource";
+            if (resp == RESP_ERR_INVALID_CONTEXT) return "bad-context";
+            if (resp == RESP_ERR_INVALID_PARAM) return "bad-param";
+            return "unknown";
+        }
+
         public static bool init () {
             int found_dev = -1;
             for (int dev = 0; dev < 32; dev++) {
@@ -415,7 +510,12 @@ namespace Planet.Kernel {
                     mmio_write32 (vgpu_cmd_page + 24, ci);
                     if (send_cmd (32, 40) && resp_type () == RESP_OK_CAPSET_INFO) {
                         int cid = mmio_read32 (vgpu_cmd_page + 2048 + 24);
-                        if (cid == CAPSET_VENUS)
+                        int max_size = mmio_read32 (vgpu_cmd_page + 2048 + 32);
+                        // A capset with zero max_size exists in the id list but
+                        // cannot be created: the host lists virglrenderer
+                        // capsets even when the build has no backend for them
+                        // (Venus without a render server, for example).
+                        if (cid == CAPSET_VENUS && max_size > 0)
                             vgpu_has_venus = 1;
                     }
                 }
@@ -426,8 +526,8 @@ namespace Planet.Kernel {
         // --- Phase 2: 2D Scanout & Hardware Cursor ---
 
         private static void gpu_fail (string what, int resp) {
-            print (@"virtio_gpu: $what failed resp=$resp\n");
-            Klog.warn (Klog.CAT_GPU, @"$what failed resp=$resp");
+            print (@"virtio_gpu: $what failed resp=$resp ($(resp_name (resp)))\n");
+            Klog.warn (Klog.CAT_GPU, @"$what failed: $(resp_name (resp))");
         }
 
         public static int init_scanout (int w, int h) {
@@ -716,6 +816,8 @@ namespace Planet.Kernel {
         public static bool ctx_create (int ctx_id, int capset_id) {
             if (vgpu_found == 0 || (vgpu_features_lo & F_VIRGL) == 0 || ctx_id <= 0)
                 return false;
+            if (res_find (GPU_RES_CTX, ctx_id) >= 0)
+                return false;
             clear_cmd (96);
             mmio_write32 (vgpu_cmd_page + 0, CMD_CTX_CREATE);
             mmio_write32 (vgpu_cmd_page + 16, ctx_id);
@@ -724,16 +826,36 @@ namespace Planet.Kernel {
                 mmio_write32 (vgpu_cmd_page + 28, capset_id);
             mmio_write32 (vgpu_cmd_page + 32, 0x6E616C70); // "plan"
             mmio_write32 (vgpu_cmd_page + 36, 0x736F7465); // "etos"
-            return send_cmd (96, 24) && resp_type () == RESP_OK_NODATA;
+            if (!send_cmd (96, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"ctx_create failed: $(resp_name (resp_type ()))");
+                return false;
+            }
+            if (res_alloc (GPU_RES_CTX, ctx_id, ctx_id, 0, 0, 0) < 0) {
+                ctx_destroy_raw (ctx_id);
+                return false;
+            }
+            return true;
+        }
+
+        private static bool ctx_destroy_raw (int ctx_id) {
+            clear_cmd (24);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_CTX_DESTROY);
+            mmio_write32 (vgpu_cmd_page + 16, ctx_id);
+            return send_cmd (24, 24) && resp_type () == RESP_OK_NODATA;
         }
 
         public static bool ctx_destroy (int ctx_id) {
             if (vgpu_found == 0 || ctx_id <= 0)
                 return false;
-            clear_cmd (24);
-            mmio_write32 (vgpu_cmd_page + 0, CMD_CTX_DESTROY);
-            mmio_write32 (vgpu_cmd_page + 16, ctx_id);
-            return send_cmd (24, 24) && resp_type () == RESP_OK_NODATA;
+            int idx = res_find (GPU_RES_CTX, ctx_id);
+            if (idx >= 0) {
+                int slot = res_slot (idx);
+                if (mmio_read32 (slot + 12) != Sched.current_tid ())
+                    return false;
+            }
+            bool ok = ctx_destroy_raw (ctx_id);
+            res_clear (idx);
+            return ok;
         }
 
         public static bool ctx_attach (int ctx_id, int res_id) {
@@ -742,6 +864,25 @@ namespace Planet.Kernel {
             clear_cmd (32);
             mmio_write32 (vgpu_cmd_page + 0, CMD_CTX_ATTACH_RESOURCE);
             mmio_write32 (vgpu_cmd_page + 16, ctx_id);
+            mmio_write32 (vgpu_cmd_page + 24, res_id);
+            return send_cmd (32, 24) && resp_type () == RESP_OK_NODATA;
+        }
+
+        public static bool ctx_detach (int ctx_id, int res_id) {
+            if (vgpu_found == 0 || ctx_id <= 0 || res_id <= 0)
+                return false;
+            clear_cmd (32);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_CTX_DETACH_RESOURCE);
+            mmio_write32 (vgpu_cmd_page + 16, ctx_id);
+            mmio_write32 (vgpu_cmd_page + 24, res_id);
+            return send_cmd (32, 24) && resp_type () == RESP_OK_NODATA;
+        }
+
+        public static bool resource_unref (int res_id) {
+            if (vgpu_found == 0 || res_id <= 0)
+                return false;
+            clear_cmd (32);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_UNREF);
             mmio_write32 (vgpu_cmd_page + 24, res_id);
             return send_cmd (32, 24) && resp_type () == RESP_OK_NODATA;
         }
@@ -755,17 +896,21 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 24, res_id);
             mmio_write32 (vgpu_cmd_page + 28, blob_mem);
             mmio_write32 (vgpu_cmd_page + 32, blob_flags);
-            mmio_write64 (vgpu_cmd_page + 40, size);
-            mmio_write64 (vgpu_cmd_page + 48, blob_id);
+            // The wire order is blob_id then size (virtio_gpu_resource_create_blob):
+            // writing size first made every GUEST blob a zero-sized request.
+            mmio_write64 (vgpu_cmd_page + 40, blob_id);
+            mmio_write64 (vgpu_cmd_page + 48, size);
             return send_cmd (56, 24) && resp_type () == RESP_OK_NODATA;
         }
 
         public static int create_blob_mapped (int ctx_id, int res_id, int size) {
             if (vgpu_found == 0 || !has_blob () || ctx_id <= 0 || res_id <= 0 || size <= 0)
                 return 0;
+            if (res_find (GPU_RES_BLOB, res_id) >= 0)
+                return 0;
+            if (size > 256 * 4096)
+                return 0; // cap at 1 MiB per blob, and never silently shrink
             int pages = (size + 4095) / 4096;
-            if (pages > 256)
-                pages = 256; // cap at 1 MiB per blob
             int aligned = pages * 4096;
             int pa = Pmm.alloc_contiguous (pages);
             if (pa == 0)
@@ -776,23 +921,111 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_CREATE_BLOB);
             mmio_write32 (vgpu_cmd_page + 16, ctx_id);
             mmio_write32 (vgpu_cmd_page + 24, res_id);
-            mmio_write32 (vgpu_cmd_page + 28, 1);       // BLOB_MEM_GUEST
-            mmio_write32 (vgpu_cmd_page + 32, 1);       // BLOB_FLAG_USE_MAPPABLE
+            mmio_write32 (vgpu_cmd_page + 28, BLOB_MEM_GUEST);
+            mmio_write32 (vgpu_cmd_page + 32, BLOB_FLAG_USE_MAPPABLE);
             mmio_write32 (vgpu_cmd_page + 36, 1);       // nr_entries = 1
-            mmio_write64 (vgpu_cmd_page + 40, aligned); // size
-            mmio_write64 (vgpu_cmd_page + 48, 0);       // blob_id = 0 for GUEST
+            mmio_write64 (vgpu_cmd_page + 40, 0);       // blob_id = 0 for GUEST
+            mmio_write64 (vgpu_cmd_page + 48, aligned); // size
             mmio_write64 (vgpu_cmd_page + 56, pa);      // mem_entry[0].addr
             mmio_write32 (vgpu_cmd_page + 64, aligned); // mem_entry[0].length
             if (!send_cmd (72, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"blob_create failed: $(resp_name (resp_type ()))");
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (pa + p * 4096);
                 return 0;
             }
-            ctx_attach (ctx_id, res_id);
+            if (!ctx_attach (ctx_id, res_id)) {
+                Klog.warn (Klog.CAT_GPU, "blob ctx_attach failed");
+                if (resource_unref (res_id))
+                    for (int p = 0; p < pages; p++)
+                        Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+            int idx = res_alloc (GPU_RES_BLOB, res_id, ctx_id, pa, aligned, pages);
+            if (idx < 0) {
+                ctx_detach (ctx_id, res_id);
+                if (resource_unref (res_id))
+                    for (int p = 0; p < pages; p++)
+                        Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+            int ucr3 = Sched.current_cr3 ();
+            if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES) {
+                if (Vmm.map_user_range_checked (ucr3, pa, aligned) == 0) {
+                    Klog.warn (Klog.CAT_GPU, "blob map failed: no page tables");
+                    ctx_detach (ctx_id, res_id);
+                    if (resource_unref (res_id))
+                        for (int p = 0; p < pages; p++)
+                            Pmm.free_frame (pa + p * 4096);
+                    res_clear (idx);
+                    return 0;
+                }
+            }
+            return pa;
+        }
+
+        // Releases a blob created by create_blob_mapped, and only that blob:
+        // the address, size and context must match the table entry the kernel
+        // recorded, so a bad argument cannot free somebody else's frames.
+        public static bool blob_destroy (int ctx_id, int res_id, int pa, int size) {
+            if (vgpu_found == 0 || ctx_id <= 0 || res_id <= 0 || pa <= 0 || size <= 0)
+                return false;
+            int aligned = align_page (size);
+            int idx = res_find (GPU_RES_BLOB, res_id);
+            if (idx < 0)
+                return false;
+            int slot = res_slot (idx);
+            if (mmio_read32 (slot + 12) != Sched.current_tid ()
+                || mmio_read32 (slot + 16) != ctx_id
+                || mmio_read32 (slot + 20) != pa
+                || mmio_read32 (slot + 24) != aligned)
+                return false;
+            int pages = mmio_read32 (slot + 28);
+            bool detached = ctx_detach (ctx_id, res_id);
+            if (!resource_unref (res_id)) {
+                // The host may still read these frames; leak them instead of
+                // handing free memory back to the PMM.
+                return false;
+            }
             int ucr3 = Sched.current_cr3 ();
             if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES)
-                Vmm.map_user_range (ucr3, pa, aligned);
-            return pa;
+                Vmm.unmap_user_range (ucr3, pa, aligned);
+            for (int p = 0; p < pages; p++)
+                Pmm.free_frame (pa + p * 4096);
+            res_clear (idx);
+            return detached;
+        }
+
+        // Called when a task is reaped: the device is global, so contexts and
+        // blobs outlive the address space unless they are released here.
+        public static void release_task (int tid) {
+            if (vgpu_found == 0 || vgpu_res_table == 0 || tid <= 0)
+                return;
+            for (int i = 0; i < GPU_RES_ENTRIES; i++) {
+                int slot = res_slot (i);
+                if (mmio_read32 (slot + 0) == 0 || mmio_read32 (slot + 12) != tid)
+                    continue;
+                if (mmio_read32 (slot + 4) != GPU_RES_BLOB)
+                    continue;
+                int res_id = mmio_read32 (slot + 8);
+                int ctx_id = mmio_read32 (slot + 16);
+                int pa = mmio_read32 (slot + 20);
+                int pages = mmio_read32 (slot + 28);
+                ctx_detach (ctx_id, res_id);
+                if (resource_unref (res_id)) {
+                    for (int p = 0; p < pages; p++)
+                        Pmm.free_frame (pa + p * 4096);
+                    res_clear (i);
+                }
+            }
+            for (int i = 0; i < GPU_RES_ENTRIES; i++) {
+                int slot = res_slot (i);
+                if (mmio_read32 (slot + 0) != 0 && mmio_read32 (slot + 12) == tid
+                    && mmio_read32 (slot + 4) == GPU_RES_CTX) {
+                    ctx_destroy_raw (mmio_read32 (slot + 8));
+                    res_clear (i);
+                }
+            }
         }
 
         public static bool submit_3d (int ctx_id, int cmd_buf_pa, int cmd_bytes, bool with_fence) {
@@ -807,7 +1040,12 @@ namespace Planet.Kernel {
             }
             mmio_write32 (vgpu_cmd_page + 16, ctx_id);
             mmio_write32 (vgpu_cmd_page + 24, cmd_bytes);
-            return send_cmd_payload (32, cmd_buf_pa, cmd_bytes, 24) && resp_type () == RESP_OK_NODATA;
+            if (!send_cmd_payload (32, cmd_buf_pa, cmd_bytes, 24)
+                || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"submit_3d failed: $(resp_name (resp_type ()))");
+                return false;
+            }
+            return true;
         }
 
         public static bool is_present () { return vgpu_found != 0; }

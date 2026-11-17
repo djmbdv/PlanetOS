@@ -350,8 +350,10 @@ namespace Planet.Kernel {
                         break;
                     }
                 }
-                if (!shared)
+                if (!shared) {
+                    VirtioGpu.release_task (tid);
                     Vmm.destroy_user_space (ucr3);
+                }
             }
             mmio_write64 (tcb + 88, 0);
             mmio_write64 (tcb + 96, 0);

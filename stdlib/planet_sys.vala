@@ -286,6 +286,10 @@ namespace Planet {
             return __sys4 (43, ctx_id, res_id, size, 0);
         }
 
+        public static int gpu_blob_destroy (int ctx_id, int res_id, int pa, int size) {
+            return __sys4 (46, ctx_id, res_id, pa, size);
+        }
+
         // --- kernel log ----------------------------------------------------
 
         // Copies up to `max_records` 64-byte records into `buf`, oldest first.

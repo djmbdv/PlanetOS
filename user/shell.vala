@@ -612,7 +612,7 @@ namespace PlanetShell {
             print ("          mv <src> <dst>, touch <file>, echo, test/[],\n");
             print ("          export, unset, env, sh <script>, exec <file> [args] [&], wait <tid>,\n");
             print ("          ticks, date, uptime, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
-            print ("          debug: dmesg [-c], log [<cat> on|off | level <0-3> | clear], mouse\n");
+            print ("          debug: dmesg [-c], log [<cat> on|off | level <0-3> | clear], mouse, gpu [probe]\n");
             print ("          <prog> [args] runs <prog>.elf directly (case-insensitive, no exec needed)\n");
             return 0;
         }
@@ -889,6 +889,20 @@ namespace PlanetShell {
             int rs = peek32 (buf + 40);
             print (@"mouse: x=$mx y=$my btn=$btn packets=$pk bytes=$nbytes resync=$rs\n");
             Sys.free_page (buf);
+            return 0;
+        }
+        if (cmd == "gpu") {
+            if (args.length > 1 && args[1] == "probe")
+                return Sys.exec ("vk_demo.elf", "vk_demo.elf --probe");
+            int caps = Sys.gpu_info ();
+            int present = caps & 1;
+            int virgl = (caps >> 1) & 1;
+            int blob = (caps >> 2) & 1;
+            int ctx = (caps >> 3) & 1;
+            int venus = (caps >> 4) & 1;
+            int gw = (caps >> 16) & 0xFFFF;
+            int gh = (caps >> 32) & 0xFFFF;
+            print (@"gpu: present=$present virgl=$virgl blob=$blob ctx=$ctx venus=$venus display=$(gw)x$(gh)\n");
             return 0;
         }
         if (cmd == "sh" || cmd == ".") {

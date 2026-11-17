@@ -10,13 +10,22 @@ using Gsk;
 
 int main (string[] args) {
     bool once = false;
+    bool probe = false;
     for (int i = 1; i < args.length; i++) {
         if (args[i] == "--once")
             once = true;
+        else if (args[i] == "--probe")
+            probe = true;
     }
 
     var caps = new GpuCaps ();
-    print (@"vk_demo: gpu present=$(caps.present ? 1 : 0) virgl=$(caps.virgl ? 1 : 0) blob=$(caps.blob ? 1 : 0) venus=$(caps.venus ? 1 : 0)\n");
+    print (@"gpu: present=$(caps.present ? 1 : 0) virgl=$(caps.virgl ? 1 : 0) blob=$(caps.blob ? 1 : 0) ctx=$(caps.ctx_init ? 1 : 0) venus=$(caps.venus ? 1 : 0) display=$(caps.width)x$(caps.height)\n");
+
+    if (probe) {
+        var pr = new ProbeResult ();
+        print (@"gpu: probe $(pr.summary ())\n");
+        return pr.ok () ? 0 : 1;
+    }
 
     var renderer = new VulkanRenderer (1);
     print (@"vk_demo: gsk_backend=$(renderer.backend_name ()) blob_ring=$(renderer.vk.ring.hw_blob ? 1 : 0) cmds=$(renderer.vk.enc.cmd_count)\n");

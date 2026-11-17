@@ -327,9 +327,11 @@ if ($gpuSwitches.Count -gt 1) {
 }
 
 # virtio-gpu with virgl is the default: the guest driver (kernel/virtio_gpu.vala)
-# negotiates VIRGL and the compositor draws through it. -Vga goes back to the
-# plain BGA/VGA path, -Virtio keeps virtio-gpu without GL, and -Venus asks for
-# the venus/blob setup that needs a render-server virglrenderer.
+# negotiates VIRGL and the compositor draws through it. blob=on exposes
+# RESOURCE_BLOB so the Phase 3 context/blob path can be probed; it needs no
+# hostmem for guest blobs. -Vga goes back to the plain BGA/VGA path, -Virtio
+# keeps virtio-gpu without GL, and -Venus asks for venus plus hostmem, which
+# needs a render-server virglrenderer.
 $GpuMode = 'gl'
 if ($Vga) { $GpuMode = 'std' }
 elseif ($Virtio) { $GpuMode = 'virtio' }
@@ -354,7 +356,7 @@ switch ($GpuMode) {
     'std'    { $vgaArgs = @('-vga', 'std') }
     'virtio' { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-pci') }
     'venus'  { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M') }
-    default  { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci') }
+    default  { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,blob=on') }
 }
 
 $displayArgs = @()

@@ -13,9 +13,11 @@ mkdir -p "$OUT"
 BUILD_ONLY=0
 DISPLAY_MODE="window"
 WINDOW_BACKEND="gtk"
-# virtio-gpu with virgl by default; --vga falls back to the plain VGA path,
-# --virtio keeps virtio-gpu without GL and --venus (or the old --virtio-gl)
-# asks for the venus/blob setup that needs a render-server virglrenderer.
+# virtio-gpu with virgl by default; blob=on exposes RESOURCE_BLOB so the
+# Phase 3 context/blob path can be probed (guest blobs need no hostmem).
+# --vga falls back to the plain VGA path, --virtio keeps virtio-gpu without GL
+# and --venus (or the old --virtio-gl) asks for the venus/hostmem setup that
+# needs a render-server virglrenderer.
 GPU_MODE="gl"
 for arg in "$@"; do
     case "$arg" in
@@ -128,7 +130,7 @@ if [ "$DISPLAY_MODE" = "window" ] \
     && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${MSYSTEM:-}" ]; then
     DISPLAY_MODE="none"
 fi
-GPU_ARGS=(-vga none -device virtio-gpu-gl-pci)
+GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,blob=on)
 case "$GPU_MODE" in
     std)    GPU_ARGS=(-vga std) ;;
     virtio) GPU_ARGS=(-vga none -device virtio-gpu-pci) ;;

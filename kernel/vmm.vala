@@ -159,6 +159,16 @@ namespace Planet.Kernel {
             }
         }
 
+        public static void unmap_user_range (int cr3, int start, int size) {
+            if (size <= 0)
+                return;
+            int first = start & ~0xFFF;
+            int last = (start + size - 1) & ~0xFFF;
+            for (int p = first; p <= last; p += 4096) {
+                unmap_user_4k (cr3, p);
+            }
+        }
+
         // All-or-nothing variant of map_user_range: returns the number of 4 KiB
         // pages mapped, or 0 when any of them could not be mapped (the pages it
         // already touched are unmapped again). A caller that gets 0 must free the
