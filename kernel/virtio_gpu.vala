@@ -51,6 +51,7 @@ namespace Planet.Kernel {
     private int vgpu_has_venus = 0;
     private int vgpu_scanout_w = 0;
     private int vgpu_scanout_h = 0;
+    private int vgpu_scanout_active = 0;
     private int vgpu_fb_pa = 0;
     private int vgpu_fb_pages = 0;
     private int vgpu_con_active = 0;
@@ -397,8 +398,10 @@ namespace Planet.Kernel {
         public static int init_scanout (int w, int h) {
             if (vgpu_found == 0 || w <= 0 || h <= 0)
                 return 0;
-            if (vgpu_fb_pa != 0 && vgpu_scanout_w == w && vgpu_scanout_h == h)
+            if (vgpu_scanout_active != 0 && vgpu_scanout_w == w && vgpu_scanout_h == h)
                 return vgpu_fb_pa;
+            if (vgpu_scanout_active != 0)
+                close_scanout ();
 
             int fb_bytes = w * h * 4;
             int pages = (fb_bytes + 4095) / 4096;
@@ -452,6 +455,7 @@ namespace Planet.Kernel {
 
             vgpu_scanout_w = w;
             vgpu_scanout_h = h;
+            vgpu_scanout_active = 1;
             return vgpu_fb_pa;
         }
 
@@ -577,7 +581,7 @@ namespace Planet.Kernel {
         }
 
         public static void close_scanout () {
-            if (vgpu_found == 0 || vgpu_fb_pa == 0)
+            if (vgpu_found == 0 || vgpu_scanout_active == 0)
                 return;
             clear_cmd (48);
             mmio_write32 (vgpu_cmd_page + 0, CMD_SET_SCANOUT);
@@ -592,6 +596,7 @@ namespace Planet.Kernel {
 
             vgpu_scanout_w = 0;
             vgpu_scanout_h = 0;
+            vgpu_scanout_active = 0;
         }
 
         public static bool set_cursor (int rgba_buf, int hot_x, int hot_y) {
