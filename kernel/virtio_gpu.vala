@@ -691,20 +691,24 @@ namespace Planet.Kernel {
             int pa = Pmm.alloc_contiguous (pages);
             if (pa == 0)
                 return 0;
-            // BLOB_MEM_GUEST = 1, BLOB_FLAG_USE_MAPPABLE | USE_SHAREABLE = 3
-            if (!create_blob (res_id, ctx_id, 1, 3, aligned, res_id)) {
+            // VIRTIO_GPU_CMD_RESOURCE_CREATE_BLOB (56B) + 1 mem_entry (16B) = 72B
+            // blob_mem = 1 (BLOB_MEM_GUEST), blob_flags = 1 (USE_MAPPABLE), nr_entries = 1
+            clear_cmd (72);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_CREATE_BLOB);
+            mmio_write32 (vgpu_cmd_page + 16, ctx_id);
+            mmio_write32 (vgpu_cmd_page + 24, res_id);
+            mmio_write32 (vgpu_cmd_page + 28, 1);       // BLOB_MEM_GUEST
+            mmio_write32 (vgpu_cmd_page + 32, 1);       // BLOB_FLAG_USE_MAPPABLE
+            mmio_write32 (vgpu_cmd_page + 36, 1);       // nr_entries = 1
+            mmio_write64 (vgpu_cmd_page + 40, aligned); // size
+            mmio_write64 (vgpu_cmd_page + 48, 0);       // blob_id = 0 for GUEST
+            mmio_write64 (vgpu_cmd_page + 56, pa);      // mem_entry[0].addr
+            mmio_write32 (vgpu_cmd_page + 64, aligned); // mem_entry[0].length
+            if (!send_cmd (72, 24) || resp_type () != RESP_OK_NODATA) {
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (pa + p * 4096);
                 return 0;
             }
-            clear_cmd (48);
-            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_ATTACH_BACKING);
-            mmio_write32 (vgpu_cmd_page + 24, res_id);
-            mmio_write32 (vgpu_cmd_page + 28, 1);
-            mmio_write64 (vgpu_cmd_page + 32, pa);
-            mmio_write32 (vgpu_cmd_page + 40, aligned);
-            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA)
-                return 0;
             ctx_attach (ctx_id, res_id);
             int ucr3 = Sched.current_cr3 ();
             if (ucr3 != 0 && ucr3 != Vmm.KERNEL_CR3)

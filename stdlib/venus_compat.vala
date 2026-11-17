@@ -208,7 +208,7 @@ namespace Venus {
             int capset = caps.venus ? CAPSET_VENUS : CAPSET_VIRGL2;
             ctx = new GpuContext (ctx_id, capset);
             enc = new CommandEncoder (8192);
-            ring = new BlobRing (ctx.active ? ctx_id : 0, 100 + ctx_id, 16384);
+            ring = new BlobRing ((caps.venus && caps.blob && ctx.active) ? ctx_id : 0, 100 + ctx_id, 16384);
             using_hw_venus = ctx.hw_venus && ctx.active;
             enc.encode_create_instance (1);
             enc.encode_create_device (1, 1);
