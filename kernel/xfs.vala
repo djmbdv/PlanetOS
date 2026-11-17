@@ -83,7 +83,7 @@ namespace Planet.Kernel {
             int linear_blk = ag * xfs_agblocks + agbno;
             int byte_off = idx * xfs_inodesize;
             int lba = linear_blk * (xfs_blocksize / 512) + (byte_off / 512);
-            if (!Ata.read_sector (lba, buf))
+            if (!Ata.read_sectors (lba, 4, buf))
                 return false;
             int off = byte_off & 511;
             int magic = be16 (buf + off);

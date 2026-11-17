@@ -66,24 +66,35 @@ namespace Cairo {
         private int src_a = 255;
         private int line_w = 1;
 
-        // Current path state (rect, circle/arc, or line)
-        private int path_kind = 0; // 0=none, 1=rect, 2=circle, 3=line
+        // Current path state (rect, circle/arc, line, rounded_rect)
+        private int path_kind = 0; // 0=none, 1=rect, 2=circle, 3=line, 4=rrect
         private int px = 0;
         private int py = 0;
         private int pw = 0;
         private int ph = 0;
+        private int pr = 0;
         private int cur_x = 0;
         private int cur_y = 0;
         private int font_scale = 2;
 
-        // Drawing clip. Extension of this small Cairo subset: clip() intersects
-        // the current rectangle path with the drawing area and reset_clip()
-        // clears it, so damage tracking can repaint single regions.
+        // Drawing clip + save/restore stack
         private int clip_x0 = 0;
         private int clip_y0 = 0;
         private int clip_x1 = 0;
         private int clip_y1 = 0;
         private bool clip_on = false;
+
+        private int saved_sp = 0;
+        private int[] sv_cx0 = new int[8];
+        private int[] sv_cy0 = new int[8];
+        private int[] sv_cx1 = new int[8];
+        private int[] sv_cy1 = new int[8];
+        private bool[] sv_con = new bool[8];
+        private int[] sv_sr = new int[8];
+        private int[] sv_sg = new int[8];
+        private int[] sv_sb = new int[8];
+        private int[] sv_sa = new int[8];
+        private int[] sv_lw = new int[8];
 
         public Context (ImageSurface target) {
             surf = target;
@@ -218,12 +229,56 @@ namespace Cairo {
             return __c_peek32 (surf.buf_addr + (y * surf.width + x) * 4);
         }
 
+        public void save () {
+            if (saved_sp >= 8)
+                return;
+            sv_cx0[saved_sp] = clip_x0;
+            sv_cy0[saved_sp] = clip_y0;
+            sv_cx1[saved_sp] = clip_x1;
+            sv_cy1[saved_sp] = clip_y1;
+            sv_con[saved_sp] = clip_on;
+            sv_sr[saved_sp] = src_r;
+            sv_sg[saved_sp] = src_g;
+            sv_sb[saved_sp] = src_b;
+            sv_sa[saved_sp] = src_a;
+            sv_lw[saved_sp] = line_w;
+            saved_sp++;
+        }
+
+        public void restore () {
+            if (saved_sp <= 0)
+                return;
+            saved_sp--;
+            clip_x0 = sv_cx0[saved_sp];
+            clip_y0 = sv_cy0[saved_sp];
+            clip_x1 = sv_cx1[saved_sp];
+            clip_y1 = sv_cy1[saved_sp];
+            clip_on = sv_con[saved_sp];
+            src_r = sv_sr[saved_sp];
+            src_g = sv_sg[saved_sp];
+            src_b = sv_sb[saved_sp];
+            src_a = sv_sa[saved_sp];
+            line_w = sv_lw[saved_sp];
+        }
+
         public void rectangle (double x, double y, double w, double h) {
             path_kind = 1;
             px = (int) x;
             py = (int) y;
             pw = (int) w;
             ph = (int) h;
+        }
+
+        public void rounded_rectangle (double x, double y, double w, double h, double radius) {
+            path_kind = 4;
+            px = (int) x;
+            py = (int) y;
+            pw = (int) w;
+            ph = (int) h;
+            pr = (int) radius;
+            if (pr < 0) pr = 0;
+            if (pr * 2 > pw) pr = pw / 2;
+            if (pr * 2 > ph) pr = ph / 2;
         }
 
         public void arc (double xc, double yc, double radius, double a1, double a2) {
@@ -282,6 +337,21 @@ namespace Cairo {
                             put_px (px + dx, py + dy);
                     }
                 }
+            } else if (path_kind == 4) {
+                int r = pr;
+                int r2 = r * r;
+                for (int y = py; y < py + ph; y++) {
+                    int dy = 0;
+                    if (y < py + r) dy = (py + r) - y;
+                    else if (y >= py + ph - r) dy = y - (py + ph - r - 1);
+                    for (int x = px; x < px + pw; x++) {
+                        int dx = 0;
+                        if (x < px + r) dx = (px + r) - x;
+                        else if (x >= px + pw - r) dx = x - (px + pw - r - 1);
+                        if (dx == 0 || dy == 0 || (dx * dx + dy * dy <= r2))
+                            put_px (x, y);
+                    }
+                }
             }
             path_kind = 0;
         }
@@ -327,8 +397,81 @@ namespace Cairo {
                     if (e2 > -dy) { err = err - dy; x0 = x0 + sx; }
                     if (e2 < dx)  { err = err + dx; y0 = y0 + sy; }
                 }
+            } else if (path_kind == 4) {
+                int r = pr;
+                int r_out = r * r;
+                int r_in = (r > line_w) ? ((r - line_w) * (r - line_w)) : 0;
+                for (int y = py; y < py + ph; y++) {
+                    int dy = 0;
+                    if (y < py + r) dy = (py + r) - y;
+                    else if (y >= py + ph - r) dy = y - (py + ph - r - 1);
+                    bool in_y_edge = (y < py + line_w || y >= py + ph - line_w);
+                    for (int x = px; x < px + pw; x++) {
+                        int dx = 0;
+                        if (x < px + r) dx = (px + r) - x;
+                        else if (x >= px + pw - r) dx = x - (px + pw - r - 1);
+                        if (dx > 0 && dy > 0) {
+                            int d2 = dx * dx + dy * dy;
+                            if (d2 <= r_out && d2 >= r_in)
+                                put_px (x, y);
+                        } else if (in_y_edge || x < px + line_w || x >= px + pw - line_w) {
+                            put_px (x, y);
+                        }
+                    }
+                }
             }
             path_kind = 0;
+        }
+
+        public void fill_gradient_v (double x, double y, double w, double h,
+                                     double r0, double g0, double b0,
+                                     double r1, double g1, double b1) {
+            int ix = (int) x;
+            int iy = (int) y;
+            int iw = (int) w;
+            int ih = (int) h;
+            if (iw <= 0 || ih <= 0)
+                return;
+            int saved_r = src_r;
+            int saved_g = src_g;
+            int saved_b = src_b;
+            int saved_a = src_a;
+            src_a = 255;
+            for (int row = 0; row < ih; row++) {
+                double t = (ih > 1) ? ((double) row / (double) (ih - 1)) : 0.0;
+                src_r = clamp255 (r0 + (r1 - r0) * t);
+                src_g = clamp255 (g0 + (g1 - g0) * t);
+                src_b = clamp255 (b0 + (b1 - b0) * t);
+                for (int col = 0; col < iw; col++) {
+                    put_px (ix + col, iy + row);
+                }
+            }
+            src_r = saved_r;
+            src_g = saved_g;
+            src_b = saved_b;
+            src_a = saved_a;
+        }
+
+        public void blit_alpha_mask (uint8[] mask, int mw, int mh, int dx, int dy) {
+            if (mw <= 0 || mh <= 0 || src_a == 0)
+                return;
+            int saved_a = src_a;
+            for (int y = 0; y < mh; y++) {
+                int py0 = dy + y;
+                if (py0 < 0 || py0 >= surf.height)
+                    continue;
+                if (clip_on && (py0 < clip_y0 || py0 >= clip_y1))
+                    continue;
+                for (int x = 0; x < mw; x++) {
+                    int a = (int) mask[y * mw + x];
+                    if (a == 0)
+                        continue;
+                    src_a = (saved_a * a) / 255;
+                    if (src_a > 0)
+                        put_px (dx + x, py0);
+                }
+            }
+            src_a = saved_a;
         }
 
         // Compact 5x7 bitmap glyph rows (encoded as 7 rows of 5 bits) for ASCII 32..126
@@ -353,7 +496,7 @@ namespace Cairo {
                 if (ch == '4') return (row == 3) ? 31 : ((row < 3) ? 17 : 1);
                 if (ch == '5') return (row == 0 || row == 3 || row == 6) ? 31 : ((row < 3) ? 16 : 1);
                 if (ch == '6') return (row == 0 || row == 3 || row == 6) ? 14 : ((row < 3) ? 16 : 17);
-                if (ch == '7') return (row == 0) ? 31 : (1 << (4 - (row / 2)));
+                if (ch == '7') return (row == 0) ? 31 : (1 << (row / 2));
                 if (ch == '8') return (row == 0 || row == 3 || row == 6) ? 14 : 17;
                 if (ch == '9') return (row == 0 || row == 3 || row == 6) ? 14 : ((row < 3) ? 17 : 1);
             }

@@ -164,14 +164,16 @@ namespace Planet.Kernel {
                     mouse_b1 = b;
                     mouse_phase = 2;
                 } else {
-                    int dx = ((mouse_b0 & 0x10) != 0) ? (mouse_b1 - 256) : mouse_b1;
-                    int dy = ((mouse_b0 & 0x20) != 0) ? (b - 256) : b;
-                    mouse_x = mouse_x + dx;
-                    mouse_y = mouse_y - dy;
-                    if (mouse_x < 0) mouse_x = 0;
-                    if (mouse_x > 799) mouse_x = 799;
-                    if (mouse_y < 0) mouse_y = 0;
-                    if (mouse_y > 599) mouse_y = 599;
+                    if ((mouse_b0 & 0xC0) == 0) {
+                        int dx = ((mouse_b0 & 0x10) != 0) ? (mouse_b1 - 256) : mouse_b1;
+                        int dy = ((mouse_b0 & 0x20) != 0) ? (b - 256) : b;
+                        mouse_x = mouse_x + dx;
+                        mouse_y = mouse_y - dy;
+                        if (mouse_x < 0) mouse_x = 0;
+                        if (mouse_x > 799) mouse_x = 799;
+                        if (mouse_y < 0) mouse_y = 0;
+                        if (mouse_y > 599) mouse_y = 599;
+                    }
                     mouse_btn = mouse_b0 & 0x07;
                     mouse_phase = 0;
                 }

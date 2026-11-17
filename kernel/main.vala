@@ -84,6 +84,10 @@ int main () {
     int kb_a = Keyboard.scancode_to_ascii (0x1E);
     print (@"kb:ok=$(kb_empty == -1 && kb_a == 'a' ? 1 : 0)\n");
 
+    bool ata_ok = Ata.init ();
+    if (ata_ok)
+        print (@"ata:sectors=$(Ata.total_sectors ()) lba48=$(Ata.has_lba48 () ? 1 : 0)\n");
+
     int xok = Xfs.mount () ? 1 : 0;
     print (@"xfs:mounted=$xok\n");
     if (xok == 1) {

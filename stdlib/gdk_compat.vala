@@ -47,6 +47,7 @@ namespace Gdk {
         NONE,
         KEY_PRESS,
         BUTTON_PRESS,
+        BUTTON_RELEASE,
         MOTION_NOTIFY
     }
 
@@ -135,6 +136,17 @@ namespace Gdk {
                 ev.x = mx;
                 ev.y = my;
                 ev.button = mb;
+                return ev;
+            }
+            if (mb == 0 && last_mb != 0) {
+                int rel_btn = last_mb;
+                last_mb = 0;
+                last_mx = mx;
+                last_my = my;
+                ev.type = EventType.BUTTON_RELEASE;
+                ev.x = mx;
+                ev.y = my;
+                ev.button = rel_btn;
                 return ev;
             }
             last_mb = mb;

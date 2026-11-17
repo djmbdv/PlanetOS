@@ -14,7 +14,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 23  # image + 22 files
+ARG_COUNT = 25  # image + 24 files
 
 
 def blk(b):
@@ -48,6 +48,8 @@ def main():
     c2_b = open(sys.argv[20], "rb").read()
     ac_b = open(sys.argv[21], "rb").read()
     fp_b = open(sys.argv[22], "rb").read()
+    gt_b = open(sys.argv[23], "rb").read()
+    ttf_b = open(sys.argv[24], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -71,8 +73,10 @@ def main():
     b_c2 = b_jm + blk(jm_b)
     b_ac = b_c2 + blk(c2_b)
     b_fp = b_ac + blk(ac_b)
-    INO_BLK = 1000
-    total_blocks = max(1024, b_fp + blk(fp_b), INO_BLK + 2)
+    b_gt = b_fp + blk(fp_b)
+    b_ttf = b_gt + blk(gt_b)
+    INO_BLK = max(1000, b_ttf + blk(ttf_b) + 4)
+    total_blocks = max(1024, INO_BLK + 4)
     img = bytearray(total_blocks * 4096)
 
     struct.pack_into(">II", img, 0, 0x58465342, 4096)
@@ -114,6 +118,8 @@ def main():
         (b"c2vala.elf", c2_b, b_c2, 0x81ED),
         (b"arith.c", ac_b, b_ac, 0x81A4),
         (b"frag_pattern.spv", fp_b, b_fp, 0x81A4),
+        (b"gtk_demo.elf", gt_b, b_gt, 0x81ED),
+        (b"Ubuntu-Regular.ttf", ttf_b, b_ttf, 0x81A4),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

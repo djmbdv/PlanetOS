@@ -20,6 +20,7 @@ using PangoCairo;
 using Spv;
 using Cairo;
 using Gdk;
+using Gtk;
 using Wm;
 
 namespace Wm {
@@ -56,7 +57,11 @@ namespace Wm {
     public const int DMG_RECTS = 32;
     public const int PAT_STEP = 8;
 
-    public enum Kind { TERMINAL, CLOCK, SHADER, NOTES }
+    public enum Kind { TERMINAL, CLOCK, SHADER, NOTES, GTK }
+
+    public class GtkCompState : Object {
+        public int clicks = 0;
+    }
 
     public class Win : Object {
         public int id;
@@ -74,6 +79,7 @@ namespace Wm {
         public int ry;
         public int rw;
         public int rh;
+        public Box? gtk_root = null;
 
         public Win (int id, string title, int x, int y, int w, int h, Kind kind) {
             this.id = id;
@@ -83,6 +89,24 @@ namespace Wm {
             this.w = w;
             this.h = h;
             this.kind = kind;
+            if (kind == Kind.GTK) {
+                var box = new Box (Orientation.VERTICAL, 10);
+                var lbl = new Label ("GTK + TrueType (7)");
+                lbl.font_size = 18.0;
+                var ent = new Entry ("PlanetOS 7");
+                var st_lbl = new Label ("Clicks: 0");
+                var gst = new GtkCompState ();
+                var btn = new Button ("Increment (+1)");
+                btn.clicked.connect ((sender) => {
+                    gst.clicks = gst.clicks + 1;
+                    st_lbl.set_text (@"Clicks: $(gst.clicks) | $(ent.get_text ())");
+                });
+                box.pack_start (lbl);
+                box.pack_start (ent);
+                box.pack_start (btn);
+                box.pack_start (st_lbl);
+                gtk_root = box;
+            }
         }
 
         public bool contains (int px, int py) {
@@ -125,6 +149,8 @@ namespace Wm {
         private int drag_id = 0;
         private int drag_ox = 0;
         private int drag_oy = 0;
+        private int last_ptr_x = 0;
+        private int last_ptr_y = 0;
         private bool quit = false;
         private int frames = 0;
         private int flush_ticks = 0;
@@ -204,9 +230,10 @@ namespace Wm {
                     key_press_mod (ev.keyval, mods);
                 } else if (ev.type == EventType.BUTTON_PRESS) {
                     pointer_press (ev.x, ev.y);
+                } else if (ev.type == EventType.BUTTON_RELEASE) {
+                    pointer_release ();
                 } else if (ev.type == EventType.MOTION_NOTIFY) {
-                    if (dragging)
-                        drag_to (ev.x, ev.y);
+                    pointer_motion (ev.x, ev.y);
                 }
             }
             if (dragging) {
@@ -662,12 +689,18 @@ namespace Wm {
                 return ACT_MAXIMIZE;
             }
             focus (id);
+            last_ptr_x = px;
+            last_ptr_y = py;
             if (w.in_title (px, py) && !w.maximized) {
                 dragging = true;
                 drag_id = id;
                 drag_ox = px - w.x;
                 drag_oy = py - w.y;
                 return ACT_DRAG;
+            }
+            if (w.kind == Kind.GTK && w.gtk_root != null) {
+                if (w.gtk_root.on_pointer_press (px, py, 1))
+                    damage_window (id);
             }
             return ACT_FOCUS;
         }
@@ -687,13 +720,26 @@ namespace Wm {
         }
 
         public void pointer_motion (int px, int py) {
-            if (dragging)
+            last_ptr_x = px;
+            last_ptr_y = py;
+            if (dragging) {
                 drag_to (px, py);
+                return;
+            }
+            var fw = find (focused_id);
+            if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
+                fw.gtk_root.on_pointer_motion (px, py);
+            }
         }
 
         public void pointer_release () {
             dragging = false;
             drag_id = 0;
+            var fw = find (focused_id);
+            if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
+                if (fw.gtk_root.on_pointer_release (last_ptr_x, last_ptr_y, 1))
+                    damage_window (fw.id);
+            }
         }
 
         public int dock_index_at (int px) {
@@ -753,8 +799,23 @@ namespace Wm {
                 close_win (focused_id);
                 return;
             }
-            if (k == 27 || k == 'q' || k == 'Q') {
+            if (k == 27) {
                 quit = true;
+                return;
+            }
+            var fw = find (focused_id);
+            if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
+                if (fw.gtk_root.on_key_press (k)) {
+                    damage_window (fw.id);
+                    return;
+                }
+            }
+            if (k == 'q' || k == 'Q') {
+                quit = true;
+                return;
+            }
+            if (k == 'g' || k == 'G') {
+                add ("gtk-demo", 140, 110, 380, 230, Kind.GTK);
                 return;
             }
             if (k == 9) {
@@ -885,10 +946,12 @@ namespace Wm {
         // --- scene ----------------------------------------------------
 
         public void seed () {
-            add ("terminal", 96, 90, 360, 220, Kind.TERMINAL);
-            add ("shader", 300, 190, 340, 210, Kind.SHADER);
-            add ("clock", 520, 120, 230, 200, Kind.CLOCK);
-            focus_nth (0);
+            TextHelper.load_ttf ("Ubuntu-Regular.ttf");
+            add ("terminal", 60, 70, 340, 210, Kind.TERMINAL);
+            add ("shader", 430, 70, 310, 190, Kind.SHADER);
+            add ("clock", 500, 290, 230, 190, Kind.CLOCK);
+            add ("gtk-demo", 110, 250, 370, 230, Kind.GTK);
+            focus_nth (3);
         }
 
         public int add_demo () {
@@ -1251,6 +1314,12 @@ namespace Wm {
                 cr.set_source_rgb (0.45, 0.52, 0.62);
                 cr.move_to (cx + 14, cy + 118);
                 cr.show_text ("vulkan backend: pending");
+            } else if (w.kind == Kind.GTK && w.gtk_root != null) {
+                cr.set_source_rgb (0.09, 0.11, 0.14);
+                cr.rectangle (cx, cy, cw, ch);
+                cr.fill ();
+                w.gtk_root.allocate (cx + 12, cy + 12, cw - 24, ch - 24);
+                w.gtk_root.draw (cr);
             } else {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
@@ -1323,8 +1392,8 @@ namespace Wm {
         }
 
         private void draw_cursor (Context cr, int mx, int my) {
-            int x = (mx > 0 && mx < SCREEN_W) ? mx : SCREEN_W / 2;
-            int y = (my > 0 && my < SCREEN_H) ? my : SCREEN_H / 2;
+            int x = (mx < 0) ? 0 : ((mx >= SCREEN_W) ? (SCREEN_W - 1) : mx);
+            int y = (my < 0) ? 0 : ((my >= SCREEN_H) ? (SCREEN_H - 1) : my);
             cr.set_source_rgba (0.0, 0.0, 0.0, 0.55);
             cr.set_line_width (1);
             cr.move_to (x + 1, y + 1);
@@ -1544,6 +1613,22 @@ private int self_test_run (Compositor comp) {
     check (!qq.quit_requested (), "no-quit-by-default");
     qq.key_press (27);
     check (qq.quit_requested (), "esc-quits");
+
+    // GTK window widget click + entry typing
+    var gtkc = new Compositor ();
+    int gw = gtkc.add ("gtk", 100, 100, 380, 240, Kind.GTK);
+    var gsurf = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    var gcr = new Context (gsurf);
+    gtkc.flush (gcr, 0, 0);
+    // Click Entry (around y = 100 + 24 + 12 + 30 = 166) and type 'x'
+    gtkc.pointer_press (150, 166);
+    gtkc.pointer_release ();
+    gtkc.key_press ('x');
+    // Click Increment button (around y = 205)
+    gtkc.pointer_press (150, 205);
+    gtkc.pointer_release ();
+    gtkc.flush (gcr, 799, 599);
+    check (gtkc.alive (gw), "gtk-win-alive-after-input");
 
     print (@"compositor:summary checks=$st_checks failures=$st_fails\n");
     return (st_fails == 0) ? 0 : 1;

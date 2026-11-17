@@ -50,8 +50,61 @@ namespace Planet.Kernel {
     ")]
     public extern void ata_write_words (int buf_addr, int count);
 
+    private int ata_present = 0;
+    private int ata_sectors = 0;
+    private int ata_lba48 = 0;
+
     public class Ata : Object {
         private const int BASE = 0x1F0;
+        private const int CTRL = 0x3F6;
+
+        public static void reset () {
+            port_out8 (CTRL, 0x04); // SRST
+            for (int i = 0; i < 4; i++)
+                port_in8 (CTRL);
+            port_out8 (CTRL, 0x00);
+            for (int i = 0; i < 4; i++)
+                port_in8 (CTRL);
+            wait_not_bsy ();
+        }
+
+        public static bool init () {
+            int buf = Pmm.alloc_frame ();
+            if (buf == 0)
+                return false;
+            bool ok = identify (buf);
+            if (!ok) {
+                reset ();
+                ok = identify (buf);
+            }
+            if (ok) {
+                ata_present = 1;
+                int w83 = (mmio_read32 (buf + 82 * 2) >> 16) & 0xFFFF;
+                if ((w83 & 0x0400) != 0) {
+                    ata_lba48 = 1;
+                    int lo = mmio_read32 (buf + 100 * 2) & 0xFFFFFFFF;
+                    int hi = mmio_read32 (buf + 102 * 2) & 0xFFFFFFFF;
+                    ata_sectors = (hi << 32) | lo;
+                } else {
+                    ata_lba48 = 0;
+                    ata_sectors = mmio_read32 (buf + 60 * 2) & 0xFFFFFFFF;
+                }
+            }
+            Pmm.free_frame (buf);
+            return ok;
+        }
+
+        public static int total_sectors () {
+            return ata_sectors;
+        }
+
+        public static bool has_lba48 () {
+            return ata_lba48 != 0;
+        }
+
+        public static bool is_present () {
+            return ata_present != 0;
+        }
 
         private static bool wait_not_bsy () {
             for (int i = 0; i < 100000; i++) {
@@ -91,36 +144,98 @@ namespace Planet.Kernel {
             return true;
         }
 
-        public static bool read_sector (int lba, int buf_addr) {
+        public static bool flush_cache () {
             if (!wait_not_bsy ())
                 return false;
-            port_out8 (BASE + 6, 0xE0 | ((lba >> 24) & 0x0F));
-            port_out8 (BASE + 2, 1);
-            port_out8 (BASE + 3, lba & 0xFF);
-            port_out8 (BASE + 4, (lba >> 8) & 0xFF);
-            port_out8 (BASE + 5, (lba >> 16) & 0xFF);
-            port_out8 (BASE + 7, 0x20);
-            if (!wait_drq ())
-                return false;
-            ata_read_words (buf_addr, 256);
+            port_out8 (BASE + 6, 0xE0);
+            port_out8 (BASE + 7, (ata_lba48 != 0) ? 0xEA : 0xE7);
+            return wait_not_bsy ();
+        }
+
+        public static bool read_sectors (int lba, int count, int buf_addr) {
+            int rem = count;
+            int cur_lba = lba;
+            int cur_buf = buf_addr;
+            while (rem > 0) {
+                int chunk = (rem > 128) ? 128 : rem;
+                if (!wait_not_bsy ())
+                    return false;
+                if (ata_lba48 != 0 && cur_lba >= 0x10000000) {
+                    port_out8 (BASE + 6, 0x40);
+                    port_out8 (BASE + 2, (chunk >> 8) & 0xFF);
+                    port_out8 (BASE + 3, (cur_lba >> 24) & 0xFF);
+                    port_out8 (BASE + 4, (cur_lba >> 32) & 0xFF);
+                    port_out8 (BASE + 5, (cur_lba >> 40) & 0xFF);
+                    port_out8 (BASE + 2, chunk & 0xFF);
+                    port_out8 (BASE + 3, cur_lba & 0xFF);
+                    port_out8 (BASE + 4, (cur_lba >> 8) & 0xFF);
+                    port_out8 (BASE + 5, (cur_lba >> 16) & 0xFF);
+                    port_out8 (BASE + 7, 0x24); // READ SECTORS EXT
+                } else {
+                    port_out8 (BASE + 6, 0xE0 | ((cur_lba >> 24) & 0x0F));
+                    port_out8 (BASE + 2, chunk & 0xFF);
+                    port_out8 (BASE + 3, cur_lba & 0xFF);
+                    port_out8 (BASE + 4, (cur_lba >> 8) & 0xFF);
+                    port_out8 (BASE + 5, (cur_lba >> 16) & 0xFF);
+                    port_out8 (BASE + 7, 0x20); // READ SECTORS
+                }
+                for (int s = 0; s < chunk; s++) {
+                    if (!wait_drq ())
+                        return false;
+                    ata_read_words (cur_buf, 256);
+                    cur_buf += 512;
+                }
+                cur_lba += chunk;
+                rem -= chunk;
+            }
             return true;
         }
 
+        public static bool write_sectors (int lba, int count, int buf_addr) {
+            int rem = count;
+            int cur_lba = lba;
+            int cur_buf = buf_addr;
+            while (rem > 0) {
+                int chunk = (rem > 128) ? 128 : rem;
+                if (!wait_not_bsy ())
+                    return false;
+                if (ata_lba48 != 0 && cur_lba >= 0x10000000) {
+                    port_out8 (BASE + 6, 0x40);
+                    port_out8 (BASE + 2, (chunk >> 8) & 0xFF);
+                    port_out8 (BASE + 3, (cur_lba >> 24) & 0xFF);
+                    port_out8 (BASE + 4, (cur_lba >> 32) & 0xFF);
+                    port_out8 (BASE + 5, (cur_lba >> 40) & 0xFF);
+                    port_out8 (BASE + 2, chunk & 0xFF);
+                    port_out8 (BASE + 3, cur_lba & 0xFF);
+                    port_out8 (BASE + 4, (cur_lba >> 8) & 0xFF);
+                    port_out8 (BASE + 5, (cur_lba >> 16) & 0xFF);
+                    port_out8 (BASE + 7, 0x34); // WRITE SECTORS EXT
+                } else {
+                    port_out8 (BASE + 6, 0xE0 | ((cur_lba >> 24) & 0x0F));
+                    port_out8 (BASE + 2, chunk & 0xFF);
+                    port_out8 (BASE + 3, cur_lba & 0xFF);
+                    port_out8 (BASE + 4, (cur_lba >> 8) & 0xFF);
+                    port_out8 (BASE + 5, (cur_lba >> 16) & 0xFF);
+                    port_out8 (BASE + 7, 0x30); // WRITE SECTORS
+                }
+                for (int s = 0; s < chunk; s++) {
+                    if (!wait_drq ())
+                        return false;
+                    ata_write_words (cur_buf, 256);
+                    cur_buf += 512;
+                }
+                cur_lba += chunk;
+                rem -= chunk;
+            }
+            return flush_cache ();
+        }
+
+        public static bool read_sector (int lba, int buf_addr) {
+            return read_sectors (lba, 1, buf_addr);
+        }
+
         public static bool write_sector (int lba, int buf_addr) {
-            if (!wait_not_bsy ())
-                return false;
-            port_out8 (BASE + 6, 0xE0 | ((lba >> 24) & 0x0F));
-            port_out8 (BASE + 2, 1);
-            port_out8 (BASE + 3, lba & 0xFF);
-            port_out8 (BASE + 4, (lba >> 8) & 0xFF);
-            port_out8 (BASE + 5, (lba >> 16) & 0xFF);
-            port_out8 (BASE + 7, 0x30);
-            if (!wait_drq ())
-                return false;
-            ata_write_words (buf_addr, 256);
-            port_out8 (BASE + 7, 0xE7); // CACHE FLUSH
-            wait_not_bsy ();
-            return true;
+            return write_sectors (lba, 1, buf_addr);
         }
     }
 }
