@@ -29,6 +29,22 @@ namespace Planet.Kernel {
     public extern int mmio_read64 (int addr);
 
     [AsmBody(@"
+        mov %edi, %edx
+        in %dx, %al
+        movzbl %al, %eax
+        ret
+    ")]
+    public extern int port_in8 (int port);
+
+    [AsmBody(@"
+        mov %edi, %edx
+        mov %esi, %eax
+        out %al, %dx
+        ret
+    ")]
+    public extern void port_out8 (int port, int val);
+
+    [AsmBody(@"
         sti
         ret
     ")]
@@ -69,6 +85,40 @@ namespace Planet.Kernel {
         ret
     ")]
     public extern void cpuid_vendor_raw (int buf_addr);
+
+    [AsmBody(@"
+        push %rbx
+        mov $1, %eax
+        xor %ecx, %ecx
+        cpuid
+        shr $19, %ecx
+        and $1, %ecx
+        mov %ecx, %eax
+        pop %rbx
+        ret
+    ")]
+    public extern int cpuid_has_sse41_raw ();
+
+    [AsmBody(@"
+        push %rbx
+        xor %eax, %eax
+        cpuid
+        cmp $7, %eax
+        jb .L_no_avx2
+        mov $7, %eax
+        xor %ecx, %ecx
+        cpuid
+        shr $5, %ebx
+        and $1, %ebx
+        mov %ebx, %eax
+        pop %rbx
+        ret
+    .L_no_avx2:
+        xor %eax, %eax
+        pop %rbx
+        ret
+    ")]
+    public extern int cpuid_has_avx2_raw ();
 
     [AsmBody(@"
         push %rax
@@ -313,6 +363,14 @@ namespace Planet.Kernel {
             print ("CPU: ");
             __planet_console_write (buf, 12);
             print ("\n");
+        }
+
+        public static bool has_sse41 () {
+            return cpuid_has_sse41_raw () != 0;
+        }
+
+        public static bool has_avx2 () {
+            return cpuid_has_avx2_raw () != 0;
         }
     }
 }

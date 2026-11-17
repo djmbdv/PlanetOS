@@ -294,6 +294,14 @@ namespace Planet.Kernel {
             }
         }
 
+        public static int width () {
+            return fb_width;
+        }
+
+        public static int height () {
+            return fb_height;
+        }
+
         public static void close () {
             if (fb_phys_addr != 0) {
                 bga_write (4, 0);

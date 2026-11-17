@@ -3,22 +3,6 @@
 namespace Planet.Kernel {
 
     [AsmBody(@"
-        mov %edi, %edx
-        in %dx, %al
-        movzbl %al, %eax
-        ret
-    ")]
-    public extern int port_in8 (int port);
-
-    [AsmBody(@"
-        mov %edi, %edx
-        mov %esi, %eax
-        out %al, %dx
-        ret
-    ")]
-    public extern void port_out8 (int port, int val);
-
-    [AsmBody(@"
         # ata_read_words(buf_addr in rdi, count in rsi) from port 0x1F0
         mov $0x1F0, %dx
         xor %rcx, %rcx

@@ -206,23 +206,35 @@ namespace Planet.Kernel {
                 int blockcount = w1 & 0x1FFFFF;
                 int lba = fsbno_to_lba (startblock);
                 int total_secs = blockcount * (xfs_blocksize / 512);
-                for (int s = 0; s < total_secs && copied < to_read; s++) {
+                int s = 0;
+                while (s < total_secs && copied < to_read) {
                     if (skip >= 512) {
                         skip = skip - 512;
+                        s++;
                         continue;
                     }
-                    if (!Ata.read_sector (lba + s, tmp)) {
+                    int rem_bytes = to_read - copied;
+                    int batch = 1;
+                    if (skip == 0 && rem_bytes > 512) {
+                        int need_secs = (rem_bytes + 511) / 512;
+                        int avail_secs = total_secs - s;
+                        batch = (need_secs < avail_secs) ? need_secs : avail_secs;
+                        if (batch > 8)
+                            batch = 8; // 8 * 512 = 4096 bytes fits in tmp frame
+                    }
+                    if (!Ata.read_sectors (lba + s, batch, tmp)) {
                         Pmm.free_frame (tmp);
                         return copied;
                     }
-                    int chunk = to_read - copied;
-                    if (chunk > 512 - skip)
-                        chunk = 512 - skip;
+                    int chunk = batch * 512 - skip;
+                    if (chunk > rem_bytes)
+                        chunk = rem_bytes;
                     for (int bi = 0; bi < chunk; bi++) {
                         mmio_write8 (dst_buf + copied + bi, read_u8 (tmp + skip + bi));
                     }
                     copied = copied + chunk;
                     skip = 0;
+                    s += batch;
                 }
             }
             Pmm.free_frame (tmp);

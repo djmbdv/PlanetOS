@@ -237,6 +237,9 @@ namespace Planet.Kernel {
             for (int p = 0; p < 17; p++) {
                 Pmm.free_frame (child_stack + p * 4096);
             }
+            if (exec_depth == 0 && Fb.width () > 0) {
+                Fb.close ();
+            }
             return code;
         }
 

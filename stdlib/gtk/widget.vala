@@ -44,8 +44,10 @@ namespace Gtk {
 
         public virtual void draw (Context cr) {}
 
-        public virtual void on_pointer_motion (int mx, int my) {
+        public virtual bool on_pointer_motion (int mx, int my) {
+            bool prev = hovered;
             hovered = visible && sensitive && contains (mx, my);
+            return hovered != prev;
         }
 
         public virtual bool on_pointer_press (int mx, int my, int button) {

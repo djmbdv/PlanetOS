@@ -48,6 +48,7 @@ int main () {
     var b = new KernelBanner ("PlanetOS", 0, 1);
     b.announce ();
     Hal.print_cpu_vendor ();
+    print (@"cpu:simd sse41=$(Hal.has_sse41 () ? 1 : 0) avx2=$(Hal.has_avx2 () ? 1 : 0)\n");
     Hal.init_interrupts ();
     Pmm.init ();
     Vmm.init ();
@@ -87,6 +88,10 @@ int main () {
     bool ata_ok = Ata.init ();
     if (ata_ok)
         print (@"ata:sectors=$(Ata.total_sectors ()) lba48=$(Ata.has_lba48 () ? 1 : 0)\n");
+
+    VirtioGpu.init ();
+    if (VirtioGpu.is_present ())
+        print (@"virtio_gpu:found=1 w=$(VirtioGpu.display_width ()) h=$(VirtioGpu.display_height ()) virgl=$(VirtioGpu.has_virgl () ? 1 : 0) blob=$(VirtioGpu.has_blob () ? 1 : 0) ctx=$(VirtioGpu.has_ctx_init () ? 1 : 0) venus=$(VirtioGpu.has_venus () ? 1 : 0)\n");
 
     int xok = Xfs.mount () ? 1 : 0;
     print (@"xfs:mounted=$xok\n");

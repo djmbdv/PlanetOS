@@ -84,10 +84,13 @@ namespace Gtk {
             }
         }
 
-        public override void on_pointer_motion (int mx, int my) {
+        public override bool on_pointer_motion (int mx, int my) {
+            bool changed = false;
             for (int i = 0; i < children.length; i++) {
-                children[i].on_pointer_motion (mx, my);
+                if (children[i].on_pointer_motion (mx, my))
+                    changed = true;
             }
+            return changed;
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {

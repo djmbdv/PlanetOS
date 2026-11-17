@@ -24,8 +24,8 @@ using Gtk;
 using Wm;
 
 namespace Wm {
-    public const int SCREEN_W = 800;
-    public const int SCREEN_H = 600;
+    public const int SCREEN_W = 1280;
+    public const int SCREEN_H = 720;
     public const int TOP_H = 26;
     public const int DOCK_H = 34;
     public const int TITLE_H = 26;
@@ -63,6 +63,148 @@ namespace Wm {
         public int clicks = 0;
     }
 
+    public class VteTerminal : Object {
+        public GenericArray<string> lines;
+        public string input = "";
+        public bool active = false;
+
+        public VteTerminal () {
+            lines = new GenericArray<string> ();
+            lines.add ("PlanetOS VTE v0.1 (click & type 'help')");
+        }
+
+        private void push_line (string s) {
+            lines.add (s);
+            if (lines.length > 64)
+                lines.remove_index (0);
+        }
+
+        private static string bytes_to_str (uint8[] buf, int off, int len) {
+            var sb = new StringBuilder ("");
+            for (int i = 0; i < len; i++) {
+                uint8 c = buf[off + i];
+                if (c >= 32 && c < 127)
+                    sb.append_c ((char) c);
+            }
+            return sb.str;
+        }
+
+        private static string trim_str (string s) {
+            int a = 0;
+            int b = s.length;
+            while (a < b && s[a] == ' ') a++;
+            while (b > a && s[b - 1] == ' ') b--;
+            return s.substring (a, b - a);
+        }
+
+        private void run_cmd (string raw) {
+            string cmd = trim_str (raw);
+            push_line ("planet> " + cmd);
+            if (cmd == "")
+                return;
+            if (cmd == "help") {
+                push_line ("cmds: help ls cat ticks uname echo clear");
+            } else if (cmd == "clear") {
+                lines.length = 0;
+            } else if (cmd == "uname") {
+                push_line ("PlanetOS x86_64 Long Mode (Ring 3 + VTE)");
+            } else if (cmd == "ticks") {
+                push_line (@"ticks: $(Sys.ticks ())");
+            } else if (cmd.has_prefix ("echo ")) {
+                push_line (cmd.substring (5, cmd.length - 5));
+            } else if (cmd == "ls") {
+                var buf = new uint8[2048];
+                int n = Sys.readdir_path ("/", buf, 2048);
+                if (n <= 0) {
+                    push_line ("(empty)");
+                    return;
+                }
+                string cur = "";
+                int start = 0;
+                for (int i = 0; i <= n; i++) {
+                    if (i == n || buf[i] == 0 || buf[i] == '\n') {
+                        if (i > start) {
+                            string name = bytes_to_str (buf, start, i - start);
+                            if (cur.length + name.length + 1 > 40) {
+                                push_line (cur);
+                                cur = name;
+                            } else {
+                                cur = (cur.length > 0) ? (cur + " " + name) : name;
+                            }
+                        }
+                        start = i + 1;
+                    }
+                }
+                if (cur.length > 0)
+                    push_line (cur);
+            } else if (cmd.has_prefix ("cat ")) {
+                string path = trim_str (cmd.substring (4, cmd.length - 4));
+                int fd = Sys.open (path);
+                if (fd < 0) {
+                    push_line (@"cat: not found: $path");
+                } else {
+                    var fbuf = new uint8[512];
+                    int nr = Sys.read (fd, fbuf, 511);
+                    Sys.close (fd);
+                    if (nr > 0) {
+                        int st = 0;
+                        for (int i = 0; i <= nr; i++) {
+                            if (i == nr || fbuf[i] == '\n') {
+                                if (i > st)
+                                    push_line (bytes_to_str (fbuf, st, i - st));
+                                st = i + 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                push_line (@"unknown: $cmd");
+            }
+        }
+
+        public bool on_key_press (int key) {
+            if (!active)
+                return false;
+            if (key == '\n' || key == '\r') {
+                string cmd = input.substring (0, input.length);
+                input = "";
+                run_cmd (cmd);
+                return true;
+            }
+            if (key == 8 || key == 127) {
+                if (input.length > 0)
+                    input = input.substring (0, input.length - 1);
+                return true;
+            }
+            if (key >= 32 && key < 127) {
+                string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+                input = input + ascii.substring (key - 32, 1);
+                return true;
+            }
+            return false;
+        }
+
+        public void draw (Context cr, int cx, int cy, int cw, int ch, bool focused, double ar, double ag, double ab) {
+            cr.set_source_rgb (0.051, 0.063, 0.090);
+            cr.rectangle (cx, cy, cw, ch);
+            cr.fill ();
+            int row_h = 18;
+            int max_rows = (ch - 12) / row_h;
+            if (max_rows < 2) max_rows = 2;
+            int hist_rows = max_rows - 1;
+            int start = (lines.length > hist_rows) ? (lines.length - hist_rows) : 0;
+            int y = cy + 8;
+            cr.set_source_rgb (0.78, 0.83, 0.90);
+            for (int i = start; i < lines.length; i++) {
+                TextHelper.draw_text (cr, lines[i], cx + 10, y, 14.0);
+                y += row_h;
+            }
+            cr.set_source_rgb (ar, ag, ab);
+            string prompt = "planet> " + input + (focused ? "_" : "");
+            TextHelper.draw_text (cr, prompt, cx + 10, y, 14.0);
+        }
+    }
+
     public class Win : Object {
         public int id;
         public string title;
@@ -80,6 +222,7 @@ namespace Wm {
         public int rw;
         public int rh;
         public Box? gtk_root = null;
+        public VteTerminal? term = null;
 
         public Win (int id, string title, int x, int y, int w, int h, Kind kind) {
             this.id = id;
@@ -89,20 +232,34 @@ namespace Wm {
             this.w = w;
             this.h = h;
             this.kind = kind;
-            if (kind == Kind.GTK) {
-                var box = new Box (Orientation.VERTICAL, 10);
+            if (kind == Kind.TERMINAL) {
+                term = new VteTerminal ();
+            } else if (kind == Kind.GTK) {
+                var box = new Box (Orientation.VERTICAL, 8);
                 var lbl = new Label ("GTK + TrueType (7)");
                 lbl.font_size = 18.0;
                 var ent = new Entry ("PlanetOS 7");
+                var chk = new CheckButton ("Auto-progress", true);
+                var pbar = new ProgressBar ();
+                pbar.set_text ("0%");
                 var st_lbl = new Label ("Clicks: 0");
                 var gst = new GtkCompState ();
                 var btn = new Button ("Increment (+1)");
                 btn.clicked.connect ((sender) => {
                     gst.clicks = gst.clicks + 1;
                     st_lbl.set_text (@"Clicks: $(gst.clicks) | $(ent.get_text ())");
+                    if (chk.get_active ()) {
+                        int pct = (gst.clicks * 10) % 110;
+                        if (pct > 100) pct = 100;
+                        pbar.set_fraction ((double) pct / 100.0);
+                        pbar.set_text (@"$pct%");
+                    }
                 });
                 box.pack_start (lbl);
                 box.pack_start (ent);
+                box.pack_start (chk);
+                box.pack_start (pbar);
+                box.pack_start (new Separator ());
                 box.pack_start (btn);
                 box.pack_start (st_lbl);
                 gtk_root = box;
@@ -134,6 +291,10 @@ namespace Wm {
             return px >= bx && px < bx + BTN && py >= by && py < by + BTN;
         }
 
+        public bool in_resize (int px, int py) {
+            return !maximized && px >= x + w - 14 && px < x + w && py >= y + h - 14 && py < y + h;
+        }
+
         public int content_y () { return y + BORDER + TITLE_H; }
         public int content_h () { return h - TITLE_H - 2 * BORDER; }
     }
@@ -147,6 +308,8 @@ namespace Wm {
         private int focused_id = 0;
         private bool dragging = false;
         private int drag_id = 0;
+        private bool resizing = false;
+        private int resize_id = 0;
         private int drag_ox = 0;
         private int drag_oy = 0;
         private int last_ptr_x = 0;
@@ -698,9 +861,18 @@ namespace Wm {
                 drag_oy = py - w.y;
                 return ACT_DRAG;
             }
+            if (w.in_resize (px, py)) {
+                resizing = true;
+                resize_id = id;
+                return ACT_DRAG;
+            }
             if (w.kind == Kind.GTK && w.gtk_root != null) {
                 if (w.gtk_root.on_pointer_press (px, py, 1))
                     damage_window (id);
+            }
+            if (w.kind == Kind.TERMINAL && w.term != null) {
+                w.term.active = true;
+                damage_window (id);
             }
             return ACT_FOCUS;
         }
@@ -726,15 +898,34 @@ namespace Wm {
                 drag_to (px, py);
                 return;
             }
+            if (resizing) {
+                var rw = find (resize_id);
+                if (rw != null && !rw.maximized) {
+                    damage_window (resize_id);
+                    int nw = px - rw.x;
+                    int nh = py - rw.y;
+                    if (nw < 220) nw = 220;
+                    if (nh < 140) nh = 140;
+                    if (rw.x + nw > SCREEN_W) nw = SCREEN_W - rw.x;
+                    if (rw.y + nh > SCREEN_H - DOCK_H) nh = SCREEN_H - DOCK_H - rw.y;
+                    rw.w = nw;
+                    rw.h = nh;
+                    damage_window (resize_id);
+                }
+                return;
+            }
             var fw = find (focused_id);
             if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
-                fw.gtk_root.on_pointer_motion (px, py);
+                if (fw.gtk_root.on_pointer_motion (px, py))
+                    damage_window (fw.id);
             }
         }
 
         public void pointer_release () {
             dragging = false;
             drag_id = 0;
+            resizing = false;
+            resize_id = 0;
             var fw = find (focused_id);
             if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
                 if (fw.gtk_root.on_pointer_release (last_ptr_x, last_ptr_y, 1))
@@ -806,6 +997,12 @@ namespace Wm {
             var fw = find (focused_id);
             if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
                 if (fw.gtk_root.on_key_press (k)) {
+                    damage_window (fw.id);
+                    return;
+                }
+            }
+            if (fw != null && fw.kind == Kind.TERMINAL && fw.term != null) {
+                if (fw.term.on_key_press (k)) {
                     damage_window (fw.id);
                     return;
                 }
@@ -947,10 +1144,10 @@ namespace Wm {
 
         public void seed () {
             TextHelper.load_ttf ("Ubuntu-Regular.ttf");
-            add ("terminal", 60, 70, 340, 210, Kind.TERMINAL);
-            add ("shader", 430, 70, 310, 190, Kind.SHADER);
-            add ("clock", 500, 290, 230, 190, Kind.CLOCK);
-            add ("gtk-demo", 110, 250, 370, 230, Kind.GTK);
+            add ("terminal", 48, 56, 420, 260, Kind.TERMINAL);
+            add ("shader", 500, 56, 360, 230, Kind.SHADER);
+            add ("clock", 900, 56, 320, 230, Kind.CLOCK);
+            add ("gtk-demo", 80, 340, 480, 280, Kind.GTK);
             focus_nth (3);
         }
 
@@ -1048,25 +1245,20 @@ namespace Wm {
             cr.rectangle (0, TOP_H - 2, SCREEN_W, 2);
             cr.fill ();
 
-            cr.set_font_size (16);
             cr.set_source_rgb (0.86, 0.90, 0.96);
-            cr.move_to (12, 6);
-            cr.show_text ("PLANETOS");
+            TextHelper.draw_text (cr, "PlanetOS", 14, 6, 15.0);
 
             string t = "desktop";
             var w = find (focused_id);
             if (w != null)
                 t = w.title;
             cr.set_source_rgb (acc_r, acc_g, acc_b);
-            cr.move_to (110, 6);
-            cr.show_text_n (t, 26);
+            TextHelper.draw_text (cr, t, 110, 6, 15.0);
 
             cr.set_source_rgb (0.55, 0.62, 0.73);
-            cr.move_to (SCREEN_W - 190, 6);
-            cr.show_text (@"$(count ()) win");
+            TextHelper.draw_text (cr, @"$(count ()) win", SCREEN_W - 190, 6, 14.0);
             int total = Sys.ticks () / 100;
-            cr.move_to (SCREEN_W - 120, 6);
-            cr.show_text (@"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))");
+            TextHelper.draw_text (cr, @"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))", SCREEN_W - 110, 6, 14.0);
         }
 
         private void draw_windows (Context cr) {
@@ -1124,48 +1316,58 @@ namespace Wm {
         private void draw_window (Context cr, Win w) {
             bool foc = (w.id == focused_id);
 
-            // Shadow only along the right/bottom bands: the inner area is
-            // overwritten by the window body, so blending it would be wasted.
-            cr.set_source_rgba (0.0, 0.0, 0.0, 0.45);
-            cr.rectangle (w.x + w.w, w.y + SHADOW, SHADOW, w.h);
+            // Shadow only along the right/bottom bands so we don't blend hidden interior pixels
+            cr.set_source_rgba (0.0, 0.0, 0.0, 0.35);
+            cr.rectangle (w.x + w.w, w.y + SHADOW, SHADOW, w.h - 4);
             cr.fill ();
-            cr.rectangle (w.x + SHADOW, w.y + w.h, w.w, SHADOW);
+            cr.rectangle (w.x + SHADOW, w.y + w.h, w.w - 4, SHADOW);
             cr.fill ();
 
+            // Rounded window body
             cr.set_source_rgb (0.113, 0.133, 0.176);
-            cr.rectangle (w.x, w.y, w.w, w.h);
+            cr.rounded_rectangle (w.x, w.y, w.w, w.h, 8.0);
             cr.fill ();
 
+            // Clip content cleanly inside rounded bottom
+            cr.save ();
+            cr.rectangle (w.x + BORDER, w.content_y (), w.w - 2 * BORDER, w.content_h () - 4);
+            cr.clip ();
             draw_content (cr, w);
+            cr.restore ();
 
+            // Rounded title bar
+            if (foc) {
+                cr.set_source_rgb (acc_r * 0.36 + 0.06, acc_g * 0.36 + 0.07, acc_b * 0.36 + 0.11);
+            } else {
+                cr.set_source_rgb (0.15, 0.17, 0.22);
+            }
+            cr.rounded_rectangle (w.x + 2, w.y + 2, w.w - 4, TITLE_H, 6.0);
+            cr.fill ();
+            cr.rectangle (w.x + 2, w.y + TITLE_H - 4, w.w - 4, 6);
+            cr.fill ();
+
+            if (foc)
+                cr.set_source_rgb (0.97, 0.98, 1.0);
+            else
+                cr.set_source_rgb (0.71, 0.76, 0.84);
+            TextHelper.draw_text (cr, w.title, w.x + 12, w.y + BORDER + 4, 15.0);
+
+            int by = w.btn_y ();
+            cr.set_source_rgba (1.0, 1.0, 1.0, 0.14);
+            cr.rounded_rectangle (w.max_x (), by, BTN, BTN, 4.0);
+            cr.fill ();
+            cr.set_source_rgba (0.88, 0.32, 0.34, 0.85);
+            cr.rounded_rectangle (w.close_x (), by, BTN, BTN, 4.0);
+            cr.fill ();
+
+            // Outer rounded 1px border drawn last so corners stay crisp
             if (foc)
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
             else
                 cr.set_source_rgb (0.243, 0.275, 0.341);
             cr.set_line_width (1);
-            cr.rectangle (w.x, w.y, w.w, w.h);
+            cr.rounded_rectangle (w.x, w.y, w.w, w.h, 8.0);
             cr.stroke ();
-
-            if (foc)
-                cr.set_source_rgb (acc_r * 0.40 + 0.06, acc_g * 0.40 + 0.07, acc_b * 0.40 + 0.10);
-            else
-                cr.set_source_rgb (0.161, 0.184, 0.239);
-            cr.rectangle (w.x + BORDER, w.y + BORDER, w.w - 2 * BORDER, TITLE_H);
-            cr.fill ();
-
-            cr.set_font_size (16);
-            if (foc)
-                cr.set_source_rgb (0.97, 0.98, 1.0);
-            else
-                cr.set_source_rgb (0.71, 0.76, 0.84);
-            draw_title (cr, w, w.x + 10, w.y + BORDER + 7);
-
-            int by = w.btn_y ();
-            cr.set_source_rgba (1.0, 1.0, 1.0, 0.12);
-            cr.rectangle (w.max_x (), by, BTN, BTN);
-            cr.fill ();
-            cr.rectangle (w.close_x (), by, BTN, BTN);
-            cr.fill ();
             cr.set_source_rgb (0.90, 0.93, 0.97);
             cr.set_line_width (1);
             int mx0 = w.max_x () + 4;
@@ -1203,9 +1405,7 @@ namespace Wm {
         }
 
         private void draw_dock_label (Context cr, string title, int x, int y) {
-            if (dock_lay.current_text () != title)
-                dock_lay.set_text (title);
-            show_layout_at (cr, dock_lay, x, y);
+            TextHelper.draw_text (cr, title, x, y - 1, 14.0);
         }
 
         private void draw_content (Context cr, Win w) {
@@ -1218,26 +1418,8 @@ namespace Wm {
             if (!rect_hits (cr, cx, cy, cw, ch))
                 return;
 
-            if (w.kind == Kind.TERMINAL) {
-                cr.set_source_rgb (0.051, 0.063, 0.090);
-                cr.rectangle (cx, cy, cw, ch);
-                cr.fill ();
-                cr.set_font_size (16);
-                cr.set_source_rgb (acc_r, acc_g, acc_b);
-                cr.move_to (cx + 12, cy + 12);
-                cr.show_text ("planetsh /");
-                cr.set_source_rgb (0.72, 0.78, 0.86);
-                cr.move_to (cx + 12, cy + 34);
-                cr.show_text ("id  " + @"$(w.id)");
-                cr.move_to (cx + 12, cy + 52);
-                cr.show_text ("pos " + @"$(w.x),$(w.y)");
-                cr.move_to (cx + 12, cy + 70);
-                cr.show_text ("size " + @"$(w.w)x$(w.h)");
-                cr.set_source_rgb (0.45, 0.52, 0.62);
-                cr.move_to (cx + 12, cy + 96);
-                cr.show_text ("tab cycle  drag move");
-                cr.move_to (cx + 12, cy + 114);
-                cr.show_text ("m max  c close  q quit");
+            if (w.kind == Kind.TERMINAL && w.term != null) {
+                w.term.draw (cr, cx, cy, cw, ch, w.id == focused_id, acc_r, acc_g, acc_b);
             } else if (w.kind == Kind.CLOCK) {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
@@ -1277,43 +1459,35 @@ namespace Wm {
                 cr.arc (ccx, ccy, 3, 0, 6.28);
                 cr.fill ();
 
-                cr.set_font_size (16);
                 cr.set_source_rgb (0.72, 0.78, 0.86);
-                cr.move_to (cx + 10, cy + ch - 26);
-                cr.show_text (@"T+$(pad2 (min)):$(pad2 (sec))");
+                TextHelper.draw_text (cr, @"T+$(pad2 (min)):$(pad2 (sec))", cx + 12, cy + ch - 28, 15.0);
             } else if (w.kind == Kind.SHADER) {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 cr.set_source_rgba (acc_r, acc_g, acc_b, 1.0);
-                cr.rectangle (cx + 14, cy + 16, 56, 56);
+                cr.rounded_rectangle (cx + 14, cy + 16, 56, 56, 6.0);
                 cr.fill ();
                 cr.set_line_width (1);
                 cr.set_source_rgb (0.30, 0.34, 0.42);
-                cr.rectangle (cx + 14, cy + 16, 56, 56);
+                cr.rounded_rectangle (cx + 14, cy + 16, 56, 56, 6.0);
                 cr.stroke ();
 
-                cr.set_font_size (16);
                 cr.set_source_rgb (0.90, 0.93, 0.97);
-                cr.move_to (cx + 84, cy + 20);
-                cr.show_text ("spir-v frag");
+                TextHelper.draw_text (cr, "spir-v frag", cx + 84, cy + 18, 16.0);
                 cr.set_source_rgb (0.66, 0.72, 0.81);
-                cr.move_to (cx + 84, cy + 40);
                 if (shader_ok)
-                    cr.show_text (@"words $(shader.words)");
+                    TextHelper.draw_text (cr, @"words $(shader.words)", cx + 84, cy + 38, 14.0);
                 else
-                    cr.show_text ("no module");
-                cr.move_to (cx + 84, cy + 58);
+                    TextHelper.draw_text (cr, "no module", cx + 84, cy + 38, 14.0);
                 if (shader_ok)
-                    cr.show_text (@"insns $(shader.insns)");
+                    TextHelper.draw_text (cr, @"insns $(shader.insns)", cx + 84, cy + 56, 14.0);
                 else
-                    cr.show_text ("cpu accent");
-                cr.move_to (cx + 14, cy + 92);
+                    TextHelper.draw_text (cr, "cpu accent", cx + 84, cy + 56, 14.0);
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
-                cr.show_text (@"rgba $(accent_ir ()) $(accent_ig ()) $(accent_ib ())");
+                TextHelper.draw_text (cr, @"rgba $(accent_ir ()) $(accent_ig ()) $(accent_ib ())", cx + 14, cy + 92, 14.0);
                 cr.set_source_rgb (0.45, 0.52, 0.62);
-                cr.move_to (cx + 14, cy + 118);
-                cr.show_text ("vulkan backend: pending");
+                TextHelper.draw_text (cr, "vulkan backend: pending", cx + 14, cy + 116, 14.0);
             } else if (w.kind == Kind.GTK && w.gtk_root != null) {
                 cr.set_source_rgb (0.09, 0.11, 0.14);
                 cr.rectangle (cx, cy, cw, ch);
@@ -1375,7 +1549,7 @@ namespace Wm {
                     cr.set_source_rgba (acc_r, acc_g, acc_b, 0.24);
                 else
                     cr.set_source_rgba (1.0, 1.0, 1.0, 0.07);
-                cr.rectangle (bx, by, DOCK_BTN_W, DOCK_H - 10);
+                cr.rounded_rectangle (bx, by, DOCK_BTN_W, DOCK_H - 10, 6.0);
                 cr.fill ();
                 if (foc) {
                     cr.set_source_rgb (acc_r, acc_g, acc_b);
@@ -1629,6 +1803,17 @@ private int self_test_run (Compositor comp) {
     gtkc.pointer_release ();
     gtkc.flush (gcr, 799, 599);
     check (gtkc.alive (gw), "gtk-win-alive-after-input");
+
+    // VTE terminal typing
+    var termc = new Compositor ();
+    int tw = termc.add ("term", 40, 50, 400, 240, Kind.TERMINAL);
+    termc.pointer_press (100, 120);
+    termc.key_press ('h');
+    termc.key_press ('e');
+    termc.key_press ('l');
+    termc.key_press ('p');
+    termc.key_press ('\n');
+    check (termc.alive (tw), "vte-term-alive");
 
     print (@"compositor:summary checks=$st_checks failures=$st_fails\n");
     return (st_fails == 0) ? 0 : 1;

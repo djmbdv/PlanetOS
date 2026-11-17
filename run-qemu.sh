@@ -69,6 +69,7 @@ OPT="${PLANC_OPT:--O2}"
     "$ROOT/kernel/fb.vala" \
     "$ROOT/kernel/pmm.vala" \
     "$ROOT/kernel/vmm.vala" \
+    "$ROOT/kernel/virtio_gpu.vala" \
     "$ROOT/kernel/env.vala" \
     "$ROOT/kernel/ramfs.vala" \
     "$ROOT/kernel/keyboard.vala" \
@@ -127,6 +128,7 @@ fi
 
 echo "Booting PlanetOS in QEMU (type 'exit' in the guest shell to quit)..."
 exec qemu-system-x86_64 \
+    -cpu max \
     -kernel "$OUT/planet-kernel" \
     -drive file="$OUT/disk.img",format=raw,if=ide \
     -vga std \

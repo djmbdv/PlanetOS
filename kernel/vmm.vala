@@ -181,6 +181,24 @@ namespace Planet.Kernel {
             vmm_invlpg (aligned);
         }
 
+        public static void map_mmio_2m (int phys) {
+            int pdpt_idx = (phys >> 30) & 0x1FF;
+            if (pdpt_idx != 3)
+                return;
+            int pd3 = 0x103000;
+            int pdpt = 0x101000;
+            int pdpt_e = mmio_read64 (pdpt + pdpt_idx * 8);
+            if ((pdpt_e & 0x01) == 0) {
+                for (int i = 0; i < 512; i++)
+                    mmio_write64 (pd3 + i * 8, 0);
+                mmio_write64 (pdpt + pdpt_idx * 8, pd3 | 0x03);
+            }
+            int base_2m = phys & ~0x1FFFFF;
+            int pd_idx = (base_2m >> 21) & 0x1FF;
+            mmio_write64 (pd3 + pd_idx * 8, base_2m | 0x83);
+            vmm_write_cr3 (vmm_read_cr3 ());
+        }
+
         public static void init () {
             // Unmap page 0 (0x0000..0x0FFF) so any NULL pointer dereference triggers #PF
             unmap_4k (0);

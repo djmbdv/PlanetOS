@@ -1,22 +1,32 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="PlanetOS — Bare-Metal x86-64 OS &amp; Self-Hosted Vala Compiler" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/arch-x86__64%20Long%20Mode-38bdf8?style=flat-square" alt="x86-64 Long Mode">
+  <img src="https://img.shields.io/badge/language-100%25%20Vala-6366f1?style=flat-square" alt="100% Vala">
+  <img src="https://img.shields.io/badge/toolchain-self--hosted%20planc-8b5cf6?style=flat-square" alt="Self-hosted planc">
+  <img src="https://img.shields.io/badge/C%20%2F%20libc-none-10b981?style=flat-square" alt="Zero C / Zero libc">
+  <img src="https://img.shields.io/badge/tests-185%2F185%20passing-22c55e?style=flat-square" alt="185/185 passing">
+</p>
+
 # PlanetOS
 
 **An operating system and its toolchain, entirely in Vala, compiled straight to
-native code.**
+native x86-64 machine code and SPIR-V — with zero C, zero libc, and no external
+assembler or linker.**
 
-Status: **specification plus a working compiler slice (`slice 8`) with static
-types (`int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/`ssize_t`/`char`/`uchar`,
-`bool`, `string`, `enum`, `errordomain`, `struct`, `T[]`, `class`, `Error`, `T?`,
-`void`, `var`), a guarded arena/slab heap allocator, automatic atomic reference
-counting (`--check-leaks`), single inheritance with `.rodata` vtables and
-destructors, Option B compile-time non-null + guarded nullable checks
-(`--no-null-check`), `throws`/`try`/`catch`/`finally`, `out`/`ref` parameters,
-inline and `virtual`/`override` properties, `new Cls() { prop = expr }`
-initializers, `foreach`/`switch`, `?:`/`??`, `s[start:end]` slicing, `const`,
-`static`/value methods, `namespace`/`using`, forward types, and multi-file
-compilation.** This repository holds the technical specification and a working
-`planc` that compiles a growing Vala subset to a static x86_64 ELF with no
-libc, no assembler and no external linker. The kernel and the runtime are still
-specification only.
+Status: **working self-hosted compiler (`planc`, slices 0–45) + freestanding
+x86-64 Long Mode kernel + pure-Vala userland running in QEMU.**
+`planc` compiles Vala directly to static ELF64 binaries (`--target=host`,
+`--target=planetos`, `--freestanding`) and Vulkan SPIR-V shader modules
+(`--target=spirv`), with `-O1`/`-O2` optimizations, DWARF v4 debug info,
+atomic ARC (`--check-leaks`), Option B null safety (`--strict-null`), generics,
+`async`/`yield` M:N coroutines, `Channel<T>`/`Mutex`, and `[AsmBody]`. The
+kernel boots in QEMU with Ring 3 per-process `CR3` isolation, preemptive `IRQ0`
+scheduling, ATA LBA48 + XFS + RAMFS, PS/2 input, double-buffered BGA +
+VirtIO-GPU PCI (Phase 1), and a desktop compositor powered by pure-Vala `GLib`,
+`Gio`, `Cairo`, `Pango`, `libschrift` TrueType, and `GTK` layers.
 
 ---
 
@@ -138,6 +148,7 @@ problems** and **creates six**:
 | [docs/planc/slice-42.md](docs/planc/slice-42.md) | **Implemented slice 42**: C -> Vala translator for the tier-0/1 subset ([tools/c2vala.py](tools/c2vala.py)) with a differential harness against gcc ([tools/c2vala_tests/run.py](tools/c2vala_tests/run.py)); `jsmn` translates and prints identical tokens |
 | [docs/planc/slice-43.md](docs/planc/slice-43.md) | **Implemented slice 43**: a memory model for the C -> Vala translator (`malloc`/`calloc` -> GC-owned Vala arrays, `free` -> documented no-op, `realloc`/pointer arithmetic/allocated aggregates still refused) and `--report`, which translates what is in scope, stubs the rest and prints a per-function verdict (exit 3 on partial) |
 | [docs/planc/slice-44.md](docs/planc/slice-44.md) | **Implemented slice 44**: pure-Vala `libschrift` TrueType rasterizer ([stdlib/schrift.vala](stdlib/schrift.vala)), modular `Gtk` layer ([stdlib/gtk/](stdlib/gtk/window.vala)) with glyph cache & `Kind.GTK` inside [user/compositor.vala](user/compositor.vala), `Cairo` rounded rects/gradients/alpha masks, `Ata` LBA48/multi-sector/cache-flush ([kernel/ata.vala](kernel/ata.vala)), and `-O2` builds in `run-qemu` |
+| [docs/planc/slice-45-vulkan-venus.md](docs/planc/slice-45-vulkan-venus.md) | **Implemented slice 45 (Phase 1)**: VirtIO-GPU Modern PCI driver ([kernel/virtio_gpu.vala](kernel/virtio_gpu.vala)) with MMIO BAR mapping, `controlq`, `GET_DISPLAY_INFO`, `CAPSET_VENUS` detection, and roadmap for Vulkan over Venus + `planc --target=spirv` |
 
 ## 5. State of the measurements
 
@@ -174,9 +185,8 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 174 cases, 174 pass
-./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3),
-                       # 174/174 under the self-hosted compiler
+./planc/tests/run.sh   # 185 cases, 185 pass
+./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3)
 ```
 
 The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/

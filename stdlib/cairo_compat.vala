@@ -340,16 +340,57 @@ namespace Cairo {
             } else if (path_kind == 4) {
                 int r = pr;
                 int r2 = r * r;
-                for (int y = py; y < py + ph; y++) {
-                    int dy = 0;
-                    if (y < py + r) dy = (py + r) - y;
-                    else if (y >= py + ph - r) dy = y - (py + ph - r - 1);
-                    for (int x = px; x < px + pw; x++) {
-                        int dx = 0;
-                        if (x < px + r) dx = (px + r) - x;
-                        else if (x >= px + pw - r) dx = x - (px + pw - r - 1);
-                        if (dx == 0 || dy == 0 || (dx * dx + dy * dy <= r2))
-                            put_px (x, y);
+                int x0 = (px < 0) ? 0 : px;
+                int y0 = (py < 0) ? 0 : py;
+                int x1 = (px + pw > surf.width) ? surf.width : (px + pw);
+                int y1 = (py + ph > surf.height) ? surf.height : (py + ph);
+                if (clip_on) {
+                    if (x0 < clip_x0) x0 = clip_x0;
+                    if (y0 < clip_y0) y0 = clip_y0;
+                    if (x1 > clip_x1) x1 = clip_x1;
+                    if (y1 > clip_y1) y1 = clip_y1;
+                }
+                if (x1 > x0 && y1 > y0) {
+                    if (src_a == 255) {
+                        int col = (255 << 24) | (src_r << 16) | (src_g << 8) | src_b;
+                        int mx0 = px + r;
+                        int mx1 = px + pw - r;
+                        if (mx0 < x0) mx0 = x0;
+                        if (mx1 > x1) mx1 = x1;
+                        for (int y = y0; y < y1; y++) {
+                            int dy = 0;
+                            if (y < py + r) dy = (py + r) - y;
+                            else if (y >= py + ph - r) dy = y - (py + ph - r - 1);
+                            if (dy == 0) {
+                                __c_fill32 (surf.buf_addr + (y * surf.width + x0) * 4, col, x1 - x0);
+                            } else {
+                                if (mx1 > mx0)
+                                    __c_fill32 (surf.buf_addr + (y * surf.width + mx0) * 4, col, mx1 - mx0);
+                                for (int x = x0; x < mx0; x++) {
+                                    int dx = (px + r) - x;
+                                    if (dx * dx + dy * dy <= r2)
+                                        __c_poke32 (surf.buf_addr + (y * surf.width + x) * 4, col);
+                                }
+                                for (int x = mx1; x < x1; x++) {
+                                    int dx = x - (px + pw - r - 1);
+                                    if (dx * dx + dy * dy <= r2)
+                                        __c_poke32 (surf.buf_addr + (y * surf.width + x) * 4, col);
+                                }
+                            }
+                        }
+                    } else {
+                        for (int y = y0; y < y1; y++) {
+                            int dy = 0;
+                            if (y < py + r) dy = (py + r) - y;
+                            else if (y >= py + ph - r) dy = y - (py + ph - r - 1);
+                            for (int x = x0; x < x1; x++) {
+                                int dx = 0;
+                                if (x < px + r) dx = (px + r) - x;
+                                else if (x >= px + pw - r) dx = x - (px + pw - r - 1);
+                                if (dx == 0 || dy == 0 || (dx * dx + dy * dy <= r2))
+                                    put_px (x, y);
+                            }
+                        }
                     }
                 }
             }
@@ -400,7 +441,9 @@ namespace Cairo {
             } else if (path_kind == 4) {
                 int r = pr;
                 int r_out = r * r;
-                int r_in = (r > line_w) ? ((r - line_w) * (r - line_w)) : 0;
+                int inner = (r > line_w) ? (r - line_w) : 0;
+                int r_in = inner * inner - (r > 1 ? (r - 1) : 0);
+                if (r_in < 0) r_in = 0;
                 for (int y = py; y < py + ph; y++) {
                     int dy = 0;
                     if (y < py + r) dy = (py + r) - y;

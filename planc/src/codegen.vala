@@ -4851,17 +4851,34 @@ namespace Planc {
                 if (!(ma.target is VarRef && is_type_name (((VarRef) ma.target).name))) {
                     string tt_name = "";
                     var tt = expr_type_full (ma.target, out tt_name);
-                    unowned var gm = find_prop_getter (tt, tt_name, ma.member);
-                    if (gm != null)
-                        return is_ref_type (gm.return_type);
+                    bool is_field = false;
+                    if (tt == ValaType.CLASS) {
+                        unowned var cd = program.find_class (strip_null (tt_name));
+                        unowned ClassField? mcf = null;
+                        if (cd != null && class_field_offset_slots (cd, ma.member, out mcf) >= 0 && mcf != null)
+                            is_field = !mcf.is_weak;
+                    }
+                    if (!is_field) {
+                        unowned var gm = find_prop_getter (tt, tt_name, ma.member);
+                        if (gm != null)
+                            return is_ref_type (gm.return_type);
+                    }
                 }
             }
             if (e is VarRef) {
                 var vr = (VarRef) e;
                 if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0) {
-                    unowned var gm = find_this_prop_getter (vr.name);
-                    if (gm != null)
-                        return is_ref_type (gm.return_type);
+                    bool is_field = false;
+                    if (current_class != null && !current.is_static) {
+                        unowned ClassField? tcf = null;
+                        if (class_field_offset_slots (current_class, vr.name, out tcf) >= 0 && tcf != null)
+                            is_field = !tcf.is_weak;
+                    }
+                    if (!is_field) {
+                        unowned var gm = find_this_prop_getter (vr.name);
+                        if (gm != null)
+                            return is_ref_type (gm.return_type);
+                    }
                 }
             }
             return false;

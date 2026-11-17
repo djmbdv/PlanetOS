@@ -204,6 +204,7 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'fb.vala'),
         (Join-Path $KernelDir 'pmm.vala'),
         (Join-Path $KernelDir 'vmm.vala'),
+        (Join-Path $KernelDir 'virtio_gpu.vala'),
         (Join-Path $KernelDir 'env.vala'),
         (Join-Path $KernelDir 'ramfs.vala'),
         (Join-Path $KernelDir 'keyboard.vala'),
@@ -273,6 +274,7 @@ if ($Headless -and $Display) {
 }
 
 $qemuArgs = @(
+    '-cpu', 'max',
     '-kernel', (To-QemuPath $kernelPath),
     '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide'),
     '-vga', 'std',

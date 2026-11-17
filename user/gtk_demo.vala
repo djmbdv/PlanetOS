@@ -17,7 +17,7 @@ int main (string[] args) {
     bool ttf_ok = load_ttf ("Ubuntu-Regular.ttf");
     print (@"gtk_demo: ttf=$(ttf_ok ? 1 : 0)\n");
 
-    var win = new GtkWindow (800, 600);
+    var win = new GtkWindow (1280, 720);
     win.set_title ("PlanetOS GTK + TrueType Demo (7)");
 
     var vbox = new Box (Orientation.VERTICAL, 14);
@@ -27,6 +27,10 @@ int main (string[] args) {
     var entry = new Entry ("Hello PlanetOS 7");
     entry.placeholder = "Type here...";
 
+    var chk = new CheckButton ("Enable progress bar", true);
+    var pbar = new ProgressBar ();
+    pbar.set_text ("0%");
+
     var status_lbl = new Label ("Clicks: 0");
     var state = new GtkDemoState ();
 
@@ -35,6 +39,12 @@ int main (string[] args) {
     btn_inc.clicked.connect ((sender) => {
         state.clicks = state.clicks + 1;
         status_lbl.set_text (@"Clicks: $(state.clicks) | $(entry.get_text ())");
+        if (chk.get_active ()) {
+            int pct = (state.clicks * 10) % 110;
+            if (pct > 100) pct = 100;
+            pbar.set_fraction ((double) pct / 100.0);
+            pbar.set_text (@"$pct%");
+        }
     });
 
     var btn_quit = new Button ("Quit");
@@ -47,6 +57,9 @@ int main (string[] args) {
 
     vbox.pack_start (title_lbl);
     vbox.pack_start (entry);
+    vbox.pack_start (chk);
+    vbox.pack_start (pbar);
+    vbox.pack_start (new Separator ());
     vbox.pack_start (hbox);
     vbox.pack_start (status_lbl);
 

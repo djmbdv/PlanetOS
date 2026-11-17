@@ -2,57 +2,24 @@
 
 namespace Planet.Kernel {
 
-    [AsmBody(@"
-        # Espera (con limite) a que el controlador PS/2 8042 pueda recibir comandos (bit 1 de 0x64 = 0)
-        mov $10000, %rcx
-    _ps2_w_wait:
-        in $0x64, %al
-        test $0x02, %al
-        jz _ps2_w_done
-        dec %rcx
-        jnz _ps2_w_wait
-    _ps2_w_done:
-        ret
-    ")]
-    public extern void ps2_wait_write ();
+    public static void ps2_wait_write () {
+        for (int i = 0; i < 10000; i++) {
+            if ((port_in8 (0x64) & 0x02) == 0)
+                return;
+        }
+    }
 
-    [AsmBody(@"
-        # Espera (con limite) a que haya un byte disponible en el buffer de salida PS/2 (bit 0 de 0x64 = 1)
-        mov $10000, %rcx
-    _ps2_r_wait:
-        in $0x64, %al
-        test $0x01, %al
-        jnz _ps2_r_done
-        dec %rcx
-        jnz _ps2_r_wait
-    _ps2_r_done:
-        ret
-    ")]
-    public extern void ps2_wait_read ();
+    public static void ps2_wait_read () {
+        for (int i = 0; i < 10000; i++) {
+            if ((port_in8 (0x64) & 0x01) != 0)
+                return;
+        }
+    }
 
-    [AsmBody(@"
-        # Envia byte de comando al puerto de control 0x64 del 8042 (cmd en rdi)
-        mov %dil, %al
-        out %al, $0x64
-        ret
-    ")]
-    public extern void out64 (int cmd);
-
-    [AsmBody(@"
-        # Envia byte de datos al puerto 0x60 del 8042 (data en rdi)
-        mov %dil, %al
-        out %al, $0x60
-        ret
-    ")]
-    public extern void out60 (int data);
-
-    [AsmBody(@"
-        # Lee un byte del puerto de datos 0x60 del 8042
-        xor %eax, %eax
-        in $0x60, %al
-        ret
-    ")]
-    public extern int in60 ();
+    public static void out64 (int cmd) { port_out8 (0x64, cmd); }
+    public static void out60 (int data) { port_out8 (0x60, data); }
+    public static int in60 () { return port_in8 (0x60); }
+    public static int in64 () { return port_in8 (0x64); }
 
     [AsmBody(@"
         # Desenmascara IRQ2 (cascada en PIC maestro 0x21) e IRQ12 (raton en PIC esclavo 0xA1)
@@ -68,7 +35,7 @@ namespace Planet.Kernel {
 
     [AsmBody(@"
         # Handler de interrupcion IRQ12 (vector 44): lee byte del raton en 0x60,
-        # lo inserta en el ring buffer circular de 64 bytes en 0x106300 (head en 0x106340)
+        # lo inserta en el ring buffer circular de 256 bytes en 0x106300 (head en 0x106400)
         # y envia EOI (0x20) al PIC esclavo (0xA0) y al maestro (0x20)
         push %rax
         push %rcx
@@ -76,12 +43,12 @@ namespace Planet.Kernel {
         mov $0x60, %dx
         in %dx, %al
         movzbl %al, %eax
-        mov $0x106340, %rcx
+        mov $0x106400, %rcx
         mov (%rcx), %edx
-        and $63, %edx
+        and $255, %edx
         mov %al, 0x106300(%rdx)
         inc %edx
-        and $63, %edx
+        and $255, %edx
         mov %edx, (%rcx)
         mov $0x20, %al
         out %al, $0xA0
@@ -108,8 +75,8 @@ namespace Planet.Kernel {
 
     public class Mouse : Object {
         private const int M_BUF = 0x106300;
-        private const int M_HEAD = 0x106340;
-        private const int M_TAIL = 0x106348;
+        private const int M_HEAD = 0x106400;
+        private const int M_TAIL = 0x106408;
 
         private static void send_mouse (int val) {
             ps2_wait_write ();
@@ -121,8 +88,12 @@ namespace Planet.Kernel {
         }
 
         public static void init () {
+            for (int f = 0; f < 32 && (in64 () & 0x01) != 0; f++) {
+                in60 ();
+            }
             mmio_write32 (M_HEAD, 0);
             mmio_write32 (M_TAIL, 0);
+            mouse_phase = 0;
             ps2_wait_write ();
             out64 (0xA8); // Enable auxiliary PS/2 port
             ps2_wait_write ();
@@ -144,9 +115,9 @@ namespace Planet.Kernel {
             int tail = mmio_read32 (M_TAIL);
             if (head == tail)
                 return -1;
-            int addr = M_BUF + (tail & 63);
+            int addr = M_BUF + (tail & 255);
             int v = (mmio_read32 (addr & ~3) >> ((addr & 3) * 8)) & 0xFF;
-            mmio_write32 (M_TAIL, (tail + 1) & 63);
+            mmio_write32 (M_TAIL, (tail + 1) & 255);
             return v;
         }
 
@@ -167,12 +138,14 @@ namespace Planet.Kernel {
                     if ((mouse_b0 & 0xC0) == 0) {
                         int dx = ((mouse_b0 & 0x10) != 0) ? (mouse_b1 - 256) : mouse_b1;
                         int dy = ((mouse_b0 & 0x20) != 0) ? (b - 256) : b;
+                        int max_x = (Fb.width () > 0) ? (Fb.width () - 1) : 799;
+                        int max_y = (Fb.height () > 0) ? (Fb.height () - 1) : 599;
                         mouse_x = mouse_x + dx;
                         mouse_y = mouse_y - dy;
                         if (mouse_x < 0) mouse_x = 0;
-                        if (mouse_x > 799) mouse_x = 799;
+                        if (mouse_x > max_x) mouse_x = max_x;
                         if (mouse_y < 0) mouse_y = 0;
-                        if (mouse_y > 599) mouse_y = 599;
+                        if (mouse_y > max_y) mouse_y = max_y;
                     }
                     mouse_btn = mouse_b0 & 0x07;
                     mouse_phase = 0;
