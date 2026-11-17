@@ -373,9 +373,37 @@ namespace Wm {
 
         // --- plumbing -------------------------------------------------
 
+        private bool hw_cursor = false;
+
+        private void init_hw_cursor () {
+            if ((Sys.gpu_info () & 1) == 0)
+                return;
+            var cb = new uint8[16384]; // 64x64 BGRA
+            // Crisp 12x18 arrow cursor with 1px dark outline
+            for (int y = 0; y < 18; y++) {
+                int span = (y < 12) ? (y + 1) : ((y == 12) ? 6 : (y - 7));
+                if (y >= 13)
+                    span = 4;
+                int x0 = (y >= 13) ? (y - 9) : 0;
+                int x1 = (y >= 13) ? (x0 + span) : span;
+                for (int x = x0; x < x1 && x < 64; x++) {
+                    bool edge = (x == x0 || x == x1 - 1 || y == 0 || y == 17 || (y == 11 && x >= 5));
+                    int off = (y * 64 + x) * 4;
+                    if (edge) {
+                        cb[off + 0] = 20; cb[off + 1] = 24; cb[off + 2] = 36; cb[off + 3] = 255;
+                    } else {
+                        cb[off + 0] = 255; cb[off + 1] = 252; cb[off + 2] = 248; cb[off + 3] = 255;
+                    }
+                }
+            }
+            if (Sys.gpu_cursor_set (cb, 0, 0) == 0)
+                hw_cursor = true;
+        }
+
         public void attach (Window w) {
             screen = w;
             attached = true;
+            init_hw_cursor ();
         }
 
         public void shutdown () {
@@ -385,20 +413,39 @@ namespace Wm {
 
         public bool frame () {
             mods = Sys.key_mods ();
-            for (int i = 0; i < 16; i++) {
+            bool had_motion = false;
+            int mot_x = 0;
+            int mot_y = 0;
+            for (int i = 0; i < 32; i++) {
                 var ev = screen.poll_event ();
                 if (ev.type == EventType.NONE)
                     break;
                 if (ev.type == EventType.KEY_PRESS) {
+                    if (had_motion) {
+                        pointer_motion (mot_x, mot_y);
+                        had_motion = false;
+                    }
                     key_press_mod (ev.keyval, mods);
                 } else if (ev.type == EventType.BUTTON_PRESS) {
+                    if (had_motion) {
+                        pointer_motion (mot_x, mot_y);
+                        had_motion = false;
+                    }
                     pointer_press (ev.x, ev.y);
                 } else if (ev.type == EventType.BUTTON_RELEASE) {
+                    if (had_motion) {
+                        pointer_motion (mot_x, mot_y);
+                        had_motion = false;
+                    }
                     pointer_release ();
                 } else if (ev.type == EventType.MOTION_NOTIFY) {
-                    pointer_motion (ev.x, ev.y);
+                    mot_x = ev.x;
+                    mot_y = ev.y;
+                    had_motion = true;
                 }
             }
+            if (had_motion)
+                pointer_motion (mot_x, mot_y);
             if (dragging) {
                 if ((screen.pointer_mask () & 1) == 0)
                     pointer_release ();
@@ -541,8 +588,12 @@ namespace Wm {
 
         private void animate_damage (int mx, int my) {
             if (mx != last_mx || my != last_my) {
-                damage (last_mx - 2, last_my - 2, 16, 22);
-                damage (mx - 2, my - 2, 16, 22);
+                if (hw_cursor) {
+                    Sys.gpu_cursor_move (mx, my);
+                } else {
+                    damage (last_mx - 2, last_my - 2, 16, 22);
+                    damage (mx - 2, my - 2, 16, 22);
+                }
                 last_mx = mx;
                 last_my = my;
             }
@@ -1181,7 +1232,8 @@ namespace Wm {
             draw_windows (cr);
             draw_dock (cr);
             draw_top_bar (cr);
-            draw_cursor (cr, mx, my);
+            if (!hw_cursor)
+                draw_cursor (cr, mx, my);
         }
 
         private void draw_background (Context cr) {
@@ -1829,7 +1881,7 @@ private int interactive (Compositor comp) {
     }
     comp.attach (win);
     var loop = new MainLoop ();
-    timeout_add (33, () => {
+    timeout_add (16, () => {
         if (!comp.frame ()) {
             loop.quit ();
             return false;

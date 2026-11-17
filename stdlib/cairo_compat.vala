@@ -164,9 +164,9 @@ namespace Cairo {
             int dg = (dst >> 8) & 0xFF;
             int db = dst & 0xFF;
             int ia = 255 - src_a;
-            int rr = (src_r * src_a + dr * ia) / 255;
-            int rg = (src_g * src_a + dg * ia) / 255;
-            int rb = (src_b * src_a + db * ia) / 255;
+            int rr = ((src_r * src_a + dr * ia + 128) * 257) >> 16;
+            int rg = ((src_g * src_a + dg * ia + 128) * 257) >> 16;
+            int rb = ((src_b * src_a + db * ia + 128) * 257) >> 16;
             __c_poke32 (addr, (255 << 24) | (rr << 16) | (rg << 8) | rb);
         }
 

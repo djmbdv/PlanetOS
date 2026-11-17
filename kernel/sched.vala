@@ -5,8 +5,29 @@ namespace Planet.Kernel {
     private const int SCHED_CUR_ADDR = 0x123FF0;
     private const int SCHED_EN_ADDR  = 0x123FF8;
     private const int TCB_BASE       = 0x124000;
+    private const int FXSAVE_BASE    = 0x125000;
     private const int MAX_TASKS      = 16;
     private const int TCB_SIZE       = 128;
+
+    [AsmBody(@"
+        .byte 0x0f, 0xae, 0x07
+        ret
+    ")]
+    public extern void fxsave_to (int addr);
+
+    [AsmBody(@"
+        .byte 0x0f, 0xae, 0x0f
+        ret
+    ")]
+    public extern void fxrstor_from (int addr);
+
+    private static void init_fx_area (int tid) {
+        int fx = FXSAVE_BASE + tid * 512;
+        for (int i = 0; i < 512; i += 8)
+            mmio_write64 (fx + i, 0);
+        mmio_write16 (fx + 0, 0x037F);  // x87 FCW default
+        mmio_write32 (fx + 24, 0x1F80); // SSE MXCSR default
+    }
 
     private const int TASK_FREE    = 0;
     private const int TASK_READY   = 1;
@@ -56,6 +77,10 @@ namespace Planet.Kernel {
             }
         }
 
+        if (next != cur) {
+            fxsave_to (FXSAVE_BASE + cur * 512);
+        }
+
         int next_tcb = TCB_BASE + next * TCB_SIZE;
         mmio_write64 (next_tcb, TASK_RUNNING);
         mmio_write64 (SCHED_CUR_ADDR, next);
@@ -65,6 +90,9 @@ namespace Planet.Kernel {
         int target_cr3 = (ncr3 != 0) ? ncr3 : Vmm.KERNEL_CR3;
         if (vmm_read_cr3 () != target_cr3) {
             vmm_write_cr3 (target_cr3);
+        }
+        if (next != cur) {
+            fxrstor_from (FXSAVE_BASE + next * 512);
         }
         return mmio_read64 (next_tcb + 8);
     }
@@ -176,6 +204,7 @@ namespace Planet.Kernel {
                         mmio_write8 (tcb + 48 + k, read_u8 (name_ptr + k));
                     }
                     mmio_write8 (tcb + 48 + nmax, 0);
+                    init_fx_area (tid);
                     mmio_write64 (tcb + 0, TASK_READY);
                     return tid;
                 }
@@ -195,7 +224,14 @@ namespace Planet.Kernel {
             mmio_write8 (stack_base + 3, 'e');
             mmio_write8 (stack_base + 4, 'a');
             mmio_write8 (stack_base + 5, 'd');
-            int tid = spawn_ready (entry, arg_sp, stack_base, stack_base, 6);
+            int ucr3 = current_cr3 ();
+            int tid = -1;
+            if (ucr3 != 0 && ucr3 != Vmm.KERNEL_CR3) {
+                Vmm.map_user_range (ucr3, stack_base, 16 * 4096);
+                tid = spawn_user_ready (entry, arg_sp, stack_base, 16, ucr3, stack_base, 6);
+            } else {
+                tid = spawn_ready (entry, arg_sp, stack_base, stack_base, 6);
+            }
             if (tid < 0) {
                 for (int p = 0; p < 16; p++)
                     Pmm.free_frame (stack_base + p * 4096);
@@ -263,6 +299,7 @@ namespace Planet.Kernel {
                         mmio_write8 (tcb + 48 + k, read_u8 (name_ptr + k));
                     }
                     mmio_write8 (tcb + 48 + nmax, 0);
+                    init_fx_area (tid);
                     mmio_write64 (tcb + 0, TASK_READY);
                     return tid;
                 }
@@ -306,8 +343,19 @@ namespace Planet.Kernel {
                     Pmm.free_frame (kbase + p * 4096);
                 }
             }
-            if (ucr3 != 0) {
-                Vmm.destroy_user_space (ucr3);
+            if (ucr3 != 0 && ucr3 != current_cr3 ()) {
+                bool shared = false;
+                for (int ot = 0; ot < MAX_TASKS; ot++) {
+                    if (ot == tid)
+                        continue;
+                    int otcb = TCB_BASE + ot * TCB_SIZE;
+                    if (mmio_read64 (otcb) != TASK_FREE && mmio_read64 (otcb + 88) == ucr3) {
+                        shared = true;
+                        break;
+                    }
+                }
+                if (!shared)
+                    Vmm.destroy_user_space (ucr3);
             }
             mmio_write64 (tcb + 88, 0);
             mmio_write64 (tcb + 96, 0);
