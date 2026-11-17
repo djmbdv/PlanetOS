@@ -82,7 +82,7 @@ namespace PlanetShell {
             if (env_keys[i] == name)
                 return env_vals[i];
         }
-        return "";
+        return Sys.getenv (name);
     }
 
     private void set_var (string name, string val) {
@@ -531,14 +531,20 @@ namespace PlanetShell {
         if (cmd == "export") {
             for (int i = 1; i < args.length; i++) {
                 int eq = args[i].index_of ("=");
-                if (eq > 0)
-                    set_var (args[i].substring (0, eq), args[i].substring (eq + 1));
+                if (eq > 0) {
+                    string k = args[i].substring (0, eq);
+                    string v = args[i].substring (eq + 1);
+                    set_var (k, v);
+                    Sys.setenv (k, v);
+                }
             }
             return 0;
         }
         if (cmd == "unset") {
-            for (int i = 1; i < args.length; i++)
+            for (int i = 1; i < args.length; i++) {
                 unset_var (args[i]);
+                Sys.unsetenv (args[i]);
+            }
             return 0;
         }
         if (cmd == "env" || cmd == "set") {
@@ -569,7 +575,7 @@ namespace PlanetShell {
             print ("          cat <file>, write <file> <text>, rm <file>, cp <src> <dst>,\n");
             print ("          mv <src> <dst>, touch <file>, echo, test/[],\n");
             print ("          export, unset, env, sh <script>, exec <file> [args] [&], wait <tid>,\n");
-            print ("          ticks, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
+            print ("          ticks, date, uptime, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
             print ("          <prog> [args] runs <prog>.elf directly (case-insensitive, no exec needed)\n");
             return 0;
         }
@@ -712,6 +718,30 @@ namespace PlanetShell {
         if (cmd == "ticks") {
             int t = Sys.ticks ();
             print (@"ticks: $t\n");
+            return 0;
+        }
+        if (cmd == "date") {
+            int pk = Sys.rtc_time ();
+            int yr  = 2000 + ((pk >> 26) & 0x3f);
+            int mon = (pk >> 22) & 0x0f;
+            int day = (pk >> 17) & 0x1f;
+            int hr  = (pk >> 12) & 0x1f;
+            int min = (pk >> 6) & 0x3f;
+            int sec = pk & 0x3f;
+            string smon = mon < 10 ? @"0$mon" : @"$mon";
+            string sday = day < 10 ? @"0$day" : @"$day";
+            string shr  = hr  < 10 ? @"0$hr"  : @"$hr";
+            string smin = min < 10 ? @"0$min" : @"$min";
+            string ssec = sec < 10 ? @"0$sec" : @"$sec";
+            print (@"$yr-$smon-$sday $shr:$smin:$ssec UTC\n");
+            return 0;
+        }
+        if (cmd == "uptime") {
+            int t = Sys.ticks ();
+            int secs = t / 100;
+            int cs = t % 100;
+            string scs = cs < 10 ? @"0$cs" : @"$cs";
+            print (@"up $secs.$(scs)s ($t ticks)\n");
             return 0;
         }
         if (cmd == "mem") {
@@ -981,6 +1011,9 @@ namespace PlanetShell {
         env_vals = new GenericArray<string> ();
         set_var ("SHELL", "shell.elf");
         set_var ("PS1", "planet> ");
+        set_var ("OS", Sys.getenv ("OS"));
+        set_var ("ARCH", Sys.getenv ("ARCH"));
+        set_var ("TARGET", Sys.getenv ("TARGET"));
 
         if (args.length > 1)
             return run_script (canonical_path (abs_path (args[1])));

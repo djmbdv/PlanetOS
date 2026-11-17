@@ -258,6 +258,31 @@ else
     ok "no_null_check"
 fi
 
+if "$PLANC" --strict-null "$WORK/null_deref.vala" -o "$WORK/null_deref_sn" 2>"$WORK/sn.err"; then
+    ko "strict_null_reject" "expected compile error for unguarded T?"
+elif ! grep -q "cannot dereference nullable" "$WORK/sn.err"; then
+    ko "strict_null_reject" "unexpected error: $(cat "$WORK/sn.err")"
+else
+    ok "strict_null_reject"
+fi
+
+cat >"$WORK/strict_null_ok.vala" <<'EOF'
+class Box { public int x = 7; }
+int main () {
+    Box? b = new Box ();
+    if (b != null)
+        return b.x == 7 ? 0 : 1;
+    return 1;
+}
+EOF
+if ! "$PLANC" --strict-null "$WORK/strict_null_ok.vala" -o "$WORK/strict_null_ok" 2>"$WORK/sn_ok.err"; then
+    ko "strict_null_narrowed" "compile failed: $(cat "$WORK/sn_ok.err")"
+elif ! "$WORK/strict_null_ok"; then
+    ko "strict_null_narrowed" "non-zero exit"
+else
+    ok "strict_null_narrowed"
+fi
+
 cat >"$WORK/bad_cast.vala" <<'EOF'
 abstract class Base {
     public abstract int kind();
@@ -518,7 +543,7 @@ img[sd_start * 4096:sd_start * 4096 + len(sd_bytes)] = sd_bytes
 
 open(sys.argv[1], "wb").write(img)
 PYEOF
-    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/fb.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/mouse.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/vfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
+    if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/fb.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/vmm.vala" "$ROOT/kernel/env.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/rtc.vala" "$ROOT/kernel/mouse.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/vfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
         printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec cairo_demo.elf --once\nexec spv_demo.elf --once\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
@@ -537,7 +562,7 @@ PYEOF
     p_elf="$WORK/planc.elf"
     p_disk="$WORK/planet_planc_disk.img"
     p_ser="$WORK/qemu_planc_serial.log"
-    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
+    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
         ko "planetos_planc_qemu" "planc.elf compile failed: $(cat "$WORK/p_elf.err")"
     else
     python3 - "$p_disk" "$s_bin" "$p_elf" "$HERE/valid/utf8.vala" "$HERE/valid/class_basic.vala" << 'PYEOF'
@@ -640,6 +665,28 @@ PYEOF
     else
         ok "spirv_shader"
     fi
+fi
+
+echo
+echo "== -O1 optimization =="
+if ! "$PLANC" -O1 "$HERE/valid/opt_o1.vala" -o "$WORK/opt_o1_bin" 2>"$WORK/opt_o1.err"; then
+    ko "opt_o1_flag" "compile failed: $(cat "$WORK/opt_o1.err")"
+elif ! "$WORK/opt_o1_bin" >"$WORK/opt_o1.stdout" 2>&1; then
+    ko "opt_o1_flag" "non-zero exit"
+elif ! cmp -s "$WORK/opt_o1.stdout" "$HERE/valid/opt_o1.out"; then
+    ko "opt_o1_flag" "stdout differs from opt_o1.out"
+else
+    ok "opt_o1_flag"
+fi
+
+if ! "$PLANC" -O2 "$HERE/valid/opt_o2.vala" -o "$WORK/opt_o2_bin" 2>"$WORK/opt_o2.err"; then
+    ko "opt_o2_flag" "compile failed: $(cat "$WORK/opt_o2.err")"
+elif ! "$WORK/opt_o2_bin" >"$WORK/opt_o2.stdout" 2>&1; then
+    ko "opt_o2_flag" "non-zero exit"
+elif ! cmp -s "$WORK/opt_o2.stdout" "$HERE/valid/opt_o2.out"; then
+    ko "opt_o2_flag" "stdout differs from opt_o2.out"
+else
+    ok "opt_o2_flag"
 fi
 
 echo

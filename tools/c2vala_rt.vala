@@ -28,3 +28,28 @@ public int c_strncmp (string a, string b, size_t n) {
     }
     return 0;
 }
+
+public string c_chr (int c) {
+    if (c == 10) return "\n";
+    if (c == 9) return "\t";
+    if (c == 13) return "\r";
+    if (c >= 32 && c <= 126) {
+        string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        return ascii.substring (c - 32, 1);
+    }
+    return "?";
+}
+
+public string c_hex (uint64 v, bool upper) {
+    if (v == 0)
+        return "0";
+    string digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    string out_s = "";
+    uint64 cur = v;
+    while (cur > 0) {
+        int d = (int) (cur & 0xf);
+        out_s = digits.substring (d, 1) + out_s;
+        cur = cur >> 4;
+    }
+    return out_s;
+}

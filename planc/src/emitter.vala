@@ -309,7 +309,14 @@ namespace Planc {
             return new Label ();
         }
 
+        public int opt_level { get; set; default = 0; }
+        private int last_push_rax_pos = -1;
+        private int last_store_local_pos = -1;
+        private int last_store_local_slot = -1;
+
         public void bind (Label l) {
+            last_push_rax_pos = -1;
+            last_store_local_pos = -1;
             l.target = code.length;
         }
 
@@ -470,6 +477,15 @@ namespace Planc {
         // mov rax, imm: 32-bit sign-extended form (48 C7 C0 imm32) when the
         // value fits, movabs (48 B8 imm64) otherwise.
         public void mov_rax_imm (int64 v) {
+            if (opt_level >= 1 && v == 0) {
+                xor_eax ();
+                return;
+            }
+            if (opt_level >= 2 && v > 0 && v <= int32.MAX) {
+                code.u8 (0xB8);
+                code.u32le ((uint32) v);
+                return;
+            }
             if (v >= int32.MIN && v <= int32.MAX) {
                 code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC0);
                 code.u32le ((uint32) (int32) v);
@@ -550,6 +566,14 @@ namespace Planc {
         public void add_rax_imm (int disp) {
             if (disp == 0)
                 return;
+            if (opt_level >= 2 && disp == 1) {
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC0); // inc %rax
+                return;
+            }
+            if (opt_level >= 2 && disp == -1) {
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC8); // dec %rax
+                return;
+            }
             if (disp >= -128 && disp <= 127) {
                 code.u8 (0x48); code.u8 (0x83); code.u8 (0xC0);
                 code.u8 ((uint8) disp);
@@ -638,6 +662,17 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0xC7);
             emit_modrm_disp (0, 5, slot_offset (slot));
             code.u32le (0);
+        }
+
+        public void zero_local_batch (int start_slot, int end_slot) {
+            if (opt_level >= 2 && async_task_rbp_offset == 0 && end_slot - start_slot >= 2) {
+                xor_eax ();
+                for (int s = start_slot; s < end_slot; s++)
+                    store_rbp_disp (slot_offset (s));
+                return;
+            }
+            for (int s = start_slot; s < end_slot; s++)
+                zero_local (s);
         }
 
         // Fills array elements [rax + 16 + 8*i] for 0 <= i < rcx with
@@ -745,8 +780,23 @@ namespace Planc {
         }
 
         // push rax / pop rax                 50 / 58
-        public void push_rax () { push_reg (Reg.RAX); }
-        public void pop_rax () { pop_reg (Reg.RAX); }
+        public void push_rax () {
+            int p = code.length;
+            push_reg (Reg.RAX);
+            if (opt_level >= 1 && code.length == p + 1)
+                last_push_rax_pos = p;
+            else
+                last_push_rax_pos = -1;
+        }
+        public void pop_rax () {
+            if (opt_level >= 1 && last_push_rax_pos >= 0 && code.length == last_push_rax_pos + 1) {
+                code.truncate (last_push_rax_pos);
+                last_push_rax_pos = -1;
+                return;
+            }
+            last_push_rax_pos = -1;
+            pop_reg (Reg.RAX);
+        }
 
         // ------------------------------------------------------------------
         // Locals: slots live at [rbp - 8*(slot+1)]. Positive displacements
@@ -794,6 +844,11 @@ namespace Planc {
                 code.u32le ((uint32) (80 + slot * 8));
                 return;
             }
+            if (opt_level >= 1 && last_store_local_slot == slot && code.length == last_store_local_pos) {
+                last_store_local_slot = -1;
+                return;
+            }
+            last_store_local_slot = -1;
             load_rbp_disp (slot_offset (slot));
         }
 
@@ -806,6 +861,10 @@ namespace Planc {
                 return;
             }
             store_rbp_disp (slot_offset (slot));
+            if (opt_level >= 1) {
+                last_store_local_slot = slot;
+                last_store_local_pos = code.length;
+            }
         }
 
         public void lea_local (int slot) {
@@ -1192,6 +1251,100 @@ namespace Planc {
         // ------------------------------------------------------------------
 
         // void* __planc_alloc(uint64 rdi = payload_bytes, uint64 rsi = elem_ref)
+        public void emit_rt_weak (GenericArray<Symbol> symbols) {
+            // __planc_weak_make(rdi = obj_ptr) -> rax = weak_box (+1 ref) or 0
+            var s_make = here ();
+            var l_make_zero = new_label ();
+            var l_make_retain = new_label ();
+            // test rdi, rdi
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_make_zero);
+            // mov rax, [rdi + 16]; test rax, rax; jne retain
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JNE, l_make_retain);
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            sub_rsp (8);
+            // mov rbx, rdi; mov edi, 8; xor esi, esi; call __planc_alloc
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB);
+            code.u8 (0xBF); code.u32le (8u);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            // mov [rax + 16], rbx; mov [rbx + 16], rax
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x58); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x43); code.u8 (0x10);
+            add_rsp (8);
+            pop_reg (Reg.RBX);
+            pop_rbp ();
+            bind (l_make_retain);
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            sub_rsp (8);
+            // mov rbx, rax; mov rdi, rax; call __planc_ref; mov rax, rbx
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC3);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7);
+            call_rel32 ("__planc_ref");
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD8);
+            add_rsp (8);
+            pop_reg (Reg.RBX);
+            pop_rbp ();
+            ret ();
+            bind (l_make_zero);
+            code.u8 (0x31); code.u8 (0xC0); // xor eax, eax
+            ret ();
+            symbols.add (new Symbol ("__planc_weak_make", s_make, here () - s_make));
+
+            // __planc_weak_load(rdi = weak_box) -> rax = obj_ptr (+1 ref) or 0
+            var s_load = here ();
+            var l_load_zero = new_label ();
+            // test rdi, rdi; je zero
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_load_zero);
+            // mov rax, [rdi + 16]; test rax, rax; je zero
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_load_zero);
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            sub_rsp (8);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC3); // mov rbx, rax
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7); // mov rdi, rax
+            call_rel32 ("__planc_ref");
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD8); // mov rax, rbx
+            add_rsp (8);
+            pop_reg (Reg.RBX);
+            pop_rbp ();
+            ret ();
+            bind (l_load_zero);
+            code.u8 (0x31); code.u8 (0xC0);
+            ret ();
+            symbols.add (new Symbol ("__planc_weak_load", s_load, here () - s_load));
+
+            // __planc_weak_clear(rdi = obj_ptr)
+            var s_clr = here ();
+            var l_clr_done = new_label ();
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_clr_done);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x10); // mov rax, [rdi + 16]
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC0); // test rax, rax
+            branch (BranchKind.JE, l_clr_done);
+            // mov qword ptr [rax + 16], 0; mov qword ptr [rdi + 16], 0
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x40); code.u8 (0x10); code.u32le (0u);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x47); code.u8 (0x10); code.u32le (0u);
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7); // mov rdi, rax
+            call_rel32 ("__planc_unref");
+            pop_rbp ();
+            bind (l_clr_done);
+            ret ();
+            symbols.add (new Symbol ("__planc_weak_clear", s_clr, here () - s_clr));
+        }
+
         public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1, bool target_planetos = false) {
             var l_class_loop = new_label ();
             var l_found_class = new_label ();

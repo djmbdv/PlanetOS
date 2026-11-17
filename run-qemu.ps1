@@ -171,6 +171,8 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf'))
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'compositor.vala'), '-o', (Out-Path 'compositor.elf'))
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf'))
+    Invoke-Planc @('--target=planetos', (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path $Root 'tools' 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf'))
+    Invoke-Planc @('--target=planetos', (Join-Path $Root 'planc' 'src' 'buffer.vala'), (Join-Path $Root 'planc' 'src' 'host_planetos.vala'), (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $Root 'tools' 'c2vala' 'ast.vala'), (Join-Path $Root 'tools' 'c2vala' 'preproc.vala'), (Join-Path $Root 'tools' 'c2vala' 'lexer.vala'), (Join-Path $Root 'tools' 'c2vala' 'parser.vala'), (Join-Path $Root 'tools' 'c2vala' 'translator.vala'), (Join-Path $Root 'tools' 'c2vala' 'main.vala'), '-o', (Out-Path 'c2vala.elf'))
     Invoke-Planc @('--target=planetos', '--image-base=0xA00000', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf'))
 
     Invoke-Planc @(
@@ -186,6 +188,7 @@ if (-not $NoBuild) {
         (Join-Path $SrcDir 'elf.vala'),
         (Join-Path $SrcDir 'dwarf.vala'),
         (Join-Path $SrcDir 'spirv.vala'),
+        (Join-Path $SrcDir 'opt.vala'),
         (Join-Path $SrcDir 'codegen.vala'),
         (Join-Path $SrcDir 'main.vala'),
         '-o', (Out-Path 'planc.elf')
@@ -199,8 +202,11 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'vga.vala'),
         (Join-Path $KernelDir 'fb.vala'),
         (Join-Path $KernelDir 'pmm.vala'),
+        (Join-Path $KernelDir 'vmm.vala'),
+        (Join-Path $KernelDir 'env.vala'),
         (Join-Path $KernelDir 'ramfs.vala'),
         (Join-Path $KernelDir 'keyboard.vala'),
+        (Join-Path $KernelDir 'rtc.vala'),
         (Join-Path $KernelDir 'mouse.vala'),
         (Join-Path $KernelDir 'ata.vala'),
         (Join-Path $KernelDir 'xfs.vala'),
@@ -232,6 +238,9 @@ if (-not $NoBuild) {
         (Out-Path 'mainloop_demo.elf') `
         (Out-Path 'compositor.elf') `
         (Out-Path 'pango_demo.elf') `
+        (Out-Path 'jsmn_demo.elf') `
+        (Out-Path 'c2vala.elf') `
+        (Join-Path $Root 'tools' 'c2vala_tests' 'cases' 'arith' 'main.c') `
         (Out-Path 'frag_pattern.spv')
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'

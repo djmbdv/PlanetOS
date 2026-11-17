@@ -19,9 +19,12 @@ namespace Planc {
         var dump = false;
         var bounds_check = true;
         var null_check = true;
+        var strict_null = false;
+        var allow_asm = true;
+        var opt_level = 0;
         var check_leaks = false;
         var freestanding = false;
-        var target_planetos = false;
+        var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
         uint64 image_base = 0;
 
@@ -39,6 +42,16 @@ namespace Planc {
                 bounds_check = false;
             } else if (a == "--no-null-check") {
                 null_check = false;
+            } else if (a == "--strict-null") {
+                strict_null = true;
+            } else if (a == "--no-asm") {
+                allow_asm = false;
+            } else if (a == "-O0") {
+                opt_level = 0;
+            } else if (a == "-O1" || a == "-O") {
+                opt_level = 1;
+            } else if (a == "-O2") {
+                opt_level = 2;
             } else if (a == "--check-leaks") {
                 check_leaks = true;
             } else if (a == "--freestanding") {
@@ -115,6 +128,10 @@ namespace Planc {
             return 1;
         }
 
+        if (opt_level > 0) {
+            Optimizer.optimize (program, opt_level);
+        }
+
         if (target_spirv) {
             try {
                 var spv = new SpirvBackend ();
@@ -133,9 +150,12 @@ namespace Planc {
         var codegen = new Codegen ();
         codegen.bounds_check = bounds_check;
         codegen.null_check = null_check;
+        codegen.strict_null = strict_null;
+        codegen.allow_asm = allow_asm;
         codegen.check_leaks = check_leaks;
         codegen.freestanding = freestanding;
         codegen.target_planetos = target_planetos;
+        codegen.opt_level = opt_level;
         try {
             codegen.generate (program);
         } catch (SemanticError e) {

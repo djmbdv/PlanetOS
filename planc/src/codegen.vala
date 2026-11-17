@@ -28,6 +28,9 @@ namespace Planc {
         public GenericArray<DebugFunc> debug_funcs { get; private set; }
         public bool bounds_check { get; set; default = true; }
         public bool null_check { get; set; default = true; }
+        public bool strict_null { get; set; default = false; }
+        public bool allow_asm { get; set; default = true; }
+        public int opt_level { get; set; default = 0; }
         public bool check_leaks { get; set; default = false; }
         public bool freestanding { get; set; default = false; }
         public bool target_planetos { get; set; default = false; }
@@ -68,6 +71,7 @@ namespace Planc {
         private GenericArray<int> local_slots;
         private GenericArray<bool> local_active;
         private GenericArray<bool> local_by_ref;
+        private GenericArray<bool> local_is_weak;
         private int next_var_slot;
         private GenericArray<Expr> pending_struct_exprs;
         private GenericArray<int> pending_struct_rel_slots;
@@ -149,6 +153,7 @@ namespace Planc {
 
         public Codegen () {
             emitter = new Emitter ();
+            emitter.opt_level = opt_level;
             symbols = new GenericArray<Symbol> ();
             debug_lines = new GenericArray<DebugLineEntry> ();
             debug_funcs = new GenericArray<DebugFunc> ();
@@ -158,6 +163,7 @@ namespace Planc {
             local_type_names = new GenericArray<string> ();
             local_slots = new GenericArray<int> ();
             local_active = new GenericArray<bool> ();
+            local_is_weak = new GenericArray<bool> ();
             break_labels = new GenericArray<Label> ();
             continue_labels = new GenericArray<Label> ();
             break_scope_marks = new GenericArray<int> ();
@@ -511,10 +517,19 @@ namespace Planc {
                     @"cyclic struct definition '$(sd.name)' at $(sd.line):$(sd.column)");
             visiting.add (sd.name);
             foreach (var fld in sd.fields) {
+                if (sd.is_union && is_ref_type (fld.field_type)) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"union '$(sd.name)' cannot contain reference-counted field '$(fld.name)' at $(fld.line):$(fld.column)");
+                }
                 if (fld.field_type == ValaType.STRUCT) {
                     unowned var sub = program.find_struct (fld.type_name);
-                    if (sub != null)
+                    if (sub != null) {
+                        if (sd.is_union && struct_has_string (sub)) {
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"union '$(sd.name)' cannot contain struct with reference-counted fields '$(fld.name)' at $(fld.line):$(fld.column)");
+                        }
                         visit_struct_cycle (sub, visiting, visited);
+                    }
                 }
             }
             visited.add (sd.name);
@@ -525,6 +540,15 @@ namespace Planc {
                 unowned var sd = program.find_struct (tname);
                 if (sd == null)
                     return 1;
+                if (sd.is_union) {
+                    int max_s = 1;
+                    foreach (var fld in sd.fields) {
+                        int fs = type_slots (fld.field_type, fld.type_name);
+                        if (fs > max_s)
+                            max_s = fs;
+                    }
+                    return max_s;
+                }
                 int total = 0;
                 foreach (var fld in sd.fields)
                     total += type_slots (fld.field_type, fld.type_name);
@@ -538,7 +562,7 @@ namespace Planc {
             foreach (unowned var fld in sd.fields) {
                 if (fld.name == fname) {
                     found = fld;
-                    return slot_off;
+                    return sd.is_union ? 0 : slot_off;
                 }
                 slot_off += type_slots (fld.field_type, fld.type_name);
             }
@@ -732,7 +756,7 @@ namespace Planc {
 
             foreach (var cd in ordered) {
                 unowned ClassDecl? base_cd = (cd.base_name != "") ? program.find_class (cd.base_name) : null;
-                cd.needs_finalizer = (cd.dtor != null) || (base_cd != null && base_cd.needs_finalizer);
+                cd.needs_finalizer = true;
 
                 foreach (var fld in cd.fields) {
                     if (base_cd != null) {
@@ -1114,12 +1138,16 @@ namespace Planc {
             return null;
         }
 
+        private static bool has_weak_slot (ClassDecl cd) {
+            return !cd.name.has_prefix ("GenericArray__") && !cd.name.has_prefix ("Channel__");
+        }
+
         private int class_total_field_slots (ClassDecl cd) {
-            int n = 0;
+            int n = has_weak_slot (cd) ? 1 : 0; // slot 0 on root class is reserved for __planc_weak_box
             if (cd.base_name != "") {
                 unowned var b = program.find_class (cd.base_name);
                 if (b != null)
-                    n += class_total_field_slots (b);
+                    n = class_total_field_slots (b);
             }
             foreach (var fld in cd.fields)
                 n += type_slots (fld.field_type, fld.type_name);
@@ -1127,7 +1155,7 @@ namespace Planc {
         }
 
         private int class_field_offset_slots (ClassDecl cd, string fname, out unowned ClassField? found) {
-            int base_off = 0;
+            int base_off = has_weak_slot (cd) ? 1 : 0; // slot 0 on root class is reserved for __planc_weak_box
             if (cd.base_name != "") {
                 unowned var b = program.find_class (cd.base_name);
                 if (b != null) {
@@ -1266,6 +1294,8 @@ namespace Planc {
                 var start_unref = emitter.here ();
                 emitter.emit_rt_unref (alloc_bss_offset, mem_panic_label);
                 symbols.add (new Symbol ("__planc_unref", start_unref, emitter.here () - start_unref));
+
+                emitter.emit_rt_weak (symbols);
             }
             if (need_async) {
                 emitter.emit_rt_async (async_bss_offset, symbols);
@@ -1494,6 +1524,7 @@ namespace Planc {
             local_type_names = new GenericArray<string> ();
             local_slots = new GenericArray<int> ();
             local_active = new GenericArray<bool> ();
+            local_is_weak = new GenericArray<bool> ();
             local_unmanaged = new GenericArray<bool> ();
             local_by_ref = new GenericArray<bool> ();
         }
@@ -2027,7 +2058,7 @@ namespace Planc {
         }
 
         private void push_local (string name, ValaType t, string tname, int slot,
-                                 bool unmanaged, bool by_ref = false) {
+                                 bool unmanaged, bool by_ref = false, bool is_weak = false) {
             locals.add (name);
             local_types.add (t);
             local_type_names.add (tname);
@@ -2035,6 +2066,34 @@ namespace Planc {
             local_active.add (true);
             local_unmanaged.add (unmanaged);
             local_by_ref.add (by_ref);
+            local_is_weak.add (is_weak);
+        }
+
+        private void emit_convert_to_weak () {
+            // Input: rax = obj_ptr (+1 strong ref, or 0).
+            // Output: rax = weak_box (+1 ref, or 0), and unrefs the strong temp obj_ptr.
+            emitter.push_rax ();
+            push_depth++;
+            emitter.mov_rdi_rax ();
+            call_aligned ("__planc_weak_make");
+            emitter.pop_reg (Reg.RDI);
+            push_depth--;
+            emitter.push_rax ();
+            push_depth++;
+            call_aligned ("__planc_unref");
+            emitter.pop_rax ();
+            push_depth--;
+        }
+
+        private void emit_load_weak (int ref_temp_slot) {
+            // Input: rax = weak_box (or 0).
+            // Output: rax = obj_ptr (+1 strong ref, or 0), registered in ref_temp_slot.
+            emitter.mov_rdi_rax ();
+            call_aligned ("__planc_weak_load");
+            if (ref_temp_slot >= 0) {
+                emitter.store_local (ref_temp_slot);
+                add_live_ref_slot (ref_temp_slot);
+            }
         }
 
         private void add_live_ref_slot (int slot) {
@@ -2807,10 +2866,13 @@ namespace Planc {
                     // the slot is zeroed (null) below and never read before
                     // the variable is assigned.
                 }
+                if (d.is_weak && ((vt != ValaType.CLASS && vt != ValaType.INTERFACE) || !is_nullable_type (vt, vtname)))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'weak' requires a nullable class or interface type, got $(type_label (vt, vtname)) at $(d.line):$(d.column)");
                 var n = type_slots (vt, vtname);
                 var slot = next_var_slot;
                 next_var_slot += n;
-                push_local (d.name, vt, vtname, slot, false);
+                push_local (d.name, vt, vtname, slot, false, false, d.is_weak);
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else
@@ -3155,6 +3217,13 @@ namespace Planc {
                                 ref_temps++;
                             }
                         }
+                    } else if (tt == ValaType.CLASS) {
+                        unowned var mcd = program.find_class (strip_null (tt_name));
+                        unowned ClassField? mcf = null;
+                        if (mcd != null && class_field_offset_slots (mcd, ma.member, out mcf) >= 0 && mcf != null && mcf.is_weak) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
                     }
                 } else if (ma.target_del_type != "") {
                     var vr = (VarRef) ma.target;
@@ -3182,10 +3251,25 @@ namespace Planc {
                             ref_temps++;
                         }
                     }
-                } else if (lookup (vr.name) < 0 && lookup_global (vr.name) < 0) {
-                    unowned var gm = find_this_prop_getter (vr.name);
-                    if (gm != null && gm.can_throw)
-                        check_domains_handled (gm.throws_domains, vr.line, vr.column);
+                } else {
+                    int vidx = lookup (vr.name);
+                    if (vidx >= 0) {
+                        if (local_is_weak[vidx]) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
+                    } else if (lookup_global (vr.name) < 0) {
+                        unowned var gm = find_this_prop_getter (vr.name);
+                        if (gm != null && gm.can_throw)
+                            check_domains_handled (gm.throws_domains, vr.line, vr.column);
+                        else if (current_class != null && !current.is_static) {
+                            unowned ClassField? tcf = null;
+                            if (class_field_offset_slots (current_class, vr.name, out tcf) >= 0 && tcf != null && tcf.is_weak) {
+                                pending_ref_exprs.add (e);
+                                ref_temps++;
+                            }
+                        }
+                    }
                 }
             } else if (e is IndexExpr) {
                 var ix = (IndexExpr) e;
@@ -3824,6 +3908,10 @@ namespace Planc {
 
         private void generate_function (Function f) throws SemanticError {
             if (f.is_asm_body) {
+                if (!allow_asm) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"[AsmBody] is forbidden under --no-asm in '$(f.name)' at $(f.asm_line):$(f.asm_column)");
+                }
                 var start = emitter.here ();
                 AsmAssembler.assemble (emitter, program, f);
                 symbols.add (new Symbol (f.name, start, emitter.here () - start));
@@ -3869,8 +3957,7 @@ namespace Planc {
 
             // Zero all ref temp slots in the prologue so unevaluated
             // short-circuit branches never leave stack garbage in them.
-            for (int s = ref_temp_start; s < total_slots; s++)
-                emitter.zero_local (s);
+            emitter.zero_local_batch (ref_temp_start, total_slots);
 
             var param_raw_slots = new int[f.params.length];
             var param_final_slots = new int[f.params.length];
@@ -4099,7 +4186,15 @@ namespace Planc {
                     emitter.load_local (0);
                     emitter.mov_rdi_rax ();
                     call_aligned (@"__planc_dtor_$(base_cd.name)");
+                } else if (has_weak_slot (current_class)) {
+                    emitter.load_local (0);
+                    emitter.mov_rdi_rax ();
+                    call_aligned ("__planc_weak_clear");
                 }
+            } else if (has_weak_slot (current_class)) {
+                emitter.load_local (0);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_weak_clear");
             }
         }
 
@@ -5396,16 +5491,18 @@ namespace Planc {
                 var tc = (TypeCheckExpr) e;
                 string ot_name = "";
                 var ot = expr_type_full (tc.operand, out ot_name);
-                if (tc.op == "cast" && tc.target_type == ValaType.INT) {
+                if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
                     if (!is_int_like (ot) && ot != ValaType.ENUM && !is_fp_type (ot))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"cannot cast $(type_label (ot, ot_name)) to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
-                    return ValaType.INT;
+                    tname = tc.target_type_name;
+                    return tc.target_type;
                 }
                 if (tc.op == "cast" && is_fp_type (tc.target_type)) {
                     if (!is_numeric_type (ot) && ot != ValaType.ENUM)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"cannot cast $(type_label (ot, ot_name)) to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
+                    tname = tc.target_type_name;
                     return tc.target_type;
                 }
                 if (tc.target_type == ValaType.ERROR) {
@@ -5421,6 +5518,7 @@ namespace Planc {
                     return ValaType.BOOL;
                 if (tc.op == "as") {
                     tname = strip_null (tc.target_type_name) + "?";
+                    tname = tc.target_type_name;
                     return tc.target_type;
                 }
                 tname = tc.target_type_name;
@@ -6044,11 +6142,15 @@ namespace Planc {
         }
 
         // Option B software null guard: emits zero instructions when `tt` is statically non-null.
-        private void emit_null_check_if_nullable (ValaType tt, string tt_name) {
-            if (null_check && is_nullable_type (tt, tt_name)) {
-                need_null_panic = true;
-                emitter.test_rax_rax ();
-                emitter.branch (BranchKind.JE, null_panic_label);
+        private void emit_null_check_if_nullable (ValaType tt, string tt_name) throws SemanticError {
+            if (is_nullable_type (tt, tt_name)) {
+                if (strict_null)
+                    throw new SemanticError.TYPE_MISMATCH (@"cannot dereference nullable '$(type_label (tt, tt_name))' without a null check");
+                if (null_check) {
+                    need_null_panic = true;
+                    emitter.test_rax_rax ();
+                    emitter.branch (BranchKind.JE, null_panic_label);
+                }
             }
         }
 
@@ -6356,7 +6458,7 @@ namespace Planc {
             }
         }
 
-        private void emit_field_store (ValaType ft, string ft_name, string op, Expr val)
+        private void emit_field_store (ValaType ft, string ft_name, string op, Expr val, bool is_weak = false)
                 throws SemanticError {
             emitter.push_rax ();
             push_depth++;
@@ -6388,6 +6490,8 @@ namespace Planc {
             if (op == "=") {
                 if (program_uses_heap && is_ref_type (ft)) {
                     consume_ref_expr (val);
+                    if (is_weak)
+                        emit_convert_to_weak ();
                     emitter.pop_rcx ();
                     push_depth--;
                     emitter.push_rax ();
@@ -6706,6 +6810,8 @@ namespace Planc {
                     if (d.init != null) {
                         gen_expr (d.init);
                         consume_ref_expr (d.init);
+                        if (d.is_weak)
+                            emit_convert_to_weak ();
                         emitter.store_local (slot);
                         cleanup_expr_temps (d.init);
                     } else if (vtype == ValaType.STRING && !is_nullable_type (vtype, vtname)) {
@@ -6727,7 +6833,7 @@ namespace Planc {
                         emitter.zero_local (slot);
                     }
                 }
-                push_local (d.name, vtype, vtname, slot, false);
+                push_local (d.name, vtype, vtname, slot, false, false, d.is_weak);
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else
@@ -6764,6 +6870,8 @@ namespace Planc {
                             }
                         } else if (program_uses_heap && is_ref_type (local_types[idx])) {
                             consume_ref_expr (a.value);
+                            if (local_is_weak[idx])
+                                emit_convert_to_weak ();
                             emitter.push_rax ();
                             push_depth++;
                             emitter.load_local (local_slots[idx]);
@@ -6892,6 +7000,7 @@ namespace Planc {
                 ValaType fa_vt = ValaType.VOID;
                 string fa_vt_name = "";
                 bool fa_is_field = false;
+                bool fa_is_weak = false;
 
                 if (peek_t == ValaType.CLASS || peek_t == ValaType.INTERFACE) {
                     var cname = strip_null (peek_name);
@@ -6923,6 +7032,7 @@ namespace Planc {
                     }
                     ft = cf.field_type;
                     ft_name = cf.type_name;
+                    fa_is_weak = cf.is_weak;
                     owner_label = cname;
                     byte_off = 16 + 8 * fslot;
                     string vt_name = "";
@@ -7012,7 +7122,7 @@ namespace Planc {
                     emitter.add_rax_imm (byte_off);
                 }
 
-                emit_field_store (ft, ft_name, fa.op, fa.value);
+                emit_field_store (ft, ft_name, fa.op, fa.value, fa_is_weak);
                 cleanup_expr_temps (fa.target);
                 cleanup_expr_temps (fa.value);
                 if (fa_is_field && fa.op == "=" && fa.target is VarRef) {
@@ -7792,7 +7902,7 @@ namespace Planc {
                 emitter.load_local (cn.ref_temp_slot);
             } else if (e is TypeCheckExpr) {
                 var tc = (TypeCheckExpr) e;
-                if (tc.op == "cast" && tc.target_type == ValaType.INT) {
+                if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
                     var ot = expr_type (tc.operand);
                     gen_expr (tc.operand);
                     if (ot == ValaType.FLOAT)
@@ -8205,6 +8315,8 @@ namespace Planc {
                         emitter.add_rax_imm (16 + 8 * fslot);
                     else
                         emitter.load_rax_disp (16 + 8 * fslot);
+                    if (cf.is_weak)
+                        emit_load_weak (m.ref_temp_slot);
                     if (is_fp_type (cf.field_type))
                         emitter.movq_xmm_rax (0);
                     return;
@@ -8530,6 +8642,8 @@ namespace Planc {
                         emitter.lea_rax_rbp_disp (struct_base_disp (local_slots[idx], n));
                     } else {
                         emitter.load_local (local_slots[idx]);
+                        if (local_is_weak[idx])
+                            emit_load_weak (v.ref_temp_slot);
                     }
                     if (is_fp_type (local_types[idx]))
                         emitter.movq_xmm_rax (0);
@@ -8563,6 +8677,8 @@ namespace Planc {
                                     emitter.add_rax_imm (16 + 8 * fslot);
                                 else
                                     emitter.load_rax_disp (16 + 8 * fslot);
+                                if (cf.is_weak)
+                                    emit_load_weak (v.ref_temp_slot);
                                 if (is_fp_type (cf.field_type))
                                     emitter.movq_xmm_rax (0);
                                 return;

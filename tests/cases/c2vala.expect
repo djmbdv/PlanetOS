@@ -1,0 +1,8 @@
+c2vala: wrote arith.vala
+=gcd=21
+=collatz(1)=0
+=collatz(2)=1
+=collatz(3)=7
+=collatz(4)=2
+=collatz(5)=5
+=collatz(6)=8

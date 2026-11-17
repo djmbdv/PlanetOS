@@ -1,0 +1,189 @@
+// Virtual Memory Manager (4 KiB page-table splitting, null-page unmap, guard pages).
+//
+// boot_mb2.vala identity-maps 1 GiB (512 x 2 MiB pages) in PD at 0x102000.
+// Vmm splits any 2 MiB PD entry into 512 x 4 KiB PT entries on demand so
+// individual 4 KiB pages (page 0x0 for NULL-deref protection, and per-process
+// stack guard pages) can be unmapped in hardware.
+
+namespace Planet.Kernel {
+
+    [AsmBody(@"
+        invlpg (%rdi)
+        ret
+    ")]
+    private extern void vmm_invlpg (int addr);
+
+    [AsmBody(@"
+        mov %cr3, %rax
+        ret
+    ")]
+    public extern int vmm_read_cr3 ();
+
+    [AsmBody(@"
+        mov %rdi, %cr3
+        ret
+    ")]
+    public extern void vmm_write_cr3 (int cr3);
+
+    public class Vmm : Object {
+        public const int KERNEL_CR3 = 0x100000;
+        private const int PD_BASE = 0x102000;
+        private const int MAX_SPLIT_ADDR = 0x40000000; // 1 GiB identity map
+
+        private static bool ensure_pt_in_pd (int pd_base, int addr, bool user_dir, out int pt_base) {
+            pt_base = 0;
+            if (addr < 0 || addr >= MAX_SPLIT_ADDR)
+                return false;
+            int pd_idx = addr >> 21;
+            int pde_addr = pd_base + pd_idx * 8;
+            int pde = mmio_read64 (pde_addr);
+            if ((pde & 0x01) == 0)
+                return false;
+            // Already split into a 4 KiB PT (PS bit 7 == 0)
+            if ((pde & 0x80) == 0) {
+                if (user_dir && (pde & 0x04) == 0)
+                    mmio_write64 (pde_addr, pde | 0x07);
+                pt_base = pde & ~0xFFF;
+                return true;
+            }
+            // Split 2 MiB page into 512 x 4 KiB pages (supervisor-only by default)
+            int pt = Pmm.alloc_frame ();
+            if (pt == 0)
+                return false;
+            int region_base = pd_idx << 21;
+            for (int i = 0; i < 512; i++) {
+                mmio_write64 (pt + i * 8, (region_base + i * 4096) | 0x03);
+            }
+            mmio_write64 (pde_addr, pt | (user_dir ? 0x07 : 0x03));
+            pt_base = pt;
+            return true;
+        }
+
+        private static bool ensure_pt (int addr, out int pt_base) {
+            return ensure_pt_in_pd (PD_BASE, addr, false, out pt_base);
+        }
+
+        public static int create_user_space () {
+            int pml4 = Pmm.alloc_frame ();
+            int pdpt = Pmm.alloc_frame ();
+            int pd = Pmm.alloc_frame ();
+            if (pml4 == 0 || pdpt == 0 || pd == 0) {
+                if (pml4 != 0) Pmm.free_frame (pml4);
+                if (pdpt != 0) Pmm.free_frame (pdpt);
+                if (pd != 0) Pmm.free_frame (pd);
+                return 0;
+            }
+            for (int i = 0; i < 512; i++) {
+                int pde = mmio_read64 (PD_BASE + i * 8);
+                if ((pde & 0x01) != 0 && (pde & 0x80) == 0) {
+                    // Clone already-split 4 KiB PT (e.g. page 0 unmapped)
+                    int src_pt = pde & ~0xFFF;
+                    int dst_pt = Pmm.alloc_frame ();
+                    if (dst_pt == 0) {
+                        mmio_write64 (pd + i * 8, 0);
+                        continue;
+                    }
+                    for (int j = 0; j < 512; j++) {
+                        mmio_write64 (dst_pt + j * 8, mmio_read64 (src_pt + j * 8) & ~0x04);
+                    }
+                    mmio_write64 (pd + i * 8, dst_pt | 0x03);
+                } else {
+                    mmio_write64 (pd + i * 8, pde & ~0x04);
+                }
+            }
+            mmio_write64 (pdpt + 0, pd | 0x07);
+            for (int i = 1; i < 512; i++) {
+                mmio_write64 (pdpt + i * 8, mmio_read64 (0x101000 + i * 8) & ~0x04);
+            }
+            mmio_write64 (pml4 + 0, pdpt | 0x07);
+            return pml4;
+        }
+
+        public static void destroy_user_space (int cr3) {
+            if (cr3 == 0 || cr3 == KERNEL_CR3)
+                return;
+            int pdpt = mmio_read64 (cr3) & ~0xFFF;
+            if (pdpt != 0) {
+                int pd = mmio_read64 (pdpt) & ~0xFFF;
+                if (pd != 0) {
+                    for (int i = 0; i < 512; i++) {
+                        int pde = mmio_read64 (pd + i * 8);
+                        if ((pde & 0x01) != 0 && (pde & 0x80) == 0) {
+                            int pt = pde & ~0xFFF;
+                            if (pt != 0)
+                                Pmm.free_frame (pt);
+                        }
+                    }
+                    Pmm.free_frame (pd);
+                }
+                Pmm.free_frame (pdpt);
+            }
+            Pmm.free_frame (cr3);
+        }
+
+        public static void map_user_4k (int cr3, int addr) {
+            if (cr3 == 0 || cr3 == KERNEL_CR3)
+                return;
+            int aligned = addr & ~0xFFF;
+            int pdpt = mmio_read64 (cr3) & ~0xFFF;
+            int pd = mmio_read64 (pdpt) & ~0xFFF;
+            int pt_base = 0;
+            if (!ensure_pt_in_pd (pd, aligned, true, out pt_base))
+                return;
+            int pt_idx = (aligned >> 12) & 0x1FF;
+            mmio_write64 (pt_base + pt_idx * 8, aligned | 0x07);
+            if (vmm_read_cr3 () == cr3)
+                vmm_invlpg (aligned);
+        }
+
+        public static void unmap_user_4k (int cr3, int addr) {
+            if (cr3 == 0 || cr3 == KERNEL_CR3)
+                return;
+            int aligned = addr & ~0xFFF;
+            int pdpt = mmio_read64 (cr3) & ~0xFFF;
+            int pd = mmio_read64 (pdpt) & ~0xFFF;
+            int pt_base = 0;
+            if (!ensure_pt_in_pd (pd, aligned, true, out pt_base))
+                return;
+            int pt_idx = (aligned >> 12) & 0x1FF;
+            mmio_write64 (pt_base + pt_idx * 8, 0);
+            if (vmm_read_cr3 () == cr3)
+                vmm_invlpg (aligned);
+        }
+
+        public static void map_user_range (int cr3, int start, int size) {
+            if (size <= 0)
+                return;
+            int first = start & ~0xFFF;
+            int last = (start + size - 1) & ~0xFFF;
+            for (int p = first; p <= last; p += 4096) {
+                map_user_4k (cr3, p);
+            }
+        }
+
+        public static void unmap_4k (int addr) {
+            int aligned = addr & ~0xFFF;
+            int pt_base = 0;
+            if (!ensure_pt (aligned, out pt_base))
+                return;
+            int pt_idx = (aligned >> 12) & 0x1FF;
+            mmio_write64 (pt_base + pt_idx * 8, 0);
+            vmm_invlpg (aligned);
+        }
+
+        public static void map_4k (int addr) {
+            int aligned = addr & ~0xFFF;
+            int pt_base = 0;
+            if (!ensure_pt (aligned, out pt_base))
+                return;
+            int pt_idx = (aligned >> 12) & 0x1FF;
+            mmio_write64 (pt_base + pt_idx * 8, aligned | 0x03);
+            vmm_invlpg (aligned);
+        }
+
+        public static void init () {
+            // Unmap page 0 (0x0000..0x0FFF) so any NULL pointer dereference triggers #PF
+            unmap_4k (0);
+        }
+    }
+}

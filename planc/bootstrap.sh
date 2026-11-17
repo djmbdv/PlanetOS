@@ -25,6 +25,7 @@ $HERE/src/asm.vala
 $HERE/src/dwarf.vala
 $HERE/src/elf.vala
 $HERE/src/spirv.vala
+$HERE/src/opt.vala
 $HERE/src/codegen.vala
 $HERE/src/main.vala
 $HERE/src/host_native.vala

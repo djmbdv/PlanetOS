@@ -1,0 +1,4 @@
+fault:vec=14
+cr2=0
+exec: exit=142
+shell:alive=1

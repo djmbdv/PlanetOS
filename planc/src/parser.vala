@@ -85,7 +85,7 @@ namespace Planc {
                 || text == "while" || text == "for" || text == "foreach" || text == "in"
                 || text == "switch" || text == "case" || text == "default"
                 || text == "break" || text == "continue"
-                || text == "enum" || text == "struct" || text == "class"
+                || text == "enum" || text == "struct" || text == "union" || text == "class"
                 || text == "interface" || text == "delegate"
                 || text == "async" || text == "yield";
         }
@@ -128,7 +128,7 @@ namespace Planc {
             var atypes = new GenericArray<ValaType> ();
             var anames = new GenericArray<string> ();
             while (true) {
-                skip_ownership_modifiers ();
+                bool mem_is_weak = parse_ownership_weak ();
                 ValaType at = ValaType.VOID;
                 string an = "";
                 if (current.kind != TokenKind.IDENTIFIER
@@ -299,7 +299,7 @@ namespace Planc {
                 if (tok.kind == TokenKind.EOF)
                     break;
                 if (tok.kind == TokenKind.IDENTIFIER && prev_kind != TokenKind.DOT
-                    && (tok.text == "enum" || tok.text == "struct"
+                    && (tok.text == "enum" || tok.text == "struct" || tok.text == "union"
                         || tok.text == "class" || tok.text == "errordomain"
                         || tok.text == "interface" || tok.text == "delegate")) {
                     var kind_kw = tok.text;
@@ -349,9 +349,11 @@ namespace Planc {
                                 prog.enums.add (new EnumDecl () {
                                     name = tname, line = nt.line, column = nt.column
                                 });
-                            } else if (kind_kw == "struct") {
+                            } else if (kind_kw == "struct" || kind_kw == "union") {
                                 var sd = new StructDecl () {
-                                    name = tname, line = nt.line, column = nt.column
+                                    name = tname,
+                                    is_union = (kind_kw == "union"),
+                                    line = nt.line, column = nt.column
                                 };
                                 var plx = lx.clone_state ();
                                 var pt = plx.next ();
@@ -472,9 +474,20 @@ namespace Planc {
 
         private void skip_ownership_modifiers () throws ParseError, LexError {
             while (current.kind == TokenKind.IDENTIFIER
-                   && (current.text == "unowned" || current.text == "owned")) {
+                   && (current.text == "unowned" || current.text == "owned" || current.text == "weak")) {
                 advance ();
             }
+        }
+
+        private bool parse_ownership_weak () throws ParseError, LexError {
+            bool is_weak = false;
+            while (current.kind == TokenKind.IDENTIFIER
+                   && (current.text == "unowned" || current.text == "owned" || current.text == "weak")) {
+                if (current.text == "weak")
+                    is_weak = true;
+                advance ();
+            }
+            return is_weak;
         }
 
         private void parse_const_decl (string owner_type) throws ParseError, LexError {
@@ -700,9 +713,9 @@ namespace Planc {
                 parse_enum ();
                 return;
             }
-            if (current.text == "struct") {
+            if (current.text == "struct" || current.text == "union") {
                 if (is_async)
-                    throw new ParseError.UNEXPECTED_TOKEN (@"struct cannot be 'async' at $(current.line):$(current.column)");
+                    throw new ParseError.UNEXPECTED_TOKEN (@"$(current.text) cannot be 'async' at $(current.line):$(current.column)");
                 parse_struct ();
                 return;
             }
@@ -977,7 +990,7 @@ namespace Planc {
                     else is_virt = true;
                     advance ();
                 }
-                skip_ownership_modifiers ();
+                bool mem_is_weak = parse_ownership_weak ();
                 var ml = current.line;
                 var mc = current.column;
                 ValaType rt = ValaType.VOID;
@@ -1249,7 +1262,7 @@ namespace Planc {
                         is_static = true;
                         advance ();
                     }
-                    skip_ownership_modifiers ();
+                    bool mem_is_weak = parse_ownership_weak ();
                     var ml = current.line;
                     var mc = current.column;
                     ValaType rt = ValaType.VOID;
@@ -1306,7 +1319,7 @@ namespace Planc {
                     throw new ParseError.UNEXPECTED_TOKEN (@"unterminated property '$mname' at $mem_l:$mem_c");
                 while (current.kind == TokenKind.IDENTIFIER && is_visibility_modifier (current.text))
                     advance ();
-                skip_ownership_modifiers ();
+                bool mem_is_weak = parse_ownership_weak ();
                 if (current.kind == TokenKind.IDENTIFIER && current.text == "default") {
                     if (!is_class)
                         throw new ParseError.UNEXPECTED_TOKEN (
@@ -1419,7 +1432,8 @@ namespace Planc {
         private void parse_struct () throws ParseError, LexError {
             var l = current.line;
             var c = current.column;
-            advance (); // 'struct'
+            bool is_union_kw = (current.text == "union");
+            advance (); // 'struct' or 'union'
             if (current.kind != TokenKind.IDENTIFIER)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"expected struct name at $(current.line):$(current.column)");
@@ -1442,8 +1456,10 @@ namespace Planc {
                 }
             }
             if (sd_existing == null) {
-                sd_existing = new StructDecl () { name = name };
+                sd_existing = new StructDecl () { name = name, is_union = is_union_kw };
                 program.structs.add (sd_existing);
+            } else if (is_union_kw) {
+                sd_existing.is_union = true;
             }
             if (current.kind == TokenKind.LT) {
                 advance ();
@@ -1485,7 +1501,7 @@ namespace Planc {
                     is_static = true;
                     advance ();
                 }
-                skip_ownership_modifiers ();
+                bool mem_is_weak = parse_ownership_weak ();
                 ValaType ft = ValaType.VOID;
                 string ft_name = "";
                 if (current.kind != TokenKind.IDENTIFIER
@@ -1608,7 +1624,7 @@ namespace Planc {
                         is_out = true;
                         advance ();
                     }
-                    skip_ownership_modifiers ();
+                    bool mem_is_weak = parse_ownership_weak ();
                     ValaType pt = ValaType.VOID;
                     string pt_name = "";
                     if (current.kind != TokenKind.IDENTIFIER
@@ -1786,7 +1802,7 @@ namespace Planc {
                     parse_const_decl (cd.name);
                     continue;
                 }
-                if (current.kind == TokenKind.IDENTIFIER && current.text == "struct") {
+                if (current.kind == TokenKind.IDENTIFIER && (current.text == "struct" || current.text == "union")) {
                     var saved_tp = current_type_params;
                     current_type_params = new GenericArray<string> ();
                     parse_struct ();
@@ -1941,7 +1957,7 @@ namespace Planc {
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"expected member declaration in class '$(cd.name)' at $(current.line):$(current.column)");
 
-                skip_ownership_modifiers ();
+                bool mem_is_weak = parse_ownership_weak ();
 
                 var ml = current.line;
                 var mc = current.column;
@@ -2145,6 +2161,7 @@ namespace Planc {
                     cd.fields.add (new ClassField () {
                         field_type = ft,
                         type_name = ft_name,
+                        is_weak = mem_is_weak,
                         name = mname,
                         init = finit,
                         line = mem_l,
@@ -2354,7 +2371,7 @@ namespace Planc {
                 if (name == "foreach") {
                     advance ();
                     expect (TokenKind.LPAREN, "'('");
-                    skip_ownership_modifiers ();
+                    bool mem_is_weak = parse_ownership_weak ();
                     bool infer_v = false;
                     ValaType vt = ValaType.VOID;
                     string vt_name = "";
@@ -2584,8 +2601,10 @@ namespace Planc {
             advance ();
 
             bool had_ownership = false;
-            if (name == "unowned" || name == "owned") {
+            bool var_is_weak = false;
+            if (name == "unowned" || name == "owned" || name == "weak") {
                 had_ownership = true;
+                var_is_weak = (name == "weak");
                 if (current.kind != TokenKind.IDENTIFIER)
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"expected type after '$name' at $(current.line):$(current.column)");
@@ -2643,6 +2662,7 @@ namespace Planc {
                     decl_type = dt,
                     decl_type_name = dt_name,
                     infer_type = (name == "var"),
+                    is_weak = var_is_weak,
                     name = vname,
                     init = init
                 };
@@ -3211,7 +3231,7 @@ namespace Planc {
                             advance ();
                         }
                         if (pending_gt == 0 && current.kind == TokenKind.RPAREN
-                            && (ct == ValaType.CLASS || ct == ValaType.INTERFACE || is_int_type_name (raw_name) || is_fp_type_name (raw_name))) {
+                            && (ct == ValaType.CLASS || ct == ValaType.INTERFACE || ct == ValaType.ENUM || is_int_type_name (raw_name) || is_fp_type_name (raw_name))) {
                             advance (); // ')'
                             if (ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE)
                                 ct_name = raw_name;

@@ -28,8 +28,23 @@ namespace Planet.Kernel {
     ")]
     public extern void zero_page_4k (int phys_addr);
 
+    [AsmBody(@"
+        # poison_page_4k(phys_addr in rdi) with 0xAA
+        mov %rdi, %rax
+        mov $512, %rcx
+        mov $0xAAAAAAAAAAAAAAAA, %rdx
+    _pp_loop:
+        mov %rdx, (%rax)
+        add $8, %rax
+        dec %rcx
+        jnz _pp_loop
+        ret
+    ")]
+    public extern void poison_page_4k (int phys_addr);
+
     private int pmm_total_frames = 0;
     private int pmm_free_count = 0;
+    private int pmm_double_free_count = 0;
 
     public class Pmm : Object {
         private const int BITMAP_ADDR = 0x110000;
@@ -115,8 +130,14 @@ namespace Planet.Kernel {
             if (phys < RESERVED_END || (phys & 4095) != 0)
                 return;
             int f = phys / PAGE_SIZE;
-            if (f >= pmm_total_frames || !test_bit (f))
+            if (f >= pmm_total_frames)
                 return;
+            if (!test_bit (f)) {
+                pmm_double_free_count = pmm_double_free_count + 1;
+                print ("pmm:double_free\n");
+                return;
+            }
+            poison_page_4k (phys);
             clear_bit (f);
             pmm_free_count = pmm_free_count + 1;
         }

@@ -50,6 +50,8 @@ int main () {
     Hal.print_cpu_vendor ();
     Hal.init_interrupts ();
     Pmm.init ();
+    Vmm.init ();
+    Env.init ();
     Ramfs.init ();
     Syscalls.init ();
 

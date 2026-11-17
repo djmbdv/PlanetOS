@@ -256,6 +256,7 @@ namespace Planc {
         public ValaType decl_type { get; set; default = ValaType.INT; }
         public string decl_type_name { get; set; default = ""; }
         public bool infer_type { get; set; default = false; }
+        public bool is_weak { get; set; default = false; }
         public string name { get; set; }
         public Expr? init { get; set; }     // null: zero/empty-initialized
     }
@@ -391,6 +392,7 @@ namespace Planc {
     public class StructField : Object {
         public ValaType field_type { get; set; }
         public string type_name { get; set; default = ""; }
+        public bool is_weak { get; set; default = false; }
         public string name { get; set; }
         public int line { get; set; }
         public int column { get; set; }
@@ -399,6 +401,7 @@ namespace Planc {
     public class StructDecl : Object {
         public string name { get; set; }
         public bool is_defined { get; set; default = false; }
+        public bool is_union { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
         public bool is_delegate { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
@@ -433,6 +436,7 @@ namespace Planc {
     public class Param : Object {
         public ValaType param_type { get; set; }
         public string type_name { get; set; default = ""; }
+        public bool is_weak { get; set; default = false; }
         public string name { get; set; }
         public bool unmanaged { get; set; default = false; }
         public bool is_ref { get; set; default = false; }
@@ -509,6 +513,7 @@ namespace Planc {
     public class ClassField : Object {
         public ValaType field_type { get; set; }
         public string type_name { get; set; default = ""; }
+        public bool is_weak { get; set; default = false; }
         public string name { get; set; }
         public Expr? init { get; set; }
         public int line { get; set; }
@@ -520,6 +525,7 @@ namespace Planc {
         public string base_name { get; set; default = ""; }
         public bool is_abstract { get; set; default = false; }
         public bool is_defined { get; set; default = false; }
+        public bool is_union { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
         public GenericArray<string> iface_names { get; private set; }
@@ -584,6 +590,7 @@ namespace Planc {
     public class ConstDecl : Object {
         public ValaType const_type { get; set; default = ValaType.INT; }
         public string type_name { get; set; default = ""; }
+        public bool is_weak { get; set; default = false; }
         public string name { get; set; }
         public string owner_type { get; set; default = ""; }
         public int64 int_value { get; set; }

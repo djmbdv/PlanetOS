@@ -37,6 +37,10 @@ echo "Building PlanetOS kernel and userland..."
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$OUT/spv_demo.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/pango_compat.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/compositor.vala" -o "$OUT/compositor.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/pango_compat.vala" "$ROOT/user/pango_demo.vala" -o "$OUT/pango_demo.elf"
+"$PLANC" --target=planetos "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
+"$PLANC" --target=planetos "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
+    "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
+    "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
 "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" --target=planetos --image-base=0xC00000 \
     "$ROOT/stdlib/planet_sys.vala" \
@@ -50,6 +54,7 @@ echo "Building PlanetOS kernel and userland..."
     "$ROOT/planc/src/elf.vala" \
     "$ROOT/planc/src/dwarf.vala" \
     "$ROOT/planc/src/spirv.vala" \
+    "$ROOT/planc/src/opt.vala" \
     "$ROOT/planc/src/codegen.vala" \
     "$ROOT/planc/src/main.vala" \
     -o "$OUT/planc.elf"
@@ -61,8 +66,11 @@ echo "Building PlanetOS kernel and userland..."
     "$ROOT/kernel/vga.vala" \
     "$ROOT/kernel/fb.vala" \
     "$ROOT/kernel/pmm.vala" \
+    "$ROOT/kernel/vmm.vala" \
+    "$ROOT/kernel/env.vala" \
     "$ROOT/kernel/ramfs.vala" \
     "$ROOT/kernel/keyboard.vala" \
+    "$ROOT/kernel/rtc.vala" \
     "$ROOT/kernel/mouse.vala" \
     "$ROOT/kernel/ata.vala" \
     "$ROOT/kernel/xfs.vala" \
@@ -78,7 +86,7 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
     "$OUT/spv_demo.elf" "$OUT/gio_demo.elf" \
     "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" \
-    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/frag_pattern.spv"
+    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/jsmn_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv"
 
 # --headless forces the serial-only mode; --display forces a window. Without a
 # flag: window when a display server exists, headless otherwise. Windows/MSYS2

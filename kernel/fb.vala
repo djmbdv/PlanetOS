@@ -128,6 +128,12 @@ namespace Planet.Kernel {
                 mmio_write64 (PD3_ADDR + pd_idx * 8, pa | 0x83);
             }
             mmio_write64 (PDPT_ADDR + pdpt_idx * 8, PD3_ADDR | 0x03);
+            int cur_cr3 = vmm_read_cr3 ();
+            if (cur_cr3 != 0 && cur_cr3 != Vmm.KERNEL_CR3) {
+                int cur_pdpt = mmio_read64 (cur_cr3) & ~0xFFF;
+                if (cur_pdpt != 0)
+                    mmio_write64 (cur_pdpt + pdpt_idx * 8, PD3_ADDR | 0x03);
+            }
             tlb_flush ();
         }
 

@@ -24,6 +24,11 @@ namespace Planc {
             get { return used; }
         }
 
+        public void truncate (int new_len) {
+            if (new_len >= 0 && new_len <= used)
+                used = new_len;
+        }
+
         public string str {
             owned get { return Host.bytes_to_string (buf, used); }
         }
@@ -69,6 +74,11 @@ namespace Planc {
 
         public int length {
             get { return used; }
+        }
+
+        public void truncate (int new_len) {
+            if (new_len >= 0 && new_len <= used)
+                used = new_len;
         }
 
         private void reserve (int extra) {

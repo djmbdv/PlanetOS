@@ -74,6 +74,39 @@ namespace Planet {
             return __sys4 (2, 0, 0, 0, 0);
         }
 
+        public static int rtc_time () {
+            return __sys4 (34, 0, 0, 0, 0);
+        }
+
+        public static string getenv (string key) {
+            if (key.length == 0 || key.length > MAX_PATH)
+                return "";
+            var buf = new uint8[512];
+            int n = __sys4 (35, __str_data (key), key.length, __arr_data (buf), 512);
+            if (n <= 0)
+                return "";
+            string s = "";
+            string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+            for (int i = 0; i < n; i++) {
+                uint8 c = buf[i];
+                if (c >= 32 && c <= 126)
+                    s = s + ascii.substring ((int) c - 32, 1);
+            }
+            return s;
+        }
+
+        public static int setenv (string key, string val) {
+            if (key.length == 0 || key.length > MAX_PATH || val.length > MAX_IO)
+                return -1;
+            return __sys4 (36, __str_data (key), key.length, __str_data (val), val.length);
+        }
+
+        public static int unsetenv (string key) {
+            if (key.length == 0 || key.length > MAX_PATH)
+                return -1;
+            return __sys4 (36, __str_data (key), key.length, 0, 0);
+        }
+
         public static int yield_cpu () {
             return __sys4 (10, 0, 0, 0, 0);
         }

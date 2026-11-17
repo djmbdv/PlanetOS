@@ -58,5 +58,9 @@ namespace Planc {
         public static string hex_u32 (uint32 v) {
             return "%x".printf (v);
         }
+
+        public static string getenv (string name) {
+            return GLib.Environment.get_variable (name) ?? "";
+        }
     }
 }

@@ -21,6 +21,10 @@ namespace Planet.Kernel {
     // +32: parent_tid (8B)
     // +40: ticks (8B)
     // +48: name[32]
+    // +80: stack_pages (8B)
+    // +88: cr3 (8B)
+    // +96: kstack_base (8B)
+    // +104: rsp0 (8B)
 
     public int sched_tick (int cur_rsp) {
         // Increment global system tick counter (0x106000)
@@ -33,6 +37,9 @@ namespace Planet.Kernel {
         int cur = mmio_read64 (SCHED_CUR_ADDR);
         int cur_tcb = TCB_BASE + cur * TCB_SIZE;
         mmio_write64 (cur_tcb + 8, cur_rsp);
+        if (cur == 0) {
+            mmio_write64 (cur_tcb + 104, Hal.get_tss_rsp0 ());
+        }
         int tt = mmio_read64 (cur_tcb + 40);
         mmio_write64 (cur_tcb + 40, tt + 1);
 
@@ -52,6 +59,13 @@ namespace Planet.Kernel {
         int next_tcb = TCB_BASE + next * TCB_SIZE;
         mmio_write64 (next_tcb, TASK_RUNNING);
         mmio_write64 (SCHED_CUR_ADDR, next);
+        int nrsp0 = mmio_read64 (next_tcb + 104);
+        Hal.set_tss_rsp0 ((nrsp0 != 0) ? nrsp0 : 0x200000);
+        int ncr3 = mmio_read64 (next_tcb + 88);
+        int target_cr3 = (ncr3 != 0) ? ncr3 : Vmm.KERNEL_CR3;
+        if (vmm_read_cr3 () != target_cr3) {
+            vmm_write_cr3 (target_cr3);
+        }
         return mmio_read64 (next_tcb + 8);
     }
 
@@ -153,6 +167,10 @@ namespace Planet.Kernel {
                     mmio_write64 (tcb + 24, 0);
                     mmio_write64 (tcb + 32, parent);
                     mmio_write64 (tcb + 40, 0);
+                    mmio_write64 (tcb + 80, 16);
+                    mmio_write64 (tcb + 88, 0);
+                    mmio_write64 (tcb + 96, 0);
+                    mmio_write64 (tcb + 104, 0);
                     int nmax = (name_len < 31) ? name_len : 31;
                     for (int k = 0; k < nmax; k++) {
                         mmio_write8 (tcb + 48 + k, read_u8 (name_ptr + k));
@@ -200,6 +218,66 @@ namespace Planet.Kernel {
             }
         }
 
+        public static void set_current_exec_ctx (int cr3, int rsp0) {
+            int cur = current_tid ();
+            int tcb = TCB_BASE + cur * TCB_SIZE;
+            mmio_write64 (tcb + 88, cr3);
+            mmio_write64 (tcb + 104, rsp0);
+        }
+
+        public static int current_cr3 () {
+            int cur = current_tid ();
+            return mmio_read64 (TCB_BASE + cur * TCB_SIZE + 88);
+        }
+
+        public static int spawn_user_ready (int entry, int user_sp, int user_stack_base, int user_stack_pages, int user_cr3, int name_ptr, int name_len) {
+            int kstack = Pmm.alloc_contiguous (4);
+            if (kstack == 0)
+                return -1;
+            int ktop = kstack + 4 * 4096;
+            int parent = current_tid ();
+            for (int tid = 1; tid < MAX_TASKS; tid++) {
+                int tcb = TCB_BASE + tid * TCB_SIZE;
+                if (mmio_read64 (tcb) == TASK_FREE) {
+                    // Synthetic Ring-3 iretq + 15-GPR frame on kernel stack
+                    mmio_write64 (ktop - 8,  0x1B);     // User SS (RPL=3)
+                    mmio_write64 (ktop - 16, user_sp);  // User RSP
+                    mmio_write64 (ktop - 24, 0x202);    // RFLAGS (IF=1)
+                    mmio_write64 (ktop - 32, 0x23);     // User CS (RPL=3)
+                    mmio_write64 (ktop - 40, entry);    // User RIP
+                    for (int g = 1; g <= 15; g++) {
+                        mmio_write64 (ktop - 40 - g * 8, 0);
+                    }
+                    int frame_rsp = ktop - 160;
+                    mmio_write64 (tcb + 8, frame_rsp);
+                    mmio_write64 (tcb + 16, user_stack_base);
+                    mmio_write64 (tcb + 24, 0);
+                    mmio_write64 (tcb + 32, parent);
+                    mmio_write64 (tcb + 40, 0);
+                    mmio_write64 (tcb + 80, user_stack_pages);
+                    mmio_write64 (tcb + 88, user_cr3);
+                    mmio_write64 (tcb + 96, kstack);
+                    mmio_write64 (tcb + 104, ktop);
+                    int nmax = (name_len < 31) ? name_len : 31;
+                    for (int k = 0; k < nmax; k++) {
+                        mmio_write8 (tcb + 48 + k, read_u8 (name_ptr + k));
+                    }
+                    mmio_write8 (tcb + 48 + nmax, 0);
+                    mmio_write64 (tcb + 0, TASK_READY);
+                    return tid;
+                }
+            }
+            for (int p = 0; p < 4; p++)
+                Pmm.free_frame (kstack + p * 4096);
+            return -1;
+        }
+
+        public static void set_stack_pages (int tid, int pages) {
+            if (tid <= 0 || tid >= MAX_TASKS)
+                return;
+            mmio_write64 (TCB_BASE + tid * TCB_SIZE + 80, pages);
+        }
+
         public static int wait_tid (int tid) {
             if (tid <= 0 || tid >= MAX_TASKS)
                 return -1;
@@ -212,11 +290,28 @@ namespace Planet.Kernel {
             }
             int code = mmio_read64 (tcb + 24);
             int sbase = mmio_read64 (tcb + 16);
+            int spages = mmio_read64 (tcb + 80);
+            int ucr3 = mmio_read64 (tcb + 88);
+            int kbase = mmio_read64 (tcb + 96);
+            if (spages <= 0)
+                spages = 16;
             if (sbase != 0) {
-                for (int p = 0; p < 16; p++) {
+                Vmm.map_4k (sbase);
+                for (int p = 0; p < spages; p++) {
                     Pmm.free_frame (sbase + p * 4096);
                 }
             }
+            if (kbase != 0) {
+                for (int p = 0; p < 4; p++) {
+                    Pmm.free_frame (kbase + p * 4096);
+                }
+            }
+            if (ucr3 != 0) {
+                Vmm.destroy_user_space (ucr3);
+            }
+            mmio_write64 (tcb + 88, 0);
+            mmio_write64 (tcb + 96, 0);
+            mmio_write64 (tcb + 104, 0);
             mmio_write64 (tcb + 0, TASK_FREE);
             return code;
         }

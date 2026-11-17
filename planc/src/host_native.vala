@@ -61,5 +61,9 @@ namespace Planc {
             }
             return out_str;
         }
+
+        public static string getenv (string name) {
+            return "";
+        }
     }
 }

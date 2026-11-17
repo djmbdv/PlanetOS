@@ -65,12 +65,22 @@ namespace Planet.Kernel {
         if (num == 3) { // SYS_ALLOC_PAGE(num_pages)
             if (a0 < 0 || a0 > 1024)
                 return -1;
-            if (a0 > 1)
-                return Pmm.alloc_contiguous (a0);
-            return Pmm.alloc_frame ();
+            int count = (a0 > 1) ? a0 : 1;
+            int phys = (count > 1) ? Pmm.alloc_contiguous (count) : Pmm.alloc_frame ();
+            if (phys != 0) {
+                int ucr3 = Sched.current_cr3 ();
+                if (ucr3 != 0) {
+                    Vmm.map_user_range (ucr3, phys, count * 4096);
+                }
+            }
+            return phys;
         }
         if (num == 4) { // SYS_FREE_PAGE(phys)
             Pmm.free_frame (a0);
+            int ucr3 = Sched.current_cr3 ();
+            if (ucr3 != 0) {
+                Vmm.unmap_user_4k (ucr3, a0);
+            }
             return 0;
         }
         if (num == 5) { // SYS_READ_KEY() -> ASCII char or -1
@@ -170,7 +180,7 @@ namespace Planet.Kernel {
             }
             if (exec_depth > 0) {
                 exec_depth = exec_depth - 1;
-                exec_return_to_parent (a0);
+                exec_return_to_parent (a0, 0x106200 + exec_depth * 32);
             }
             qemu_debug_exit (a0);
             return 0;
@@ -371,7 +381,39 @@ namespace Planet.Kernel {
         if (num == 33) { // SYS_KEY_MODS() -> shift|ctrl<<1|alt<<2|super<<3
             return Keyboard.modifiers ();
         }
+        if (num == 34) { // SYS_RTC_TIME() -> packed UTC date/time
+            return Rtc.read_packed ();
+        }
+        if (num == 35) { // SYS_GETENV(k_ptr, k_len, out_buf, max_len) -> len or -1
+            if (!path_ok (a0, a1) || !user_ok (a2, a3))
+                return -1;
+            return Env.sys_get (a0, a1, a2, a3);
+        }
+        if (num == 36) { // SYS_SETENV(k_ptr, k_len, v_ptr, v_len) -> 0 or -1
+            if (!path_ok (a0, a1))
+                return -1;
+            if (a2 != 0 && !user_ok (a2, a3))
+                return -1;
+            return Env.sys_set (a0, a1, a2, a3);
+        }
         return -1;
+    }
+
+    public int fault_dispatch (int vec, int err, int rip, int cr2) {
+        print (@"fault:vec=$vec err=$err rip=$rip cr2=$cr2\n");
+        if (Sched.current_tid () > 0) {
+            cpu_sti ();
+            Sched.exit_current (128 + vec);
+        }
+        if (exec_depth > 0) {
+            exec_depth = exec_depth - 1;
+            cpu_sti ();
+            exec_return_to_parent (128 + vec, 0x106200 + exec_depth * 32);
+        }
+        print ("kernel:fault_halt\n");
+        while (true) {
+            cpu_hlt ();
+        }
     }
 
     [AsmBody(@"

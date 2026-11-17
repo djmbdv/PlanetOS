@@ -100,6 +100,82 @@ namespace Planet.Kernel {
     public extern int addr_isr_irq0 ();
 
     [AsmBody(@"
+        # #DE (vector 0, no error code)
+        mov $0, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_de ();
+
+    [AsmBody(@"
+        # #UD (vector 6, no error code)
+        mov $6, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_ud ();
+
+    [AsmBody(@"
+        # #GP (vector 13, error code at [rsp])
+        mov $13, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_gp ();
+
+    [AsmBody(@"
+        # #PF (vector 14, error code at [rsp], faulting address in CR2)
+        mov $14, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        mov %cr2, %rcx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_pf ();
+
+    [AsmBody(@"
+        lea isr_de(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_de ();
+
+    [AsmBody(@"
+        lea isr_ud(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_ud ();
+
+    [AsmBody(@"
+        lea isr_gp(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_gp ();
+
+    [AsmBody(@"
+        lea isr_pf(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_pf ();
+
+    [AsmBody(@"
         lea isr_default(%rip), %rax
         ret
     ")]
@@ -110,6 +186,14 @@ namespace Planet.Kernel {
         ret
     ")]
     public extern void load_idt (int idtr_addr);
+
+    [AsmBody(@"
+        lgdt (%rdi)
+        mov %si, %ax
+        ltr %ax
+        ret
+    ")]
+    public extern void load_gdt_tss (int gdtr_addr, int tss_sel);
 
     [AsmBody(@"
         # Remap 8259 PIC: IRQ 0..7 -> 32..39, IRQ 8..15 -> 40..47
@@ -144,9 +228,45 @@ namespace Planet.Kernel {
     public extern void pic_pit_init ();
 
     public class Hal : Object {
+        private const int GDT_BASE = 0x104000;
+        private const int GDTR_ADDR = 0x104040;
+        private const int TSS_BASE = 0x104100;
+        public const int TSS_RSP0_ADDR = 0x104104;
         private const int IDT_BASE = 0x105000;
         private const int TICK_ADDR = 0x106000;
         private const int IDTR_ADDR = 0x106010;
+
+        public static void set_tss_rsp0 (int rsp0) {
+            mmio_write64 (TSS_RSP0_ADDR, rsp0);
+        }
+
+        public static int get_tss_rsp0 () {
+            return mmio_read64 (TSS_RSP0_ADDR);
+        }
+
+        public static void init_gdt_tss () {
+            // 64-bit GDT: 0x00=null, 0x08=kcode, 0x10=kdata, 0x18=udata, 0x20=ucode, 0x28=TSS(16B)
+            mmio_write64 (GDT_BASE + 0x00, 0);
+            mmio_write64 (GDT_BASE + 0x08, 0x00AF9A000000FFFF);
+            mmio_write64 (GDT_BASE + 0x10, 0x00AF92000000FFFF);
+            mmio_write64 (GDT_BASE + 0x18, 0x00AFF2000000FFFF);
+            mmio_write64 (GDT_BASE + 0x20, 0x00AFFA000000FFFF);
+            for (int i = 0; i < 104; i += 8) {
+                mmio_write64 (TSS_BASE + i, 0);
+            }
+            mmio_write64 (TSS_RSP0_ADDR, 0x200000);
+            mmio_write16 (TSS_BASE + 102, 104); // iomap_base
+            int tss_lo = (103 & 0xFFFF)
+                | ((TSS_BASE & 0xFFFFFF) << 16)
+                | (0x89 << 40)
+                | (((TSS_BASE >> 24) & 0xFF) << 56);
+            int tss_hi = (TSS_BASE >> 32) & 0xFFFFFFFF;
+            mmio_write64 (GDT_BASE + 0x28, tss_lo);
+            mmio_write64 (GDT_BASE + 0x30, tss_hi);
+            mmio_write16 (GDTR_ADDR + 0, 55);
+            mmio_write64 (GDTR_ADDR + 2, GDT_BASE);
+            load_gdt_tss (GDTR_ADDR, 0x28);
+        }
 
         public static void set_idt_gate_dpl (int vec, int handler_addr, int dpl3) {
             int entry = IDT_BASE + vec * 16;
@@ -163,11 +283,16 @@ namespace Planet.Kernel {
         }
 
         public static void init_interrupts () {
+            init_gdt_tss ();
             mmio_write64 (TICK_ADDR, 0);
             int def_addr = addr_isr_default ();
             for (int v = 0; v < 256; v++) {
                 set_idt_gate (v, def_addr);
             }
+            set_idt_gate (0, addr_isr_de ());
+            set_idt_gate (6, addr_isr_ud ());
+            set_idt_gate (13, addr_isr_gp ());
+            set_idt_gate (14, addr_isr_pf ());
             set_idt_gate (32, addr_isr_irq0 ());
 
             // IDTR: limit = 4095 (256 * 16 - 1), base = IDT_BASE
