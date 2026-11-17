@@ -74,10 +74,6 @@ namespace Planet.Kernel {
     private int mouse_b1 = 0;
 
     public class Mouse : Object {
-        private const int M_BUF = 0x106300;
-        private const int M_HEAD = 0x106400;
-        private const int M_TAIL = 0x106408;
-
         private static void send_mouse (int val) {
             ps2_wait_write ();
             out64 (0xD4);
@@ -91,8 +87,8 @@ namespace Planet.Kernel {
             for (int f = 0; f < 32 && (in64 () & 0x01) != 0; f++) {
                 in60 ();
             }
-            mmio_write32 (M_HEAD, 0);
-            mmio_write32 (M_TAIL, 0);
+            mmio_write32 (KernelLayout.MOUSE_HEAD, 0);
+            mmio_write32 (KernelLayout.MOUSE_TAIL, 0);
             mouse_phase = 0;
             ps2_wait_write ();
             out64 (0xA8); // Enable auxiliary PS/2 port
@@ -111,13 +107,13 @@ namespace Planet.Kernel {
         }
 
         private static int poll_byte () {
-            int head = mmio_read32 (M_HEAD);
-            int tail = mmio_read32 (M_TAIL);
+            int head = mmio_read32 (KernelLayout.MOUSE_HEAD);
+            int tail = mmio_read32 (KernelLayout.MOUSE_TAIL);
             if (head == tail)
                 return -1;
-            int addr = M_BUF + (tail & 255);
+            int addr = KernelLayout.MOUSE_RING + (tail & 255);
             int v = (mmio_read32 (addr & ~3) >> ((addr & 3) * 8)) & 0xFF;
-            mmio_write32 (M_TAIL, (tail + 1) & 255);
+            mmio_write32 (KernelLayout.MOUSE_TAIL, (tail + 1) & 255);
             return v;
         }
 

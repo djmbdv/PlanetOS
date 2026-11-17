@@ -5,9 +5,8 @@ using Planet.Rt;
 
 namespace Planet.Kernel {
 
-    // Simple kernel FD table (16 slots stored at 0x107000, 32 bytes each:
-    // +0 in_use, +8 ino, +16 size, +24 pos)
-    private const int FD_TABLE_ADDR = 0x107000;
+    // Simple kernel FD table (16 slots at KernelLayout.FD_TABLE, 32 bytes
+    // each: +0 in_use, +8 ino, +16 size, +24 pos)
     private const int MAX_FDS = 16;
     private const int USER_LIMIT = 0x4000000; // 64 MiB, the PMM cap
     private const int MAX_PATH = 512;
@@ -39,7 +38,7 @@ namespace Planet.Kernel {
             if (!user_ok (a0, a1))
                 return -1;
             if (stdio_out_fd >= 3 && stdio_out_fd < MAX_FDS) {
-                int slot = FD_TABLE_ADDR + stdio_out_fd * 32;
+                int slot = KernelLayout.FD_TABLE + stdio_out_fd * 32;
                 if (mmio_read64 (slot) == 2) {
                     int rslot = mmio_read64 (slot + 8);
                     int pos = mmio_read64 (slot + 24);
@@ -92,11 +91,11 @@ namespace Planet.Kernel {
         }
         if (num == 5) { // SYS_READ_KEY() -> ASCII char or -1
             if (stdio_in_fd >= 3 && stdio_in_fd < MAX_FDS) {
-                int slot = FD_TABLE_ADDR + stdio_in_fd * 32;
+                int slot = KernelLayout.FD_TABLE + stdio_in_fd * 32;
                 if (mmio_read64 (slot) == 2) {
                     int rslot = mmio_read64 (slot + 8);
                     int pos = mmio_read64 (slot + 24);
-                    int bbuf = 0x106210;
+                    int bbuf = KernelLayout.SYSCALL_SCRATCH;
                     int nr = Ramfs.read (rslot, pos, bbuf, 1);
                     if (nr <= 0)
                         return -2; // EOF
@@ -133,7 +132,7 @@ namespace Planet.Kernel {
                 return -1;
             }
             for (int fd = 3; fd < MAX_FDS; fd++) {
-                int slot = FD_TABLE_ADDR + fd * 32;
+                int slot = KernelLayout.FD_TABLE + fd * 32;
                 if (mmio_read64 (slot) == 0) {
                     mmio_write64 (slot + 0, fd_kind);
                     mmio_write64 (slot + 8, id);
@@ -149,7 +148,7 @@ namespace Planet.Kernel {
                 return -1;
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
-            int slot = FD_TABLE_ADDR + a0 * 32;
+            int slot = KernelLayout.FD_TABLE + a0 * 32;
             int kind = mmio_read64 (slot);
             if (kind == 0)
                 return -1;
@@ -166,14 +165,14 @@ namespace Planet.Kernel {
         if (num == 8) { // SYS_CLOSE(fd)
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
-            int slot = FD_TABLE_ADDR + a0 * 32;
+            int slot = KernelLayout.FD_TABLE + a0 * 32;
             mmio_write64 (slot, 0);
             return 0;
         }
         if (num == 9) { // SYS_FILE_SIZE(fd)
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
-            int slot = FD_TABLE_ADDR + a0 * 32;
+            int slot = KernelLayout.FD_TABLE + a0 * 32;
             if (mmio_read64 (slot) == 0)
                 return -1;
             return mmio_read64 (slot + 16);
@@ -189,7 +188,7 @@ namespace Planet.Kernel {
             }
             if (exec_depth > 0) {
                 exec_depth = exec_depth - 1;
-                exec_return_to_parent (a0, 0x106200 + exec_depth * 32);
+                exec_return_to_parent (a0, KernelLayout.EXEC_SLOTS + exec_depth * KernelLayout.EXEC_SLOT_SIZE);
             }
             qemu_debug_exit (a0);
             return 0;
@@ -218,7 +217,7 @@ namespace Planet.Kernel {
             if (rslot < 0)
                 return -1;
             for (int fd = 3; fd < MAX_FDS; fd++) {
-                int slot = FD_TABLE_ADDR + fd * 32;
+                int slot = KernelLayout.FD_TABLE + fd * 32;
                 if (mmio_read64 (slot) == 0) {
                     mmio_write64 (slot + 0, 2);
                     mmio_write64 (slot + 8, rslot);
@@ -243,7 +242,7 @@ namespace Planet.Kernel {
             }
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
-            int slot = FD_TABLE_ADDR + a0 * 32;
+            int slot = KernelLayout.FD_TABLE + a0 * 32;
             if (mmio_read64 (slot) != 2)
                 return -1;
             int rslot = mmio_read64 (slot + 8);
@@ -278,7 +277,7 @@ namespace Planet.Kernel {
         if (num == 20) { // SYS_SEEK(fd, offset; -1 = end)
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
-            int slot = FD_TABLE_ADDR + a0 * 32;
+            int slot = KernelLayout.FD_TABLE + a0 * 32;
             if (mmio_read64 (slot) == 0)
                 return -1;
             int sz = mmio_read64 (slot + 16);
@@ -442,7 +441,7 @@ namespace Planet.Kernel {
         if (exec_depth > 0) {
             exec_depth = exec_depth - 1;
             cpu_sti ();
-            exec_return_to_parent (128 + vec, 0x106200 + exec_depth * 32);
+            exec_return_to_parent (128 + vec, KernelLayout.EXEC_SLOTS + exec_depth * KernelLayout.EXEC_SLOT_SIZE);
         }
         print ("kernel:fault_halt\n");
         while (true) {
@@ -497,7 +496,7 @@ namespace Planet.Kernel {
     public class Syscalls : Object {
         public static void init () {
             for (int fd = 0; fd < MAX_FDS; fd++) {
-                mmio_write64 (FD_TABLE_ADDR + fd * 32, 0);
+                mmio_write64 (KernelLayout.FD_TABLE + fd * 32, 0);
             }
             Hal.set_idt_gate_dpl (0x80, addr_isr_syscall (), 1);
         }

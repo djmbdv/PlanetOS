@@ -47,6 +47,17 @@ int main () {
     Vga.init ();
     var b = new KernelBanner ("PlanetOS", 0, 1);
     b.announce ();
+    // The structures the compiler cannot place (page tables, rings, tables)
+    // come from a fixed window: refuse to run on a window that overlaps itself
+    // or runs into the boot stack / PMM / image.
+    int layout_code = KernelLayout.verify ();
+    print (@"layout:ok=$(layout_code == 0 ? 1 : 0)\n");
+    if (layout_code != 0) {
+        print (@"layout:fail=$(layout_code)\n");
+        while (true) {
+            cpu_hlt ();
+        }
+    }
     Hal.print_cpu_vendor ();
     print (@"cpu:simd sse41=$(Hal.has_sse41 () ? 1 : 0) avx2=$(Hal.has_avx2 () ? 1 : 0)\n");
     Hal.init_interrupts ();

@@ -740,7 +740,7 @@ namespace Planet.Kernel {
             }
             ctx_attach (ctx_id, res_id);
             int ucr3 = Sched.current_cr3 ();
-            if (ucr3 != 0 && ucr3 != Vmm.KERNEL_CR3)
+            if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES)
                 Vmm.map_user_range (ucr3, pa, aligned);
             return pa;
         }

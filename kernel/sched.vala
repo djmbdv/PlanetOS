@@ -2,10 +2,6 @@
 
 namespace Planet.Kernel {
 
-    private const int SCHED_CUR_ADDR = 0x123FF0;
-    private const int SCHED_EN_ADDR  = 0x123FF8;
-    private const int TCB_BASE       = 0x124000;
-    private const int FXSAVE_BASE    = 0x125000;
     private const int MAX_TASKS      = 16;
     private const int TCB_SIZE       = 128;
 
@@ -22,7 +18,7 @@ namespace Planet.Kernel {
     public extern void fxrstor_from (int addr);
 
     private static void init_fx_area (int tid) {
-        int fx = FXSAVE_BASE + tid * 512;
+        int fx = KernelLayout.FXSAVE_AREA + tid * 512;
         for (int i = 0; i < 512; i += 8)
             mmio_write64 (fx + i, 0);
         mmio_write16 (fx + 0, 0x037F);  // x87 FCW default
@@ -48,15 +44,15 @@ namespace Planet.Kernel {
     // +104: rsp0 (8B)
 
     public int sched_tick (int cur_rsp) {
-        // Increment global system tick counter (0x106000)
-        int t = mmio_read64 (0x106000);
-        mmio_write64 (0x106000, t + 1);
+        // Increment the global system tick counter
+        int t = mmio_read64 (KernelLayout.TICK);
+        mmio_write64 (KernelLayout.TICK, t + 1);
 
-        if (mmio_read64 (SCHED_EN_ADDR) == 0)
+        if (mmio_read64 (KernelLayout.SCHED_ENABLED) == 0)
             return cur_rsp;
 
-        int cur = mmio_read64 (SCHED_CUR_ADDR);
-        int cur_tcb = TCB_BASE + cur * TCB_SIZE;
+        int cur = mmio_read64 (KernelLayout.SCHED_CUR);
+        int cur_tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
         mmio_write64 (cur_tcb + 8, cur_rsp);
         if (cur == 0) {
             mmio_write64 (cur_tcb + 104, Hal.get_tss_rsp0 ());
@@ -70,7 +66,7 @@ namespace Planet.Kernel {
         int next = cur;
         for (int off = 1; off <= MAX_TASKS; off++) {
             int cand = (cur + off) % MAX_TASKS;
-            int ctcb = TCB_BASE + cand * TCB_SIZE;
+            int ctcb = KernelLayout.TCB_TABLE + cand * TCB_SIZE;
             if (mmio_read64 (ctcb) == TASK_READY) {
                 next = cand;
                 break;
@@ -78,21 +74,21 @@ namespace Planet.Kernel {
         }
 
         if (next != cur) {
-            fxsave_to (FXSAVE_BASE + cur * 512);
+            fxsave_to (KernelLayout.FXSAVE_AREA + cur * 512);
         }
 
-        int next_tcb = TCB_BASE + next * TCB_SIZE;
+        int next_tcb = KernelLayout.TCB_TABLE + next * TCB_SIZE;
         mmio_write64 (next_tcb, TASK_RUNNING);
-        mmio_write64 (SCHED_CUR_ADDR, next);
+        mmio_write64 (KernelLayout.SCHED_CUR, next);
         int nrsp0 = mmio_read64 (next_tcb + 104);
-        Hal.set_tss_rsp0 ((nrsp0 != 0) ? nrsp0 : 0x200000);
+        Hal.set_tss_rsp0 ((nrsp0 != 0) ? nrsp0 : KernelLayout.STACK_TOP);
         int ncr3 = mmio_read64 (next_tcb + 88);
-        int target_cr3 = (ncr3 != 0) ? ncr3 : Vmm.KERNEL_CR3;
+        int target_cr3 = (ncr3 != 0) ? ncr3 : KernelLayout.PAGE_TABLES;
         if (vmm_read_cr3 () != target_cr3) {
             vmm_write_cr3 (target_cr3);
         }
         if (next != cur) {
-            fxrstor_from (FXSAVE_BASE + next * 512);
+            fxrstor_from (KernelLayout.FXSAVE_AREA + next * 512);
         }
         return mmio_read64 (next_tcb + 8);
     }
@@ -151,33 +147,33 @@ namespace Planet.Kernel {
 
         public static void init () {
             for (int i = 0; i < (MAX_TASKS * TCB_SIZE) / 8; i++) {
-                mmio_write64 (TCB_BASE + i * 8, 0);
+                mmio_write64 (KernelLayout.TCB_TABLE + i * 8, 0);
             }
             // Task 0 represents the main shell/userland task
-            mmio_write64 (TCB_BASE + 0, TASK_RUNNING);
-            mmio_write64 (TCB_BASE + 32, -1);
-            mmio_write8 (TCB_BASE + 48 + 0, 's');
-            mmio_write8 (TCB_BASE + 48 + 1, 'h');
-            mmio_write8 (TCB_BASE + 48 + 2, 'e');
-            mmio_write8 (TCB_BASE + 48 + 3, 'l');
-            mmio_write8 (TCB_BASE + 48 + 4, 'l');
-            mmio_write8 (TCB_BASE + 48 + 5, 0);
+            mmio_write64 (KernelLayout.TCB_TABLE + 0, TASK_RUNNING);
+            mmio_write64 (KernelLayout.TCB_TABLE + 32, -1);
+            mmio_write8 (KernelLayout.TCB_TABLE + 48 + 0, 's');
+            mmio_write8 (KernelLayout.TCB_TABLE + 48 + 1, 'h');
+            mmio_write8 (KernelLayout.TCB_TABLE + 48 + 2, 'e');
+            mmio_write8 (KernelLayout.TCB_TABLE + 48 + 3, 'l');
+            mmio_write8 (KernelLayout.TCB_TABLE + 48 + 4, 'l');
+            mmio_write8 (KernelLayout.TCB_TABLE + 48 + 5, 0);
 
-            mmio_write64 (SCHED_CUR_ADDR, 0);
-            mmio_write64 (SCHED_EN_ADDR, 1);
+            mmio_write64 (KernelLayout.SCHED_CUR, 0);
+            mmio_write64 (KernelLayout.SCHED_ENABLED, 1);
             Hal.set_idt_gate_dpl (32, addr_isr_sched_irq0 (), 0);
         }
 
         public static int current_tid () {
-            if (mmio_read64 (SCHED_EN_ADDR) == 0)
+            if (mmio_read64 (KernelLayout.SCHED_ENABLED) == 0)
                 return 0;
-            return mmio_read64 (SCHED_CUR_ADDR);
+            return mmio_read64 (KernelLayout.SCHED_CUR);
         }
 
         public static int spawn_ready (int entry, int arg_sp, int stack_base, int name_ptr, int name_len) {
             int parent = current_tid ();
             for (int tid = 1; tid < MAX_TASKS; tid++) {
-                int tcb = TCB_BASE + tid * TCB_SIZE;
+                int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
                 if (mmio_read64 (tcb) == TASK_FREE) {
                     // Build synthetic iretq + 15-GPR frame below arg_sp
                     mmio_write64 (arg_sp - 8,  0x10);   // SS
@@ -226,7 +222,7 @@ namespace Planet.Kernel {
             mmio_write8 (stack_base + 5, 'd');
             int ucr3 = current_cr3 ();
             int tid = -1;
-            if (ucr3 != 0 && ucr3 != Vmm.KERNEL_CR3) {
+            if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES) {
                 Vmm.map_user_range (ucr3, stack_base, 16 * 4096);
                 tid = spawn_user_ready (entry, arg_sp, stack_base, 16, ucr3, stack_base, 6);
             } else {
@@ -238,14 +234,14 @@ namespace Planet.Kernel {
                 return -1;
             }
             // Put `arg` into saved %rdi slot (offset +72 in 15-GPR frame)
-            int frame_rsp = mmio_read64 (TCB_BASE + tid * TCB_SIZE + 8);
+            int frame_rsp = mmio_read64 (KernelLayout.TCB_TABLE + tid * TCB_SIZE + 8);
             mmio_write64 (frame_rsp + 72, arg);
             return tid;
         }
 
         public static void exit_current (int code) {
-            int cur = mmio_read64 (SCHED_CUR_ADDR);
-            int tcb = TCB_BASE + cur * TCB_SIZE;
+            int cur = mmio_read64 (KernelLayout.SCHED_CUR);
+            int tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
             mmio_write64 (tcb + 24, code);
             mmio_write64 (tcb + 0, TASK_ZOMBIE);
             cpu_sti ();
@@ -256,14 +252,14 @@ namespace Planet.Kernel {
 
         public static void set_current_exec_ctx (int cr3, int rsp0) {
             int cur = current_tid ();
-            int tcb = TCB_BASE + cur * TCB_SIZE;
+            int tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
             mmio_write64 (tcb + 88, cr3);
             mmio_write64 (tcb + 104, rsp0);
         }
 
         public static int current_cr3 () {
             int cur = current_tid ();
-            return mmio_read64 (TCB_BASE + cur * TCB_SIZE + 88);
+            return mmio_read64 (KernelLayout.TCB_TABLE + cur * TCB_SIZE + 88);
         }
 
         public static int spawn_user_ready (int entry, int user_sp, int user_stack_base, int user_stack_pages, int user_cr3, int name_ptr, int name_len) {
@@ -273,7 +269,7 @@ namespace Planet.Kernel {
             int ktop = kstack + 4 * 4096;
             int parent = current_tid ();
             for (int tid = 1; tid < MAX_TASKS; tid++) {
-                int tcb = TCB_BASE + tid * TCB_SIZE;
+                int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
                 if (mmio_read64 (tcb) == TASK_FREE) {
                     // Synthetic Ring-3 iretq + 15-GPR frame on kernel stack
                     mmio_write64 (ktop - 8,  0x1B);     // User SS (RPL=3)
@@ -312,13 +308,13 @@ namespace Planet.Kernel {
         public static void set_stack_pages (int tid, int pages) {
             if (tid <= 0 || tid >= MAX_TASKS)
                 return;
-            mmio_write64 (TCB_BASE + tid * TCB_SIZE + 80, pages);
+            mmio_write64 (KernelLayout.TCB_TABLE + tid * TCB_SIZE + 80, pages);
         }
 
         public static int wait_tid (int tid) {
             if (tid <= 0 || tid >= MAX_TASKS)
                 return -1;
-            int tcb = TCB_BASE + tid * TCB_SIZE;
+            int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
             if (mmio_read64 (tcb) == TASK_FREE)
                 return -1;
             while (mmio_read64 (tcb) != TASK_ZOMBIE) {
@@ -348,7 +344,7 @@ namespace Planet.Kernel {
                 for (int ot = 0; ot < MAX_TASKS; ot++) {
                     if (ot == tid)
                         continue;
-                    int otcb = TCB_BASE + ot * TCB_SIZE;
+                    int otcb = KernelLayout.TCB_TABLE + ot * TCB_SIZE;
                     if (mmio_read64 (otcb) != TASK_FREE && mmio_read64 (otcb + 88) == ucr3) {
                         shared = true;
                         break;
@@ -401,7 +397,7 @@ namespace Planet.Kernel {
                 return 0;
             int pos = append_str (buf, 0, max_b, "TID STATE   TICKS NAME\n");
             for (int tid = 0; tid < MAX_TASKS; tid++) {
-                int tcb = TCB_BASE + tid * TCB_SIZE;
+                int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
                 int st = mmio_read64 (tcb);
                 if (st == TASK_FREE)
                     continue;

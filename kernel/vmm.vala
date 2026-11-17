@@ -26,8 +26,6 @@ namespace Planet.Kernel {
     public extern void vmm_write_cr3 (int cr3);
 
     public class Vmm : Object {
-        public const int KERNEL_CR3 = 0x100000;
-        private const int PD_BASE = 0x102000;
         private const int MAX_SPLIT_ADDR = 0x40000000; // 1 GiB identity map
 
         private static bool ensure_pt_in_pd (int pd_base, int addr, bool user_dir, out int pt_base) {
@@ -60,7 +58,7 @@ namespace Planet.Kernel {
         }
 
         private static bool ensure_pt (int addr, out int pt_base) {
-            return ensure_pt_in_pd (PD_BASE, addr, false, out pt_base);
+            return ensure_pt_in_pd (KernelLayout.PD, addr, false, out pt_base);
         }
 
         public static int create_user_space () {
@@ -74,7 +72,7 @@ namespace Planet.Kernel {
                 return 0;
             }
             for (int i = 0; i < 512; i++) {
-                int pde = mmio_read64 (PD_BASE + i * 8);
+                int pde = mmio_read64 (KernelLayout.PD + i * 8);
                 if ((pde & 0x01) != 0 && (pde & 0x80) == 0) {
                     // Clone already-split 4 KiB PT (e.g. page 0 unmapped)
                     int src_pt = pde & ~0xFFF;
@@ -100,7 +98,7 @@ namespace Planet.Kernel {
         }
 
         public static void destroy_user_space (int cr3) {
-            if (cr3 == 0 || cr3 == KERNEL_CR3)
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
                 return;
             int pdpt = mmio_read64 (cr3) & ~0xFFF;
             if (pdpt != 0) {
@@ -122,7 +120,7 @@ namespace Planet.Kernel {
         }
 
         public static void map_user_4k (int cr3, int addr) {
-            if (cr3 == 0 || cr3 == KERNEL_CR3)
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
                 return;
             int aligned = addr & ~0xFFF;
             int pdpt = mmio_read64 (cr3) & ~0xFFF;
@@ -137,7 +135,7 @@ namespace Planet.Kernel {
         }
 
         public static void unmap_user_4k (int cr3, int addr) {
-            if (cr3 == 0 || cr3 == KERNEL_CR3)
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
                 return;
             int aligned = addr & ~0xFFF;
             int pdpt = mmio_read64 (cr3) & ~0xFFF;
@@ -167,7 +165,7 @@ namespace Planet.Kernel {
         // frames it just allocated - an unmapped buffer must never reach userland,
         // because the first write to it would be a #PF instead of an error code.
         public static int map_user_range_checked (int cr3, int start, int size) {
-            if (cr3 == 0 || cr3 == KERNEL_CR3 || size <= 0)
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES || size <= 0)
                 return 0;
             int first = start & ~0xFFF;
             int last = (start + size - 1) & ~0xFFF;

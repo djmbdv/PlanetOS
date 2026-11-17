@@ -118,8 +118,8 @@ namespace Planet.Kernel {
             int entry = load_image (buf, size);
             if (entry == 0)
                 return false;
-            int sp = 0x1FE000;
-            int str = 0x1FE800;
+            int sp = KernelLayout.LEGACY_STACK;
+            int str = KernelLayout.LEGACY_ARGV;
             mmio_write8 (str + 0, 's');
             mmio_write8 (str + 1, 'h');
             mmio_write8 (str + 2, 0);
@@ -226,10 +226,20 @@ namespace Planet.Kernel {
             int entry = prepare_process (name_ptr, name_len, cmdline_ptr, out child_stack, out ptr_base, out user_cr3);
             if (entry == 0)
                 return -1;
+            if (exec_depth >= KernelLayout.EXEC_MAX_DEPTH) {
+                // The saved-context slots are a fixed window: nesting deeper
+                // would run past EXEC_SLOTS into the mouse ring, so refuse the
+                // exec instead of overwriting it.
+                Vmm.destroy_user_space (user_cr3);
+                for (int p = 0; p < 17; p++) {
+                    Pmm.free_frame (child_stack + p * 4096);
+                }
+                return -1;
+            }
             int prev_cr3 = Sched.current_cr3 ();
             int prev_rsp0 = Hal.get_tss_rsp0 ();
             exec_depth = exec_depth + 1;
-            int slot = 0x106200 + (exec_depth - 1) * 32;
+            int slot = KernelLayout.EXEC_SLOTS + (exec_depth - 1) * KernelLayout.EXEC_SLOT_SIZE;
             Sched.set_current_exec_ctx (user_cr3, 0);
             int code = exec_trampoline (entry, ptr_base, user_cr3, slot);
             Sched.set_current_exec_ctx (prev_cr3, prev_rsp0);

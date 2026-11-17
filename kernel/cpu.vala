@@ -294,48 +294,40 @@ namespace Planet.Kernel {
     public extern void pic_pit_init ();
 
     public class Hal : Object {
-        private const int GDT_BASE = 0x104000;
-        private const int GDTR_ADDR = 0x104040;
-        private const int TSS_BASE = 0x104100;
-        public const int TSS_RSP0_ADDR = 0x104104;
-        private const int IDT_BASE = 0x105000;
-        private const int TICK_ADDR = 0x106000;
-        private const int IDTR_ADDR = 0x106010;
-
         public static void set_tss_rsp0 (int rsp0) {
-            mmio_write64 (TSS_RSP0_ADDR, rsp0);
+            mmio_write64 (KernelLayout.TSS_RSP0, rsp0);
         }
 
         public static int get_tss_rsp0 () {
-            return mmio_read64 (TSS_RSP0_ADDR);
+            return mmio_read64 (KernelLayout.TSS_RSP0);
         }
 
         public static void init_gdt_tss () {
             // 64-bit GDT: 0x00=null, 0x08=kcode, 0x10=kdata, 0x18=udata, 0x20=ucode, 0x28=TSS(16B)
-            mmio_write64 (GDT_BASE + 0x00, 0);
-            mmio_write64 (GDT_BASE + 0x08, 0x00AF9A000000FFFF);
-            mmio_write64 (GDT_BASE + 0x10, 0x00AF92000000FFFF);
-            mmio_write64 (GDT_BASE + 0x18, 0x00AFF2000000FFFF);
-            mmio_write64 (GDT_BASE + 0x20, 0x00AFFA000000FFFF);
+            mmio_write64 (KernelLayout.GDT + 0x00, 0);
+            mmio_write64 (KernelLayout.GDT + 0x08, 0x00AF9A000000FFFF);
+            mmio_write64 (KernelLayout.GDT + 0x10, 0x00AF92000000FFFF);
+            mmio_write64 (KernelLayout.GDT + 0x18, 0x00AFF2000000FFFF);
+            mmio_write64 (KernelLayout.GDT + 0x20, 0x00AFFA000000FFFF);
             for (int i = 0; i < 104; i += 8) {
-                mmio_write64 (TSS_BASE + i, 0);
+                mmio_write64 (KernelLayout.TSS + i, 0);
             }
-            mmio_write64 (TSS_RSP0_ADDR, 0x200000);
-            mmio_write16 (TSS_BASE + 102, 104); // iomap_base
+            mmio_write64 (KernelLayout.TSS_RSP0, KernelLayout.STACK_TOP);
+            mmio_write16 (KernelLayout.TSS + 102, 104); // iomap_base
             int tss_lo = (103 & 0xFFFF)
-                | ((TSS_BASE & 0xFFFFFF) << 16)
+                | ((KernelLayout.TSS & 0xFFFFFF) << 16)
                 | (0x89 << 40)
-                | (((TSS_BASE >> 24) & 0xFF) << 56);
-            int tss_hi = (TSS_BASE >> 32) & 0xFFFFFFFF;
-            mmio_write64 (GDT_BASE + 0x28, tss_lo);
-            mmio_write64 (GDT_BASE + 0x30, tss_hi);
-            mmio_write16 (GDTR_ADDR + 0, 55);
-            mmio_write64 (GDTR_ADDR + 2, GDT_BASE);
-            load_gdt_tss (GDTR_ADDR, 0x28);
+                | (((KernelLayout.TSS >> 24) & 0xFF) << 56);
+            int tss_hi = (KernelLayout.TSS >> 32) & 0xFFFFFFFF;
+            mmio_write64 (KernelLayout.GDT + 0x28, tss_lo);
+            mmio_write64 (KernelLayout.GDT + 0x30, tss_hi);
+            mmio_write16 (KernelLayout.GDTR + 0, 55);
+            mmio_write64 (KernelLayout.GDTR + 2, KernelLayout.GDT);
+            load_gdt_tss (KernelLayout.GDTR, 0x28);
         }
 
         public static void set_idt_gate_dpl (int vec, int handler_addr, int dpl3) {
-            int entry = IDT_BASE + vec * 16;
+            int entry = KernelLayout.IDT + vec * 16;
             mmio_write16 (entry + 0, handler_addr & 0xFFFF);
             mmio_write16 (entry + 2, 0x08);
             mmio_write8 (entry + 4, 0);
@@ -350,7 +342,7 @@ namespace Planet.Kernel {
 
         public static void init_interrupts () {
             init_gdt_tss ();
-            mmio_write64 (TICK_ADDR, 0);
+            mmio_write64 (KernelLayout.TICK, 0);
             int def_addr = addr_isr_default ();
             for (int v = 0; v < 256; v++) {
                 set_idt_gate (v, def_addr);
@@ -361,20 +353,20 @@ namespace Planet.Kernel {
             set_idt_gate (14, addr_isr_pf ());
             set_idt_gate (32, addr_isr_irq0 ());
 
-            // IDTR: limit = 4095 (256 * 16 - 1), base = IDT_BASE
-            mmio_write16 (IDTR_ADDR + 0, 4095);
-            mmio_write64 (IDTR_ADDR + 2, IDT_BASE);
-            load_idt (IDTR_ADDR);
+            // IDTR: limit = 4095 (256 * 16 - 1), base = KernelLayout.IDT
+            mmio_write16 (KernelLayout.IDTR + 0, 4095);
+            mmio_write64 (KernelLayout.IDTR + 2, KernelLayout.IDT);
+            load_idt (KernelLayout.IDTR);
             pic_pit_init ();
             cpu_sti ();
         }
 
         public static int ticks () {
-            return mmio_read64 (TICK_ADDR);
+            return mmio_read64 (KernelLayout.TICK);
         }
 
         public static void print_cpu_vendor () {
-            int buf = 0x106020;
+            int buf = KernelLayout.CPUID_BUF;
             cpuid_vendor_raw (buf);
             print ("CPU: ");
             __planet_console_write (buf, 12);

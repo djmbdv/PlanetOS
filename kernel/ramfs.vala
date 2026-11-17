@@ -3,7 +3,6 @@
 namespace Planet.Kernel {
 
     public class Ramfs : Object {
-        private const int TABLE_ADDR = 0x120000;
         private const int MAX_FILES = 32;
         private const int SLOT_SIZE = 256;
         private const int MAX_NAME = 64;
@@ -24,27 +23,27 @@ namespace Planet.Kernel {
 
         public static void init () {
             for (int i = 0; i < (MAX_FILES * SLOT_SIZE) / 8; i++) {
-                mmio_write64 (TABLE_ADDR + i * 8, 0);
+                mmio_write64 (KernelLayout.RAMFS_TABLE + i * 8, 0);
             }
         }
 
         public static int kind_of (int s) {
             if (s < 0 || s >= MAX_FILES)
                 return 0;
-            return mmio_read64 (TABLE_ADDR + s * SLOT_SIZE);
+            return mmio_read64 (KernelLayout.RAMFS_TABLE + s * SLOT_SIZE);
         }
 
         public static int parent_of (int s) {
             if (s < 0 || s >= MAX_FILES)
                 return -1;
-            return mmio_read64 (TABLE_ADDR + s * SLOT_SIZE + 248);
+            return mmio_read64 (KernelLayout.RAMFS_TABLE + s * SLOT_SIZE + 248);
         }
 
         public static int find_in (int parent, int name_ptr, int name_len) {
             if (name_len <= 0 || name_len > MAX_NAME)
                 return -1;
             for (int s = 0; s < MAX_FILES; s++) {
-                int slot = TABLE_ADDR + s * SLOT_SIZE;
+                int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
                 if (mmio_read64 (slot) == 0)
                     continue;
                 if (mmio_read64 (slot + 248) != parent)
@@ -76,7 +75,7 @@ namespace Planet.Kernel {
                     return -1;
                 if (kind == 2)
                     return -1;
-                int slot = TABLE_ADDR + existing * SLOT_SIZE;
+                int slot = KernelLayout.RAMFS_TABLE + existing * SLOT_SIZE;
                 for (int p = 0; p < MAX_PAGES; p++) {
                     int pa = mmio_read64 (slot + 88 + p * 8);
                     if (pa != 0) {
@@ -88,7 +87,7 @@ namespace Planet.Kernel {
                 return existing;
             }
             for (int s = 0; s < MAX_FILES; s++) {
-                int slot = TABLE_ADDR + s * SLOT_SIZE;
+                int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
                 if (mmio_read64 (slot) == 0) {
                     mmio_write64 (slot + 0, kind);
                     mmio_write64 (slot + 8, 0);
@@ -108,7 +107,7 @@ namespace Planet.Kernel {
 
         public static bool has_children (int s) {
             for (int i = 0; i < MAX_FILES; i++) {
-                int slot = TABLE_ADDR + i * SLOT_SIZE;
+                int slot = KernelLayout.RAMFS_TABLE + i * SLOT_SIZE;
                 if (mmio_read64 (slot) == 0)
                     continue;
                 if (mmio_read64 (slot + 248) == s)
@@ -120,7 +119,7 @@ namespace Planet.Kernel {
         public static int unlink_slot (int s) {
             if (kind_of (s) == 0)
                 return -1;
-            int slot = TABLE_ADDR + s * SLOT_SIZE;
+            int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
             for (int p = 0; p < MAX_PAGES; p++) {
                 int pa = mmio_read64 (slot + 88 + p * 8);
                 if (pa != 0) {
@@ -143,7 +142,7 @@ namespace Planet.Kernel {
             int existing = find_in (new_parent, new_ptr, new_len);
             if (existing >= 0 && existing != s)
                 return -1;
-            int slot = TABLE_ADDR + s * SLOT_SIZE;
+            int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
             int old_len = mmio_read64 (slot + 16);
             for (int i = 0; i < new_len; i++) {
                 mmio_write8 (slot + 24 + i, read_u8 (new_ptr + i));
@@ -159,7 +158,7 @@ namespace Planet.Kernel {
         public static int file_size (int s) {
             if (kind_of (s) == 0)
                 return -1;
-            return mmio_read64 (TABLE_ADDR + s * SLOT_SIZE + 8);
+            return mmio_read64 (KernelLayout.RAMFS_TABLE + s * SLOT_SIZE + 8);
         }
 
         public static int read (int s, int pos, int dst_buf, int count) {
@@ -170,7 +169,7 @@ namespace Planet.Kernel {
                 return 0;
             int rem = fsz - pos;
             int n = (count < rem) ? count : rem;
-            int slot = TABLE_ADDR + s * SLOT_SIZE;
+            int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
             for (int i = 0; i < n; i++) {
                 int off = pos + i;
                 int pg_idx = off / 4096;
@@ -185,7 +184,7 @@ namespace Planet.Kernel {
         public static int write (int s, int pos, int src_buf, int count) {
             if (kind_of (s) != 1 || pos < 0 || count <= 0)
                 return -1;
-            int slot = TABLE_ADDR + s * SLOT_SIZE;
+            int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
             int written = 0;
             for (int i = 0; i < count; i++) {
                 int off = pos + i;
@@ -215,7 +214,7 @@ namespace Planet.Kernel {
                 return 0;
             int pos = 0;
             for (int s = 0; s < MAX_FILES; s++) {
-                int slot = TABLE_ADDR + s * SLOT_SIZE;
+                int slot = KernelLayout.RAMFS_TABLE + s * SLOT_SIZE;
                 if (mmio_read64 (slot) == 0)
                     continue;
                 if (mmio_read64 (slot + 248) != parent)

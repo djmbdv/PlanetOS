@@ -27,26 +27,76 @@ with it, and what the correct design is. Sources are listed at the end.
 
 ### 1. Kernel data structures at hard-coded absolute addresses
 
-`kernel/pmm.vala`: `BITMAP_ADDR = 0x110000`, `RESERVED_END = 0x600000`,
-`MB_INFO_PTR = 0x106040`. `kernel/syscall.vala` uses `FD_TABLE_ADDR` and
-`0x106210` as a scratch buffer. The kernel image is loaded at `0x100000`, and its
-page tables live at `0x100000`/`0x101000`/`0x102000`/`0x103000`.
+The window is real, but the first reading of this defect was wrong: the kernel
+image is **not** at `0x100000`. `planc --freestanding` links it at `0x400000`
+(multiboot header at `0x4000F0`), and the produced image is file-backed
+`0x4000e8..0x4292c2` with `.bss` reaching `0x46b348`. Everything the kernel keeps
+at a fixed address lives *below* the image, hand-partitioned into
+`0x100000..0x127000`:
 
-So the kernel image, its BSS and these fixed structures share the first 6 MiB with
-no linker script and no runtime assertion that `end_of_kernel <= 0x110000`. Any
-growth in `.text`/`.data`/`.bss` moves the kernel's own end and silently
-overlaps the bitmap or the fd table. This is the most likely explanation for
-"adding one branch broke the mapping path": the *only* difference between the
-working and the failing build was ~15 lines of kernel code, and the symptom was
-not a compile error but memory corruption during allocation.
+| region | base | size | owner |
+| --- | --- | --- | --- |
+| page tables (PML4/PDPT/PD/PD3) | `0x100000` | `0x4000` | boot asm, `Fb`, `Vmm` |
+| GDT, GDTR, TSS (+`rsp0`) | `0x104000` | `0x200` | boot asm, `Hal` |
+| IDT | `0x105000` | `0x1000` | `Hal` |
+| tick, IDTR, cpuid scratch | `0x106000` | `0x40` | `Hal`, IRQ0 handler |
+| multiboot pointer | `0x106040` | `0x8` | boot asm, `Pmm` |
+| keyboard ring + cursors | `0x106100` | `0x50` | `Keyboard` |
+| nested exec slots | `0x106200` | `0x100` | `ElfLoader` |
+| mouse ring | `0x106300` | `0x100` | `Mouse` |
+| mouse cursors | `0x106400` | `0x10` | `Mouse` |
+| syscall scratch | `0x106800` | `0x10` | `SYS_READ_KEY` |
+| fd table | `0x107000` | `0x200` | `syscall.vala` |
+| PMM bitmap | `0x110000` | `0x800` | `Pmm` |
+| RAMFS table | `0x120000` | `0x2000` | `Ramfs` |
+| scheduler variables | `0x123FF0` | `0x10` | `Sched` |
+| TCBs (16 x 128 B) | `0x124000` | `0x800` | `Sched` |
+| FXSAVE areas (16 x 512 B) | `0x125000` | `0x2000` | `Sched` |
 
-Correct approach: give the kernel a linker script (or a fixed layout documented
-in one place) with `_kernel_end` exported, place the bitmap/fd table/scratch
-buffers in `.bss` (symbols, not literals), and assert at boot that the region
-between `_kernel_end` and the first PMM frame is large enough. Squeezing
-structures into absolute addresses is only safe when something verifies them
-(see Intel SDM Vol. 3A 4.5 for the mapping rules; nothing there protects you from
-your own layout).
+So growth of `.text`/`.data`/`.bss` moves away from the window: the image starts
+`0x400000 - 0x127000` ≈ 2.8 MiB above it, and the boot stack (`rsp = 0x200000`,
+growing down) is the only thing between them. The earlier probe in `81ed103`
+reported the opposite ("the image is file-backed up to 0x42b280, which covers the
+fixed structures") because it assumed a single contiguous span from `0x100000`;
+that conclusion is withdrawn here.
+
+What *is* wrong is that the partition existed only as magic numbers spread over
+ten files, with nothing checking it. Two overlaps were live in the tree:
+
+- `syscall.vala` used `0x106210` as the one-byte scratch buffer for
+  `SYS_READ_KEY`. That address is inside the first 32-byte nested-exec slot
+  (`0x106200 + (exec_depth - 1) * 32`), so reading stdin while a file was open on
+  fd 0 overwrote the saved `rsp`/`cr3`/`rsp0` of the outermost `SYS_EXEC` and the
+  return path restored a garbage stack.
+- nested `SYS_EXEC` had no depth limit, and the slots only span 8 levels before
+  they reach the mouse ring at `0x106300`.
+
+Both are fixed, and the window is now declared once:
+
+- `kernel/layout.vala` holds the region table above (base, size, bounds of the
+  window, boot stack, PMM range and image base). Every module references
+  `KernelLayout.*` instead of its own literals, so the partition cannot drift
+  between files.
+- `KernelLayout.verify ()` walks the regions in address order at boot and the
+  kernel refuses to run on a broken table, printing `layout:ok=1` (or
+  `layout:fail=<code>` and halting).
+- `ElfLoader.exec_from_xfs ()` refuses to nest past `EXEC_MAX_DEPTH` (8),
+  releasing the child stack and address space instead of writing past the slots.
+- `tools/check_layout.py` is a build gate, not a report: it parses
+  `kernel/layout.vala`, checks ordering/disjointness/window bounds, checks that
+  the produced image (PT_LOAD `vaddr + memsz`, so `.bss` counts) does not touch
+  the window or the boot stack, and checks that the addresses which only exist as
+  literals inside asm bodies (boot page tables, multiboot pointer, PS/2 rings,
+  TSS `rsp0`) still match their constants. `run-qemu.ps1` fails the build on a
+  non-zero exit.
+
+What is still not possible is the ideal form of the fix: putting the buffers in
+`.bss` as symbols. `planc` has no arrays and no static class fields, so a byte
+buffer cannot be declared at all — only scalar globals reach `.bss`. Until the
+compiler grows fixed-size static buffers (or a linker script plus exported
+`_kernel_end`), an enumerated, verified window is the strongest guarantee
+available; the checks are what make it safe rather than lucky.
+
 
 ### 2. User space is the kernel identity map
 
@@ -112,10 +162,11 @@ of relying on what is left after fragmentation, and report failures.
 
 ## Recommendation
 
-Do defects 1 and 3 first: they are small, they are bugs in their own right, and
-they turn silent corruption into an assertion or an error code. Then, as a slice
-of its own, implement the user VA window (defect 2), which makes freeing memory
-trivial (defect 5) because a block no longer has to be contiguous.
+Defect 1 is now declared and enforced (region table, boot check, build gate) and
+defect 3 turns silent mapping failures into `0` returns; what remains of defect 1
+is the compiler work needed to place the buffers in `.bss` instead of a window.
+The next slice should be defect 2, the user VA window, which also makes freeing
+memory trivial (defect 5) because a block no longer has to be contiguous.
 
 The `-animate` failure that slice 47 fixed by reusing one framebuffer was a
 symptom of defect 5 only; the five surfaces were fine in principle.

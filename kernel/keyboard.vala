@@ -50,10 +50,6 @@ namespace Planet.Kernel {
     private int kb_super = 0;
 
     public class Keyboard : Object {
-        private const int KB_BUF = 0x106100;
-        private const int KB_HEAD = 0x106140;
-        private const int KB_TAIL = 0x106148;
-
         public static void init () {
             ps2_drain ();
             kb_shift = 0;
@@ -61,19 +57,19 @@ namespace Planet.Kernel {
             kb_ctrl = 0;
             kb_alt = 0;
             kb_super = 0;
-            mmio_write32 (KB_HEAD, 0);
-            mmio_write32 (KB_TAIL, 0);
+            mmio_write32 (KernelLayout.KB_HEAD, 0);
+            mmio_write32 (KernelLayout.KB_TAIL, 0);
             Hal.set_idt_gate_dpl (33, addr_isr_irq1 (), 0);
         }
 
         public static int poll_scancode () {
-            int head = mmio_read32 (KB_HEAD);
-            int tail = mmio_read32 (KB_TAIL);
+            int head = mmio_read32 (KernelLayout.KB_HEAD);
+            int tail = mmio_read32 (KernelLayout.KB_TAIL);
             if (head == tail)
                 return -1;
-            int addr = KB_BUF + (tail & 63);
+            int addr = KernelLayout.KB_RING + (tail & 63);
             int v = (mmio_read32 (addr & ~3) >> ((addr & 3) * 8)) & 0xFF;
-            mmio_write32 (KB_TAIL, (tail + 1) & 63);
+            mmio_write32 (KernelLayout.KB_TAIL, (tail + 1) & 63);
             return v;
         }
 

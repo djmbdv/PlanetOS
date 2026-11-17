@@ -138,9 +138,6 @@ namespace Planet.Kernel {
     private int vga_state_buf = 0;
 
     public class Fb : Object {
-        private const int PD3_ADDR = 0x103000;
-        private const int PDPT_ADDR = 0x101000;
-
         private static int find_vga_bar0 () {
             for (int dev = 0; dev < 32; dev++) {
                 int id = pci_cfg_read32 (0x80000000 | (dev << 11));
@@ -162,20 +159,20 @@ namespace Planet.Kernel {
             if (pdpt_idx == 0)
                 return;
             for (int i = 0; i < 512; i++) {
-                mmio_write64 (PD3_ADDR + i * 8, 0);
+                mmio_write64 (KernelLayout.PD3 + i * 8, 0);
             }
             int base_2m = phys & ~0x1FFFFF;
             for (int k = 0; k < 8; k++) { // map 16 MiB (supports double-buffered 1280x720x32 / 1024x768x32)
                 int pa = base_2m + k * 0x200000;
                 int pd_idx = (pa >> 21) & 0x1FF;
-                mmio_write64 (PD3_ADDR + pd_idx * 8, pa | 0x83);
+                mmio_write64 (KernelLayout.PD3 + pd_idx * 8, pa | 0x83);
             }
-            mmio_write64 (PDPT_ADDR + pdpt_idx * 8, PD3_ADDR | 0x03);
+            mmio_write64 (KernelLayout.PDPT + pdpt_idx * 8, KernelLayout.PD3 | 0x03);
             int cur_cr3 = vmm_read_cr3 ();
-            if (cur_cr3 != 0 && cur_cr3 != Vmm.KERNEL_CR3) {
+            if (cur_cr3 != 0 && cur_cr3 != KernelLayout.PAGE_TABLES) {
                 int cur_pdpt = mmio_read64 (cur_cr3) & ~0xFFF;
                 if (cur_pdpt != 0)
-                    mmio_write64 (cur_pdpt + pdpt_idx * 8, PD3_ADDR | 0x03);
+                    mmio_write64 (cur_pdpt + pdpt_idx * 8, KernelLayout.PD3 | 0x03);
             }
             tlb_flush ();
         }

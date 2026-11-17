@@ -202,6 +202,7 @@ if (-not $NoBuild) {
         '--freestanding',
         (Join-Path $RtDir 'boot_mb2.vala'),
         (Join-Path $RtDir 'serial.vala'),
+        (Join-Path $KernelDir 'layout.vala'),
         (Join-Path $KernelDir 'cpu.vala'),
         (Join-Path $KernelDir 'vga.vala'),
         (Join-Path $KernelDir 'fb.vala'),
