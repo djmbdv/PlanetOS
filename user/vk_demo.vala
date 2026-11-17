@@ -55,9 +55,9 @@ int main (string[] args) {
             renderer.vk.draw_fullscreen (pipe_id);
         win.present ();
         if (!once) {
-            for (int f = 0; f < 60; f++) {
+            while (true) {
                 var ev = win.poll_event ();
-                if (ev.type == EventType.KEY_PRESS && ev.keyval == 'q')
+                if (ev.type == EventType.KEY_PRESS && (ev.keyval == 'q' || ev.keyval == 27))
                     break;
                 Sys.yield_cpu ();
             }
