@@ -429,6 +429,30 @@ namespace Planet.Kernel {
         if (num == 43) { // SYS_GPU_BLOB_CREATE(ctx_id, res_id, size) -> mapped addr or 0
             return VirtioGpu.create_blob_mapped (a0, a1, a2);
         }
+        if (num == 44) { // SYS_KLOG_READ(buf, max_records) -> records copied
+            if (a0 == 0 || a1 <= 0 || a1 > 128 || !user_ok (a0, a1 * 64))
+                return -1;
+            return Klog.read_records (a0, a1);
+        }
+        if (num == 45) { // SYS_KLOG_CTL(op, a, b)
+            if (a0 == 0) {  // set level
+                Klog.set_level (a1);
+                return Klog.level ();
+            }
+            if (a0 == 1) {  // set category a1 on/off
+                Klog.set_category (a1, a2 != 0);
+                return Klog.mask ();
+            }
+            if (a0 == 2) {  // clear
+                Klog.clear ();
+                return 0;
+            }
+            if (a0 == 3)    // query: level | mask << 8
+                return (Klog.level () & 0xFF) | ((Klog.mask () & 0xFF) << 8);
+            if (a0 == 4)    // records written since the last clear
+                return Klog.total ();
+            return -1;
+        }
         return -1;
     }
 

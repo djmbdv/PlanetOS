@@ -41,6 +41,7 @@ REGIONS = [
     ("mouse cursors", "MOUSE_HEAD", "MOUSE_POS_SIZE"),
     ("syscall scratch", "SYSCALL_SCRATCH", "SYSCALL_SCRATCH_SIZE"),
     ("fd table", "FD_TABLE", "FD_TABLE_SIZE"),
+    ("kernel log ring", "KLOG_RING", "KLOG_RING_SIZE"),
     ("pmm bitmap", "PMM_BITMAP", "PMM_BITMAP_SIZE"),
     ("ramfs table", "RAMFS_TABLE", "RAMFS_TABLE_SIZE"),
     ("scheduler variables", "SCHED_CUR", "SCHED_VARS_SIZE"),

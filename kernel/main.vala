@@ -52,6 +52,8 @@ int main () {
     // or runs into the boot stack / PMM / image.
     int layout_code = KernelLayout.verify ();
     print (@"layout:ok=$(layout_code == 0 ? 1 : 0)\n");
+    Klog.write (Klog.CAT_BOOT, layout_code == 0 ? Klog.LVL_INFO : Klog.LVL_ERROR,
+                layout_code == 0 ? "low-memory window verified" : "low-memory window broken");
     if (layout_code != 0) {
         print (@"layout:fail=$(layout_code)\n");
         while (true) {
@@ -103,7 +105,10 @@ int main () {
     VirtioGpu.init ();
     if (VirtioGpu.is_present ()) {
         print (@"virtio_gpu:found=1 w=$(VirtioGpu.display_width ()) h=$(VirtioGpu.display_height ()) virgl=$(VirtioGpu.has_virgl () ? 1 : 0) blob=$(VirtioGpu.has_blob () ? 1 : 0) ctx=$(VirtioGpu.has_ctx_init () ? 1 : 0) venus=$(VirtioGpu.has_venus () ? 1 : 0)\n");
+        Klog.info (Klog.CAT_GPU, @"present virgl=$(VirtioGpu.has_virgl () ? 1 : 0) blob=$(VirtioGpu.has_blob () ? 1 : 0) venus=$(VirtioGpu.has_venus () ? 1 : 0)");
         Vga.activate_virtio_console ();
+    } else {
+        Klog.info (Klog.CAT_GPU, "no virtio-gpu device, using VGA");
     }
 
     int xok = Xfs.mount () ? 1 : 0;

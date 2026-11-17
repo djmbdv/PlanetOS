@@ -91,6 +91,8 @@ namespace Planet.Kernel {
         // --- kernel tables -------------------------------------------------
         public const int FD_TABLE = 0x107000;      // 16 slots x 32 bytes
         public const int FD_TABLE_SIZE = 0x200;
+        public const int KLOG_RING = 0x108000;     // 128 records x 64 bytes
+        public const int KLOG_RING_SIZE = 0x2000;
         public const int PMM_BITMAP = 0x110000;    // 64 MiB / 4 KiB frames
         public const int PMM_BITMAP_SIZE = 0x800;
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
@@ -121,6 +123,7 @@ namespace Planet.Kernel {
         private const int R_MOUSE_POS = 10;
         private const int R_SYSCALL_SCRATCH = 11;
         private const int R_FD_TABLE = 12;
+        private const int R_KLOG_RING = 18;
         private const int R_PMM_BITMAP = 13;
         private const int R_RAMFS_TABLE = 14;
         private const int R_SCHED_VARS = 15;
@@ -164,6 +167,8 @@ namespace Planet.Kernel {
             r = step (R_SYSCALL_SCRATCH, SYSCALL_SCRATCH, SYSCALL_SCRATCH_SIZE);
             if (r != 0) return r;
             r = step (R_FD_TABLE, FD_TABLE, FD_TABLE_SIZE);
+            if (r != 0) return r;
+            r = step (R_KLOG_RING, KLOG_RING, KLOG_RING_SIZE);
             if (r != 0) return r;
             r = step (R_PMM_BITMAP, PMM_BITMAP, PMM_BITMAP_SIZE);
             if (r != 0) return r;

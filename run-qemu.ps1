@@ -226,6 +226,7 @@ if (-not $NoBuild) {
         (Join-Path $RtDir 'boot_mb2.vala'),
         (Join-Path $RtDir 'serial.vala'),
         (Join-Path $KernelDir 'layout.vala'),
+        (Join-Path $KernelDir 'klog.vala'),
         (Join-Path $KernelDir 'cpu.vala'),
         (Join-Path $KernelDir 'vga.vala'),
         (Join-Path $KernelDir 'fb.vala'),
@@ -328,8 +329,14 @@ if ($Vga) { $GpuMode = 'std' }
 elseif ($Virtio) { $GpuMode = 'virtio' }
 elseif ($Venus -or $VirtioGl) { $GpuMode = 'venus' }
 
-if ($Headless -and ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus')) {
-    # A GL device needs a GL-capable display backend, and QEMU on Windows has
+if ($GpuMode -eq 'venus') {
+    # Every MSYS2 virglrenderer so far is built without the render server, so
+    # venus cannot come up and QEMU leaves the guest on plain virgl. Say it here
+    # instead of letting the failure look like a guest bug.
+    Write-Host 'QEMU: -Venus needs a virglrenderer built with the render server; if QEMU reports "failed to initialize venus renderer", this host cannot do venus and the guest keeps plain virgl.'
+}
+
+if ($Headless -and ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus')) {    # A GL device needs a GL-capable display backend, and QEMU on Windows has
     # none without a window: '-display egl-headless' boots but its scanouts
     # fail (VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER), so headless stays on the
     # non-GL virtio-gpu where the serial console is all that matters.

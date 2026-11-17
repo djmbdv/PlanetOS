@@ -281,6 +281,28 @@ not, so `-Venus` there falls back to a plain virgl context. Headless mode always
 uses the non-GL `virtio-gpu-pci`, because QEMU has no OpenGL backend without a
 window (`egl-headless` boots but fails its scanouts on Windows).
 
+### Debugging the guest without adding prints
+
+The kernel keeps a categorised log ring (`kernel/klog.vala`) and the shell can
+drive it, so a fault can be reproduced first and inspected afterwards:
+
+```sh
+dmesg                 # dump the records (oldest first)
+dmesg -c              # dump and clear
+log                   # level, per-category switches, record count
+log input debug       # turn one category up (boot input gpu mem vfs sched exec)
+log level 3           # 0=error 1=warn 2=info 3=debug, all categories
+log clear
+mouse                 # PS/2 state plus counters: packets/bytes/resync
+```
+
+Nothing is recorded above the current level, and `log level 2` (the default)
+keeps only warnings and errors plus the boot summaries, so leaving a
+`Klog.debug ()` call in a hot path costs nothing until someone asks for it.
+Subsystems also keep cheap always-on counters (`mouse` above, `mem`, `ps`)
+because "no events arrive" and "events arrive but are dropped" need different
+fixes.
+
 Type `exit` in the guest shell (or close the QEMU window) to shut the machine
 down. The window-mode serial log is `<msys64>\tmp\planetos-qemu\serial.log`
 (`/tmp/planetos-qemu/serial.log` from bash).

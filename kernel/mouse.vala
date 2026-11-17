@@ -73,6 +73,12 @@ namespace Planet.Kernel {
     private int mouse_b0 = 0;
     private int mouse_b1 = 0;
 
+    // Counters: cheap, always on, and enough to tell "no bytes arrive" from
+    // "bytes arrive but the decoder drops them" without per-event logging.
+    private int mouse_bytes = 0;
+    private int mouse_packets = 0;
+    private int mouse_resync = 0;
+
     public class Mouse : Object {
         private static void send_mouse (int val) {
             ps2_wait_write ();
@@ -104,6 +110,7 @@ namespace Planet.Kernel {
             send_mouse (0xF4); // Enable data reporting
             Hal.set_idt_gate_dpl (44, addr_isr_irq12 (), 0);
             pic_unmask_irq12 ();
+            Klog.info (Klog.CAT_INPUT, "ps/2 mouse enabled (irq12)");
         }
 
         private static int poll_byte () {
@@ -122,9 +129,12 @@ namespace Planet.Kernel {
                 int b = poll_byte ();
                 if (b < 0)
                     break;
+                mouse_bytes = mouse_bytes + 1;
                 if (mouse_phase == 0) {
-                    if ((b & 0x08) == 0)
+                    if ((b & 0x08) == 0) {
+                        mouse_resync = mouse_resync + 1;
                         continue;
+                    }
                     mouse_b0 = b;
                     mouse_phase = 1;
                 } else if (mouse_phase == 1) {
@@ -145,12 +155,18 @@ namespace Planet.Kernel {
                     }
                     mouse_btn = mouse_b0 & 0x07;
                     mouse_phase = 0;
+                    mouse_packets = mouse_packets + 1;
+                    if (Klog.enabled (Klog.CAT_INPUT))
+                        Klog.debug (Klog.CAT_INPUT, @"x=$(mouse_x) y=$(mouse_y) btn=$(mouse_btn)");
                 }
             }
             if (out_buf != 0) {
                 mmio_write64 (out_buf + 0, mouse_x);
                 mmio_write64 (out_buf + 8, mouse_y);
                 mmio_write64 (out_buf + 16, mouse_btn);
+                mmio_write64 (out_buf + 24, mouse_packets);
+                mmio_write64 (out_buf + 32, mouse_bytes);
+                mmio_write64 (out_buf + 40, mouse_resync);
             }
         }
     }

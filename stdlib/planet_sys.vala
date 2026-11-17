@@ -285,5 +285,40 @@ namespace Planet {
         public static int gpu_blob_create (int ctx_id, int res_id, int size) {
             return __sys4 (43, ctx_id, res_id, size, 0);
         }
+
+        // --- kernel log ----------------------------------------------------
+
+        // Copies up to `max_records` 64-byte records into `buf`, oldest first.
+        public static int klog_read (uint8[] buf, int max_records) {
+            if (max_records <= 0 || buf.length < max_records * 64)
+                return -1;
+            return __sys4 (44, __arr_data (buf), max_records, 0, 0);
+        }
+
+        // Same, for callers that already hold a raw page address.
+        public static int klog_read_at (int addr, int max_records) {
+            return __sys4 (44, addr, max_records, 0, 0);
+        }
+
+        public static int klog_set_level (int level) {
+            return __sys4 (45, 0, level, 0, 0);
+        }
+
+        public static int klog_set_category (int cat, bool on) {
+            return __sys4 (45, 1, cat, on ? 1 : 0, 0);
+        }
+
+        public static int klog_clear () {
+            return __sys4 (45, 2, 0, 0, 0);
+        }
+
+        // level in the low byte, category mask in the next one
+        public static int klog_state () {
+            return __sys4 (45, 3, 0, 0, 0);
+        }
+
+        public static int klog_total () {
+            return __sys4 (45, 4, 0, 0, 0);
+        }
     }
 }

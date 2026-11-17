@@ -25,6 +25,42 @@ namespace PlanetShell {
         return @"$v";
     }
 
+    [AsmBody(@"
+        mov (%rdi), %eax
+        ret
+    ")]
+    private extern int peek32 (int addr);
+
+    private string klog_cat_name (int cat) {
+        if (cat == 0) return "boot";
+        if (cat == 1) return "input";
+        if (cat == 2) return "gpu";
+        if (cat == 3) return "mem";
+        if (cat == 4) return "vfs";
+        if (cat == 5) return "sched";
+        if (cat == 6) return "exec";
+        return "?";
+    }
+
+    private int klog_cat_id (string name) {
+        if (name == "boot") return 0;
+        if (name == "input") return 1;
+        if (name == "gpu") return 2;
+        if (name == "mem") return 3;
+        if (name == "vfs") return 4;
+        if (name == "sched") return 5;
+        if (name == "exec") return 6;
+        return -1;
+    }
+
+    private string klog_lvl_name (int lvl) {
+        if (lvl == 0) return "E";
+        if (lvl == 1) return "W";
+        if (lvl == 2) return "I";
+        if (lvl == 3) return "D";
+        return "?";
+    }
+
     private string abs_path (string name) {
         if (name.length == 0)
             return cwd;
@@ -576,6 +612,7 @@ namespace PlanetShell {
             print ("          mv <src> <dst>, touch <file>, echo, test/[],\n");
             print ("          export, unset, env, sh <script>, exec <file> [args] [&], wait <tid>,\n");
             print ("          ticks, date, uptime, mem, exit [code]  |  ops: |, >, >>, <, ;, &&, ||, &, $VAR, if/for\n");
+            print ("          debug: dmesg [-c], log [<cat> on|off | level <0-3> | clear], mouse\n");
             print ("          <prog> [args] runs <prog>.elf directly (case-insensitive, no exec needed)\n");
             return 0;
         }
@@ -759,6 +796,100 @@ namespace PlanetShell {
             int code = Sys.wait (tid);
             print (@"wait: tid=$tid exit=$code\n");
             return code;
+        }
+        if (cmd == "dmesg") {
+            bool clear = (args.length > 1 && args[1] == "-c");
+            int buf = Sys.alloc_pages (1);
+            if (buf == 0) {
+                print ("dmesg: out of memory\n");
+                return 1;
+            }
+            int n = Sys.klog_read_at (buf, 64);
+            if (n <= 0) {
+                print ("dmesg: empty\n");
+            } else {
+                var txt = new uint8[40];
+                for (int i = 0; i < n; i++) {
+                    int rec = buf + i * 64;
+                    int cat = peek32 (rec + 0);
+                    int lvl = peek32 (rec + 4);
+                    int len = peek32 (rec + 8);
+                    int tick = peek32 (rec + 16);
+                    if (len < 0) len = 0;
+                    if (len > 40) len = 40;
+                    for (int k = 0; k < len; k++)
+                        txt[k] = (uint8) (peek32 (rec + 24 + k) & 0xFF);
+                    string tag = klog_cat_name (cat);
+                    string mark = klog_lvl_name (lvl);
+                    print (@"[$tick] $mark $tag: ");
+                    Sys.console_write (txt, len);
+                    print ("\n");
+                }
+            }
+            Sys.free_page (buf);
+            if (clear)
+                Sys.klog_clear ();
+            return 0;
+        }
+        if (cmd == "log") {
+            if (args.length == 1) {
+                int st = Sys.klog_state ();
+                int lvl = st & 0xFF;
+                int mask = (st >> 8) & 0xFF;
+                string head = @"log: level=$lvl records=$(Sys.klog_total ()) categories:";
+                print (head);
+                for (int c = 0; c < 7; c++) {
+                    string nm = klog_cat_name (c);
+                    string state = ((mask & (1 << c)) != 0) ? "on" : "off";
+                    print (@" $nm=$state");
+                }
+                print ("\n");
+                return 0;
+            }
+            string sub = args[1];
+            if (sub == "clear") {
+                Sys.klog_clear ();
+                return 0;
+            }
+            if (sub == "level") {
+                if (args.length < 3) {
+                    print ("usage: log level <0-3> (0=error 1=warn 2=info 3=debug)\n");
+                    return 1;
+                }
+                Sys.klog_set_level (parse_int_s (args[2]));
+                string lv = @"$(Sys.klog_state () & 0xFF)";
+                print (@"log: level=$lv\n");
+                return 0;
+            }
+            int cat = klog_cat_id (sub);
+            if (cat < 0) {
+                print ("log: categories: boot input gpu mem vfs sched exec\n");
+                return 1;
+            }
+            int cur = (Sys.klog_state () >> 8) & 0xFF;
+            bool on = (args.length > 2) ? (args[2] == "on") : ((cur & (1 << cat)) != 0);
+            if (args.length > 2)
+                Sys.klog_set_category (cat, on);
+            string state = on ? "on" : "off";
+            print (@"log: $sub=$state\n");
+            return 0;
+        }
+        if (cmd == "mouse") {
+            int buf = Sys.alloc_pages (1);
+            if (buf == 0) {
+                print ("mouse: out of memory\n");
+                return 1;
+            }
+            Sys.sys (24, buf, 0, 0);
+            int mx = peek32 (buf + 0);
+            int my = peek32 (buf + 8);
+            int btn = peek32 (buf + 16);
+            int pk = peek32 (buf + 24);
+            int nbytes = peek32 (buf + 32);
+            int rs = peek32 (buf + 40);
+            print (@"mouse: x=$mx y=$my btn=$btn packets=$pk bytes=$nbytes resync=$rs\n");
+            Sys.free_page (buf);
+            return 0;
         }
         if (cmd == "sh" || cmd == ".") {
             if (args.length < 2) {

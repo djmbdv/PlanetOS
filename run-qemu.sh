@@ -79,6 +79,7 @@ OPT="${PLANC_OPT:--O2}"
     "$ROOT/planetrt/boot_mb2.vala" \
     "$ROOT/planetrt/serial.vala" \
     "$ROOT/kernel/layout.vala" \
+    "$ROOT/kernel/klog.vala" \
     "$ROOT/kernel/cpu.vala" \
     "$ROOT/kernel/vga.vala" \
     "$ROOT/kernel/fb.vala" \
@@ -129,7 +130,10 @@ GPU_ARGS=(-vga none -device virtio-gpu-gl-pci)
 case "$GPU_MODE" in
     std)    GPU_ARGS=(-vga std) ;;
     virtio) GPU_ARGS=(-vga none -device virtio-gpu-pci) ;;
-    venus)  GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M) ;;
+    venus)  GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M)
+            # Most virglrenderer builds lack the render server, so venus cannot
+            # come up and QEMU leaves the guest on plain virgl.
+            echo "QEMU: --venus needs a virglrenderer built with the render server; if QEMU reports \"failed to initialize venus renderer\", this host cannot do venus and the guest keeps plain virgl." ;;
 esac
 DISP_ARGS=()
 SER_ARGS=()

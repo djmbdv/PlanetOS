@@ -1,0 +1,8 @@
+~\[\d+\] I boot: low-memory window verified
+~\[\d+\] I input: ps/2 mouse enabled \(irq12\)
+~\[\d+\] I gpu: no virtio-gpu device, using VGA
+~log: level=2 records=\d+ categories:
+=log: input=off
+=log: input=on
+~mouse: x=\d+ y=\d+ btn=\d+ packets=\d+ bytes=\d+ resync=\d+
+=dmesg: empty

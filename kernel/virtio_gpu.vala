@@ -419,6 +419,11 @@ namespace Planet.Kernel {
 
         // --- Phase 2: 2D Scanout & Hardware Cursor ---
 
+        private static void gpu_fail (string what, int resp) {
+            print (@"virtio_gpu: $what failed resp=$resp\n");
+            Klog.warn (Klog.CAT_GPU, @"$what failed resp=$resp");
+        }
+
         public static int init_scanout (int w, int h) {
             if (vgpu_found == 0 || w <= 0 || h <= 0)
                 return 0;
@@ -455,7 +460,7 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 32, w);
             mmio_write32 (vgpu_cmd_page + 36, h);
             if (!send_cmd (40, 24) || resp_type () != RESP_OK_NODATA) {
-                print (@"virtio_gpu: create_2d failed resp=$(resp_type ())\n");
+                gpu_fail ("create_2d", resp_type ());
                 return 0;
             }
 
@@ -467,7 +472,7 @@ namespace Planet.Kernel {
             mmio_write64 (vgpu_cmd_page + 32, vgpu_fb_pa);
             mmio_write32 (vgpu_cmd_page + 40, fb_bytes);
             if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
-                print (@"virtio_gpu: attach_backing failed resp=$(resp_type ())\n");
+                gpu_fail ("attach_backing", resp_type ());
                 return 0;
             }
 
@@ -479,7 +484,7 @@ namespace Planet.Kernel {
             mmio_write32 (vgpu_cmd_page + 40, 0); // scanout_id
             mmio_write32 (vgpu_cmd_page + 44, RES_SCANOUT);
             if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
-                print (@"virtio_gpu: set_scanout failed resp=$(resp_type ())\n");
+                gpu_fail ("set_scanout", resp_type ());
                 return 0;
             }
 
