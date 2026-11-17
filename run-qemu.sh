@@ -152,10 +152,13 @@ if [ "$DISPLAY_MODE" = "none" ]; then
     DISP_ARGS=(-display none)
     SER_ARGS=(-serial mon:stdio)
 else
+    # grab-on-hover is a GTK-only sub-option; passing it to SDL makes QEMU
+    # refuse to start, so it is added only for the GTK backend.
+    if [ "$WINDOW_BACKEND" = "gtk" ]; then GRAB=",grab-on-hover=on"; else GRAB=""; fi
     case "$GPU_MODE" in
-        gl|venus) DISP_ARGS=(-display "$WINDOW_BACKEND,gl=on") ;;
-        virtio)   DISP_ARGS=(-display "$WINDOW_BACKEND,grab-on-hover=on") ;;
-        std)      if [ "$DISPLAY_MODE" = "gtk" ]; then DISP_ARGS=(-display "$WINDOW_BACKEND,grab-on-hover=on"); fi ;;
+        gl|venus) DISP_ARGS=(-display "$WINDOW_BACKEND,gl=on$GRAB") ;;
+        virtio)   DISP_ARGS=(-display "$WINDOW_BACKEND$GRAB") ;;
+        std)      if [ "$DISPLAY_MODE" = "gtk" ]; then DISP_ARGS=(-display "$WINDOW_BACKEND$GRAB"); fi ;;
     esac
     # Keep the serial console out of the terminal: QEMU's stdio backend is
     # unreliable under mintty, and the guest already draws to the VGA window.

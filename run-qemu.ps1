@@ -360,12 +360,16 @@ switch ($GpuMode) {
 $displayArgs = @()
 if ($Headless) {
     $displayArgs = @('-display', 'none')
-} elseif ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus') {
+} else {
+    # grab-on-hover is a GTK-only sub-option: passing it to SDL makes QEMU refuse
+    # to start ("Parameter 'grab-on-hover' is unexpected").
     $backend = if ($Sdl) { 'sdl' } else { 'gtk' }
-    $displayArgs = @('-display', ($backend + ',gl=on,grab-on-hover=on'))
-} elseif ($GpuMode -eq 'virtio') {
-    $backend = if ($Sdl) { 'sdl' } else { 'gtk' }
-    $displayArgs = @('-display', ($backend + ',grab-on-hover=on'))
+    $grab = if ($Sdl) { '' } else { ',grab-on-hover=on' }
+    if ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus') {
+        $displayArgs = @('-display', ($backend + ',gl=on' + $grab))
+    } elseif ($GpuMode -eq 'virtio') {
+        $displayArgs = @('-display', ($backend + $grab))
+    }
 }
 
 # A virtio-gpu-gl device only exists on top of an OpenGL display backend: QEMU
