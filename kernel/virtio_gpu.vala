@@ -164,12 +164,22 @@ namespace Planet.Kernel {
 
             mmio_write16 (vgpu_notify_base + vgpu_q_notify_off * vgpu_notify_mult, 0);
 
-            for (int spin = 0; spin < 2000000; spin++) {
+            // A fixed spin count is not a timeout: with virgl the control queue
+            // is served by the host GL thread, and the first commands arrive
+            // while QEMU is still creating the renderer. Spinning 2M times used
+            // to give up mid-flight, which showed up as a zero display size and
+            // as create_2d "failing" with an OK response already in the buffer.
+            // Poll against the PIT instead, with a spin cap so a wedged device
+            // cannot hang the boot.
+            int deadline = Hal.ticks () + 50; // 100 Hz ticks: ~500 ms
+            for (int spin = 0; spin < 40000000; spin++) {
                 int uidx = mmio_read32 (used_base) >> 16;
                 if ((uidx & 0xFFFF) != (vgpu_last_used & 0xFFFF)) {
                     vgpu_last_used = uidx & 0xFFFF;
                     return true;
                 }
+                if ((spin & 0x3FFF) == 0 && Hal.ticks () >= deadline)
+                    break;
             }
             return false;
         }
@@ -211,12 +221,22 @@ namespace Planet.Kernel {
 
             mmio_write16 (vgpu_notify_base + vgpu_q_notify_off * vgpu_notify_mult, 0);
 
-            for (int spin = 0; spin < 2000000; spin++) {
+            // A fixed spin count is not a timeout: with virgl the control queue
+            // is served by the host GL thread, and the first commands arrive
+            // while QEMU is still creating the renderer. Spinning 2M times used
+            // to give up mid-flight, which showed up as a zero display size and
+            // as create_2d "failing" with an OK response already in the buffer.
+            // Poll against the PIT instead, with a spin cap so a wedged device
+            // cannot hang the boot.
+            int deadline = Hal.ticks () + 50; // 100 Hz ticks: ~500 ms
+            for (int spin = 0; spin < 40000000; spin++) {
                 int uidx = mmio_read32 (used_base) >> 16;
                 if ((uidx & 0xFFFF) != (vgpu_last_used & 0xFFFF)) {
                     vgpu_last_used = uidx & 0xFFFF;
                     return true;
                 }
+                if ((spin & 0x3FFF) == 0 && Hal.ticks () >= deadline)
+                    break;
             }
             return false;
         }
@@ -368,12 +388,16 @@ namespace Planet.Kernel {
             mmio_write8 (vgpu_common_base + 20, ST_ACK | ST_DRIVER | ST_FEATURES_OK | ST_DRIVER_OK);
             vgpu_found = 1;
 
-            // Query display info
-            clear_cmd (64);
-            mmio_write32 (vgpu_cmd_page + 0, CMD_GET_DISPLAY_INFO);
-            if (send_cmd (24, 408) && resp_type () == RESP_OK_DISPLAY_INFO) {
-                vgpu_disp_w = mmio_read32 (vgpu_cmd_page + 2048 + 24 + 8);
-                vgpu_disp_h = mmio_read32 (vgpu_cmd_page + 2048 + 24 + 12);
+            // Query display info. The host reports 0x0 until it has a scanout
+            // mode, which only happens once the GL display is realised, so ask
+            // again a few times instead of believing the first answer.
+            for (int attempt = 0; attempt < 5 && vgpu_disp_w == 0; attempt++) {
+                clear_cmd (64);
+                mmio_write32 (vgpu_cmd_page + 0, CMD_GET_DISPLAY_INFO);
+                if (send_cmd (24, 408) && resp_type () == RESP_OK_DISPLAY_INFO) {
+                    vgpu_disp_w = mmio_read32 (vgpu_cmd_page + 2048 + 24 + 8);
+                    vgpu_disp_h = mmio_read32 (vgpu_cmd_page + 2048 + 24 + 12);
+                }
             }
 
             // Probe 3D capsets for CAPSET_VENUS (4) (num_capsets is at device_cfg + 12)

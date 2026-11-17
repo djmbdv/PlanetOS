@@ -161,6 +161,22 @@ else
     echo "Serial log: $SER_LOG"
 fi
 
+# A virtio-gpu-gl device only exists on top of an OpenGL display backend: QEMU
+# refuses to start without one ("The display backend does not have OpenGL
+# support enabled"), and a GL device paired with a plain backend is how a run
+# silently loses virgl. Keep device and display in sync and say so out loud.
+GPU_LINE="${GPU_ARGS[*]:-} ${DISP_ARGS[*]:-}"
+DISP_LINE="${DISP_ARGS[*]:-}"
+case "$GPU_LINE" in
+    *virtio-gpu-gl*)
+        case "$DISP_LINE" in
+            *gl=on*) ;;
+            *) echo "run-qemu: the GL device needs a gl=on display backend, got: $GPU_LINE" >&2; exit 1 ;;
+        esac
+        ;;
+esac
+echo "GPU: $GPU_MODE [$GPU_LINE]"
+
 echo "Booting PlanetOS in QEMU (type 'exit' in the guest shell to quit)..."
 exec qemu-system-x86_64 \
     -cpu max \

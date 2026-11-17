@@ -344,6 +344,26 @@ switch ($GpuMode) {
     default  { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci') }
 }
 
+$displayArgs = @()
+if ($Headless) {
+    $displayArgs = @('-display', 'none')
+} elseif ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus') {
+    $displayArgs = @('-display', 'gtk,gl=on,grab-on-hover=on')
+} elseif ($GpuMode -eq 'virtio') {
+    $displayArgs = @('-display', 'gtk,grab-on-hover=on')
+}
+
+# A virtio-gpu-gl device only exists on top of an OpenGL display backend: QEMU
+# refuses to start without one ("The display backend does not have OpenGL
+# support enabled"), and a GL device paired with a plain backend is how a run
+# silently loses virgl. Keep device and display in sync and say so out loud.
+$gpuLine = ($vgaArgs + $displayArgs) -join ' '
+$dispLine = $displayArgs -join ' '
+if ($gpuLine -match 'virtio-gpu-gl' -and $dispLine -notmatch 'gl=on') {
+    Fail ('the GL device needs a gl=on display backend, got: ' + $gpuLine)
+}
+Write-Host ('GPU: ' + $GpuMode + ' [' + $gpuLine + ']')
+
 $qemuArgs = @(
     '-cpu', 'max',
     '-kernel', (To-QemuPath $kernelPath),
@@ -351,16 +371,11 @@ $qemuArgs = @(
 ) + $vgaArgs + @(
     '-no-reboot',
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04'
-)
+) + $displayArgs
 
 if ($Headless) {
-    $qemuArgs += @('-display', 'none', '-serial', 'mon:stdio')
+    $qemuArgs += @('-serial', 'mon:stdio')
 } else {
-    if ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus') {
-        $qemuArgs += @('-display', 'gtk,gl=on,grab-on-hover=on')
-    } elseif ($GpuMode -eq 'virtio') {
-        $qemuArgs += @('-display', 'gtk,grab-on-hover=on')
-    }
     $serialLog = Out-Path 'serial.log'
     $qemuArgs += @('-serial', ('file:' + (To-QemuPath $serialLog)))
     Write-Host ('Serial log: ' + $serialLog)
