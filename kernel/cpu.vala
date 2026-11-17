@@ -62,6 +62,7 @@ namespace Planet.Kernel {
         # - CR0.MP (bit 1) = 1: monitor coprocessor
         # - CR4.OSFXSR (bit 9) = 1: habilita FXSAVE/FXRSTOR e instrucciones SSE
         # - CR4.OSXMMEXCPT (bit 10) = 1: habilita excepciones SIMD #XF
+        # - Si CPUID.1:ECX[26] (XSAVE)=1: habilita CR4.OSXSAVE (bit 18) + XCR0(x87|SSE|AVX)
         mov %cr0, %rax
         and $0xFFFFFFFB, %eax
         or $0x02, %eax
@@ -69,6 +70,21 @@ namespace Planet.Kernel {
         mov %cr4, %rax
         or $0x600, %eax
         mov %rax, %cr4
+        push %rbx
+        mov $1, %eax
+        xor %ecx, %ecx
+        cpuid
+        test $0x04000000, %ecx
+        jz .L_no_xsave
+        mov %cr4, %rax
+        or $0x40000, %eax
+        mov %rax, %cr4
+        xor %ecx, %ecx
+        .byte 0x0f, 0x01, 0xd0
+        or $0x07, %eax
+        .byte 0x0f, 0x01, 0xd1
+    .L_no_xsave:
+        pop %rbx
         ret
     ")]
     public extern void cpu_enable_sse ();

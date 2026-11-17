@@ -251,5 +251,35 @@ namespace Planet {
         public static int set_stdio (int in_fd, int out_fd) {
             return __sys4 (19, in_fd, out_fd, 0, 0);
         }
+
+        // --- VirtIO-GPU / Venus 3D -----------------------------------------
+
+        public static int gpu_info () {
+            return __sys4 (37, 0, 0, 0, 0);
+        }
+
+        public static int gpu_ctx_create (int ctx_id, int capset_id) {
+            return __sys4 (38, ctx_id, capset_id, 0, 0);
+        }
+
+        public static int gpu_ctx_destroy (int ctx_id) {
+            return __sys4 (39, ctx_id, 0, 0, 0);
+        }
+
+        public static int gpu_submit_3d (int ctx_id, uint8[] cmd_buf, int cmd_bytes) {
+            if (!range_ok (cmd_buf, cmd_bytes))
+                return -1;
+            return __sys4 (40, ctx_id, __arr_data (cmd_buf), cmd_bytes, 0);
+        }
+
+        public static int gpu_cursor_move (int x, int y) {
+            return __sys4 (41, x, y, 0, 0);
+        }
+
+        public static int gpu_cursor_set (uint8[] rgba_64x64, int hot_x, int hot_y) {
+            if (!range_ok (rgba_64x64, 16384))
+                return -1;
+            return __sys4 (42, __arr_data (rgba_64x64), hot_x, hot_y, 0);
+        }
     }
 }

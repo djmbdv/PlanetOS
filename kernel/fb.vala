@@ -52,11 +52,22 @@ namespace Planet.Kernel {
 
     [AsmBody(@"
         # fb_copy_dwords(dst in rdi, src in rsi, count in rdx)
-        # Copia 'count' pixeles de 32 bits (ARGB) desde el backbuffer hacia el LFB
+        # Copia 'count' pixeles de 32 bits (ARGB) usando SSE2 (16B/iter) + cola de 4B
         mov %rdx, %rcx
         test %rcx, %rcx
         jz _fb_cp_done
+    _fb_cp_sse:
+        cmp $4, %rcx
+        jb _fb_cp_loop
+        .byte 0xf3, 0x0f, 0x6f, 0x06
+        .byte 0xf3, 0x0f, 0x7f, 0x07
+        add $16, %rsi
+        add $16, %rdi
+        sub $4, %rcx
+        jmp _fb_cp_sse
     _fb_cp_loop:
+        test %rcx, %rcx
+        jz _fb_cp_done
         mov (%rsi), %eax
         mov %eax, (%rdi)
         add $4, %rsi
@@ -67,6 +78,36 @@ namespace Planet.Kernel {
         ret
     ")]
     public extern void fb_copy_dwords (int dst, int src, int count);
+
+    [AsmBody(@"
+        # fb_copy_dwords_avx2(dst in rdi, src in rsi, count in rdx)
+        # Copia 'count' pixeles de 32 bits (ARGB) usando AVX2 (32B/iter) + cola de 4B
+        mov %rdx, %rcx
+        test %rcx, %rcx
+        jz _fb_avx_done
+    _fb_avx_loop:
+        cmp $8, %rcx
+        jb _fb_avx_tail
+        .byte 0xc5, 0xfe, 0x6f, 0x06
+        .byte 0xc5, 0xfe, 0x7f, 0x07
+        add $32, %rsi
+        add $32, %rdi
+        sub $8, %rcx
+        jmp _fb_avx_loop
+    _fb_avx_tail:
+        test %rcx, %rcx
+        jz _fb_avx_done
+        mov (%rsi), %eax
+        mov %eax, (%rdi)
+        add $4, %rsi
+        add $4, %rdi
+        dec %rcx
+        jnz _fb_avx_tail
+    _fb_avx_done:
+        .byte 0xc5, 0xf8, 0x77
+        ret
+    ")]
+    public extern void fb_copy_dwords_avx2 (int dst, int src, int count);
 
     [AsmBody(@"
         # vga_inb(port in rdi) -> lee 1 byte desde un puerto I/O VGA
@@ -90,6 +131,7 @@ namespace Planet.Kernel {
     private int fb_width = 0;
     private int fb_height = 0;
     private int fb_page = 0;
+    private int fb_backend = 0; // 1 = BGA, 2 = VirtIO-GPU
     private int vga_saved = 0;
     private int vga_misc = 0;
     private int vga_state_buf = 0;
@@ -221,6 +263,17 @@ namespace Planet.Kernel {
         }
 
         public static int init (int w, int h) {
+            if (VirtioGpu.is_present ()) {
+                int vfb = VirtioGpu.init_scanout (w, h);
+                if (vfb != 0) {
+                    fb_backend = 2;
+                    fb_phys_addr = vfb;
+                    fb_width = w;
+                    fb_height = h;
+                    fb_page = 0;
+                    return vfb;
+                }
+            }
             int ver = bga_read (0);
             if (ver < 0xB0C0 || ver > 0xB0C6)
                 return 0;
@@ -238,6 +291,7 @@ namespace Planet.Kernel {
             bga_write (8, 0);       // X_OFFSET = 0
             bga_write (9, 0);       // Y_OFFSET = 0
             bga_write (4, 0x41);    // ENABLED | LFB_ENABLED
+            fb_backend = 1;
             fb_phys_addr = bar0;
             fb_width = w;
             fb_height = h;
@@ -256,18 +310,29 @@ namespace Planet.Kernel {
             return (fb_width << 16) | fb_height;
         }
 
+        private static void copy_pixels (int dst, int src, int count) {
+            if (Hal.has_avx2 ())
+                fb_copy_dwords_avx2 (dst, src, count);
+            else
+                fb_copy_dwords (dst, src, count);
+        }
+
         public static void blit (int src_buf, int w, int h) {
             if (fb_phys_addr == 0 || src_buf == 0)
                 return;
+            if (fb_backend == 2) {
+                VirtioGpu.present_full (src_buf, w, h);
+                return;
+            }
             int back = 1 - fb_page;
             int dst_base = fb_phys_addr + back * fb_width * fb_height * 4;
             int cw = (w < fb_width) ? w : fb_width;
             int ch = (h < fb_height) ? h : fb_height;
             if (cw == fb_width) {
-                fb_copy_dwords (dst_base, src_buf, cw * ch);
+                copy_pixels (dst_base, src_buf, cw * ch);
             } else {
                 for (int y = 0; y < ch; y++) {
-                    fb_copy_dwords (dst_base + y * fb_width * 4, src_buf + y * w * 4, cw);
+                    copy_pixels (dst_base + y * fb_width * 4, src_buf + y * w * 4, cw);
                 }
             }
             fb_page = back;
@@ -281,6 +346,10 @@ namespace Planet.Kernel {
             int ry = xy_packed & 0xFFFF;
             int rw = (wh_packed >> 16) & 0xFFFF;
             int rh = wh_packed & 0xFFFF;
+            if (fb_backend == 2) {
+                VirtioGpu.present_rect (src_buf, rx, ry, rw, rh);
+                return;
+            }
             if (rx < 0) rx = 0;
             if (ry < 0) ry = 0;
             if (rx + rw > fb_width) rw = fb_width - rx;
@@ -290,7 +359,7 @@ namespace Planet.Kernel {
             int dst_base = fb_phys_addr + fb_page * fb_width * fb_height * 4;
             for (int row = 0; row < rh; row++) {
                 int off = ((ry + row) * fb_width + rx) * 4;
-                fb_copy_dwords (dst_base + off, src_buf + off, rw);
+                copy_pixels (dst_base + off, src_buf + off, rw);
             }
         }
 
@@ -304,14 +373,19 @@ namespace Planet.Kernel {
 
         public static void close () {
             if (fb_phys_addr != 0) {
-                bga_write (4, 0);
-                bga_write (8, 0);
-                bga_write (9, 0);
+                if (fb_backend == 2) {
+                    VirtioGpu.close_scanout ();
+                } else {
+                    bga_write (4, 0);
+                    bga_write (8, 0);
+                    bga_write (9, 0);
+                    restore_vga_text_state ();
+                }
+                fb_backend = 0;
                 fb_phys_addr = 0;
                 fb_width = 0;
                 fb_height = 0;
                 fb_page = 0;
-                restore_vga_text_state ();
                 Vga.init ();
             }
         }

@@ -396,6 +396,28 @@ namespace Planet.Kernel {
                 return -1;
             return Env.sys_set (a0, a1, a2, a3);
         }
+        if (num == 37) { // SYS_GPU_INFO() -> packed caps + w/h
+            return VirtioGpu.packed_caps ();
+        }
+        if (num == 38) { // SYS_GPU_CTX_CREATE(ctx_id, capset_id)
+            return VirtioGpu.ctx_create (a0, a1) ? 0 : -1;
+        }
+        if (num == 39) { // SYS_GPU_CTX_DESTROY(ctx_id)
+            return VirtioGpu.ctx_destroy (a0) ? 0 : -1;
+        }
+        if (num == 40) { // SYS_GPU_SUBMIT_3D(ctx_id, cmd_buf, cmd_bytes)
+            if (!user_ok (a1, a2))
+                return -1;
+            return VirtioGpu.submit_3d (a0, a1, a2, true) ? 0 : -1;
+        }
+        if (num == 41) { // SYS_GPU_CURSOR_MOVE(x, y)
+            return VirtioGpu.move_cursor (a0, a1) ? 0 : -1;
+        }
+        if (num == 42) { // SYS_GPU_CURSOR_SET(rgba_64x64_buf, hot_x, hot_y)
+            if (!user_ok (a0, 16384))
+                return -1;
+            return VirtioGpu.set_cursor (a0, a1, a2) ? 0 : -1;
+        }
         return -1;
     }
 

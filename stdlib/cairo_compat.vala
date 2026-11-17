@@ -6,12 +6,25 @@ namespace Cairo {
 
     [AsmBody(@"
         # __c_fill32(addr in rdi, val in rsi, count in rdx)
-        # Rellena 'count' pixeles de 32 bits (ARGB) con 'val' en memoria contigua
+        # Rellena 'count' pixeles de 32 bits (ARGB) usando SSE2 (16B/iter) + cola de 4B
         mov %rdx, %rcx
         test %rcx, %rcx
         jz _cf_done
         mov %esi, %eax
+        cmp $4, %rcx
+        jb _cf_loop
+        .byte 0x66, 0x0f, 0x6e, 0xc6
+        .byte 0x66, 0x0f, 0x70, 0xc0, 0x00
+    _cf_sse:
+        cmp $4, %rcx
+        jb _cf_loop
+        .byte 0xf3, 0x0f, 0x7f, 0x07
+        add $16, %rdi
+        sub $4, %rcx
+        jmp _cf_sse
     _cf_loop:
+        test %rcx, %rcx
+        jz _cf_done
         mov %eax, (%rdi)
         add $4, %rdi
         dec %rcx
