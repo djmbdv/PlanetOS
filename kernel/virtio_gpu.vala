@@ -905,22 +905,40 @@ namespace Planet.Kernel {
             return vgpu_con_active != 0;
         }
 
+        private static int blend_rgb (int bg, int fg, int w3) {
+            int rb = (bg >> 16) & 0xFF;
+            int gb = (bg >> 8) & 0xFF;
+            int bb = bg & 0xFF;
+            int rf = (fg >> 16) & 0xFF;
+            int gf = (fg >> 8) & 0xFF;
+            int bf = fg & 0xFF;
+            int r = (rb * (3 - w3) + rf * w3 + 1) / 3;
+            int g = (gb * (3 - w3) + gf * w3 + 1) / 3;
+            int b = (bb * (3 - w3) + bf * w3 + 1) / 3;
+            return (255 << 24) | (r << 16) | (g << 8) | b;
+        }
+
         public static void console_draw_cell (int row, int col, int ch, int attr, bool cursor) {
             if (vgpu_con_active == 0 || vgpu_fb_pa == 0 || row < 0 || row >= 25 || col < 0 || col >= 80)
                 return;
             int fg = cursor ? 0xFF0F131A : vga_fg_rgb (attr);
             int bg = cursor ? 0xFF38BDF8 : 0xFF0F131A;
+            int c1 = blend_rgb (bg, fg, 1);
+            int c2 = blend_rgb (bg, fg, 2);
             int x0 = 240 + col * 10;
             int y0 = 110 + row * 20;
             int glyph = ch & 0xFF;
-            for (int q = 0; q < 4; q++) {
+            for (int q = 0; q < 7; q++) {
                 int packed = ConsoleFont.pack (glyph, q);
-                for (int r = 0; r < 5; r++) {
-                    int rbits = (packed >> (r * 10)) & 0x3FF;
-                    int py = y0 + q * 5 + r;
+                for (int r = 0; r < 3; r++) {
+                    int py = y0 + q * 3 + r;
+                    if (py >= y0 + 20)
+                        break;
+                    int rbits = (packed >> (r * 20)) & 0xFFFFF;
                     int off = (py * 1280 + x0) * 4;
                     for (int c = 0; c < 10; c++) {
-                        int px = ((rbits & (1 << (9 - c))) != 0) ? fg : bg;
+                        int lvl = (rbits >> ((9 - c) * 2)) & 3;
+                        int px = (lvl == 0) ? bg : ((lvl == 3) ? fg : ((lvl == 2) ? c2 : c1));
                         mmio_write32 (vgpu_fb_pa + off + c * 4, px);
                     }
                 }
@@ -998,7 +1016,15 @@ namespace Planet.Kernel {
             if (init_scanout (1280, 720) == 0)
                 return;
             for (int i = 0; i < 1280 * 720 * 4; i += 4)
-                mmio_write32 (vgpu_fb_pa + i, 0xFF0F131A);
+                mmio_write32 (vgpu_fb_pa + i, 0xFF0B0E14);
+            // Inner console panel (232, 102, 816, 516) with 1px subtle slate border
+            for (int y = 102; y < 618; y++) {
+                int row_off = y * 1280 * 4;
+                for (int x = 232; x < 1048; x++) {
+                    bool border = (y == 102 || y == 617 || x == 232 || x == 1047);
+                    mmio_write32 (vgpu_fb_pa + row_off + x * 4, border ? 0xFF1E293B : 0xFF0F131A);
+                }
+            }
             vgpu_con_active = 1;
             flush_scanout_rect (0, 0, 1280, 720);
             console_redraw_all (cur_r, cur_c);
