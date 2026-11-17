@@ -223,6 +223,13 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'main.vala'),
         '-o', (Out-Path 'planet-kernel')
     )
+            if ($LASTEXITCODE -ne 0) {
+                Fail 'planc failed on the kernel'
+            }
+            & $Python (Join-Path (Join-Path $Root 'tools') 'check_layout.py') (Out-Path 'planet-kernel')
+            if ($LASTEXITCODE -ne 0) {
+                Fail 'the kernel image overlaps its fixed data structures (tools/check_layout.py)'
+            }
 
     Write-Step 'Building the boot disk image...'
     & $Python (Join-Path $Root 'tools\mkdisk.py') `
