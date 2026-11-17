@@ -400,10 +400,11 @@ namespace Wm {
                 hw_cursor = true;
         }
 
-        public void attach (Window w) {
+        public void attach (Window w, bool use_hw_cursor = false) {
             screen = w;
             attached = true;
-            init_hw_cursor ();
+            if (use_hw_cursor)
+                init_hw_cursor ();
         }
 
         public void shutdown () {
