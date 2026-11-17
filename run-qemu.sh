@@ -118,7 +118,7 @@ GPU_ARGS=(-vga std)
 if [ "$GPU_MODE" = "virtio" ]; then
     GPU_ARGS=(-vga none -device virtio-gpu-pci)
 elif [ "$GPU_MODE" = "virtio-gl" ]; then
-    GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,blob=on,hostmem=256M)
+    GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M)
 fi
 DISP_ARGS=()
 SER_ARGS=()

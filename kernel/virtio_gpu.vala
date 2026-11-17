@@ -370,9 +370,9 @@ namespace Planet.Kernel {
                 vgpu_disp_h = mmio_read32 (vgpu_cmd_page + 2048 + 24 + 12);
             }
 
-            // Probe 3D capsets for CAPSET_VENUS (4)
+            // Probe 3D capsets for CAPSET_VENUS (4) (num_capsets is at device_cfg + 12)
             if (vgpu_dev_base != 0 && (vgpu_features_lo & F_VIRGL) != 0) {
-                int num_capsets = mmio_read32 (vgpu_dev_base + 8);
+                int num_capsets = mmio_read32 (vgpu_dev_base + 12);
                 for (int ci = 0; ci < num_capsets && ci < 16; ci++) {
                     clear_cmd (32);
                     mmio_write32 (vgpu_cmd_page + 0, CMD_GET_CAPSET_INFO);

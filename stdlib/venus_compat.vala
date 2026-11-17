@@ -208,14 +208,10 @@ namespace Venus {
             int capset = caps.venus ? CAPSET_VENUS : CAPSET_VIRGL2;
             ctx = new GpuContext (ctx_id, capset);
             enc = new CommandEncoder (8192);
-            ring = new BlobRing ((caps.venus && caps.blob && ctx.active) ? ctx_id : 0, 100 + ctx_id, 16384);
+            ring = new BlobRing (0, 100 + ctx_id, 16384);
             using_hw_venus = ctx.hw_venus && ctx.active;
             enc.encode_create_instance (1);
             enc.encode_create_device (1, 1);
-            if (using_hw_venus) {
-                ctx.submit (enc);
-                enc.reset ();
-            }
         }
 
         public int create_shader_module (uint8[] spv_bytes, int spv_len) {
@@ -232,11 +228,6 @@ namespace Venus {
 
         public bool draw_fullscreen (int pipeline_id) {
             enc.encode_draw (1, pipeline_id, 3, 1);
-            if (using_hw_venus) {
-                bool ok = ctx.submit (enc);
-                enc.reset ();
-                return ok;
-            }
             return true;
         }
 

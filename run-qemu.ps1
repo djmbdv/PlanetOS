@@ -285,7 +285,7 @@ $vgaArgs = @('-vga', 'std')
 if ($Virtio) {
     $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-pci')
 } elseif ($VirtioGl) {
-    $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,blob=on,hostmem=256M')
+    $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M')
 }
 
 $qemuArgs = @(
