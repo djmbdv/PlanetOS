@@ -1765,6 +1765,9 @@ private int self_test_run (Compositor comp) {
     check (!kb.alive (k2) && kb.count () == 2, "key-closes-focused");
 
     // rendering smoke test (no framebuffer needed)
+    // One 1280x720 surface is 900 contiguous frames and every block below starts
+    // with a full flush, so the whole self-test shares this one: allocating five
+    // of them (18 MiB) is more than the allocator can serve in --animate mode.
     var surf = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
     check (surf.buf_addr != 0, "surface-alloc");
     var cr = new Context (surf);
@@ -1791,7 +1794,7 @@ private int self_test_run (Compositor comp) {
 
     // damage merging and occlusion culling
     var mg = new Compositor ();
-    var surf4 = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    var surf4 = surf;
     check (surf4.buf_addr != 0, "merge-surface-alloc");
     var cr4 = new Context (surf4);
     mg.flush (cr4, 0, 0);
@@ -1807,7 +1810,8 @@ private int self_test_run (Compositor comp) {
     var occ = new Compositor ();
     occ.add ("low", 100, 100, 300, 200, Kind.TERMINAL);
     occ.add ("high", 60, 60, 420, 320, Kind.NOTES);
-    var surv5 = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    var surv5 = surf;
+    check (surv5.buf_addr != 0, "occlusion-surface-alloc");
     var cr5 = new Context (surv5);
     occ.flush (cr5, 0, 0);
     check (occ.occluded_count () == 1, "occlusion-skips-covered");
@@ -1819,7 +1823,7 @@ private int self_test_run (Compositor comp) {
     var dmgc = new Compositor ();
     dmgc.add ("d", 200, 200, 200, 150, Kind.NOTES);
     check (dmgc.damage_is_full (), "add-damages-all");
-    var surf2 = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    var surf2 = surf;
     check (surf2.buf_addr != 0, "damage-surface-alloc");
     var cr2 = new Context (surf2);
     dmgc.flush (cr2, 0, 0);
@@ -1865,7 +1869,8 @@ private int self_test_run (Compositor comp) {
     // GTK window widget click + entry typing
     var gtkc = new Compositor ();
     int gw = gtkc.add ("gtk", 100, 100, 380, 240, Kind.GTK);
-    var gsurf = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+    var gsurf = surf;
+    check (gsurf.buf_addr != 0, "gtk-surface-alloc");
     var gcr = new Context (gsurf);
     gtkc.flush (gcr, 0, 0);
     // Click Entry (around y = 100 + 24 + 12 + 30 = 166) and type 'x'

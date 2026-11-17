@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="PlanetOS — Bare-Metal x86-64 OS &amp; Self-Hosted Vala Compiler" width="100%">
+  <img src="docs/banner.svg" alt="PlanetOS â€” Bare-Metal x86-64 OS &amp; Self-Hosted Vala Compiler" width="100%">
 </p>
 
 <p align="center">
@@ -13,10 +13,10 @@
 # PlanetOS
 
 **An operating system and its toolchain, entirely in Vala, compiled straight to
-native x86-64 machine code and SPIR-V — with zero C, zero libc, and no external
+native x86-64 machine code and SPIR-V â€” with zero C, zero libc, and no external
 assembler or linker.**
 
-Status: **working self-hosted compiler (`planc`, slices 0–45) + freestanding
+Status: **working self-hosted compiler (`planc`, slices 0â€“45) + freestanding
 x86-64 Long Mode kernel + pure-Vala userland running in QEMU.**
 `planc` compiles Vala directly to static ELF64 binaries (`--target=host`,
 `--target=planetos`, `--freestanding`) and Vulkan SPIR-V shader modules
@@ -34,7 +34,7 @@ VirtIO-GPU PCI (Phase 1), and a desktop compositor powered by pure-Vala `GLib`,
 
 | Artifact | What it is | The constraint that defines it |
 |---|---|---|
-| **`planc`** | Vala → x86_64 machine code compiler. Own frontend, IR, backend, assembler and linker. Written in Vala. Second backend target: **SPIR-V** bytecode for Vulkan shaders, from the same IR. | Emits no C. Needs no `cc`, `ld` or `as` to produce binaries, and no glslang/glslc to produce SPIR-V. |
+| **`planc`** | Vala â†’ x86_64 machine code compiler. Own frontend, IR, backend, assembler and linker. Written in Vala. Second backend target: **SPIR-V** bytecode for Vulkan shaders, from the same IR. | Emits no C. Needs no `cc`, `ld` or `as` to produce binaries, and no glslang/glslc to produce SPIR-V. |
 | **`planetrt`** | Runtime and standard library: object model, strings, arrays, closures, signals, coroutines, errors, allocator. Written in Vala. | Does not wrap libc. Does not reimplement the GLib ABI. |
 | **`planetos`** | Kernel and userland. Written in Vala, compiled by `planc`, linked with `planetrt`. | No libc, no POSIX, no Linux. |
 
@@ -46,13 +46,13 @@ another Vala library.
 ### The graphics track (planned)
 
 The toolchain plans a second output target from the same IR: **shaders written
-in the Vala dialect, lowered by `planc` to SPIR-V bytecode** for Vulkan — no
+in the Vala dialect, lowered by `planc` to SPIR-V bytecode** for Vulkan â€” no
 GLSL, no glslang, no external shader compiler in the chain. On the `host`
 profile, `planetrt` will provide the Vulkan bindings to drive devices and
 pipelines from Vala. Whether the target system eventually ships its own Vulkan
-ICD is open (decision D-13). Requirements: TC-11, TC-12 and GX-01…GX-05 in
+ICD is open (decision D-13). Requirements: TC-11, TC-12 and GX-01â€¦GX-05 in
 [docs/00-requirements.md](docs/00-requirements.md); backend design in
-[docs/02-compiler.md §10.4](docs/02-compiler.md). Nothing of this is
+[docs/02-compiler.md Â§10.4](docs/02-compiler.md). Nothing of this is
 implemented yet; it is specified so that the IR and dialect decisions made
 today do not close the door tomorrow.
 
@@ -114,7 +114,7 @@ problems** and **creates six**:
 | [docs/planc/slice-6.md](docs/planc/slice-6.md) | **Implemented slice 6**: `class` objects, `.rodata` vtables, `virtual`/`override`/`abstract`, `: base(...)`, destructors, `is`/`as`/casts, Option B `T` vs `T?` null safety (`--no-null-check`) |
 | [docs/planc/slice-7.md](docs/planc/slice-7.md) | **Implemented slice 7**: `foreach`, `switch` (VL-14), `s[start:end]` slicing, `?:`/`??` (`T? ?? T -> T`), `const`, `static`/`enum`/`struct` methods, `0x`/`0b`/char literals, integer aliases |
 | [docs/planc/slice-8.md](docs/planc/slice-8.md) | **Implemented slice 8**: `errordomain`/`throws`/`try`/`catch`/`finally` (`(rax, rdx)` ABI), `out`/`ref` parameters, inline and `virtual` properties, object initializers, `namespace`/`using`, forward types, multi-file compilation |
-| [docs/planc/slice-11.md](docs/planc/slice-11.md) | **Implemented slice 11**: IEEE-754 `float` & `double` on x86-64-v3 (`xmm0`–`xmm7` ABI, pure-integer literal parser, `__planc_double_to_str`/`__planc_str_to_double`) |
+| [docs/planc/slice-11.md](docs/planc/slice-11.md) | **Implemented slice 11**: IEEE-754 `float` & `double` on x86-64-v3 (`xmm0`â€“`xmm7` ABI, pure-integer literal parser, `__planc_double_to_str`/`__planc_str_to_double`) |
 | [docs/planc/slice-12.md](docs/planc/slice-12.md) | **Implemented slice 12**: `[AsmBody("...")]` and built-in x86-64 assembler (`TC-04`, `VL-09`, `I5`) |
 | [docs/planc/slice-13.md](docs/planc/slice-13.md) | **Implemented slice 13**: `async`/`yield`/`.begin()` heap state machines (`VL-08`), thread-safe allocator, `Async.run()` & `Async.run_parallel(n)` M:N scheduler |
 | [docs/planc/slice-14.md](docs/planc/slice-14.md) | **Implemented slice 14**: `signal`, `.connect()`, `.disconnect()`, default handlers, and ARC destructor cleanup |
@@ -127,7 +127,7 @@ problems** and **creates six**:
 | [docs/planc/slice-21.md](docs/planc/slice-21.md) | **Implemented slice 21**: read-only XFS filesystem driver over ATA PIO and expanded `int 0x80` runtime syscalls (`open`/`read`/`close`/`file_size`/`yield`/`exit`) |
 | [docs/planc/slice-22.md](docs/planc/slice-22.md) | **Implemented slice 22**: `--target=planetos` userland ELF64 target (`0x800000`, `int 0x80` runtime) and kernel ELF64 loader running `user/init.elf` from XFS in QEMU |
 | [docs/planc/slice-23.md](docs/planc/slice-23.md) | **Implemented slice 23**: VGA `80x25` + COM1 RX drivers, `SYS_READDIR` / `SYS_EXEC`, `--image-base`, and interactive `user/shell.vala` (`help`, `ls`, `cat`, `exec`, `ticks`, `mem`, `exit`) |
-| [docs/planc/slice-24.md](docs/planc/slice-24.md) | **Implemented slice 24**: native UTF-8 in `planc` (`unichar`, `\u`/`\U`, `char_count`, `get_char`, `validate`) and PlanetOS (VGA UTF-8→CP437, shell backspace), plus writable PMM-backed RAMFS (`SYS_CREATE`, `SYS_WRITE`) |
+| [docs/planc/slice-24.md](docs/planc/slice-24.md) | **Implemented slice 24**: native UTF-8 in `planc` (`unichar`, `\u`/`\U`, `char_count`, `get_char`, `validate`) and PlanetOS (VGA UTF-8â†’CP437, shell backspace), plus writable PMM-backed RAMFS (`SYS_CREATE`, `SYS_WRITE`) |
 | [docs/planc/slice-25.md](docs/planc/slice-25.md) | **Implemented slice 25**: `host_planetos.vala`, multi-page `SYS_ALLOC_PAGE`, `argc`/`argv` in `SYS_EXEC`, and `planc.elf` compiling & running tests inside PlanetOS/QEMU |
 | [docs/planc/slice-26.md](docs/planc/slice-26.md) | **Implemented slice 26**: preemptive `IRQ0` round-robin scheduler (`kernel/sched.vala`), `SYS_SPAWN`/`SYS_WAIT`/`SYS_PS`, `ps`, `wait`, and `exec ... &` |
 | [docs/planc/slice-27.md](docs/planc/slice-27.md) | **Implemented slice 27**: `string.index_of`/`contains` and pure-Vala `GLib`/`Gee` compatibility layer ([stdlib/glib_compat.vala](stdlib/glib_compat.vala), `user/wc.vala`) with zero C or `.vapi` |
@@ -135,19 +135,20 @@ problems** and **creates six**:
 | [docs/planc/slice-29.md](docs/planc/slice-29.md) | **Implemented slice 29**: SSE enable, Bochs VBE `800x600x32` framebuffer (`kernel/fb.vala`), PS/2 mouse (`IRQ12`), and pure-Vala `Cairo` + `Gdk` layer ([stdlib/cairo_compat.vala](stdlib/cairo_compat.vala) + [stdlib/gdk_compat.vala](stdlib/gdk_compat.vala), `user/cairo_demo.vala`) |
 | [docs/planc/slice-30.md](docs/planc/slice-30.md) | **Implemented slice 30**: double-buffered `BGA` display driver (`16 MiB` VRAM, `SYS_FB_INFO`/`SYS_FB_BLIT_RECT`) and `--target=spirv` deterministic Vala shader compiler ([planc/src/spirv.vala](planc/src/spirv.vala)) |
 | [docs/planc/slice-31.md](docs/planc/slice-31.md) | **Implemented slice 31**: pure-Vala `Gio` layer in userland ([stdlib/gio_compat.vala](stdlib/gio_compat.vala), [user/gio_demo.vala](user/gio_demo.vala)) with streaming XFS reads and non-truncating append |
-| [docs/planc/slice-32.md](docs/planc/slice-32.md) | **Implemented slice 32**: Windows-style shell command resolution ([user/shell.vala](user/shell.vala)) — `gio_demo`, `GIO_DEMO.ELF`, `.\gio_demo` all run `gio_demo.elf`, with `.elf` implied and case-insensitive matching |
-| [docs/planc/slice-33.md](docs/planc/slice-33.md) | **Implemented slice 33**: file management — `SYS_UNLINK` (28) and `SYS_RENAME` (29) on RAMFS, `File.delete`/`File.move` in Gio, and `rm`, `cp`, `mv`, `touch`, `ls -l` in the shell |
-| [docs/planc/slice-34.md](docs/planc/slice-34.md) | **Implemented slice 34**: directories — kernel path resolution ([kernel/vfs.vala](kernel/vfs.vala)), RAMFS directory entries, `SYS_MKDIR`/`SYS_READDIR(path)`/`SYS_STAT`, `mkdir`/`cd`/`ls [dir]` and Gio `make_directory`/per-directory enumeration |
-| [docs/planc/slice-35.md](docs/planc/slice-35.md) | **Implemented slice 35**: asm audit — 35 duplicated `int 0x80` trampolines replaced by [stdlib/planet_sys.vala](stdlib/planet_sys.vala) (3 primitives + typed wrappers), shell without raw memory, and kernel validation of every syscall pointer (`sysguard:ok=1`) |
+| [docs/planc/slice-32.md](docs/planc/slice-32.md) | **Implemented slice 32**: Windows-style shell command resolution ([user/shell.vala](user/shell.vala)) â€” `gio_demo`, `GIO_DEMO.ELF`, `.\gio_demo` all run `gio_demo.elf`, with `.elf` implied and case-insensitive matching |
+| [docs/planc/slice-33.md](docs/planc/slice-33.md) | **Implemented slice 33**: file management â€” `SYS_UNLINK` (28) and `SYS_RENAME` (29) on RAMFS, `File.delete`/`File.move` in Gio, and `rm`, `cp`, `mv`, `touch`, `ls -l` in the shell |
+| [docs/planc/slice-34.md](docs/planc/slice-34.md) | **Implemented slice 34**: directories â€” kernel path resolution ([kernel/vfs.vala](kernel/vfs.vala)), RAMFS directory entries, `SYS_MKDIR`/`SYS_READDIR(path)`/`SYS_STAT`, `mkdir`/`cd`/`ls [dir]` and Gio `make_directory`/per-directory enumeration |
+| [docs/planc/slice-35.md](docs/planc/slice-35.md) | **Implemented slice 35**: asm audit â€” 35 duplicated `int 0x80` trampolines replaced by [stdlib/planet_sys.vala](stdlib/planet_sys.vala) (3 primitives + typed wrappers), shell without raw memory, and kernel validation of every syscall pointer (`sysguard:ok=1`) |
 | [docs/planc/slice-36.md](docs/planc/slice-36.md) | **Implemented slice 36**: Cairo/Gdk split ([stdlib/cairo_compat.vala](stdlib/cairo_compat.vala), [stdlib/gdk_compat.vala](stdlib/gdk_compat.vala)), [GObject](stdlib/gobject_compat.vala) `Type`/`Value` layer and [GModule](stdlib/gmodule_compat.vala) with a static module registry |
-| [docs/planc/slice-37.md](docs/planc/slice-37.md) | **Implemented slice 37**: GLib main loop — `MainContext`, `idle_add`/`timeout_add`/`source_remove`, `MainLoop`, and a `Gio.Application.run()` that drives it while `hold()` is active |
-| [docs/planc/slice-38.md](docs/planc/slice-38.md) | **Implemented slice 38**: compositor — Openbox-style window model and Gala-style visuals in 100% Vala ([user/compositor.vala](user/compositor.vala)), SPIR-V accent through the shared [Spv.Module](stdlib/spirv_compat.vala), Vulkan backend seam, and the 1024-page framebuffer limit fix |
+| [docs/planc/slice-37.md](docs/planc/slice-37.md) | **Implemented slice 37**: GLib main loop â€” `MainContext`, `idle_add`/`timeout_add`/`source_remove`, `MainLoop`, and a `Gio.Application.run()` that drives it while `hold()` is active |
+| [docs/planc/slice-38.md](docs/planc/slice-38.md) | **Implemented slice 38**: compositor â€” Openbox-style window model and Gala-style visuals in 100% Vala ([user/compositor.vala](user/compositor.vala)), SPIR-V accent through the shared [Spv.Module](stdlib/spirv_compat.vala), Vulkan backend seam, and the 1024-page framebuffer limit fix |
 | [docs/planc/slice-39.md](docs/planc/slice-39.md) | **Implemented slice 39**: Pango/PangoCairo text layout ([stdlib/pango_compat.vala](stdlib/pango_compat.vala)), damage tracking with rect blits in the compositor, keyboard modifiers (`SYS_KEY_MODS`) with Alt+Tab and Super+arrows tiling, and a per-pixel SPIR-V shader using `gl_FragCoord` ([user/frag_pattern.vala](user/frag_pattern.vala)) |
 | [docs/planc/slice-40.md](docs/planc/slice-40.md) | **Implemented slice 40**: SPIR-V push constants (`uniform_time/width/height`) with an animated background (`--animate`), damage-rect merging and occlusion culling in the compositor, and Pango colour attribute runs |
-| [docs/planc/slice-41.md](docs/planc/slice-41.md) | **Implemented slice 41**: C -> Vala feasibility probe ([tools/c_coverage.py](tools/c_coverage.py)) — preprocesses with a fake libc, classifies tier-0/1/2 constructs and reports clean functions plus the libc shim list; 95.4% of 329 library functions have no structural blocker, kernel drivers do not parse without their headers |
+| [docs/planc/slice-41.md](docs/planc/slice-41.md) | **Implemented slice 41**: C -> Vala feasibility probe ([tools/c_coverage.py](tools/c_coverage.py)) â€” preprocesses with a fake libc, classifies tier-0/1/2 constructs and reports clean functions plus the libc shim list; 95.4% of 329 library functions have no structural blocker, kernel drivers do not parse without their headers |
 | [docs/planc/slice-42.md](docs/planc/slice-42.md) | **Implemented slice 42**: C -> Vala translator for the tier-0/1 subset ([tools/c2vala.py](tools/c2vala.py)) with a differential harness against gcc ([tools/c2vala_tests/run.py](tools/c2vala_tests/run.py)); `jsmn` translates and prints identical tokens |
 | [docs/planc/slice-43.md](docs/planc/slice-43.md) | **Implemented slice 43**: a memory model for the C -> Vala translator (`malloc`/`calloc` -> GC-owned Vala arrays, `free` -> documented no-op, `realloc`/pointer arithmetic/allocated aggregates still refused) and `--report`, which translates what is in scope, stubs the rest and prints a per-function verdict (exit 3 on partial) |
 | [docs/planc/slice-46-c2vala-on-windows.md](docs/planc/slice-46-c2vala-on-windows.md) | **Implemented slice 46**: the native Vala C -> Vala translator now builds for the **host** with valac ([tools/c2vala/build_host.sh](tools/c2vala/build_host.sh), GLib `Host`/`StrBuilder` in [tools/c2vala/host_glib.vala](tools/c2vala/host_glib.vala)) so it runs on Windows, plus four strict-Vala emission fixes (declarations, assignments, `char *` buffer elements, call arguments) that valac rejected but planc tolerated |
+| [docs/planc/slice-47-surface-reuse.md](docs/planc/slice-47-surface-reuse.md) | **Implemented slice 47**: the compositor self-test shares one framebuffer instead of allocating five 1280x720 surfaces (900 contiguous frames each), which is what made `graphics --animate` fail with `FAIL damage-surface-alloc` and then fault through a null buffer; QEMU is back to 14/14 |
 | [docs/planc/slice-44.md](docs/planc/slice-44.md) | **Implemented slice 44**: pure-Vala `libschrift` TrueType rasterizer ([stdlib/schrift.vala](stdlib/schrift.vala)), modular `Gtk` layer ([stdlib/gtk/](stdlib/gtk/window.vala)) with glyph cache & `Kind.GTK` inside [user/compositor.vala](user/compositor.vala), `Cairo` rounded rects/gradients/alpha masks, `Ata` LBA48/multi-sector/cache-flush ([kernel/ata.vala](kernel/ata.vala)), and `-O2` builds in `run-qemu` |
 | [docs/planc/slice-45-vulkan-venus.md](docs/planc/slice-45-vulkan-venus.md) | **Implemented slice 45 (Phase 1)**: VirtIO-GPU Modern PCI driver ([kernel/virtio_gpu.vala](kernel/virtio_gpu.vala)) with MMIO BAR mapping, `controlq`, `GET_DISPLAY_INFO`, `CAPSET_VENUS` detection, and roadmap for Vulkan over Venus + `planc --target=spirv` |
 
@@ -160,11 +161,11 @@ with reproducible measurement:
 | Assumption | Measured result | Evidence |
 |---|---|---|
 | Constructs Vala accepts | 39 cases, 29 compile; the rejections are language rules | [E-01](docs/experiments/E01-dialect.md) |
-| Generics | `valac` erases the type and boxes with `GType`; we monomorphize | [E-01 §3](docs/experiments/E01-dialect.md) |
-| Delegates | `valac` uses `fn` + a `(target, destroy_notify)` pair; we use a fat pointer | [E-01 §4](docs/experiments/E01-dialect.md) |
-| Construction order | defaults → `construct` properties → `construct` block → body | [E-01 §5](docs/experiments/E01-dialect.md) |
+| Generics | `valac` erases the type and boxes with `GType`; we monomorphize | [E-01 Â§3](docs/experiments/E01-dialect.md) |
+| Delegates | `valac` uses `fn` + a `(target, destroy_notify)` pair; we use a fat pointer | [E-01 Â§4](docs/experiments/E01-dialect.md) |
+| Construction order | defaults â†’ `construct` properties â†’ `construct` block â†’ body | [E-01 Â§5](docs/experiments/E01-dialect.md) |
 | `async` | tied to GIO; the shape is reusable, not the API | [E-04](docs/experiments/E04-async.md) |
-| `[CCode]` attributes | `cheader_filename` ×752 forces rejection at the point of use | [E-06](docs/experiments/E06-vapis.md) |
+| `[CCode]` attributes | `cheader_filename` Ã—752 forces rejection at the point of use | [E-06](docs/experiments/E06-vapis.md) |
 | DWARF without CFI | GDB debugs with a frame pointer and no `.eh_frame` | [E-08](docs/experiments/E08-dwarf.md) |
 
 Reproducible without root:
@@ -190,7 +191,7 @@ printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n 
 ./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3)
 ```
 
-The accepted subset now covers `int`/`int8`–`int64`/`uint8`–`uint64`/`size_t`/
+The accepted subset now covers `int`/`int8`â€“`int64`/`uint8`â€“`uint64`/`size_t`/
 `ssize_t`/`char`/`uchar`/`bool`/`string`/`enum`/`errordomain`/`struct`/`T[]`/
 `class`/`interface`/`delegate`/`Error`/`T?`/`void` functions and methods
 (`static`, `virtual`, `override`, `abstract`, plus `enum`/`struct` methods) with
@@ -224,12 +225,12 @@ value-semantics `struct`s, `owned`/`unowned` syntax hints, `namespace`/`using`
 blocks, cross-file forward types, multi-file CLI inputs, global variables with
 `.data`/`.bss` (`R_X86_64_64` relocations for string globals), and `print` /
 `exit` builtins.
-The calling convention is the project ABI (§3.1 of [01-architecture.md](docs/01-architecture.md)):
-arguments in `rdi`–`r9` plus stack, return in `rax` (plus `Error*` in `rdx`
+The calling convention is the project ABI (Â§3.1 of [01-architecture.md](docs/01-architecture.md)):
+arguments in `rdi`â€“`r9` plus stack, return in `rax` (plus `Error*` in `rdx`
 for `throws` functions), `rbp` frame pointer, 16-byte stack alignment at every
 call, no red zone.
 
-Produced binaries have three `PT_LOAD` segments (R|X, R and RW — never RWX,
+Produced binaries have three `PT_LOAD` segments (R|X, R and RW â€” never RWX,
 and never one page mapped with two permission sets), an empty `nm -u`, a
 `.symtab` that makes `objdump -d` and `gdb` work, and byte-identical output
 across runs. The compiler is self-hosted: `planc/bootstrap.sh` compiles the
@@ -288,7 +289,7 @@ serial log when a case fails.
 | Before | Now |
 |---|---|
 | `valac` + `gcc` with an own sysroot | `planc`, an own compiler that emits machine code |
-| A clone of the GLib ABI (`g_malloc`, `g_object_new`…) | An own Vala standard library, with no inherited names or ABI |
+| A clone of the GLib ABI (`g_malloc`, `g_object_new`â€¦) | An own Vala standard library, with no inherited names or ABI |
 | A `plibc` layer with `memcpy`/`printf`/`malloc` | It does not exist: there is no C demanding it |
 | libffi or generated *marshallers* for signals | Static dispatch generated by the compiler |
 | Reflective `GType`/`GValue` | Static type descriptors, generated on demand |
