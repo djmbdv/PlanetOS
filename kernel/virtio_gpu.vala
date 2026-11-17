@@ -681,6 +681,37 @@ namespace Planet.Kernel {
             return send_cmd (56, 24) && resp_type () == RESP_OK_NODATA;
         }
 
+        public static int create_blob_mapped (int ctx_id, int res_id, int size) {
+            if (vgpu_found == 0 || !has_blob () || ctx_id <= 0 || res_id <= 0 || size <= 0)
+                return 0;
+            int pages = (size + 4095) / 4096;
+            if (pages > 256)
+                pages = 256; // cap at 1 MiB per blob
+            int aligned = pages * 4096;
+            int pa = Pmm.alloc_contiguous (pages);
+            if (pa == 0)
+                return 0;
+            // BLOB_MEM_GUEST = 1, BLOB_FLAG_USE_MAPPABLE | USE_SHAREABLE = 3
+            if (!create_blob (res_id, ctx_id, 1, 3, aligned, res_id)) {
+                for (int p = 0; p < pages; p++)
+                    Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+            clear_cmd (48);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_ATTACH_BACKING);
+            mmio_write32 (vgpu_cmd_page + 24, res_id);
+            mmio_write32 (vgpu_cmd_page + 28, 1);
+            mmio_write64 (vgpu_cmd_page + 32, pa);
+            mmio_write32 (vgpu_cmd_page + 40, aligned);
+            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA)
+                return 0;
+            ctx_attach (ctx_id, res_id);
+            int ucr3 = Sched.current_cr3 ();
+            if (ucr3 != 0 && ucr3 != Vmm.KERNEL_CR3)
+                Vmm.map_user_range (ucr3, pa, aligned);
+            return pa;
+        }
+
         public static bool submit_3d (int ctx_id, int cmd_buf_pa, int cmd_bytes, bool with_fence) {
             if (vgpu_found == 0 || (vgpu_features_lo & F_VIRGL) == 0 || cmd_buf_pa == 0 || cmd_bytes <= 0)
                 return false;

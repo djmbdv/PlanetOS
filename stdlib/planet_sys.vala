@@ -281,5 +281,9 @@ namespace Planet {
                 return -1;
             return __sys4 (42, __arr_data (rgba_64x64), hot_x, hot_y, 0);
         }
+
+        public static int gpu_blob_create (int ctx_id, int res_id, int size) {
+            return __sys4 (43, ctx_id, res_id, size, 0);
+        }
     }
 }

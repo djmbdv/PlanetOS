@@ -418,6 +418,9 @@ namespace Planet.Kernel {
                 return -1;
             return VirtioGpu.set_cursor (a0, a1, a2) ? 0 : -1;
         }
+        if (num == 43) { // SYS_GPU_BLOB_CREATE(ctx_id, res_id, size) -> mapped addr or 0
+            return VirtioGpu.create_blob_mapped (a0, a1, a2);
+        }
         return -1;
     }
 

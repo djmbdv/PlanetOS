@@ -24,6 +24,9 @@ namespace Spv {
         private uint8[] code;
         private int[] wcache;
         private int code_size = 0;
+
+        public uint8[] raw_bytes () { return code; }
+        public int raw_size () { return code_size; }
         private int input_id = 0;
         private bool input_ready = false;
         private int pc_id = 0;

@@ -1,0 +1,74 @@
+// Vulkan (Venus) + GSK Scene Graph demo for PlanetOS.
+// Usage: exec vk_demo.elf [--once]
+
+using Planet;
+using Spv;
+using Cairo;
+using Gdk;
+using Venus;
+using Gsk;
+
+int main (string[] args) {
+    bool once = false;
+    for (int i = 1; i < args.length; i++) {
+        if (args[i] == "--once")
+            once = true;
+    }
+
+    var caps = new GpuCaps ();
+    print (@"vk_demo: gpu present=$(caps.present ? 1 : 0) virgl=$(caps.virgl ? 1 : 0) blob=$(caps.blob ? 1 : 0) venus=$(caps.venus ? 1 : 0)\n");
+
+    var renderer = new VulkanRenderer (1);
+    print (@"vk_demo: gsk_backend=$(renderer.backend_name ()) blob_ring=$(renderer.vk.ring.hw_blob ? 1 : 0) cmds=$(renderer.vk.enc.cmd_count)\n");
+
+    // Load SPIR-V shader compiled by planc --target=spirv
+    var mod = Module.load ("frag.spv");
+    int mod_id = 0;
+    int pipe_id = 0;
+    if (mod != null && mod.valid) {
+        mod_id = renderer.vk.create_shader_module (mod.raw_bytes (), mod.raw_size ());
+        pipe_id = renderer.vk.create_pipeline (mod_id);
+        print (@"vk_demo: spv=frag.spv words=$(mod.words) mod_id=$mod_id pipe_id=$pipe_id\n");
+    }
+
+    // Build GSK scene graph
+    var root = new ContainerNode ();
+    var bg = new LinearGradientNode (new Rect (0, 0, 800, 600), false);
+    bg.add_stop (0.0, 0.04, 0.06, 0.12, 1.0);
+    bg.add_stop (1.0, 0.10, 0.14, 0.26, 1.0);
+    root.append (bg);
+
+    var card_rr = new RoundedRect (120, 100, 560, 380, 14);
+    var card = new RoundedRectNode (card_rr, 0.12, 0.16, 0.25, 0.95);
+    card.set_border (2.0, 0.22, 0.74, 0.97, 0.85);
+    root.append (new ShadowNode (card, card_rr, 0, 8, 16));
+
+    var hdr = new ColorNode (new Rect (140, 120, 520, 44), 0.18, 0.25, 0.38, 1.0);
+    root.append (hdr);
+    root.append (new TextNode ("PlanetOS GSK + Venus / SPIR-V", 160, 134, 16.0, 0.95, 0.98, 1.0, 1.0));
+    root.append (new TextNode (@"Backend: $(renderer.backend_name ())", 160, 190, 16.0, 0.49, 0.83, 0.99, 1.0));
+
+    var win = Display.open_window (800, 600);
+    if (win != null) {
+        renderer.render (root, win.surface);
+        if (pipe_id > 0)
+            renderer.vk.draw_fullscreen (pipe_id);
+        win.present ();
+        if (!once) {
+            for (int f = 0; f < 60; f++) {
+                var ev = win.poll_event ();
+                if (ev.type == EventType.KEY_PRESS && ev.keyval == 'q')
+                    break;
+                Sys.yield_cpu ();
+            }
+        }
+        win.close ();
+    } else {
+        var surf = new ImageSurface (Format.ARGB32, 320, 200);
+        renderer.render (root, surf);
+    }
+
+    renderer.unrealize ();
+    print ("vk_demo: done\n");
+    return 0;
+}
