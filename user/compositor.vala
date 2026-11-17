@@ -316,6 +316,7 @@ namespace Wm {
         private int last_ptr_y = 0;
         private bool quit = false;
         private int frames = 0;
+        private int motions = 0;
         private int flush_ticks = 0;
         private int blit_ticks = 0;
         private int dirty_frames = 0;
@@ -595,6 +596,7 @@ namespace Wm {
 
         private void animate_damage (int mx, int my) {
             if (mx != last_mx || my != last_my) {
+                motions = motions + 1;
                 if (hw_cursor && Sys.gpu_cursor_move (mx, my) != 0) {
                     // The host refused the cursor update (no cursorq support,
                     // or the queue timed out): stop relying on it and draw the
@@ -644,6 +646,7 @@ namespace Wm {
 
         public int frame_count () { return frames; }
         public int dirty_frame_count () { return dirty_frames; }
+        public int motion_count () { return motions; }
         public int avg_flush_ms () { return (dirty_frames > 0) ? (flush_ticks * 10 / dirty_frames) : 0; }
         public int avg_blit_ms () { return (dirty_frames > 0) ? (blit_ticks * 10 / dirty_frames) : 0; }
         public bool quit_requested () { return quit; }
@@ -1929,7 +1932,7 @@ private int interactive (Compositor comp) {
     });
     loop.run ();
     comp.shutdown ();
-    print (@"compositor: frames=$(comp.frame_count ()) windows=$(comp.count ()) dirty=$(comp.dirty_frame_count ()) flush_ms=$(comp.avg_flush_ms ()) blit_ms=$(comp.avg_blit_ms ())\n");
+    print (@"compositor: frames=$(comp.frame_count ()) moves=$(comp.motion_count ()) windows=$(comp.count ()) dirty=$(comp.dirty_frame_count ()) flush_ms=$(comp.avg_flush_ms ()) blit_ms=$(comp.avg_blit_ms ())\n");
     return 0;
 }
 

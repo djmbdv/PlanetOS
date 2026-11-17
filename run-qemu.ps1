@@ -41,6 +41,11 @@
     Alias of -Venus, kept for invocations written before virtio-gl became the
     default.
 
+.PARAMETER Sdl
+    Uses the SDL window instead of GTK. SDL handles the pointer grab differently
+    on Windows, which decides whether a relative PS/2 mouse gets motion events
+    at all.
+
 .EXAMPLE
     .\run-qemu.ps1
 
@@ -66,7 +71,8 @@ param(
     [switch]$Vga,
     [switch]$Virtio,
     [switch]$Venus,
-    [switch]$VirtioGl
+    [switch]$VirtioGl,
+    [switch]$Sdl
 )
 
 $ErrorActionPreference = 'Stop'
@@ -355,9 +361,11 @@ $displayArgs = @()
 if ($Headless) {
     $displayArgs = @('-display', 'none')
 } elseif ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus') {
-    $displayArgs = @('-display', 'gtk,gl=on,grab-on-hover=on')
+    $backend = if ($Sdl) { 'sdl' } else { 'gtk' }
+    $displayArgs = @('-display', ($backend + ',gl=on,grab-on-hover=on'))
 } elseif ($GpuMode -eq 'virtio') {
-    $displayArgs = @('-display', 'gtk,grab-on-hover=on')
+    $backend = if ($Sdl) { 'sdl' } else { 'gtk' }
+    $displayArgs = @('-display', ($backend + ',grab-on-hover=on'))
 }
 
 # A virtio-gpu-gl device only exists on top of an OpenGL display backend: QEMU

@@ -275,6 +275,18 @@ GL driver. The GPU modes are:
 | `-Vga` | `--vga` | `-vga std` (plain VGA/BGA path) |
 | `-Virtio` | `--virtio` | `virtio-gpu-pci` (2D, no GL) |
 | `-Venus` / `-VirtioGl` | `--venus` / `--virtio-gl` | `virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M` |
+| `-Sdl` | `--sdl` | same device, SDL window instead of GTK |
+
+A relative pointing device (PS/2) only receives motion while QEMU has captured
+the host pointer, so the window backend matters: use `-Sdl` if the pointer does
+not follow the mouse under GTK. The compositor reports what it actually saw when
+it exits, which separates "no events reached the guest" from "events arrived but
+the screen did not change":
+
+```
+compositor: frames=104 moves=37 windows=4 dirty=10 flush_ms=31 blit_ms=10
+                      ^^^^^^^^ zero means no pointer events arrived
+```
 
 Venus needs a `virglrenderer` built with the render server; the MSYS2 one is
 not, so `-Venus` there falls back to a plain virgl context. Headless mode always

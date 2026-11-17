@@ -12,6 +12,7 @@ mkdir -p "$OUT"
 
 BUILD_ONLY=0
 DISPLAY_MODE="window"
+WINDOW_BACKEND="gtk"
 # virtio-gpu with virgl by default; --vga falls back to the plain VGA path,
 # --virtio keeps virtio-gpu without GL and --venus (or the old --virtio-gl)
 # asks for the venus/blob setup that needs a render-server virglrenderer.
@@ -25,6 +26,7 @@ for arg in "$@"; do
         --virtio)     GPU_MODE="virtio" ;;
         --venus)      GPU_MODE="venus" ;;
         --virtio-gl)  GPU_MODE="venus" ;;
+        --sdl)        WINDOW_BACKEND="sdl" ;;
     esac
 done
 
@@ -151,9 +153,9 @@ if [ "$DISPLAY_MODE" = "none" ]; then
     SER_ARGS=(-serial mon:stdio)
 else
     case "$GPU_MODE" in
-        gl|venus) DISP_ARGS=(-display sdl,gl=on) ;;
-        virtio)   DISP_ARGS=(-display gtk,grab-on-hover=on) ;;
-        std)      if [ "$DISPLAY_MODE" = "gtk" ]; then DISP_ARGS=(-display gtk,grab-on-hover=on); fi ;;
+        gl|venus) DISP_ARGS=(-display "$WINDOW_BACKEND,gl=on") ;;
+        virtio)   DISP_ARGS=(-display "$WINDOW_BACKEND,grab-on-hover=on") ;;
+        std)      if [ "$DISPLAY_MODE" = "gtk" ]; then DISP_ARGS=(-display "$WINDOW_BACKEND,grab-on-hover=on"); fi ;;
     esac
     # Keep the serial console out of the terminal: QEMU's stdio backend is
     # unreliable under mintty, and the guest already draws to the VGA window.
