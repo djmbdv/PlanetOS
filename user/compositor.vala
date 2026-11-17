@@ -407,6 +407,12 @@ namespace Wm {
                 init_hw_cursor ();
         }
 
+        // Which pointer path is in use: the compositor draws the cursor into the
+        // framebuffer unless the GPU takes it over.
+        public bool hardware_cursor () {
+            return hw_cursor;
+        }
+
         public void shutdown () {
             if (attached)
                 screen.close ();
@@ -589,9 +595,14 @@ namespace Wm {
 
         private void animate_damage (int mx, int my) {
             if (mx != last_mx || my != last_my) {
-                if (hw_cursor) {
-                    Sys.gpu_cursor_move (mx, my);
-                } else {
+                if (hw_cursor && Sys.gpu_cursor_move (mx, my) != 0) {
+                    // The host refused the cursor update (no cursorq support,
+                    // or the queue timed out): stop relying on it and draw the
+                    // pointer ourselves from now on.
+                    hw_cursor = false;
+                    damage (last_mx - 2, last_my - 2, 16, 22);
+                    damage (mx - 2, my - 2, 16, 22);
+                } else if (!hw_cursor) {
                     damage (last_mx - 2, last_my - 2, 16, 22);
                     damage (mx - 2, my - 2, 16, 22);
                 }
@@ -1907,6 +1918,7 @@ private int interactive (Compositor comp) {
         return 1;
     }
     comp.attach (win);
+    print (@"compositor: cursor=$(comp.hardware_cursor () ? "hw" : "sw") screen=$(SCREEN_W)x$(SCREEN_H)\n");
     var loop = new MainLoop ();
     timeout_add (16, () => {
         if (!comp.frame ()) {
