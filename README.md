@@ -264,6 +264,23 @@ If the execution policy blocks the script:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\run-qemu.ps1
 ```
 
+Both launchers boot on virtio-gpu with virgl by default
+(`-device virtio-gpu-gl-pci`, `-display gtk,gl=on` / `sdl,gl=on`), so the guest
+banner reports `VirtIO-GPU 3D/VirGL` and the compositor draws through the host
+GL driver. The GPU modes are:
+
+| PowerShell | bash | QEMU device |
+| --- | --- | --- |
+| — (default) | — (default) | `virtio-gpu-gl-pci` (virgl) |
+| `-Vga` | `--vga` | `-vga std` (plain VGA/BGA path) |
+| `-Virtio` | `--virtio` | `virtio-gpu-pci` (2D, no GL) |
+| `-Venus` / `-VirtioGl` | `--venus` / `--virtio-gl` | `virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M` |
+
+Venus needs a `virglrenderer` built with the render server; the MSYS2 one is
+not, so `-Venus` there falls back to a plain virgl context. Headless mode always
+uses the non-GL `virtio-gpu-pci`, because QEMU has no OpenGL backend without a
+window (`egl-headless` boots but fails its scanouts on Windows).
+
 Type `exit` in the guest shell (or close the QEMU window) to shut the machine
 down. The window-mode serial log is `<msys64>\tmp\planetos-qemu\serial.log`
 (`/tmp/planetos-qemu/serial.log` from bash).

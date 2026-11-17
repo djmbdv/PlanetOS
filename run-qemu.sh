@@ -12,14 +12,19 @@ mkdir -p "$OUT"
 
 BUILD_ONLY=0
 DISPLAY_MODE="window"
-GPU_MODE="std"
+# virtio-gpu with virgl by default; --vga falls back to the plain VGA path,
+# --virtio keeps virtio-gpu without GL and --venus (or the old --virtio-gl)
+# asks for the venus/blob setup that needs a render-server virglrenderer.
+GPU_MODE="gl"
 for arg in "$@"; do
     case "$arg" in
         --build-only) BUILD_ONLY=1 ;;
         --headless)   DISPLAY_MODE="none" ;;
         --display)    DISPLAY_MODE="gtk" ;;
+        --vga)        GPU_MODE="std" ;;
         --virtio)     GPU_MODE="virtio" ;;
-        --virtio-gl)  GPU_MODE="virtio-gl" ;;
+        --venus)      GPU_MODE="venus" ;;
+        --virtio-gl)  GPU_MODE="venus" ;;
     esac
 done
 
@@ -73,6 +78,7 @@ OPT="${PLANC_OPT:--O2}"
 "$PLANC" $OPT --freestanding \
     "$ROOT/planetrt/boot_mb2.vala" \
     "$ROOT/planetrt/serial.vala" \
+    "$ROOT/kernel/layout.vala" \
     "$ROOT/kernel/cpu.vala" \
     "$ROOT/kernel/vga.vala" \
     "$ROOT/kernel/fb.vala" \
@@ -93,6 +99,10 @@ OPT="${PLANC_OPT:--O2}"
     "$ROOT/kernel/sched.vala" \
     "$ROOT/kernel/main.vala" \
     -o "$OUT/planet-kernel"
+
+# Fails the build when the fixed low-memory window in kernel/layout.vala is
+# broken (overlapping regions, image reaching into it, asm literals drifted).
+python3 "$ROOT/tools/check_layout.py" "$OUT/planet-kernel"
 
 python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/init.elf" "$OUT/shell.elf" "$OUT/planc.elf" "$OUT/banner.elf" \
@@ -115,27 +125,32 @@ if [ "$DISPLAY_MODE" = "window" ] \
     && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && [ -z "${MSYSTEM:-}" ]; then
     DISPLAY_MODE="none"
 fi
-GPU_ARGS=(-vga std)
-if [ "$GPU_MODE" = "virtio" ]; then
-    GPU_ARGS=(-vga none -device virtio-gpu-pci)
-elif [ "$GPU_MODE" = "virtio-gl" ]; then
-    GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M)
-fi
+GPU_ARGS=(-vga none -device virtio-gpu-gl-pci)
+case "$GPU_MODE" in
+    std)    GPU_ARGS=(-vga std) ;;
+    virtio) GPU_ARGS=(-vga none -device virtio-gpu-pci) ;;
+    venus)  GPU_ARGS=(-vga none -device virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M) ;;
+esac
 DISP_ARGS=()
 SER_ARGS=()
 if [ "$DISPLAY_MODE" = "none" ]; then
-    if [ "$GPU_MODE" = "virtio-gl" ]; then
-        DISP_ARGS=(-display egl-headless)
-    else
-        DISP_ARGS=(-display none)
-    fi
+    case "$GPU_MODE" in
+        gl|venus)
+            # A GL device needs a GL-capable display backend, and egl-headless
+            # boots but fails its scanouts (VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER),
+            # so headless stays on the non-GL virtio-gpu: only serial matters.
+            echo "QEMU: --headless has no OpenGL backend here; using virtio-gpu-pci instead of virtio-gpu-gl-pci."
+            GPU_ARGS=(-vga none -device virtio-gpu-pci)
+            ;;
+    esac
+    DISP_ARGS=(-display none)
     SER_ARGS=(-serial mon:stdio)
 else
-    if [ "$GPU_MODE" = "virtio-gl" ]; then
-        DISP_ARGS=(-display sdl,gl=on)
-    elif [ "$GPU_MODE" = "virtio" ] || [ "$DISPLAY_MODE" = "gtk" ]; then
-        DISP_ARGS=(-display gtk,grab-on-hover=on)
-    fi
+    case "$GPU_MODE" in
+        gl|venus) DISP_ARGS=(-display sdl,gl=on) ;;
+        virtio)   DISP_ARGS=(-display gtk,grab-on-hover=on) ;;
+        std)      if [ "$DISPLAY_MODE" = "gtk" ]; then DISP_ARGS=(-display gtk,grab-on-hover=on); fi ;;
+    esac
     # Keep the serial console out of the terminal: QEMU's stdio backend is
     # unreliable under mintty, and the guest already draws to the VGA window.
     SER_LOG="$OUT/serial.log"

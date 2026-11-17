@@ -26,11 +26,32 @@
     Compiles everything and stops before starting QEMU. Prints the build
     directory so tests/qemu.py can reuse the artifacts.
 
+.PARAMETER Vga
+    Plain std VGA instead of the virtio-gpu default.
+
+.PARAMETER Virtio
+    virtio-gpu-pci without OpenGL: 2D resources over the virtio queue, no virgl.
+
+.PARAMETER Venus
+    virtio-gpu-gl-pci with venus/blob/hostmem enabled. Needs a virglrenderer
+    built with the render server; the MSYS2 one is not, so it falls back to a
+    plain virgl context there.
+
+.PARAMETER VirtioGl
+    Alias of -Venus, kept for invocations written before virtio-gl became the
+    default.
+
 .EXAMPLE
     .\run-qemu.ps1
 
 .EXAMPLE
     .\run-qemu.ps1 -Headless
+
+.EXAMPLE
+    .\run-qemu.ps1 -Vga
+
+.EXAMPLE
+    .\run-qemu.ps1 -Virtio -NoBuild
 
 .NOTES
     If PowerShell refuses to run the script, start it with:
@@ -42,7 +63,9 @@ param(
     [switch]$Display,
     [switch]$NoBuild,
     [switch]$BuildOnly,
+    [switch]$Vga,
     [switch]$Virtio,
+    [switch]$Venus,
     [switch]$VirtioGl
 )
 
@@ -287,15 +310,38 @@ if ($Headless -and $Display) {
     Fail 'use either -Headless or -Display, not both'
 }
 
-if ($Virtio -and $VirtioGl) {
-    Fail 'use either -Virtio or -VirtioGl, not both'
+$gpuSwitches = @()
+if ($Vga) { $gpuSwitches += '-Vga' }
+if ($Virtio) { $gpuSwitches += '-Virtio' }
+if ($Venus) { $gpuSwitches += '-Venus' }
+if ($VirtioGl -and -not $Venus) { $gpuSwitches += '-VirtioGl' }
+if ($gpuSwitches.Count -gt 1) {
+    Fail ('use only one GPU mode, not ' + ($gpuSwitches -join ' + '))
 }
 
-$vgaArgs = @('-vga', 'std')
-if ($Virtio) {
-    $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-pci')
-} elseif ($VirtioGl) {
-    $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M')
+# virtio-gpu with virgl is the default: the guest driver (kernel/virtio_gpu.vala)
+# negotiates VIRGL and the compositor draws through it. -Vga goes back to the
+# plain BGA/VGA path, -Virtio keeps virtio-gpu without GL, and -Venus asks for
+# the venus/blob setup that needs a render-server virglrenderer.
+$GpuMode = 'gl'
+if ($Vga) { $GpuMode = 'std' }
+elseif ($Virtio) { $GpuMode = 'virtio' }
+elseif ($Venus -or $VirtioGl) { $GpuMode = 'venus' }
+
+if ($Headless -and ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus')) {
+    # A GL device needs a GL-capable display backend, and QEMU on Windows has
+    # none without a window: '-display egl-headless' boots but its scanouts
+    # fail (VIRTIO_GPU_RESP_ERR_INVALID_PARAMETER), so headless stays on the
+    # non-GL virtio-gpu where the serial console is all that matters.
+    Write-Host 'QEMU: -Headless has no OpenGL backend here; using virtio-gpu-pci instead of virtio-gpu-gl-pci.'
+    $GpuMode = 'virtio'
+}
+
+switch ($GpuMode) {
+    'std'    { $vgaArgs = @('-vga', 'std') }
+    'virtio' { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-pci') }
+    'venus'  { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci,venus=on,blob=on,hostmem=256M') }
+    default  { $vgaArgs = @('-vga', 'none', '-device', 'virtio-gpu-gl-pci') }
 }
 
 $qemuArgs = @(
@@ -308,12 +354,11 @@ $qemuArgs = @(
 )
 
 if ($Headless) {
-    $disp = if ($VirtioGl) { 'egl-headless' } else { 'none' }
-    $qemuArgs += @('-display', $disp, '-serial', 'mon:stdio')
+    $qemuArgs += @('-display', 'none', '-serial', 'mon:stdio')
 } else {
-    if ($VirtioGl) {
+    if ($GpuMode -eq 'gl' -or $GpuMode -eq 'venus') {
         $qemuArgs += @('-display', 'gtk,gl=on,grab-on-hover=on')
-    } elseif ($Virtio) {
+    } elseif ($GpuMode -eq 'virtio') {
         $qemuArgs += @('-display', 'gtk,grab-on-hover=on')
     }
     $serialLog = Out-Path 'serial.log'
