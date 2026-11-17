@@ -52,6 +52,7 @@ namespace Planet.Kernel {
     private int vgpu_scanout_w = 0;
     private int vgpu_scanout_h = 0;
     private int vgpu_fb_pa = 0;
+    private int vgpu_fb_pages = 0;
     private int vgpu_fence_seq = 1;
 
     public class VirtioGpu : Object {
@@ -396,10 +397,22 @@ namespace Planet.Kernel {
 
             int fb_bytes = w * h * 4;
             int pages = (fb_bytes + 4095) / 4096;
+            if (vgpu_fb_pa != 0 && pages > vgpu_fb_pages) {
+                for (int p = 0; p < vgpu_fb_pages; p++)
+                    Pmm.free_frame (vgpu_fb_pa + p * 4096);
+                vgpu_fb_pa = 0;
+                vgpu_fb_pages = 0;
+            }
             if (vgpu_fb_pa == 0) {
-                vgpu_fb_pa = Pmm.alloc_contiguous (pages);
+                int alloc_pages = (pages < 1000) ? 1000 : pages; // 1280x800x4 max without realloc
+                vgpu_fb_pa = Pmm.alloc_contiguous (alloc_pages);
+                if (vgpu_fb_pa == 0) {
+                    vgpu_fb_pa = Pmm.alloc_contiguous (pages);
+                    alloc_pages = pages;
+                }
                 if (vgpu_fb_pa == 0)
                     return 0;
+                vgpu_fb_pages = alloc_pages;
             }
 
             // 1. RESOURCE_CREATE_2D (40 bytes)
