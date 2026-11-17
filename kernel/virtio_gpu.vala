@@ -56,6 +56,8 @@ namespace Planet.Kernel {
     private int vgpu_con_active = 0;
     private int vgpu_con_cur_r = -1;
     private int vgpu_con_cur_c = -1;
+    private int vgpu_con_dirty_r0 = 25;
+    private int vgpu_con_dirty_r1 = -1;
     private int vgpu_fence_seq = 1;
 
     public class VirtioGpu : Object {
@@ -930,6 +932,25 @@ namespace Planet.Kernel {
             flush_scanout_rect (80, 100, 640, 400);
         }
 
+        public static void console_flush_dirty () {
+            if (vgpu_con_active == 0 || vgpu_fb_pa == 0 || vgpu_con_dirty_r1 < vgpu_con_dirty_r0)
+                return;
+            int r0 = vgpu_con_dirty_r0;
+            int r1 = vgpu_con_dirty_r1;
+            if (r0 < 0) r0 = 0;
+            if (r1 >= 25) r1 = 24;
+            vgpu_con_dirty_r0 = 25;
+            vgpu_con_dirty_r1 = -1;
+            flush_scanout_rect (80, 100 + r0 * 16, 640, (r1 - r0 + 1) * 16);
+        }
+
+        private static void mark_dirty_row (int r) {
+            if (r < 0 || r >= 25)
+                return;
+            if (r < vgpu_con_dirty_r0) vgpu_con_dirty_r0 = r;
+            if (r > vgpu_con_dirty_r1) vgpu_con_dirty_r1 = r;
+        }
+
         public static void console_flush_cell (int row, int col, int cur_r, int cur_c, bool flush_now) {
             if (vgpu_con_active == 0 || vgpu_fb_pa == 0)
                 return;
@@ -938,8 +959,7 @@ namespace Planet.Kernel {
                 int ow = mmio_read32 (oa & ~3);
                 int oc = ((oa & 2) != 0) ? ((ow >> 16) & 0xFFFF) : (ow & 0xFFFF);
                 console_draw_cell (vgpu_con_cur_r, vgpu_con_cur_c, oc & 0xFF, (oc >> 8) & 0xFF, false);
-                if (flush_now)
-                    flush_scanout_rect (80 + vgpu_con_cur_c * 8, 100 + vgpu_con_cur_r * 16, 8, 16);
+                mark_dirty_row (vgpu_con_cur_r);
             }
             vgpu_con_cur_r = cur_r;
             vgpu_con_cur_c = cur_c;
@@ -948,16 +968,17 @@ namespace Planet.Kernel {
                 int w = mmio_read32 (addr & ~3);
                 int cell = ((addr & 2) != 0) ? ((w >> 16) & 0xFFFF) : (w & 0xFFFF);
                 console_draw_cell (row, col, cell & 0xFF, (cell >> 8) & 0xFF, (row == cur_r && col == cur_c));
-                if (flush_now)
-                    flush_scanout_rect (80 + col * 8, 100 + row * 16, 8, 16);
+                mark_dirty_row (row);
             }
-            if (flush_now && cur_r >= 0 && cur_r < 25 && cur_c >= 0 && cur_c < 80) {
+            if (cur_r >= 0 && cur_r < 25 && cur_c >= 0 && cur_c < 80) {
                 int ca = 0xB8000 + (cur_r * 80 + cur_c) * 2;
                 int cw = mmio_read32 (ca & ~3);
                 int cc = ((ca & 2) != 0) ? ((cw >> 16) & 0xFFFF) : (cw & 0xFFFF);
                 console_draw_cell (cur_r, cur_c, cc & 0xFF, (cc >> 8) & 0xFF, true);
-                flush_scanout_rect (80 + cur_c * 8, 100 + cur_r * 16, 8, 16);
+                mark_dirty_row (cur_r);
             }
+            if (flush_now)
+                console_flush_dirty ();
         }
 
         public static void init_console (int cur_r, int cur_c) {

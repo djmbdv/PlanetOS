@@ -134,8 +134,7 @@ namespace Planet.Kernel {
             if (vga_row >= ROWS) {
                 scroll_up ();
             } else if (VirtioGpu.is_console_active ()) {
-                VirtioGpu.console_flush_cell (r0, c0, vga_row, vga_col,
-                    (glyph == '>' || glyph == ' ' || glyph == ':' || glyph == '?'));
+                VirtioGpu.console_flush_cell (r0, c0, vga_row, vga_col, (glyph == '>'));
             }
             update_cursor ();
         }
@@ -188,7 +187,7 @@ namespace Planet.Kernel {
                 if (vga_row >= ROWS)
                     scroll_up ();
                 else if (VirtioGpu.is_console_active ())
-                    VirtioGpu.console_flush_cell (-1, -1, vga_row, vga_col, true);
+                    VirtioGpu.console_flush_cell (-1, -1, vga_row, vga_col, (b == '\n' || b == '\r'));
                 update_cursor ();
                 return;
             }

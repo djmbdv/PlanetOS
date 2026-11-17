@@ -97,6 +97,8 @@ namespace Planet.Kernel {
                     return mmio_read32 (bbuf) & 0xFF;
                 }
             }
+            if (VirtioGpu.is_console_active ())
+                VirtioGpu.console_flush_dirty ();
             while (true) {
                 int sc = Keyboard.poll_scancode ();
                 if (sc == -1)
