@@ -1130,6 +1130,7 @@ namespace C2Vala {
                 return e;
             }
             refuse (t, @"unexpected token '$(t.text)'");
+            throw new RefuseError.FAILED ("unreachable");
         }
 
         private static int64 eval_char_lit (string raw) {

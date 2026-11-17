@@ -57,7 +57,18 @@ namespace C2Vala {
         private GenericArray<FuncSig> sigs = new GenericArray<FuncSig> ();
         private GenericArray<string> enum_member_names = new GenericArray<string> ();
         private GenericArray<string> enum_member_types = new GenericArray<string> ();
-        private GenericArray<int64> enum_member_vals = new GenericArray<int64> ();
+        private int64[] enum_member_vals = new int64[0];
+
+        // Grow-by-one append. `GenericArray<int64>` would be shorter but valac
+        // rejects value types as generic arguments and planc rejects the
+        // `int64?` box that valac demands, so the shared source uses an array.
+        private void push_enum_val (int64 v) {
+            var bigger = new int64[enum_member_vals.length + 1];
+            for (int i = 0; i < enum_member_vals.length; i++)
+                bigger[i] = enum_member_vals[i];
+            bigger[enum_member_vals.length] = v;
+            enum_member_vals = bigger;
+        }
 
         public GenericArray<ReportEntry> report_entries = new GenericArray<ReportEntry> ();
         public int translated_count = 0;
@@ -181,6 +192,7 @@ namespace C2Vala {
                 refuse_loc (e.file, e.line, @"unsupported constant operator '$(b.op)'");
             }
             refuse_loc (e.file, e.line, "non-constant enum initializer");
+            throw new RefuseError.FAILED ("unreachable");
         }
 
         private void resolve_enums () throws RefuseError {
@@ -196,7 +208,7 @@ namespace C2Vala {
                     m.has_val = true;
                     enum_member_names.add (m.name);
                     enum_member_types.add (ed.name);
-                    enum_member_vals.add (next_val);
+                    push_enum_val (next_val);
                     next_val++;
                 }
             }
@@ -934,7 +946,9 @@ namespace C2Vala {
                     string alloc_s = emit_alloc ((ExprCall) d.init, li.ctype);
                     sb.append (@"$vt $(d.name) = $alloc_s;\n");
                 } else {
-                    sb.append (@"$vt $(d.name) = $(emit_expr ((CExpr) d.init));\n");
+                    string? tgt = (d.ctype.kind == CTypeKind.SCALAR
+                                   || d.ctype.kind == CTypeKind.ENUM) ? vt : null;
+                    sb.append (@"$vt $(d.name) = $(coerce_value ((CExpr) d.init, tgt));\n");
                 }
             } else {
                 if (d.ctype.kind == CTypeKind.STRUCT) {
@@ -1114,6 +1128,58 @@ namespace C2Vala {
             return @"($s != 0)";
         }
 
+        // Vala requires an assignment's right-hand side to have exactly the
+        // target's type; C converts implicitly. Insert the cast C leaves out.
+        private string coerce_value (CExpr value, string? target) throws RefuseError {
+            string rt = emit_expr (value);
+            if (target == null)
+                return rt;
+            var vt = infer_type (value);
+            if (vt == null || vt.kind != CTypeKind.SCALAR)
+                return rt;
+            if (vt.name == target)
+                return rt;
+            return @"($target) $rt";
+        }
+
+        private string coerce_assign (CExpr target, CExpr value) throws RefuseError {
+            return coerce_value (value, scalar_lvalue_type (target));
+        }
+
+        // Vala type of a scalar assignment target, or null when it is not one.
+        private string? scalar_lvalue_type (CExpr t) throws RefuseError {
+            if (t is ExprIdent) {
+                var li = find_local (cur_locals, ((ExprIdent) t).name);
+                if (li == null || li.is_array)
+                    return null;
+                if (li.ctype.kind == CTypeKind.ENUM)
+                    return li.ctype.name;
+                if (li.ctype.kind != CTypeKind.SCALAR)
+                    return null;
+                return li.ctype.name;
+            }
+            if (t is ExprIndex) {
+                var et = infer_type (t);
+                if (et == null || et.kind != CTypeKind.SCALAR)
+                    return null;
+                // a `char *` buffer is declared as `uchar[]`
+                if (et.is_scalar ("char"))
+                    return "uchar";
+                return et.name;
+            }
+            if (t is ExprMember) {
+                var mt = infer_type (t);
+                if (mt == null)
+                    return null;
+                if (mt.kind == CTypeKind.ENUM)
+                    return mt.name;
+                if (mt.kind != CTypeKind.SCALAR)
+                    return null;
+                return mt.name;
+            }
+            return null;
+        }
+
         private string emit_expr (CExpr e) throws RefuseError {
             if (e is ExprInt)
                 return ((ExprInt) e).raw;
@@ -1212,10 +1278,11 @@ namespace C2Vala {
                         return @"$(li.name) = $(emit_alloc ((ExprCall) a.rvalue, li.ctype))";
                     }
                 }
+                if (a.op == "=")
+                    return @"$(emit_expr (a.lvalue)) = $(coerce_assign (a.lvalue, a.rvalue))";
                 return @"$(emit_expr (a.lvalue)) $(a.op) $(emit_expr (a.rvalue))";
             }
-            if (e is ExprTernary) {
-                var t = (ExprTernary) e;
+            if (e is ExprTernary) {                var t = (ExprTernary) e;
                 return @"($(emit_cond (t.cond)) ? $(emit_expr (t.if_true)) : $(emit_expr (t.if_false)))";
             }
             if (e is ExprIndex) {
@@ -1242,6 +1309,7 @@ namespace C2Vala {
                 refuse_loc (e.file, e.line, "initializer lists are not supported");
             }
             refuse_loc (e.file, e.line, "unsupported expression");
+            throw new RefuseError.FAILED ("unreachable");
         }
 
         private string emit_alloc (ExprCall call, CType target_ptr) throws RefuseError {
@@ -1277,6 +1345,7 @@ namespace C2Vala {
                 return @"new uchar[$(emit_expr (arg))]";
 
             refuse_loc (call.file, call.line, "malloc whose size does not imply an element type");
+            throw new RefuseError.FAILED ("unreachable");
         }
 
         private string emit_printf_planc (ExprCall c) throws RefuseError {
@@ -1392,7 +1461,11 @@ namespace C2Vala {
             var sb = new StrBuilder (@"$fn (");
             for (int i = 0; i < c.args.length; i++) {
                 if (i > 0) sb.append (", ");
-                sb.append (emit_expr (c.args[i]));
+                var pt = sig.param_types[i];
+                string? tgt = null;
+                if (pt.kind == CTypeKind.SCALAR || pt.kind == CTypeKind.ENUM)
+                    tgt = pt.name;
+                sb.append (coerce_value (c.args[i], tgt));
             }
             sb.append (")");
             return sb.str;

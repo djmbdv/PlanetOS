@@ -1,0 +1,3 @@
+The native translator maps a C union to a Vala `union`, which is a planc
+extension: valac has no union type, so this case is only runnable when the
+guest compiler (planc) is the one compiling the generated code.

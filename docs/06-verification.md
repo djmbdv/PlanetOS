@@ -127,10 +127,11 @@ python tests/qemu.py --no-build     # reuse the last build
 python tests/qemu.py --case gio     # one case
 ```
 
-Host-side differential tests for the C -> Vala translator live in [tools/c2vala_tests/run.py](tools/c2vala_tests/run.py) (gcc vs valac on the same source; needs MSYS2, not QEMU). A case directory with `refuse.txt` must be refused with that message and one with `report.txt` must print those lines under `--report`:
+Host-side differential tests for the C -> Vala translator live in [tools/c2vala_tests/run.py](tools/c2vala_tests/run.py) (gcc vs valac on the same source; needs MSYS2, not QEMU). The native translator has to be built first: `tools/c2vala/build_host.sh` for this host (`.exe` on Windows) or `tools/c2vala/build.sh` for the guest (ELF, planc). A case directory with `refuse.txt` must be refused with that message, one with `report.txt` must print those lines under `--report`, and one with `planc_only.txt` is skipped unless planc compiles the generated code:
 
 ```sh
-python tools/c2vala_tests/run.py    # 6 passed, 0 failed
+python tools/c2vala_tests/run.py --translator vala   # native, 5 passed (unions need planc)
+python tools/c2vala_tests/run.py --translator py     # python, 6 passed
 ```
 
 Tests that require QEMU, and only those:

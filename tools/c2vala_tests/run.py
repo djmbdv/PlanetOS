@@ -35,6 +35,7 @@ CASES = os.path.join(HERE, "cases")
 RUNTIME = os.path.join(TOOLS, "c2vala_rt.vala")
 TRANSLATOR_PY = os.path.join(TOOLS, "c2vala.py")
 TRANSLATOR_VALA = os.path.join(TOOLS, "c2vala", "build", "c2vala")
+TRANSLATOR_VALA_EXE = TRANSLATOR_VALA + ".exe"
 PLANC_BIN = os.path.join(ROOT, "planc", "build", "planc")
 
 IS_WINDOWS = os.name == "nt"
@@ -48,6 +49,29 @@ JSMN_URL = "https://raw.githubusercontent.com/zserge/jsmn/master/jsmn.h"
 def die(msg):
     sys.stderr.write("c2vala-tests: %s\n" % msg)
     sys.exit(2)
+
+
+def find_native():
+    """The native (Vala) translator, however it was built for this host."""
+    for cand in (TRANSLATOR_VALA_EXE, TRANSLATOR_VALA):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def runs_here(path):
+    """True when this host can execute `path`.
+
+    planc emits ELF, so a native build made by tools/c2vala/build.sh only runs
+    inside the guest (or on Linux); the host build (build_host.sh) produces a
+    PE image on Windows.
+    """
+    if not os.path.isfile(path):
+        return False
+    if not IS_WINDOWS:
+        return True
+    with open(path, "rb") as fh:
+        return fh.read(2) == b"MZ"
 
 
 def sh(command):
@@ -110,10 +134,11 @@ def main(argv):
 
     if IS_WINDOWS and not os.path.isfile(BASH):
         die("MSYS2 bash not found at %s (set MSYS2_ROOT)" % BASH)
-    translator_cmd = [sys.executable, TRANSLATOR_PY] if args.translator == "py" else [TRANSLATOR_VALA]
-    if args.translator == "vala" and not os.path.isfile(TRANSLATOR_VALA):
-        die("native c2vala not built at %s (run tools/c2vala/build.sh)" % TRANSLATOR_VALA)
-    use_planc = (args.translator == "vala") and os.path.isfile(PLANC_BIN)
+    translator_cmd = [sys.executable, TRANSLATOR_PY] if args.translator == "py" else [find_native()]
+    if args.translator == "vala" and find_native() is None:
+        die("native c2vala not built: run tools/c2vala/build_host.sh (host build) "
+            "or tools/c2vala/build.sh (guest build)")
+    use_planc = (args.translator == "vala") and runs_here(PLANC_BIN)
     valac_available = has_valac()
     names = sorted(d for d in os.listdir(CASES) if os.path.isdir(os.path.join(CASES, d)))
     if args.only:
@@ -136,6 +161,11 @@ def main(argv):
                 continue
             if name == "unions" and args.translator == "py":
                 print("   SKIP (unions are refused in c2vala.py)")
+                continue
+            planc_only = os.path.join(case_dir, "planc_only.txt")
+            if os.path.isfile(planc_only) and not use_planc:
+                print("   SKIP (needs planc to compile the generated code: %s)"
+                      % open(planc_only, encoding="utf-8").read().splitlines()[0])
                 continue
             if name == "jsmn" and not ensure_jsmn(case_dir, args.verbose):
                 continue
