@@ -86,7 +86,11 @@ namespace Planet.Kernel {
             ps2_wait_write ();
             out60 (val);
             ps2_wait_read ();
-            in60 (); // ACK
+            // Drain everything the device answered (ACK plus anything it had
+            // queued). Leaving a byte behind used to put the packet decoder
+            // one byte out of phase for the rest of the session.
+            for (int i = 0; i < 8 && (in64 () & 0x01) != 0; i++)
+                in60 ();
         }
 
         public static void init () {
@@ -131,7 +135,13 @@ namespace Planet.Kernel {
                     break;
                 mouse_bytes = mouse_bytes + 1;
                 if (mouse_phase == 0) {
-                    if ((b & 0x08) == 0) {
+                    // A packet starts with bit 3 set and both overflow bits
+                    // clear. Anything else is a stray byte (an ACK left over
+                    // from init, or a byte the controller served with an empty
+                    // queue) and must not shift the decoder: that used to leave
+                    // every later packet one byte out of phase, so the cursor
+                    // never moved while packets were counted.
+                    if ((b & 0x08) == 0 || (b & 0xC0) != 0) {
                         mouse_resync = mouse_resync + 1;
                         continue;
                     }
