@@ -78,6 +78,7 @@ OPT="${PLANC_OPT:--O2}"
     "$ROOT/kernel/fb.vala" \
     "$ROOT/kernel/pmm.vala" \
     "$ROOT/kernel/vmm.vala" \
+    "$ROOT/kernel/console_font.vala" \
     "$ROOT/kernel/virtio_gpu.vala" \
     "$ROOT/kernel/env.vala" \
     "$ROOT/kernel/ramfs.vala" \

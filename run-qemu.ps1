@@ -207,6 +207,7 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'fb.vala'),
         (Join-Path $KernelDir 'pmm.vala'),
         (Join-Path $KernelDir 'vmm.vala'),
+        (Join-Path $KernelDir 'console_font.vala'),
         (Join-Path $KernelDir 'virtio_gpu.vala'),
         (Join-Path $KernelDir 'env.vala'),
         (Join-Path $KernelDir 'ramfs.vala'),

@@ -910,19 +910,19 @@ namespace Planet.Kernel {
                 return;
             int fg = cursor ? 0xFF0F131A : vga_fg_rgb (attr);
             int bg = cursor ? 0xFF38BDF8 : 0xFF0F131A;
-            int bits = font8x8 (ch & 0xFF);
-            int x0 = 320 + col * 8;
-            int y0 = 160 + row * 16;
-            for (int r = 0; r < 8; r++) {
-                int rbits = (bits >> ((7 - r) * 8)) & 0xFF;
-                int py0 = y0 + r * 2;
-                int py1 = py0 + 1;
-                int off0 = (py0 * 1280 + x0) * 4;
-                int off1 = (py1 * 1280 + x0) * 4;
-                for (int c = 0; c < 8; c++) {
-                    int px = ((rbits & (1 << (7 - c))) != 0) ? fg : bg;
-                    mmio_write32 (vgpu_fb_pa + off0 + c * 4, px);
-                    mmio_write32 (vgpu_fb_pa + off1 + c * 4, px);
+            int x0 = 240 + col * 10;
+            int y0 = 110 + row * 20;
+            int glyph = ch & 0xFF;
+            for (int q = 0; q < 4; q++) {
+                int packed = ConsoleFont.pack (glyph, q);
+                for (int r = 0; r < 5; r++) {
+                    int rbits = (packed >> (r * 10)) & 0x3FF;
+                    int py = y0 + q * 5 + r;
+                    int off = (py * 1280 + x0) * 4;
+                    for (int c = 0; c < 10; c++) {
+                        int px = ((rbits & (1 << (9 - c))) != 0) ? fg : bg;
+                        mmio_write32 (vgpu_fb_pa + off + c * 4, px);
+                    }
                 }
             }
         }
@@ -940,7 +940,7 @@ namespace Planet.Kernel {
             }
             vgpu_con_cur_r = cur_r;
             vgpu_con_cur_c = cur_c;
-            flush_scanout_rect (320, 160, 640, 400);
+            flush_scanout_rect (240, 110, 800, 500);
         }
 
         public static void console_flush_dirty () {
@@ -952,7 +952,7 @@ namespace Planet.Kernel {
             if (r1 >= 25) r1 = 24;
             vgpu_con_dirty_r0 = 25;
             vgpu_con_dirty_r1 = -1;
-            flush_scanout_rect (320, 160 + r0 * 16, 640, (r1 - r0 + 1) * 16);
+            flush_scanout_rect (240, 110 + r0 * 20, 800, (r1 - r0 + 1) * 20);
         }
 
         private static void mark_dirty_row (int r) {
