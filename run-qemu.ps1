@@ -195,7 +195,7 @@ if (-not $NoBuild) {
     $GeeSrcs = @((Join-Path $StdDir 'gee\base.vala'), (Join-Path $StdDir 'gee\lists.vala'), (Join-Path $StdDir 'gee\maps.vala'), (Join-Path $StdDir 'gee\queues.vala'))
     $GioSrcs = @((Join-Path $StdDir 'gio\types.vala'), (Join-Path $StdDir 'gio\streams.vala'), (Join-Path $StdDir 'gio\file.vala'), (Join-Path $StdDir 'gio\models.vala'))
     $CairoSrcs = @((Join-Path $StdDir 'cairo\surface.vala'), (Join-Path $StdDir 'cairo\context.vala'))
-    $GtkSrcs = @((Join-Path $StdDir 'gtk\text.vala'), (Join-Path $StdDir 'gtk\widget.vala'), (Join-Path $StdDir 'gtk\widgets.vala'), (Join-Path $StdDir 'gtk\container.vala'), (Join-Path $StdDir 'gtk\window.vala'))
+    $GtkSrcs = @((Join-Path $StdDir 'gtk\text.vala'), (Join-Path $StdDir 'gtk\widget.vala'), (Join-Path $StdDir 'gtk\widgets.vala'), (Join-Path $StdDir 'gtk\container.vala'), (Join-Path $StdDir 'gtk\scrolled.vala'), (Join-Path $StdDir 'gtk\listview.vala'), (Join-Path $StdDir 'gtk\image.vala'), (Join-Path $StdDir 'gtk\window.vala'))
     Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'wc.vala'), '-o', (Out-Path 'wc.elf')))
     Invoke-Planc (@('--target=planetos', '-O2') + $GeeSrcs + @((Join-Path $UserDir 'gee_demo.vala'), '-o', (Out-Path 'gee_demo.elf')))
     Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GioSrcs + @((Join-Path $UserDir 'gio_demo.vala'), '-o', (Out-Path 'gio_demo.elf')))

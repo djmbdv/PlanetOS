@@ -64,7 +64,33 @@ int main (string[] args) {
     vbox.pack_start (hbox);
     vbox.pack_start (status_lbl);
 
-    win.add (vbox);
+    // Fase 2 widgets: Image, ListBox, ListView, ScrolledWindow, Paned, Notebook
+    var nb = new Notebook ();
+    nb.append_page (vbox, "Controls");
+
+    var paned = new Paned (Orientation.HORIZONTAL);
+    paned.set_position (200);
+    var sidebar = new ListBox ();
+    var r_home = new Box (Orientation.HORIZONTAL, 6);
+    r_home.pack_start (new Image.from_icon_name ("folder", 18));
+    r_home.pack_start (new Label ("/ (XFS)"));
+    sidebar.append (r_home);
+    paned.set_start_child (sidebar);
+
+    var sc = new ScrolledWindow ();
+    var lv = new ListView ();
+    var items = new GenericArray<string> ();
+    items.add ("hello.txt");
+    items.add ("gtk_demo.elf");
+    var icons = new GenericArray<string> ();
+    icons.add ("text-x-generic");
+    icons.add ("application-x-executable");
+    lv.set_items (items, icons);
+    sc.set_child (lv);
+    paned.set_end_child (sc);
+    nb.append_page (paned, "Files");
+
+    win.add (nb);
     win.run (once);
     print ("gtk_demo: done\n");
     return 0;

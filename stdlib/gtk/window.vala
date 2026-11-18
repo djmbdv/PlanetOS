@@ -159,4 +159,40 @@ namespace Gtk {
             }
         }
     }
+
+    public class GtkApplicationWindow : GtkWindow {
+        public GtkApplication? application = null;
+
+        public GtkApplicationWindow (GtkApplication app, int w = 800, int h = 520) : base (w, h) {
+            application = app;
+            app.add_window (this);
+        }
+    }
+
+    public class GtkApplication : Object {
+        public string application_id;
+        private GtkWindow? active_win = null;
+
+        public signal void activate ();
+
+        public GtkApplication (string app_id = "org.planetos.App") {
+            application_id = app_id;
+        }
+
+        public void add_window (GtkWindow w) {
+            active_win = w;
+        }
+
+        public GtkWindow? get_active_window () {
+            return active_win;
+        }
+
+        public int run (string[] args) {
+            init (args);
+            activate ();
+            if (active_win != null)
+                active_win.run (false);
+            return 0;
+        }
+    }
 }
