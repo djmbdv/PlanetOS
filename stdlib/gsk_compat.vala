@@ -67,6 +67,8 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
+            if (bounds == null || bounds.w <= 0.0 || bounds.h <= 0.0 || a <= 0.0)
+                return;
             cr.set_source_rgba (r, g, b, a);
             cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
             cr.fill ();
@@ -102,13 +104,19 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
-            cr.set_source_rgba (r, g, b, a);
-            cr.rounded_rectangle (rect.bounds.x, rect.bounds.y, rect.bounds.w, rect.bounds.h, rect.radius);
-            cr.fill ();
+            if (rect == null || rect.bounds == null || rect.bounds.w <= 0.0 || rect.bounds.h <= 0.0)
+                return;
+            double max_r = ((rect.bounds.w < rect.bounds.h) ? rect.bounds.w : rect.bounds.h) * 0.5;
+            double rad = (rect.radius < 0.0) ? 0.0 : ((rect.radius > max_r) ? max_r : rect.radius);
+            if (a > 0.0) {
+                cr.set_source_rgba (r, g, b, a);
+                cr.rounded_rectangle (rect.bounds.x, rect.bounds.y, rect.bounds.w, rect.bounds.h, rad);
+                cr.fill ();
+            }
             if (border_w > 0.0 && ba > 0.0) {
                 cr.set_source_rgba (br, bg, bb, ba);
                 cr.set_line_width (border_w);
-                cr.rounded_rectangle (rect.bounds.x, rect.bounds.y, rect.bounds.w, rect.bounds.h, rect.radius);
+                cr.rounded_rectangle (rect.bounds.x, rect.bounds.y, rect.bounds.w, rect.bounds.h, rad);
                 cr.stroke ();
             }
         }
@@ -126,11 +134,12 @@ namespace Gsk {
         }
 
         public void add_stop (double offset, double r, double g, double b, double a = 1.0) {
-            stops.add (new ColorStop (offset, r, g, b, a));
+            double off = (offset < 0.0) ? 0.0 : ((offset > 1.0) ? 1.0 : offset);
+            stops.add (new ColorStop (off, r, g, b, a));
         }
 
         public override void draw_cairo (Context cr) {
-            if (stops.length == 0)
+            if (bounds == null || bounds.w <= 0.0 || bounds.h <= 0.0 || stops.length == 0)
                 return;
             int n = stops.length;
             int steps = horizontal ? (int) bounds.w : (int) bounds.h;
@@ -186,15 +195,18 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
-            int rings = (spread > 4.0) ? 4 : 2;
-            for (int i = rings; i >= 1; i--) {
-                double pad = (spread * i) / (double) rings;
-                double alpha = 0.16 / (double) rings;
-                cr.set_source_rgba (0.0, 0.0, 0.0, alpha);
-                cr.rounded_rectangle (outline.bounds.x + dx - pad, outline.bounds.y + dy - pad,
-                                      outline.bounds.w + pad * 2.0, outline.bounds.h + pad * 2.0,
-                                      outline.radius + pad * 0.5);
-                cr.fill ();
+            if (outline != null && outline.bounds != null && spread > 0.0
+                && outline.bounds.w > 0.0 && outline.bounds.h > 0.0) {
+                int rings = (spread > 4.0) ? 4 : 2;
+                for (int i = rings; i >= 1; i--) {
+                    double pad = (spread * i) / (double) rings;
+                    double alpha = 0.16 / (double) rings;
+                    cr.set_source_rgba (0.0, 0.0, 0.0, alpha);
+                    cr.rounded_rectangle (outline.bounds.x + dx - pad, outline.bounds.y + dy - pad,
+                                          outline.bounds.w + pad * 2.0, outline.bounds.h + pad * 2.0,
+                                          outline.radius + pad * 0.5);
+                    cr.fill ();
+                }
             }
             if (child != null)
                 child.draw_cairo (cr);
@@ -224,6 +236,8 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
+            if (text == null || text.length == 0 || font_size <= 0.0 || a <= 0.0)
+                return;
             cr.set_source_rgba (r, g, b, a);
             cr.set_font_size (font_size);
             cr.move_to (x, y);
@@ -241,11 +255,30 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
+            if (clip_rect == null || clip_rect.w <= 0.0 || clip_rect.h <= 0.0)
+                return;
+            cr.save ();
             cr.rectangle (clip_rect.x, clip_rect.y, clip_rect.w, clip_rect.h);
             cr.clip ();
             if (child != null)
                 child.draw_cairo (cr);
-            cr.reset_clip ();
+            cr.restore ();
+        }
+    }
+
+    public class OpacityNode : RenderNode {
+        public double opacity;
+        public RenderNode? child;
+
+        public OpacityNode (RenderNode? c, double op = 1.0) {
+            child = c;
+            opacity = (op < 0.0) ? 0.0 : ((op > 1.0) ? 1.0 : op);
+        }
+
+        public override void draw_cairo (Context cr) {
+            if (opacity <= 0.0 || child == null)
+                return;
+            child.draw_cairo (cr);
         }
     }
 
@@ -256,8 +289,9 @@ namespace Gsk {
             children = new GenericArray<RenderNode> ();
         }
 
-        public void append (RenderNode node) {
-            children.add (node);
+        public void append (RenderNode? node) {
+            if (node != null)
+                children.add (node);
         }
 
         public int count () {
@@ -266,7 +300,8 @@ namespace Gsk {
 
         public override void draw_cairo (Context cr) {
             for (int i = 0; i < children.length; i++) {
-                children[i].draw_cairo (cr);
+                if (children[i] != null)
+                    children[i].draw_cairo (cr);
             }
         }
     }
@@ -298,6 +333,11 @@ namespace Gsk {
         public VulkanRenderer (int ctx_id = 1) {
             vk = new GpuDevice (ctx_id);
             fallback = new CairoRenderer ();
+        }
+
+        ~VulkanRenderer () {
+            if (vk != null)
+                vk.close ();
         }
 
         public override string backend_name () {

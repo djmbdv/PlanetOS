@@ -50,6 +50,8 @@ namespace Planet.Kernel {
             id = -1;
             if (path_len <= 0)
                 return KIND_DIR;
+            if (path_ptr == 0 || path_len > 4096)
+                return KIND_NONE;
             int dir = -1;
             int i = 0;
             while (i < path_len) {
@@ -58,9 +60,14 @@ namespace Planet.Kernel {
                 if (i >= path_len)
                     break;
                 int start = i;
-                while (i < path_len && byte_at (path_ptr + i) != '/')
+                while (i < path_len && byte_at (path_ptr + i) != '/') {
+                    if (byte_at (path_ptr + i) == 0)
+                        return KIND_NONE;
                     i = i + 1;
+                }
                 int clen = i - start;
+                if (clen > 255)
+                    return KIND_NONE;
                 bool last = true;
                 int k = i;
                 while (k < path_len) {

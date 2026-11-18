@@ -381,33 +381,3 @@ namespace GLib {
         }
     }
 }
-
-namespace Gee {
-    public class ArrayList<T> : Object {
-        private GenericArray<T> inner;
-
-        public int size {
-            get { return inner.length; }
-        }
-
-        public ArrayList () {
-            inner = new GenericArray<T> ();
-        }
-
-        public void add (T item) {
-            inner.add (item);
-        }
-
-        public T get (int index) {
-            return inner[index];
-        }
-
-        public void set (int index, T item) {
-            inner[index] = item;
-        }
-
-        public void clear () {
-            inner = new GenericArray<T> ();
-        }
-    }
-}

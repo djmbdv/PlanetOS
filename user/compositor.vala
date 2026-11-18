@@ -360,6 +360,10 @@ namespace Wm {
         private uint8[] cursor_pix;
         private int cursor_hot_x = 0;
         private int cursor_hot_y = 0;
+        private int cursor_min_x = 0;
+        private int cursor_min_y = 0;
+        private int cursor_bw = 16;
+        private int cursor_bh = 22;
 
         public Compositor () {
             wins = new GenericArray<Win> ();
@@ -450,15 +454,32 @@ namespace Wm {
             cr.set_source_rgba (0.97, 0.98, 1.0, 1.0);
             path.fill (cr);
             cursor_pix = new uint8[CURSOR_TEX * CURSOR_TEX * 4];
+            int minx = CURSOR_TEX;
+            int miny = CURSOR_TEX;
+            int maxx = -1;
+            int maxy = -1;
             for (int y = 0; y < CURSOR_TEX; y++) {
                 for (int x = 0; x < CURSOR_TEX; x++) {
                     int px = cr.pixel_at (x, y);
+                    int a = (px >> 24) & 0xFF;
+                    if (a > 0) {
+                        if (x < minx) minx = x;
+                        if (y < miny) miny = y;
+                        if (x > maxx) maxx = x;
+                        if (y > maxy) maxy = y;
+                    }
                     int off = (y * CURSOR_TEX + x) * 4;
                     cursor_pix[off + 0] = (uint8) (px & 0xFF);
                     cursor_pix[off + 1] = (uint8) ((px >> 8) & 0xFF);
                     cursor_pix[off + 2] = (uint8) ((px >> 16) & 0xFF);
-                    cursor_pix[off + 3] = (uint8) ((px >> 24) & 0xFF);
+                    cursor_pix[off + 3] = (uint8) a;
                 }
+            }
+            if (maxx >= minx && maxy >= miny) {
+                cursor_min_x = minx;
+                cursor_min_y = miny;
+                cursor_bw = maxx - minx + 1;
+                cursor_bh = maxy - miny + 1;
             }
             cursor_svg_ok = true;
         }
@@ -699,6 +720,16 @@ namespace Wm {
             clear_damage ();
         }
 
+        private void damage_cursor_at (int mx, int my) {
+            if (cursor_svg_ok) {
+                int x = mx - cursor_hot_x + cursor_min_x - 2;
+                int y = my - cursor_hot_y + cursor_min_y - 2;
+                damage (x, y, cursor_bw + 4, cursor_bh + 4);
+            } else {
+                damage (mx - 2, my - 2, 16, 22);
+            }
+        }
+
         private void animate_damage (int mx, int my) {
             if (mx != last_mx || my != last_my) {
                 motions = motions + 1;
@@ -707,11 +738,11 @@ namespace Wm {
                     // or the queue timed out): stop relying on it and draw the
                     // pointer ourselves from now on.
                     hw_cursor = false;
-                    damage (last_mx - 2, last_my - 2, 16, 22);
-                    damage (mx - 2, my - 2, 16, 22);
+                    damage_cursor_at (last_mx, last_my);
+                    damage_cursor_at (mx, my);
                 } else if (!hw_cursor) {
-                    damage (last_mx - 2, last_my - 2, 16, 22);
-                    damage (mx - 2, my - 2, 16, 22);
+                    damage_cursor_at (last_mx, last_my);
+                    damage_cursor_at (mx, my);
                 }
                 last_mx = mx;
                 last_my = my;

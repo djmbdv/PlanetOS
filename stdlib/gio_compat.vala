@@ -95,28 +95,51 @@ namespace Gio {
 
         public virtual bool read_all (uint8[] buffer, out int bytes_read, Cancellable? cancellable = null) throws IOError {
             bytes_read = 0;
-            if (buffer.length == 0)
+            if (buffer.length == 0) {
+                if (cancellable != null && cancellable.is_cancelled ())
+                    throw new IOError.CANCELLED ("Operation was cancelled");
+                if (closed)
+                    throw new IOError.CLOSED ("Stream is already closed");
                 return true;
-            var tmp = new uint8[buffer.length];
+            }
+            int first = read (buffer, cancellable);
+            if (first <= 0)
+                return true;
+            bytes_read = first;
             while (bytes_read < buffer.length) {
                 int rem = buffer.length - bytes_read;
                 var slice = new uint8[rem];
                 int n = read (slice, cancellable);
                 if (n <= 0)
                     break;
-                for (int i = 0; i < n; i++) {
+                for (int i = 0; i < n; i++)
                     buffer[bytes_read + i] = slice[i];
-                }
                 bytes_read = bytes_read + n;
             }
             return true;
         }
 
         public virtual int skip (int count, Cancellable? cancellable = null) throws IOError {
-            if (count <= 0)
+            if (count <= 0) {
+                if (cancellable != null && cancellable.is_cancelled ())
+                    throw new IOError.CANCELLED ("Operation was cancelled");
+                if (closed)
+                    throw new IOError.CLOSED ("Stream is already closed");
                 return 0;
-            var tmp = new uint8[count];
-            return read (tmp, cancellable);
+            }
+            int skipped = 0;
+            int chunk_sz = (count < 4096) ? count : 4096;
+            var tmp = new uint8[chunk_sz];
+            while (skipped < count) {
+                int rem = count - skipped;
+                if (rem < chunk_sz)
+                    tmp = new uint8[rem];
+                int n = read (tmp, cancellable);
+                if (n <= 0)
+                    break;
+                skipped = skipped + n;
+            }
+            return skipped;
         }
 
         public virtual bool close (Cancellable? cancellable = null) throws IOError {
@@ -144,11 +167,27 @@ namespace Gio {
 
         public virtual bool write_all (uint8[] buffer, out int bytes_written, Cancellable? cancellable = null) throws IOError {
             bytes_written = 0;
-            if (buffer.length == 0)
+            if (buffer.length == 0) {
+                if (cancellable != null && cancellable.is_cancelled ())
+                    throw new IOError.CANCELLED ("Operation was cancelled");
+                if (closed)
+                    throw new IOError.CLOSED ("Stream is already closed");
                 return true;
-            int n = write (buffer, cancellable);
-            if (n > 0)
-                bytes_written = n;
+            }
+            int first = write (buffer, cancellable);
+            if (first <= 0)
+                return false;
+            bytes_written = first;
+            while (bytes_written < buffer.length) {
+                int rem = buffer.length - bytes_written;
+                var slice = new uint8[rem];
+                for (int i = 0; i < rem; i++)
+                    slice[i] = buffer[bytes_written + i];
+                int n = write (slice, cancellable);
+                if (n <= 0)
+                    break;
+                bytes_written = bytes_written + n;
+            }
             return bytes_written == buffer.length;
         }
 
@@ -178,6 +217,33 @@ namespace Gio {
 
         public FileInputStream (int fd) {
             this.fd = fd;
+        }
+
+        ~FileInputStream () {
+            if (!closed && fd >= 0) {
+                Sys.close (fd);
+                fd = -1;
+                closed = true;
+            }
+        }
+
+        public override int skip (int count, Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            if (closed || fd < 0)
+                throw new IOError.CLOSED ("Stream is closed");
+            if (count <= 0)
+                return 0;
+            int sz = Sys.file_size (fd);
+            int target = pos + count;
+            if (sz >= 0 && target > sz)
+                target = sz;
+            int old_pos = pos;
+            int res = Sys.seek (fd, target);
+            if (res < 0)
+                throw new IOError.FAILED ("Skip failed");
+            pos = res;
+            return (pos > old_pos) ? (pos - old_pos) : 0;
         }
 
         public override int read (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
@@ -238,6 +304,14 @@ namespace Gio {
         public FileOutputStream (int fd, int initial_pos = 0) {
             this.fd = fd;
             this.pos = initial_pos;
+        }
+
+        ~FileOutputStream () {
+            if (!closed && fd >= 0) {
+                Sys.close (fd);
+                fd = -1;
+                closed = true;
+            }
         }
 
         public override int write (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
@@ -339,6 +413,26 @@ namespace Gio {
             pos = pos + n;
             return n;
         }
+
+        public int tell () {
+            return pos;
+        }
+
+        public bool seek (int offset, SeekType type, Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            if (closed)
+                throw new IOError.CLOSED ("Stream is closed");
+            int target = offset;
+            if (type == SeekType.CUR)
+                target = pos + offset;
+            else if (type == SeekType.END)
+                target = used + offset;
+            if (target < 0)
+                throw new IOError.INVALID_ARGUMENT ("Negative seek offset");
+            pos = (target <= used) ? target : used;
+            return true;
+        }
     }
 
     public class MemoryOutputStream : OutputStream {
@@ -385,44 +479,82 @@ namespace Gio {
 
     public class DataInputStream : InputStream {
         private InputStream base_stream;
+        private uint8[] rbuf;
+        private int rpos = 0;
+        private int rlen = 0;
 
         public DataInputStream (InputStream base_stream) {
             this.base_stream = base_stream;
+            this.rbuf = new uint8[512];
+        }
+
+        private int refill (Cancellable? cancellable) throws IOError {
+            if (rpos < rlen)
+                return rlen - rpos;
+            rpos = 0;
+            rlen = base_stream.read (rbuf, cancellable);
+            if (rlen < 0)
+                rlen = 0;
+            return rlen;
         }
 
         public override int read (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            if (closed)
+                throw new IOError.CLOSED ("Stream is closed");
+            if (buffer.length == 0)
+                return 0;
+            if (rpos < rlen) {
+                int avail = rlen - rpos;
+                int n = (buffer.length < avail) ? buffer.length : avail;
+                for (int i = 0; i < n; i++)
+                    buffer[i] = rbuf[rpos + i];
+                rpos = rpos + n;
+                return n;
+            }
             return base_stream.read (buffer, cancellable);
         }
 
         public override bool close (Cancellable? cancellable = null) throws IOError {
             closed = true;
+            rpos = 0;
+            rlen = 0;
             return base_stream.close (cancellable);
         }
 
         public uint8 read_byte (Cancellable? cancellable = null) throws IOError {
-            var b = new uint8[1];
-            int n = base_stream.read (b, cancellable);
-            if (n <= 0)
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            if (closed)
+                throw new IOError.CLOSED ("Stream is closed");
+            if (refill (cancellable) <= 0)
                 throw new IOError.FAILED ("End of stream");
-            return b[0];
+            uint8 b = rbuf[rpos];
+            rpos = rpos + 1;
+            return b;
         }
 
         public string? read_line (out int length, Cancellable? cancellable = null) throws IOError {
             length = 0;
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            if (closed)
+                throw new IOError.CLOSED ("Stream is closed");
             var buf = new uint8[256];
             int cap = 256;
             int used = 0;
-            var one = new uint8[1];
             while (true) {
-                int n = base_stream.read (one, cancellable);
-                if (n <= 0) {
+                if (refill (cancellable) <= 0) {
                     if (used == 0)
                         return null;
                     break;
                 }
-                if (one[0] == '\n')
+                uint8 ch = rbuf[rpos];
+                rpos = rpos + 1;
+                if (ch == '\n')
                     break;
-                if (one[0] == '\r')
+                if (ch == '\r')
                     continue;
                 if (used >= cap) {
                     int ncap = cap * 2;
@@ -432,7 +564,7 @@ namespace Gio {
                     buf = nbuf;
                     cap = ncap;
                 }
-                buf[used] = one[0];
+                buf[used] = ch;
                 used = used + 1;
             }
             length = used;
@@ -531,7 +663,7 @@ namespace Gio {
                 return null;
             string name = names[idx];
             idx = idx + 1;
-            string full = (base_path.length == 0 || base_path == "/") ? name : base_path + "/" + name;
+            string full = (base_path.length == 0 || base_path == "/" || base_path == ".") ? name : base_path + "/" + name;
             int kind = Sys.stat (full);
             int sz = 0;
             if (kind == 1) {
@@ -663,8 +795,51 @@ namespace Gio {
                 if (Sys.unlink (dst) < 0)
                     throw new IOError.FAILED ("Failed to replace target");
             }
-            if (Sys.rename (src, dst) < 0)
-                throw new IOError.FAILED ("Failed to move file");
+            if (Sys.rename (src, dst) < 0) {
+                if (Sys.stat (src) != 1)
+                    throw new IOError.FAILED ("Failed to move file");
+                copy (destination, flags, cancellable);
+                delete (cancellable);
+            }
+            return true;
+        }
+
+        public bool copy (File destination, FileCopyFlags flags = FileCopyFlags.NONE, Cancellable? cancellable = null) throws IOError {
+            if (cancellable != null && cancellable.is_cancelled ())
+                throw new IOError.CANCELLED ("Operation was cancelled");
+            string src = normalize_fs_path ();
+            string dst = destination.normalize_fs_path ();
+            if (src == dst)
+                return true;
+            if (destination.query_exists (cancellable) && flags != FileCopyFlags.OVERWRITE)
+                throw new IOError.EXISTS ("Target file exists");
+            var inp = read (cancellable);
+            FileOutputStream? outp = null;
+            try {
+                outp = destination.replace (null, false, FileCreateFlags.REPLACE_DESTINATION, cancellable);
+                var buf = new uint8[4096];
+                while (true) {
+                    int n = inp.read (buf, cancellable);
+                    if (n <= 0)
+                        break;
+                    if (n == buf.length) {
+                        int w = 0;
+                        if (!outp.write_all (buf, out w, cancellable))
+                            throw new IOError.FAILED ("Copy write failed");
+                    } else {
+                        var slice = new uint8[n];
+                        for (int i = 0; i < n; i++)
+                            slice[i] = buf[i];
+                        int w = 0;
+                        if (!outp.write_all (slice, out w, cancellable))
+                            throw new IOError.FAILED ("Copy write failed");
+                    }
+                }
+            } finally {
+                inp.close (null);
+                if (outp != null)
+                    outp.close (null);
+            }
             return true;
         }
 
@@ -757,6 +932,11 @@ namespace Gio {
                 sz = 0;
             var buf = new uint8[sz];
             int got = 0;
+            if (sz > 0) {
+                int first = Sys.read (fd, buf, sz);
+                if (first > 0)
+                    got = first;
+            }
             while (got < sz) {
                 int rem = sz - got;
                 var chunk = new uint8[rem];
@@ -782,9 +962,13 @@ namespace Gio {
         public bool replace_contents (uint8[] contents, string? etag, bool make_backup, FileCreateFlags flags, out string? new_etag, Cancellable? cancellable = null) throws IOError {
             new_etag = null;
             var stream = replace (etag, make_backup, flags, cancellable);
-            int written = 0;
-            bool ok = stream.write_all (contents, out written, cancellable);
-            stream.close (cancellable);
+            bool ok = false;
+            try {
+                int written = 0;
+                ok = stream.write_all (contents, out written, cancellable);
+            } finally {
+                stream.close (null);
+            }
             return ok;
         }
 

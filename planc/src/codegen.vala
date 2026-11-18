@@ -4838,7 +4838,7 @@ namespace Planc {
                 var ce = (CallExpr) e;
                 if (ce.callee == "__planc_host_bytes_to_str" || ce.callee == "__planc_host_read_file")
                     return true;
-                if (is_host_intrinsic (ce.callee))
+                if (ce.callee == "__planc_hash" || is_host_intrinsic (ce.callee))
                     return false;
                 unowned var dd = resolve_delegate_callee (ce.callee);
                 if (dd != null)
@@ -5227,6 +5227,14 @@ namespace Planc {
         }
 
         private unowned Function? check_call (CallExpr c, bool want_value) throws SemanticError {
+            if (c.callee == "__planc_hash") {
+                if (c.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"__planc_hash expects 1 argument at $(c.line):$(c.column)");
+                string atn;
+                expr_type_full (c.args[0], out atn);
+                return null;
+            }
             if (is_host_intrinsic (c.callee)) {
                 check_host_intrinsic (c, want_value);
                 return null;
@@ -6008,6 +6016,15 @@ namespace Planc {
             }
             if (e is CallExpr) {
                 var ce = (CallExpr) e;
+                if (ce.callee == "__planc_hash") {
+                    if (ce.args.length != 1)
+                        throw new SemanticError.WRONG_ARG_COUNT (
+                            @"__planc_hash expects 1 argument at $(ce.line):$(ce.column)");
+                    string atn;
+                    expr_type_full (ce.args[0], out atn);
+                    tname = "";
+                    return ValaType.INT;
+                }
                 if (is_host_intrinsic (ce.callee))
                     return check_host_intrinsic (ce, true);
                 unowned DelegateDecl? dd = resolve_delegate_callee (ce.callee);
@@ -9983,7 +10000,21 @@ namespace Planc {
             emit_post_call_error_check_flag (true);
         }
 
+        private void gen_planc_hash (Expr arg) throws SemanticError {
+            string atn;
+            ValaType at = expr_type_full (arg, out atn);
+            gen_expr (arg);
+            if (at == ValaType.STRING)
+                emitter.emit_hash_str ();
+            else
+                emitter.emit_hash_int64 ();
+        }
+
         private void gen_call (CallExpr e) throws SemanticError {
+            if (e.callee == "__planc_hash") {
+                gen_planc_hash (e.args[0]);
+                return;
+            }
             if (is_host_intrinsic (e.callee)) {
                 gen_host_intrinsic (e);
                 return;

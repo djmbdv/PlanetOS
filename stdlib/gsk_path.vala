@@ -50,6 +50,8 @@ namespace Gsk {
         public double first_y { get; private set; }
 
         public static Path? parse (string d) {
+            if (d.length == 0)
+                return null;
             var p = new Path ();
             p.src = d;
             p.len = d.length;
@@ -110,8 +112,13 @@ namespace Gsk {
         }
 
         private void begin_contour (double x, double y) {
-            if (contours >= starts.length)
-                return;
+            if (contours >= starts.length) {
+                int ncap = starts.length * 2;
+                var ns = new int[ncap];
+                for (int i = 0; i < contours; i++)
+                    ns[i] = starts[i];
+                starts = ns;
+            }
             starts[contours] = n;
             contours++;
             add_point (x, y);

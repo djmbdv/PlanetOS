@@ -15,7 +15,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 28  # image + 27 files
+ARG_COUNT = 29  # image + 28 files
 
 
 def blk(b):
@@ -51,9 +51,10 @@ def main():
     fp_b = open(sys.argv[22], "rb").read()
     gt_b = open(sys.argv[23], "rb").read()
     vk_b = open(sys.argv[24], "rb").read()
-    lsans_b = open(sys.argv[25], "rb").read()
-    lmono_b = open(sys.argv[26], "rb").read()
-    cur_b = open(sys.argv[27], "rb").read()
+    ge_b = open(sys.argv[25], "rb").read()
+    lsans_b = open(sys.argv[26], "rb").read()
+    lmono_b = open(sys.argv[27], "rb").read()
+    cur_b = open(sys.argv[28], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -79,14 +80,16 @@ def main():
     b_fp = b_ac + blk(ac_b)
     b_gt = b_fp + blk(fp_b)
     b_vk = b_gt + blk(gt_b)
-    b_lsans = b_vk + blk(vk_b)
+    b_ge = b_vk + blk(vk_b)
+    b_lsans = b_ge + blk(ge_b)
     b_lmono = b_lsans + blk(lsans_b)
     b_cur = b_lmono + blk(lmono_b)
     INO_BLK = max(1000, b_cur + blk(cur_b) + 4)
-    total_blocks = max(1024, INO_BLK + 4)
+    total_blocks = INO_BLK + 264 # 8 inode blocks (128 inodes) + 256 free data blocks (1 MiB)
     img = bytearray(total_blocks * 4096)
 
     struct.pack_into(">II", img, 0, 0x58465342, 4096)
+    struct.pack_into(">Q", img, 8, total_blocks)
     struct.pack_into(">Q", img, 56, 64)
     struct.pack_into(">I", img, 84, total_blocks)
     struct.pack_into(">H", img, 104, 256)
@@ -127,6 +130,7 @@ def main():
         (b"frag_pattern.spv", fp_b, b_fp, 0x81A4),
         (b"gtk_demo.elf", gt_b, b_gt, 0x81ED),
         (b"vk_demo.elf", vk_b, b_vk, 0x81ED),
+        (b"gee_demo.elf", ge_b, b_ge, 0x81ED),
         (b"LiberationSans-Regular.ttf", lsans_b, b_lsans, 0x81A4),
         (b"LiberationMono-Regular.ttf", lmono_b, b_lmono, 0x81A4),
         (b"cursor.svg", cur_b, b_cur, 0x81A4),

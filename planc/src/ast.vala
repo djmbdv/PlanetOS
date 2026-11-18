@@ -1824,6 +1824,7 @@ namespace Planc {
                             field_type = ft,
                             type_name = fn,
                             name = fld.name,
+                            is_weak = fld.is_weak,
                             init = (fld.init != null) ? clone_expr (fld.init, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names) : null,
                             line = fld.line,
                             column = fld.column

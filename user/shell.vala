@@ -2,7 +2,7 @@
 // pipelines, redirections, conditionals, loops, scripts, and background jobs).
 
 using GLib;
-
+using Gee;
 using Planet;
 
 namespace PlanetShell {
@@ -16,8 +16,7 @@ namespace PlanetShell {
         }
     }
 
-    private GenericArray<string> env_keys;
-    private GenericArray<string> env_vals;
+    private HashMap<string, string> env_map;
     private int last_status = 0;
     private string cwd = "/";
 
@@ -114,31 +113,17 @@ namespace PlanetShell {
             return "0";
         if (name == "PWD")
             return cwd;
-        for (int i = 0; i < env_keys.length; i++) {
-            if (env_keys[i] == name)
-                return env_vals[i];
-        }
+        if (env_map.has_key (name))
+            return env_map.get (name);
         return Sys.getenv (name);
     }
 
     private void set_var (string name, string val) {
-        for (int i = 0; i < env_keys.length; i++) {
-            if (env_keys[i] == name) {
-                env_vals[i] = val;
-                return;
-            }
-        }
-        env_keys.add (name);
-        env_vals.add (val);
+        env_map.set (name, val);
     }
 
     private void unset_var (string name) {
-        for (int i = 0; i < env_keys.length; i++) {
-            if (env_keys[i] == name) {
-                env_keys[i] = "";
-                env_vals[i] = "";
-            }
-        }
+        env_map.unset (name);
     }
 
     private bool is_var_char (uint8 c) {
@@ -584,9 +569,10 @@ namespace PlanetShell {
             return 0;
         }
         if (cmd == "env" || cmd == "set") {
-            for (int i = 0; i < env_keys.length; i++) {
-                if (env_keys[i].length > 0)
-                    print (@"$(env_keys[i])=$(env_vals[i])\n");
+            var entries = env_map.entries ();
+            for (int i = 0; i < entries.size; i++) {
+                var e = entries.get (i);
+                print (@"$(e.key)=$(e.value)\n");
             }
             return 0;
         }
@@ -1152,8 +1138,7 @@ namespace PlanetShell {
     }
 
     int main (string[] args) {
-        env_keys = new GenericArray<string> ();
-        env_vals = new GenericArray<string> ();
+        env_map = new HashMap<string, string> ();
         set_var ("SHELL", "shell.elf");
         set_var ("PS1", "planet> ");
         set_var ("OS", Sys.getenv ("OS"));

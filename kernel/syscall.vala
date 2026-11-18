@@ -213,14 +213,23 @@ namespace Planet.Kernel {
             int parent = Vfs.resolve_parent (a0, a1, out base_ptr, out base_len);
             if (parent < -1 || Vfs.reserved_name (base_ptr, base_len))
                 return -1;
-            int rslot = Ramfs.create_in (parent, base_ptr, base_len, 1);
-            if (rslot < 0)
-                return -1;
+            int fd_kind = 2;
+            int fid = -1;
+            if (parent == -1 && Xfs.is_mounted ()) {
+                fid = Xfs.create_file (base_ptr, base_len);
+                if (fid > 0)
+                    fd_kind = 1;
+            }
+            if (fd_kind == 2) {
+                fid = Ramfs.create_in (parent, base_ptr, base_len, 1);
+                if (fid < 0)
+                    return -1;
+            }
             for (int fd = 3; fd < MAX_FDS; fd++) {
                 int slot = KernelLayout.FD_TABLE + fd * 32;
                 if (mmio_read64 (slot) == 0) {
-                    mmio_write64 (slot + 0, 2);
-                    mmio_write64 (slot + 8, rslot);
+                    mmio_write64 (slot + 0, fd_kind);
+                    mmio_write64 (slot + 8, fid);
                     mmio_write64 (slot + 16, 0);
                     mmio_write64 (slot + 24, 0);
                     return fd;
@@ -243,14 +252,16 @@ namespace Planet.Kernel {
             if (a0 < 3 || a0 >= MAX_FDS)
                 return -1;
             int slot = KernelLayout.FD_TABLE + a0 * 32;
-            if (mmio_read64 (slot) != 2)
+            int fkind = mmio_read64 (slot);
+            if (fkind != 1 && fkind != 2)
                 return -1;
             int rslot = mmio_read64 (slot + 8);
             int pos = mmio_read64 (slot + 24);
-            int nw = Ramfs.write (rslot, pos, a1, a2);
+            int nw = (fkind == 1) ? Xfs.write_file (rslot, pos, a1, a2) : Ramfs.write (rslot, pos, a1, a2);
             if (nw > 0) {
                 mmio_write64 (slot + 24, pos + nw);
-                mmio_write64 (slot + 16, Ramfs.file_size (rslot));
+                int nsz = (fkind == 1) ? Xfs.file_size (rslot) : Ramfs.file_size (rslot);
+                mmio_write64 (slot + 16, nsz);
             }
             return nw;
         }
@@ -321,6 +332,13 @@ namespace Planet.Kernel {
                 return -1;
             int id = -1;
             int kind = Vfs.resolve (a0, a1, out id);
+            if (kind == Vfs.KIND_XFS) {
+                int bp = 0;
+                int bl = 0;
+                if (Vfs.resolve_parent (a0, a1, out bp, out bl) == -1)
+                    return Xfs.unlink_root (bp, bl);
+                return -1;
+            }
             if (kind == Vfs.KIND_FILE)
                 return Ramfs.unlink_slot (id);
             if (kind == Vfs.KIND_DIR && id >= 0)

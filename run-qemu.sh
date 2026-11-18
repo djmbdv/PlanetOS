@@ -44,7 +44,8 @@ OPT="${PLANC_OPT:--O2}"
 "$PLANC" $OPT --target=planetos "$ROOT/user/init.vala" -o "$OUT/init.elf"
 "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/worker.vala" -o "$OUT/worker.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/gee_demo.vala" -o "$OUT/gee_demo.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gio_compat.vala" "$ROOT/user/gio_demo.vala" -o "$OUT/gio_demo.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/gobject_compat.vala" "$ROOT/user/gobject_demo.vala" -o "$OUT/gobject_demo.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/gmodule_compat.vala" "$ROOT/user/gmodule_demo.vala" -o "$OUT/gmodule_demo.elf"
@@ -61,7 +62,7 @@ OPT="${PLANC_OPT:--O2}"
 "$PLANC" --target=planetos "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
     "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
-"$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
+"$PLANC" $OPT --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" $OPT --target=planetos --image-base=0xC00000 \
     "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/planc/src/buffer.vala" \
@@ -114,7 +115,7 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
     "$OUT/spv_demo.elf" "$OUT/gio_demo.elf" \
     "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" \
-    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/jsmn_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$OUT/gtk_demo.elf" "$OUT/vk_demo.elf" "$ROOT/assets/LiberationSans-Regular.ttf" "$ROOT/assets/LiberationMono-Regular.ttf" "$ROOT/cursor.svg"
+    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/jsmn_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$OUT/gtk_demo.elf" "$OUT/vk_demo.elf" "$OUT/gee_demo.elf" "$ROOT/assets/LiberationSans-Regular.ttf" "$ROOT/assets/LiberationMono-Regular.ttf" "$ROOT/cursor.svg"
 
 # --headless forces the serial-only mode; --display forces a window. Without a
 # flag: window when a display server exists, headless otherwise. Windows/MSYS2

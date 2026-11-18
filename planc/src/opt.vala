@@ -479,6 +479,12 @@ namespace Planc {
                         return b.left;
                     if (b.op == "*" && r == 0 && is_pure_atom (b.left))
                         return new IntLiteral () { value = 0, line = e.line, column = e.column };
+                    if (b.op == "&" && r == 0 && is_pure_atom (b.left))
+                        return new IntLiteral () { value = 0, line = e.line, column = e.column };
+                    if (b.op == "&" && r == -1)
+                        return b.left;
+                    if (b.op == "|" && r == -1 && is_pure_atom (b.left))
+                        return new IntLiteral () { value = -1, line = e.line, column = e.column };
                     if (b.op == "*") {
                         int sh = pow2_shift (r);
                         if (sh > 0) {
@@ -574,6 +580,10 @@ namespace Planc {
             if (e is MemberAccessExpr) {
                 var ma = (MemberAccessExpr) e;
                 ma.target = opt_expr (ma.target);
+                if (ma.member == "length" && ma.target is StringLiteral) {
+                    string sv = ((StringLiteral) ma.target).value;
+                    return new IntLiteral () { value = sv.length, line = e.line, column = e.column };
+                }
                 return ma;
             }
 

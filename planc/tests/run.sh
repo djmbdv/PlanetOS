@@ -403,7 +403,7 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
         ko "freestanding_qemu" "user init compile failed: $(cat "$WORK/u.err")"
     elif ! "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/worker.vala" -o "$w_bin" 2>"$WORK/w.err"; then
         ko "freestanding_qemu" "user worker compile failed: $(cat "$WORK/w.err")"
-    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
         ko "freestanding_qemu" "user wc compile failed: $(cat "$WORK/wc.err")"
     elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$cd_bin" 2>"$WORK/cd.err"; then
         ko "freestanding_qemu" "user cairo_demo compile failed: $(cat "$WORK/cd.err")"
@@ -411,7 +411,7 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
         ko "freestanding_qemu" "frag_planet.vala compile failed: $(cat "$WORK/sp.err")"
     elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
         ko "freestanding_qemu" "user spv_demo compile failed: $(cat "$WORK/sd.err")"
-    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
+    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
     python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" "$cd_bin" "$sp_bin" "$sd_bin" << 'PYEOF'

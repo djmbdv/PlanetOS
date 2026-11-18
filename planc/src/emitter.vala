@@ -1003,6 +1003,44 @@ namespace Planc {
             code.u8 (0x0F); code.u8 (0xB6); code.u8 (0xC0);
         }
 
+        // Hash 64-bit integer/pointer in rax into non-negative 31-bit int in rax.
+        // Clobbers rcx.
+        public void emit_hash_int64 () {
+            mov_rcx_rax ();
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE9); code.u8 (32); // shr rcx, 32
+            xor_rax_rcx ();
+            mov_rcx_rax ();
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE9); code.u8 (16); // shr rcx, 16
+            xor_rax_rcx ();
+            code.u8 (0xB9); code.u32le (0x045d9f3bu);                     // mov ecx, 0x45d9f3b
+            imul_rax_rcx ();
+            mov_rcx_rax ();
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE9); code.u8 (16); // shr rcx, 16
+            xor_rax_rcx ();
+            code.u8 (0x25); code.u32le (0x7fffffffu);                     // and eax, 0x7fffffff
+        }
+
+        // Hash null-terminated UTF-8 string in rax (FNV-1a) into non-negative 31-bit int in rax.
+        // Clobbers rcx, rdx.
+        public void emit_hash_str () {
+            var loop_lbl = new Label ();
+            var done_lbl = new Label ();
+            mov_rcx_rax ();
+            mov_eax (216613626u);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xC9);               // test rcx, rcx
+            branch (BranchKind.JE, done_lbl);
+            bind (loop_lbl);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x11);               // movzx edx, byte [rcx]
+            code.u8 (0x85); code.u8 (0xD2);                               // test edx, edx
+            branch (BranchKind.JE, done_lbl);
+            code.u8 (0x31); code.u8 (0xD0);                               // xor eax, edx
+            code.u8 (0x69); code.u8 (0xC0); code.u32le (16777619u);       // imul eax, eax, 16777619
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1);               // inc rcx
+            branch (BranchKind.JMP, loop_lbl);
+            bind (done_lbl);
+            code.u8 (0x25); code.u32le (0x7fffffffu);                     // and eax, 0x7fffffff
+        }
+
         // ------------------------------------------------------------------
         // Syscall plumbing (slice 0, unchanged).
         // ------------------------------------------------------------------
