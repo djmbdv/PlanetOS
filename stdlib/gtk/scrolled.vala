@@ -208,7 +208,7 @@ namespace Gtk {
                 start_child.draw (cr);
             if (end_child != null)
                 end_child.draw (cr);
-            cr.set_source_rgb (0.24, 0.28, 0.35);
+            cr.set_source_rgb (0.83, 0.83, 0.83);
             if (orientation == Orientation.HORIZONTAL)
                 cr.rectangle ((double) (x + position), (double) y, 4.0, (double) height);
             else
@@ -356,27 +356,30 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
-            cr.set_source_rgb (0.11, 0.13, 0.17);
+            cr.set_source_rgb (0.93, 0.93, 0.93);
             cr.rectangle ((double) x, (double) y, (double) width, (double) tab_h);
             cr.fill ();
             int tx = x + 4;
             for (int i = 0; i < pages.length; i++) {
                 if (i == current_page)
-                    cr.set_source_rgb (0.18, 0.23, 0.31);
+                    cr.set_source_rgb (0.98, 0.98, 0.98);
                 else
-                    cr.set_source_rgb (0.13, 0.16, 0.21);
+                    cr.set_source_rgb (0.89, 0.89, 0.89);
                 cr.rectangle ((double) tx, (double) (y + 3), (double) (tab_w - 4), (double) (tab_h - 3));
                 cr.fill ();
                 if (i == current_page) {
-                    cr.set_source_rgb (0.32, 0.54, 0.80);
+                    cr.set_source_rgb (0.21, 0.54, 0.90);
                     cr.rectangle ((double) tx, (double) (y + 3), (double) (tab_w - 4), 2.0);
                     cr.fill ();
                 }
-                cr.set_source_rgb (0.93, 0.95, 0.98);
+                if (i == current_page)
+                    cr.set_source_rgb (0.20, 0.20, 0.20);
+                else
+                    cr.set_source_rgb (0.42, 0.42, 0.42);
                 TextHelper.draw_text (cr, labels[i], tx + 10, y + 7, 13.0);
                 tx += tab_w;
             }
-            cr.set_source_rgb (0.24, 0.28, 0.35);
+            cr.set_source_rgb (0.80, 0.80, 0.80);
             cr.rectangle ((double) x, (double) (y + tab_h - 1), (double) width, 1.0);
             cr.fill ();
             if (current_page >= 0 && current_page < pages.length)

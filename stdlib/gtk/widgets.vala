@@ -6,9 +6,9 @@ namespace Gtk {
     public class Label : Widget {
         public string label = "";
         public double font_size = 16.0;
-        public double r = 0.92;
-        public double g = 0.94;
-        public double b = 0.97;
+        public double r = 0.20;
+        public double g = 0.20;
+        public double b = 0.20;
 
         public Label (string text = "") {
             label = text;
@@ -66,18 +66,18 @@ namespace Gtk {
             if (!visible)
                 return;
             if (pressed)
-                cr.set_source_rgb (0.14, 0.25, 0.40);
+                cr.set_source_rgb (0.89, 0.91, 0.94);
             else if (hovered)
-                cr.set_source_rgb (0.19, 0.24, 0.31);
+                cr.set_source_rgb (1.0, 1.0, 1.0);
             else
-                cr.set_source_rgb (0.15, 0.18, 0.24);
+                cr.set_source_rgb (0.99, 0.99, 0.99);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
             cr.set_line_width (1.0);
             if (hovered || pressed)
-                cr.set_source_rgb (0.29, 0.49, 0.72);
+                cr.set_source_rgb (0.21, 0.54, 0.90);
             else
-                cr.set_source_rgb (0.24, 0.28, 0.35);
+                cr.set_source_rgb (0.80, 0.80, 0.80);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
 
@@ -87,9 +87,9 @@ namespace Gtk {
             int tx = x + (width - tw) / 2;
             int ty = y + (height - th) / 2;
             if (sensitive)
-                cr.set_source_rgb (0.96, 0.97, 0.99);
+                cr.set_source_rgb (0.20, 0.20, 0.20);
             else
-                cr.set_source_rgb (0.50, 0.54, 0.60);
+                cr.set_source_rgb (0.55, 0.55, 0.55);
             TextHelper.draw_text (cr, label, tx, ty, font_size);
         }
 
@@ -158,24 +158,24 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 12 || height <= 4)
                 return;
-            cr.set_source_rgb (0.08, 0.10, 0.13);
+            cr.set_source_rgb (1.0, 1.0, 1.0);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
             cr.set_line_width (1.0);
             if (focused)
-                cr.set_source_rgb (0.29, 0.49, 0.72);
+                cr.set_source_rgb (0.21, 0.54, 0.90);
             else
-                cr.set_source_rgb (0.22, 0.26, 0.33);
+                cr.set_source_rgb (0.78, 0.78, 0.78);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
 
             int tw = 0;
             int th = 0;
             if (text.length > 0) {
-                cr.set_source_rgb (0.94, 0.96, 0.98);
+                cr.set_source_rgb (0.20, 0.20, 0.20);
                 TextHelper.measure_text (text, font_size, out tw, out th);
             } else {
-                cr.set_source_rgb (0.50, 0.55, 0.63);
+                cr.set_source_rgb (0.45, 0.45, 0.45);
                 TextHelper.measure_text (placeholder, font_size, out tw, out th);
             }
             int inner_w = width - 20;
@@ -189,7 +189,7 @@ namespace Gtk {
             else if (placeholder.length > 0)
                 TextHelper.draw_text (cr, placeholder, x + 10, ty, font_size);
             if (focused) {
-                cr.set_source_rgb (0.45, 0.78, 1.0);
+                cr.set_source_rgb (0.21, 0.54, 0.90);
                 cr.rectangle ((double) (x + 11 + tw - scroll_x), (double) (y + 6), 2.0, (double) (height - 12));
                 cr.fill ();
             }
@@ -268,10 +268,10 @@ namespace Gtk {
             int bx = x + 2;
             int by = y + (height - 18) / 2;
             if (active) {
-                cr.set_source_rgb (0.23, 0.45, 0.70);
+                cr.set_source_rgb (0.21, 0.54, 0.90);
                 cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.fill ();
-                cr.set_source_rgb (0.95, 0.97, 0.99);
+                cr.set_source_rgb (1.0, 1.0, 1.0);
                 cr.set_line_width (2.0);
                 cr.move_to ((double) (bx + 4), (double) (by + 9));
                 cr.line_to ((double) (bx + 8), (double) (by + 13));
@@ -280,14 +280,14 @@ namespace Gtk {
                 cr.line_to ((double) (bx + 14), (double) (by + 5));
                 cr.stroke ();
             } else {
-                cr.set_source_rgb (0.09, 0.11, 0.15);
+                cr.set_source_rgb (1.0, 1.0, 1.0);
                 cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.fill ();
                 cr.set_line_width (1.0);
                 if (hovered)
-                    cr.set_source_rgb (0.29, 0.49, 0.72);
+                    cr.set_source_rgb (0.21, 0.54, 0.90);
                 else
-                    cr.set_source_rgb (0.24, 0.28, 0.35);
+                    cr.set_source_rgb (0.72, 0.72, 0.72);
                 cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.stroke ();
             }
@@ -295,7 +295,7 @@ namespace Gtk {
             int th = 0;
             TextHelper.measure_text (label, font_size, out tw, out th);
             int ty = y + (height - th) / 2;
-            cr.set_source_rgb (0.92, 0.94, 0.97);
+            cr.set_source_rgb (0.20, 0.20, 0.20);
             TextHelper.draw_text (cr, label, bx + 26, ty, font_size);
         }
 
@@ -347,17 +347,17 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 2 || height <= 2)
                 return;
-            cr.set_source_rgb (0.08, 0.10, 0.13);
+            cr.set_source_rgb (0.89, 0.89, 0.89);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
             int fw = (int) ((double) (width - 2) * fraction);
             if (fw > 2) {
-                cr.set_source_rgb (0.23, 0.45, 0.70);
+                cr.set_source_rgb (0.21, 0.54, 0.90);
                 cr.rectangle ((double) (x + 1), (double) (y + 1), (double) fw, (double) (height - 2));
                 cr.fill ();
             }
             cr.set_line_width (1.0);
-            cr.set_source_rgb (0.22, 0.26, 0.33);
+            cr.set_source_rgb (0.78, 0.78, 0.78);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
             if (text.length > 0) {
@@ -366,7 +366,7 @@ namespace Gtk {
                 TextHelper.measure_text (text, font_size, out tw, out th);
                 int tx = x + (width - tw) / 2;
                 int ty = y + (height - th) / 2;
-                cr.set_source_rgb (0.95, 0.97, 0.99);
+                cr.set_source_rgb (0.20, 0.20, 0.20);
                 TextHelper.draw_text (cr, text, tx, ty, font_size);
             }
         }
@@ -383,7 +383,7 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible)
                 return;
-            cr.set_source_rgb (0.26, 0.30, 0.38);
+            cr.set_source_rgb (0.85, 0.85, 0.85);
             cr.rectangle ((double) x, (double) (y + height / 2), (double) width, 1.0);
             cr.fill ();
         }

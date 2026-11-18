@@ -74,14 +74,16 @@ namespace Gtk {
         public void redraw () {
             if (cr == null || gdk_win == null)
                 return;
-            cr.set_source_rgb (0.09, 0.11, 0.14);
+            // elementary OS Granite light window surface (#F5F5F5)
+            cr.set_source_rgb (0.96, 0.96, 0.96);
             cr.paint ();
 
-            cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.16, 0.19, 0.25, 0.12, 0.14, 0.19);
-            cr.set_source_rgb (0.28, 0.33, 0.42);
+            // Minimalist headerbar (#F2F2F2 -> #E5E5E5)
+            cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.95, 0.95, 0.95, 0.90, 0.90, 0.90);
+            cr.set_source_rgb (0.78, 0.78, 0.78);
             cr.rectangle (0.0, 38.0, (double) width, 1.0);
             cr.fill ();
-            cr.set_source_rgb (0.94, 0.96, 0.98);
+            cr.set_source_rgb (0.20, 0.20, 0.20);
             TextHelper.draw_text (cr, title, 14, 10, 16.0);
 
             if (child != null)

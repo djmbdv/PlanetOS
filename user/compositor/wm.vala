@@ -1538,13 +1538,13 @@ namespace Wm {
                     gmsg = "gpu: virtio-gpu 2d + spv/simd";
                 TextHelper.draw_mono (cr, gmsg, cx + 14, cy + 116, 14.0);
             } else if ((w.kind == Kind.GTK || w.kind == Kind.FILES) && w.gtk_root != null) {
-                cr.set_source_rgb (0.09, 0.11, 0.14);
+                cr.set_source_rgb (0.96, 0.96, 0.96);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 w.gtk_root.allocate (cx + 12, cy + 12, cw - 24, ch - 24);
                 w.gtk_root.draw (cr);
             } else if (w.kind == Kind.EXT) {
-                cr.set_source_rgb (0.09, 0.11, 0.14);
+                cr.set_source_rgb (0.96, 0.96, 0.96);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 if (w.ext_surf != null) {

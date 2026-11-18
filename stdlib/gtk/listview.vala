@@ -55,11 +55,11 @@ namespace Gtk {
             if (!visible || width <= 0 || height <= 0)
                 return;
             if (selected) {
-                cr.set_source_rgb (0.18, 0.34, 0.56);
+                cr.set_source_rgb (0.21, 0.54, 0.90);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
             } else if (hovered) {
-                cr.set_source_rgb (0.15, 0.19, 0.25);
+                cr.set_source_rgb (0.92, 0.95, 0.98);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
             }
@@ -301,11 +301,11 @@ namespace Gtk {
             for (int i = 0; i < labels.length; i++) {
                 int ry = y + i * row_height;
                 if (i == selected_index) {
-                    cr.set_source_rgb (0.18, 0.34, 0.56);
+                    cr.set_source_rgb (0.21, 0.54, 0.90);
                     cr.rectangle ((double) x, (double) ry, (double) width, (double) row_height);
                     cr.fill ();
                 } else if (i == hovered_index) {
-                    cr.set_source_rgb (0.15, 0.19, 0.25);
+                    cr.set_source_rgb (0.92, 0.95, 0.98);
                     cr.rectangle ((double) x, (double) ry, (double) width, (double) row_height);
                     cr.fill ();
                 }
@@ -314,7 +314,10 @@ namespace Gtk {
                     Image.draw_builtin_icon (cr, icon_names[i], x + 8, ry + 5, row_height - 10);
                     tx = x + row_height + 4;
                 }
-                cr.set_source_rgb (0.93, 0.95, 0.98);
+                if (i == selected_index)
+                    cr.set_source_rgb (1.0, 1.0, 1.0);
+                else
+                    cr.set_source_rgb (0.20, 0.20, 0.20);
                 TextHelper.draw_text (cr, labels[i], tx, ry + (row_height - 16) / 2, font_size);
             }
         }
