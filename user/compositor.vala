@@ -2034,7 +2034,7 @@ private int interactive (Compositor comp) {
         print ("compositor: no framebuffer available\n");
         return 1;
     }
-    comp.attach (win, true);
+    comp.attach (win, false);
     print (@"compositor: cursor=$(comp.hardware_cursor () ? "hw" : "sw") screen=$(SCREEN_W)x$(SCREEN_H)\n");
     var loop = new MainLoop ();
     timeout_add (16, () => {
