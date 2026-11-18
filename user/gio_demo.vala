@@ -347,6 +347,51 @@ namespace GioDemo {
         }
     }
 
+    private int phase1_changed_events = 0;
+    private bool phase1_fired = false;
+
+    private void demo_phase1_models () {
+        var kf = new KeyFile ();
+        try {
+            kf.load_from_data ("[Desktop Entry]\nName=pcm4\nIconSize=48\nHidden=false\n");
+            check ("kf-group", kf.has_group ("Desktop Entry"));
+            check ("kf-str", kf.get_string ("Desktop Entry", "Name") == "pcm4");
+            check ("kf-int", kf.get_integer ("Desktop Entry", "IconSize") == 48);
+            check ("kf-bool", !kf.get_boolean ("Desktop Entry", "Hidden"));
+            kf.set_integer ("Desktop Entry", "IconSize", 64);
+            check ("kf-set-int", kf.get_integer ("Desktop Entry", "IconSize") == 64);
+        } catch (KeyFileError e) {
+            check ("kf-err", false);
+        }
+
+        var store = new ListStore<string> ();
+        phase1_changed_events = 0;
+        store.items_changed.connect ((s, pos, rem, add) => {
+            phase1_changed_events = phase1_changed_events + 1;
+        });
+        store.append ("alpha");
+        store.append ("gamma");
+        store.insert (1, "beta");
+        int found_pos = -1;
+        check ("liststore-len", store.get_n_items () == 3);
+        check ("liststore-find", store.find ("beta", out found_pos) && found_pos == 1);
+        store.remove (1);
+        check ("liststore-rem", store.get_n_items () == 2 && phase1_changed_events == 4);
+
+        var act = new SimpleAction ("refresh", null);
+        phase1_fired = false;
+        act.activate.connect ((s, p) => {
+            phase1_fired = true;
+        });
+        var grp = new SimpleActionGroup ();
+        grp.add_action (act);
+        grp.activate_action ("refresh", null);
+        check ("simple-action", phase1_fired);
+
+        var ai = AppInfo.get_default_for_type ("text/plain");
+        check ("appinfo-mime", ai != null && ai.get_commandline () == "wc.elf");
+    }
+
     int main (string[] args) {
         string target = "hello.txt";
         if (args.length > 1)
@@ -370,6 +415,7 @@ namespace GioDemo {
         demo_directories ();
         demo_enumerate ();
         demo_application (args);
+        demo_phase1_models ();
 
         print (@"gio:summary checks=$checks failures=$failures\n");
         return (failures == 0) ? 0 : 1;

@@ -28,8 +28,15 @@ namespace Gtk {
         private int cur_my = -1;
 
         public GtkWindow (int w = 640, int h = 420) {
-            width = w;
-            height = h;
+            width = (w < 64) ? 64 : w;
+            height = (h < 64) ? 64 : h;
+        }
+
+        ~GtkWindow () {
+            if (gdk_win != null) {
+                gdk_win.close ();
+                gdk_win = null;
+            }
         }
 
         public void set_title (string t) {
@@ -37,11 +44,15 @@ namespace Gtk {
         }
 
         public void set_default_size (int w, int h) {
-            width = w;
-            height = h;
+            width = (w < 64) ? 64 : w;
+            height = (h < 64) ? 64 : h;
         }
 
         public void add (Widget w) {
+            child = w;
+        }
+
+        public void set_child (Widget? w) {
             child = w;
         }
 
@@ -52,8 +63,11 @@ namespace Gtk {
                     gdk_win = new Window (width, height);
                 cr = gdk_win.create_cairo_context ();
             }
-            if (child != null)
-                child.allocate (20, 56, width - 40, height - 76);
+            if (child != null) {
+                int cw = (width > 40) ? (width - 40) : 0;
+                int ch = (height > 76) ? (height - 76) : 0;
+                child.allocate (20, 56, cw, ch);
+            }
             redraw ();
         }
 
@@ -86,10 +100,13 @@ namespace Gtk {
         }
 
         public void run (bool once = false) {
+            gtk_running = true;
             show_all ();
             if (once) {
-                if (gdk_win != null)
+                if (gdk_win != null) {
                     gdk_win.close ();
+                    gdk_win = null;
+                }
                 return;
             }
             while (gtk_running && gdk_win != null) {
@@ -136,8 +153,10 @@ namespace Gtk {
                 else
                     Sys.yield_cpu ();
             }
-            if (gdk_win != null)
+            if (gdk_win != null) {
                 gdk_win.close ();
+                gdk_win = null;
+            }
         }
     }
 }

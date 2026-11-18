@@ -3217,6 +3217,25 @@ namespace Planc {
                 if (is_lambda_after_lparen ())
                     return parse_lambda_from_lparen (l, c);
                 advance ();
+                if (current.kind == TokenKind.NOT) {
+                    var saved_lex = lexer.clone_state ();
+                    var saved_cur = current;
+                    advance (); // '!'
+                    if (current.kind == TokenKind.RPAREN) {
+                        advance (); // ')'
+                        var tc = new TypeCheckExpr () {
+                            op = "nonnull",
+                            operand = parse_unary (),
+                            target_type = ValaType.VOID,
+                            target_type_name = ""
+                        };
+                        tc.line = l;
+                        tc.column = c;
+                        return tc;
+                    }
+                    lexer = saved_lex;
+                    current = saved_cur;
+                }
                 if (current.kind == TokenKind.IDENTIFIER) {
                     var saved_lex = lexer.clone_state ();
                     var saved_cur = current;

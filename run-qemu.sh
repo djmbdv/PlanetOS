@@ -41,28 +41,34 @@ fi
 
 echo "Building PlanetOS kernel and userland..."
 OPT="${PLANC_OPT:--O2}"
+GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala")
+GEE_SRCS=("$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala")
+GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala")
+CAIRO_SRCS=("$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala")
+GTK_SRCS=("$ROOT/stdlib/gtk/text.vala" "$ROOT/stdlib/gtk/widget.vala" "$ROOT/stdlib/gtk/widgets.vala" "$ROOT/stdlib/gtk/container.vala" "$ROOT/stdlib/gtk/window.vala")
+
 "$PLANC" $OPT --target=planetos "$ROOT/user/init.vala" -o "$OUT/init.elf"
 "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/worker.vala" -o "$OUT/worker.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
-"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
-"$PLANC" $OPT --target=planetos "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/gee_demo.vala" -o "$OUT/gee_demo.elf"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gio_compat.vala" "$ROOT/user/gio_demo.vala" -o "$OUT/gio_demo.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
+"$PLANC" $OPT --target=planetos "${GEE_SRCS[@]}" "$ROOT/user/gee_demo.vala" -o "$OUT/gee_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/user/gio_demo.vala" -o "$OUT/gio_demo.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/gobject_compat.vala" "$ROOT/user/gobject_demo.vala" -o "$OUT/gobject_demo.elf"
 "$PLANC" --target=planetos "$ROOT/stdlib/gmodule_compat.vala" "$ROOT/user/gmodule_demo.vala" -o "$OUT/gmodule_demo.elf"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gio_compat.vala" "$ROOT/user/mainloop_demo.vala" -o "$OUT/mainloop_demo.elf"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$OUT/cairo_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/user/mainloop_demo.vala" -o "$OUT/mainloop_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/cairo_demo.vala" -o "$OUT/cairo_demo.elf"
 "$PLANC" --target=spirv "$ROOT/user/frag_planet.vala" -o "$OUT/frag.spv"
 "$PLANC" --target=spirv "$ROOT/user/frag_pattern.vala" -o "$OUT/frag_pattern.spv"
-"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$OUT/spv_demo.elf"
-"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/gsk_compat.vala" "$ROOT/user/vk_demo.vala" -o "$OUT/vk_demo.elf"
-"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/pango_compat.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/schrift.vala" "$ROOT/stdlib/gsk_path.vala" "$ROOT/stdlib/gtk/text.vala" "$ROOT/stdlib/gtk/widget.vala" "$ROOT/stdlib/gtk/widgets.vala" "$ROOT/stdlib/gtk/container.vala" "$ROOT/stdlib/gtk/window.vala" "$ROOT/user/compositor.vala" -o "$OUT/compositor.elf"
-"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/pango_compat.vala" "$ROOT/user/pango_demo.vala" -o "$OUT/pango_demo.elf"
-"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo_compat.vala" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/schrift.vala" "$ROOT/stdlib/gtk/text.vala" "$ROOT/stdlib/gtk/widget.vala" "$ROOT/stdlib/gtk/widgets.vala" "$ROOT/stdlib/gtk/container.vala" "$ROOT/stdlib/gtk/window.vala" "$ROOT/user/gtk_demo.vala" -o "$OUT/gtk_demo.elf"
+"$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/user/spv_demo.vala" -o "$OUT/spv_demo.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/gsk_compat.vala" "$ROOT/user/vk_demo.elf" 2>/dev/null || "$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/gsk_compat.vala" "$ROOT/user/vk_demo.vala" -o "$OUT/vk_demo.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/stdlib/pango_compat.vala" "$ROOT/stdlib/spirv_compat.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/schrift.vala" "$ROOT/stdlib/gsk_path.vala" "${GTK_SRCS[@]}" "$ROOT/user/compositor.vala" -o "$OUT/compositor.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/pango_compat.vala" "$ROOT/user/pango_demo.vala" -o "$OUT/pango_demo.elf"
+"$PLANC" $OPT --target=planetos "$ROOT/stdlib/planet_sys.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/gdk_compat.vala" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/gtk_demo.vala" -o "$OUT/gtk_demo.elf"
 "$PLANC" --target=planetos "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
 "$PLANC" --target=planetos "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
     "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
-"$PLANC" $OPT --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib_compat.vala" "$ROOT/stdlib/gee_compat.vala" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
+"$PLANC" $OPT --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" $OPT --target=planetos --image-base=0xC00000 \
     "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/planc/src/buffer.vala" \

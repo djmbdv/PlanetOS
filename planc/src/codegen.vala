@@ -10,6 +10,7 @@ namespace Planc {
     public errordomain SemanticError {
         UNKNOWN_VARIABLE,
         DUPLICATE_VARIABLE,
+        UNUSED_VARIABLE,
         UNKNOWN_FUNCTION,
         UNKNOWN_MEMBER,
         WRONG_ARG_COUNT,
@@ -29,9 +30,13 @@ namespace Planc {
         public bool bounds_check { get; set; default = true; }
         public bool null_check { get; set; default = true; }
         public bool strict_null { get; set; default = false; }
+        public bool strict_unused { get; set; default = false; }
+        public bool warn_unused { get; set; default = true; }
         public bool allow_asm { get; set; default = true; }
         public int opt_level { get; set; default = 0; }
         public bool check_leaks { get; set; default = false; }
+        public bool check_overflow { get; set; default = false; }
+        public string current_file { get; private set; default = ""; }
         public bool freestanding { get; set; default = false; }
         public bool target_planetos { get; set; default = false; }
 
@@ -72,6 +77,11 @@ namespace Planc {
         private GenericArray<bool> local_active;
         private GenericArray<bool> local_by_ref;
         private GenericArray<bool> local_is_weak;
+        private GenericArray<bool> local_used;
+        private GenericArray<bool> local_is_user;
+        private GenericArray<int> local_decl_line;
+        private GenericArray<int> local_decl_col;
+        private bool in_check_pass = false;
         private int next_var_slot;
         private GenericArray<Expr> pending_struct_exprs;
         private GenericArray<int> pending_struct_rel_slots;
@@ -122,6 +132,8 @@ namespace Planc {
         private bool need_null_panic = false;
         private bool need_cast_panic = false;
         private bool need_leak_panic = false;
+        private bool need_overflow_panic = false;
+        private Label overflow_panic_label = new Label ();
         private bool need_iface_lookup = false;
         private bool need_build_args = false;
         private bool need_str_has_prefix = false;
@@ -1416,6 +1428,8 @@ namespace Planc {
                             "planc: panic: invalid class cast\n");
             emit_panic_sym (need_leak_panic, leak_panic_label, "__planc_leak_panic",
                             "planc: panic: memory leak detected\n");
+            emit_panic_sym (need_overflow_panic, overflow_panic_label, "__planc_overflow_panic",
+                            "planc: panic: integer overflow\n");
         }
 
         private void emit_panic_sym (bool needed, Label lbl, string sym_name, string msg) {
@@ -1527,11 +1541,27 @@ namespace Planc {
             local_is_weak = new GenericArray<bool> ();
             local_unmanaged = new GenericArray<bool> ();
             local_by_ref = new GenericArray<bool> ();
+            local_used = new GenericArray<bool> ();
+            local_is_user = new GenericArray<bool> ();
+            local_decl_line = new GenericArray<int> ();
+            local_decl_col = new GenericArray<int> ();
         }
 
-        private void deactivate_from (int saved_len) {
-            for (int i = saved_len; i < local_active.length; i++)
+        private void deactivate_from (int saved_len) throws SemanticError {
+            for (int i = saved_len; i < local_active.length; i++) {
+                if (in_check_pass && local_active[i] && local_is_user[i] && !local_used[i]) {
+                    string loc = (current_file != "")
+                        ? @"$current_file:$(local_decl_line[i]):$(local_decl_col[i])"
+                        : @"$(local_decl_line[i]):$(local_decl_col[i])";
+                    if (strict_unused)
+                        throw new SemanticError.UNUSED_VARIABLE (
+                            @"unused local variable '$(locals[i])' at $loc");
+                    else if (warn_unused)
+                        Host.eprintln (
+                            @"planc: warning: unused variable '$(locals[i])' at $loc");
+                }
                 local_active[i] = false;
+            }
         }
 
         private GenericArray<string> clone_non_null () {
@@ -2067,6 +2097,10 @@ namespace Planc {
             local_unmanaged.add (unmanaged);
             local_by_ref.add (by_ref);
             local_is_weak.add (is_weak);
+            local_used.add (false);
+            local_is_user.add (false);
+            local_decl_line.add (0);
+            local_decl_col.add (0);
         }
 
         private void emit_convert_to_weak () {
@@ -2732,6 +2766,7 @@ namespace Planc {
 
         private int prepare_function (Function f, out int ref_temp_start) throws SemanticError {
             current = f;
+            current_file = f.file;
             // Definite-assignment analysis runs first: it decides whether
             // locals without an initializer are legal in this body.
             da_reset ();
@@ -2794,8 +2829,11 @@ namespace Planc {
                 foreach (var ba in f.base_args)
                     prepare_expr (ba, ref struct_temp_slots, ref ref_temp_slots);
             }
+            in_check_pass = true;
             foreach (var s in f.body)
                 prepare_stmt (s, ref struct_temp_slots, ref ref_temp_slots);
+            deactivate_from (0);
+            in_check_pass = false;
 
             int var_end = next_var_slot;
             for (int k = 0; k < pending_struct_exprs.length; k++) {
@@ -2873,6 +2911,10 @@ namespace Planc {
                 var slot = next_var_slot;
                 next_var_slot += n;
                 push_local (d.name, vt, vtname, slot, false, false, d.is_weak);
+                int uidx = locals.length - 1;
+                local_is_user[uidx] = (!d.name.has_prefix ("_") && !d.name.has_prefix ("#"));
+                local_decl_line[uidx] = d.line;
+                local_decl_col[uidx] = d.column;
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else
@@ -3254,6 +3296,7 @@ namespace Planc {
                 } else {
                     int vidx = lookup (vr.name);
                     if (vidx >= 0) {
+                        local_used[vidx] = true;
                         if (local_is_weak[vidx]) {
                             pending_ref_exprs.add (e);
                             ref_temps++;
@@ -3744,6 +3787,7 @@ namespace Planc {
         private void generate_async_function (Function f) throws SemanticError {
             need_async = true;
             current = f;
+            current_file = f.file;
             int ref_temp_start = 0;
             var total_slots = prepare_function (f, out ref_temp_start);
 
@@ -3922,6 +3966,7 @@ namespace Planc {
                 return;
             }
             current = f;
+            current_file = f.file;
             int ref_temp_start = 0;
             var total_slots = prepare_function (f, out ref_temp_start);
 
@@ -5241,6 +5286,9 @@ namespace Planc {
             }
             unowned DelegateDecl? dd = resolve_delegate_callee (c.callee);
             if (dd != null) {
+                var dslot = lookup (c.callee);
+                if (dslot >= 0)
+                    local_used[dslot] = true;
                 if (want_value && dd.return_type == ValaType.VOID)
                     throw new SemanticError.VOID_IN_EXPRESSION (
                         @"void delegate '$(c.callee)' cannot be used as a value at $(c.line):$(c.column)");
@@ -5516,6 +5564,19 @@ namespace Planc {
                 var tc = (TypeCheckExpr) e;
                 string ot_name = "";
                 var ot = expr_type_full (tc.operand, out ot_name);
+                if (tc.op == "nonnull") {
+                    if (ot == ValaType.NULL)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'(!)' cannot be applied to null at $(tc.line):$(tc.column)");
+                    if (ot == ValaType.STRING)
+                        tname = "";
+                    else if (ot == ValaType.CLASS || ot == ValaType.INTERFACE
+                             || ot == ValaType.ARRAY || ot == ValaType.ERROR)
+                        tname = strip_null (ot_name);
+                    else
+                        tname = ot_name;
+                    return ot;
+                }
                 if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
                     if (!is_int_like (ot) && ot != ValaType.ENUM && !is_fp_type (ot))
                         throw new SemanticError.TYPE_MISMATCH (
@@ -5891,6 +5952,7 @@ namespace Planc {
                 }
                 var slot = lookup (v.name);
                 if (slot >= 0) {
+                    local_used[slot] = true;
                     tname = maybe_narrow_var (v.name, local_type_names[slot]);
                     return local_types[slot];
                 }
@@ -6585,9 +6647,18 @@ namespace Planc {
 
         private void emit_compound_alu (string op) {
             switch (op) {
-                case "+":  emitter.add_rax_rcx (); break;
-                case "-":  emitter.sub_rax_rcx (); break;
-                case "*":  emitter.imul_rax_rcx (); break;
+                case "+":
+                    emitter.add_rax_rcx ();
+                    if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    break;
+                case "-":
+                    emitter.sub_rax_rcx ();
+                    if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    break;
+                case "*":
+                    emitter.imul_rax_rcx ();
+                    if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    break;
                 case "/":
                     emitter.cqo ();
                     emitter.idiv_rcx ();
@@ -7936,6 +8007,13 @@ namespace Planc {
                 emitter.load_local (cn.ref_temp_slot);
             } else if (e is TypeCheckExpr) {
                 var tc = (TypeCheckExpr) e;
+                if (tc.op == "nonnull") {
+                    string ot_name = "";
+                    var ot = expr_type_full (tc.operand, out ot_name);
+                    gen_expr (tc.operand);
+                    emit_null_check_if_nullable (ot, ot_name);
+                    return;
+                }
                 if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
                     var ot = expr_type (tc.operand);
                     gen_expr (tc.operand);
@@ -8936,9 +9014,18 @@ namespace Planc {
                     return;
                 }
                 switch (b.op) {
-                    case "+":  emitter.add_rax_rcx (); break;
-                    case "-":  emitter.sub_rax_rcx (); break;
-                    case "*":  emitter.imul_rax_rcx (); break;
+                    case "+":
+                        emitter.add_rax_rcx ();
+                        if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        break;
+                    case "-":
+                        emitter.sub_rax_rcx ();
+                        if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        break;
+                    case "*":
+                        emitter.imul_rax_rcx ();
+                        if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        break;
                     case "/":
                         emitter.cqo ();
                         emitter.idiv_rcx ();

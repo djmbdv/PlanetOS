@@ -221,16 +221,15 @@ namespace C2Vala {
                     return;
                 }
 
-                // Global variable declaration -> record for refusal
+                // Global variable declaration
+                CExpr? ginit = null;
                 if (at (TokKind.ASSIGN)) {
                     advance ();
-                    parse_expr_or_init ();
+                    ginit = parse_expr_or_init ();
                 }
-                if (tu.refused_global_reason == null) {
-                    tu.refused_global_file = start_tok.file;
-                    tu.refused_global_line = start_tok.line;
-                    tu.refused_global_reason = "global variables are not supported";
-                }
+                tu.globals.add (new GlobalVarDef (name, decl_t, ginit, start_tok.file, start_tok.line));
+                tu.top_order.add (name);
+                tu.top_kinds.add ("global");
                 if (at (TokKind.COMMA)) {
                     advance ();
                     continue;

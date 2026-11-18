@@ -20,9 +20,12 @@ namespace Planc {
         var bounds_check = true;
         var null_check = true;
         var strict_null = false;
+        var strict_unused = false;
+        var warn_unused = true;
         var allow_asm = true;
         var opt_level = 0;
         var check_leaks = false;
+        var check_overflow = false;
         var freestanding = false;
         var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
@@ -44,6 +47,12 @@ namespace Planc {
                 null_check = false;
             } else if (a == "--strict-null") {
                 strict_null = true;
+            } else if (a == "--strict-unused") {
+                strict_unused = true;
+            } else if (a == "--no-warn-unused") {
+                warn_unused = false;
+            } else if (a == "--check-overflow") {
+                check_overflow = true;
             } else if (a == "--no-asm") {
                 allow_asm = false;
             } else if (a == "-O0") {
@@ -110,21 +119,80 @@ namespace Planc {
         }
 
         var program = new Program ();
+        string current_parse_file = "";
         try {
-            for (int i = 0; i < sources.length; i++)
-                Parser.prescan_types (sources[i], program);
             for (int i = 0; i < sources.length; i++) {
+                current_parse_file = source_paths[i];
+                int pe = program.enums.length;
+                int ps = program.structs.length;
+                int pc = program.classes.length;
+                Parser.prescan_types (sources[i], program);
+                for (int k = pe; k < program.enums.length; k++)
+                    program.enums[k].file = source_paths[i];
+                for (int k = ps; k < program.structs.length; k++)
+                    program.structs[k].file = source_paths[i];
+                for (int k = pc; k < program.classes.length; k++)
+                    program.classes[k].file = source_paths[i];
+            }
+            for (int i = 0; i < sources.length; i++) {
+                current_parse_file = source_paths[i];
+                int pf = program.functions.length;
+                int pg = program.globals.length;
+                int pco = program.consts.length;
+                int pe = program.enums.length;
+                int ps = program.structs.length;
+                int pc = program.classes.length;
                 var parser = new Parser.with_program (sources[i], program);
                 parser.parse_unit ();
+                for (int k = pf; k < program.functions.length; k++)
+                    program.functions[k].file = source_paths[i];
+                for (int k = pg; k < program.globals.length; k++)
+                    program.globals[k].file = source_paths[i];
+                for (int k = pco; k < program.consts.length; k++)
+                    program.consts[k].file = source_paths[i];
+                for (int k = pe; k < program.enums.length; k++)
+                    program.enums[k].file = source_paths[i];
+                for (int k = ps; k < program.structs.length; k++)
+                    program.structs[k].file = source_paths[i];
+                for (int k = pc; k < program.classes.length; k++)
+                    program.classes[k].file = source_paths[i];
+            }
+            current_parse_file = "";
+            for (int i = 0; i < program.classes.length; i++) {
+                var cd = program.classes[i];
+                if (cd.file != "") {
+                    for (int j = 0; j < cd.methods.length; j++)
+                        if (cd.methods[j].file == "") cd.methods[j].file = cd.file;
+                    for (int j = 0; j < cd.named_ctors.length; j++)
+                        if (cd.named_ctors[j].file == "") cd.named_ctors[j].file = cd.file;
+                    if (cd.ctor != null && cd.ctor.file == "") cd.ctor.file = cd.file;
+                    if (cd.dtor != null && cd.dtor.file == "") cd.dtor.file = cd.file;
+                }
+            }
+            for (int i = 0; i < program.structs.length; i++) {
+                var sd = program.structs[i];
+                if (sd.file != "") {
+                    for (int j = 0; j < sd.methods.length; j++)
+                        if (sd.methods[j].file == "") sd.methods[j].file = sd.file;
+                }
+            }
+            for (int i = 0; i < program.enums.length; i++) {
+                var ed = program.enums[i];
+                if (ed.file != "") {
+                    for (int j = 0; j < ed.methods.length; j++)
+                        if (ed.methods[j].file == "") ed.methods[j].file = ed.file;
+                }
             }
             program.monomorphize_all ();
             if (program.find ("main") == null)
                 throw new ParseError.MISSING_MAIN ("the program does not define main");
         } catch (LexError e) {
-            Host.eprintln (@"planc: lexical error: $(e.message)");
+            string fpref = (current_parse_file != "") ? @"$current_parse_file: " : "";
+            Host.eprintln (@"planc: $(fpref)lexical error: $(e.message)");
             return 1;
         } catch (ParseError e) {
-            Host.eprintln (@"planc: syntax error: $(e.message)");
+            string fpref = (current_parse_file != "") ? @"$current_parse_file: " : "";
+            Host.eprintln (@"planc: $(fpref)syntax error: $(e.message)");
             return 1;
         }
 
@@ -151,6 +219,9 @@ namespace Planc {
         codegen.bounds_check = bounds_check;
         codegen.null_check = null_check;
         codegen.strict_null = strict_null;
+        codegen.strict_unused = strict_unused;
+        codegen.warn_unused = warn_unused;
+        codegen.check_overflow = check_overflow;
         codegen.allow_asm = allow_asm;
         codegen.check_leaks = check_leaks;
         codegen.freestanding = freestanding;
@@ -159,7 +230,8 @@ namespace Planc {
         try {
             codegen.generate (program);
         } catch (SemanticError e) {
-            Host.eprintln (@"planc: semantic error: $(e.message)");
+            string fpref = (codegen.current_file != "") ? @"$(codegen.current_file): " : "";
+            Host.eprintln (@"planc: $(fpref)semantic error: $(e.message)");
             return 1;
         }
         var text = codegen.emitter.code.to_array ();

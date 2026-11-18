@@ -22,12 +22,30 @@ namespace Gtk {
         public bool focused = false;
 
         public void set_size_request (int w, int h) {
-            req_w = w;
-            req_h = h;
+            req_w = (w < 0) ? 0 : w;
+            req_h = (h < 0) ? 0 : h;
+        }
+
+        public void set_visible (bool v) {
+            visible = v;
+            if (!v) {
+                hovered = false;
+                pressed = false;
+                focused = false;
+            }
+        }
+
+        public void set_sensitive (bool s) {
+            sensitive = s;
+            if (!s) {
+                hovered = false;
+                pressed = false;
+                focused = false;
+            }
         }
 
         public bool contains (int px, int py) {
-            return px >= x && px < (x + width) && py >= y && py < (y + height);
+            return width > 0 && height > 0 && px >= x && px < (x + width) && py >= y && py < (y + height);
         }
 
         public virtual void measure (out int min_w, out int min_h) {
@@ -38,8 +56,8 @@ namespace Gtk {
         public virtual void allocate (int ax, int ay, int aw, int ah) {
             x = ax;
             y = ay;
-            width = aw;
-            height = ah;
+            width = (aw < 0) ? 0 : aw;
+            height = (ah < 0) ? 0 : ah;
         }
 
         public virtual void draw (Context cr) {}

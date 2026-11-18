@@ -361,6 +361,7 @@ namespace Planc {
 
     public class EnumDecl : Object {
         public string name { get; set; }
+        public string file { get; set; default = ""; }
         public bool is_defined { get; set; default = false; }
         public GenericArray<EnumMember> members { get; private set; }
         public GenericArray<Function> methods { get; private set; }
@@ -400,6 +401,7 @@ namespace Planc {
 
     public class StructDecl : Object {
         public string name { get; set; }
+        public string file { get; set; default = ""; }
         public bool is_defined { get; set; default = false; }
         public bool is_union { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
@@ -448,6 +450,7 @@ namespace Planc {
 
     public class Function : Object {
         public string name { get; set; }
+        public string file { get; set; default = ""; }
         public string method_name { get; set; default = ""; }
         public ValaType return_type { get; set; default = ValaType.VOID; }
         public string return_type_name { get; set; default = ""; }
@@ -522,6 +525,7 @@ namespace Planc {
 
     public class ClassDecl : Object {
         public string name { get; set; }
+        public string file { get; set; default = ""; }
         public string base_name { get; set; default = ""; }
         public bool is_abstract { get; set; default = false; }
         public bool is_defined { get; set; default = false; }
@@ -589,6 +593,7 @@ namespace Planc {
 
     public class ConstDecl : Object {
         public ValaType const_type { get; set; default = ValaType.INT; }
+        public string file { get; set; default = ""; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
         public string name { get; set; }
@@ -704,7 +709,96 @@ namespace Planc {
         }
     }
 
+    public class StrIndexMap : Object {
+        private string[] keys;
+        private int[] vals;
+        private int count = 0;
+        private int cap = 0;
+
+        public StrIndexMap () {
+            init_cap (32);
+        }
+
+        private void init_cap (int ncap) {
+            cap = ncap;
+            keys = new string[cap];
+            vals = new int[cap];
+            for (int i = 0; i < cap; i++) {
+                keys[i] = "";
+                vals[i] = -1;
+            }
+            count = 0;
+        }
+
+        private static int hash_str (string s) {
+            uint32 h = 216613626u;
+            for (int i = 0; i < s.length; i++) {
+                h = h ^ (uint32) s[i];
+                h = h * 16777619u;
+            }
+            return (int) (h & 0x7FFFFFFFu);
+        }
+
+        private void rehash (int ncap) {
+            string[] ok = keys;
+            int[] ov = vals;
+            int ocap = cap;
+            init_cap (ncap);
+            int mask = cap - 1;
+            for (int i = 0; i < ocap; i++) {
+                if (ov[i] >= 0) {
+                    int idx = hash_str (ok[i]) & mask;
+                    while (vals[idx] >= 0)
+                        idx = (idx + 1) & mask;
+                    keys[idx] = ok[i];
+                    vals[idx] = ov[i];
+                    count++;
+                }
+            }
+        }
+
+        public void put (string key, int val) {
+            if ((count + 1) * 10 >= cap * 7)
+                rehash (cap << 1);
+            int mask = cap - 1;
+            int idx = hash_str (key) & mask;
+            while (vals[idx] >= 0) {
+                if (keys[idx] == key) {
+                    vals[idx] = val;
+                    return;
+                }
+                idx = (idx + 1) & mask;
+            }
+            keys[idx] = key;
+            vals[idx] = val;
+            count++;
+        }
+
+        public int lookup (string key) {
+            int mask = cap - 1;
+            int idx = hash_str (key) & mask;
+            while (vals[idx] >= 0) {
+                if (keys[idx] == key)
+                    return vals[idx];
+                idx = (idx + 1) & mask;
+            }
+            return -1;
+        }
+    }
+
     public class Program : Object {
+        private StrIndexMap fn_idx = new StrIndexMap ();
+        private int fn_idx_len = 0;
+        private StrIndexMap enum_idx = new StrIndexMap ();
+        private int enum_idx_len = 0;
+        private StrIndexMap struct_idx = new StrIndexMap ();
+        private int struct_idx_len = 0;
+        private StrIndexMap class_idx = new StrIndexMap ();
+        private int class_idx_len = 0;
+        private StrIndexMap iface_idx = new StrIndexMap ();
+        private int iface_idx_len = 0;
+        private StrIndexMap inst_idx = new StrIndexMap ();
+        private int inst_idx_len = 0;
         public GenericArray<Function> functions { get; private set; }
         public GenericArray<GlobalVar> globals { get; private set; }
         public GenericArray<ConstDecl> consts { get; private set; }
@@ -738,11 +832,12 @@ namespace Planc {
         }
 
         public unowned InterfaceDecl? find_interface (string name) {
-            foreach (unowned var itf in interfaces) {
-                if (itf.name == name)
-                    return itf;
+            while (iface_idx_len < interfaces.length) {
+                iface_idx.put (interfaces[iface_idx_len].name, iface_idx_len);
+                iface_idx_len++;
             }
-            return null;
+            int i = iface_idx.lookup (name);
+            return (i >= 0) ? interfaces[i] : null;
         }
 
         public unowned DelegateDecl? find_delegate (string name) {
@@ -783,43 +878,48 @@ namespace Planc {
         }
 
         public unowned Function? find (string name) {
-            foreach (unowned var f in functions) {
-                if (f.name == name)
-                    return f;
+            while (fn_idx_len < functions.length) {
+                fn_idx.put (functions[fn_idx_len].name, fn_idx_len);
+                fn_idx_len++;
             }
-            return null;
+            int i = fn_idx.lookup (name);
+            return (i >= 0) ? functions[i] : null;
         }
 
         public unowned EnumDecl? find_enum (string name) {
-            foreach (unowned var e in enums) {
-                if (e.name == name)
-                    return e;
+            while (enum_idx_len < enums.length) {
+                enum_idx.put (enums[enum_idx_len].name, enum_idx_len);
+                enum_idx_len++;
             }
-            return null;
+            int i = enum_idx.lookup (name);
+            return (i >= 0) ? enums[i] : null;
         }
 
         public unowned StructDecl? find_struct (string name) {
-            foreach (unowned var s in structs) {
-                if (s.name == name)
-                    return s;
+            while (struct_idx_len < structs.length) {
+                struct_idx.put (structs[struct_idx_len].name, struct_idx_len);
+                struct_idx_len++;
             }
-            return null;
+            int i = struct_idx.lookup (name);
+            return (i >= 0) ? structs[i] : null;
         }
 
         public unowned ClassDecl? find_class (string name) {
-            foreach (unowned var c in classes) {
-                if (c.name == name)
-                    return c;
+            while (class_idx_len < classes.length) {
+                class_idx.put (classes[class_idx_len].name, class_idx_len);
+                class_idx_len++;
             }
-            return null;
+            int i = class_idx.lookup (name);
+            return (i >= 0) ? classes[i] : null;
         }
 
         public unowned GenericInstantiation? find_instantiation_by_mangled (string mangled) {
-            foreach (unowned var gi in instantiations) {
-                if (gi.mangled_name == mangled)
-                    return gi;
+            while (inst_idx_len < instantiations.length) {
+                inst_idx.put (instantiations[inst_idx_len].mangled_name, inst_idx_len);
+                inst_idx_len++;
             }
-            return null;
+            int i = inst_idx.lookup (mangled);
+            return (i >= 0) ? instantiations[i] : null;
         }
 
         private static string sanitize_ident (string s) {
@@ -1422,6 +1522,7 @@ namespace Planc {
             substitute_type (ref rt, ref rn, tparams, targs, targ_names);
             var nf = new Function () {
                 name = f.name,
+                file = f.file,
                 method_name = f.method_name,
                 return_type = rt,
                 return_type_name = rn,
@@ -1781,6 +1882,7 @@ namespace Planc {
                         continue;
                     var nsd = new StructDecl () {
                         name = inst.mangled_name,
+                        file = tmpl_sd.file,
                         is_defined = tmpl_sd.is_defined,
                         line = tmpl_sd.line,
                         column = tmpl_sd.column
@@ -1808,6 +1910,7 @@ namespace Planc {
                         continue;
                     var ncd = new ClassDecl () {
                         name = inst.mangled_name,
+                        file = tmpl_cd.file,
                         base_name = tmpl_cd.base_name,
                         is_abstract = tmpl_cd.is_abstract,
                         is_defined = tmpl_cd.is_defined,
@@ -1838,6 +1941,28 @@ namespace Planc {
                         ncd.named_ctors.add (clone_function (nc, inst.mangled_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names));
                     if (tmpl_cd.dtor != null)
                         ncd.dtor = clone_function (tmpl_cd.dtor, inst.mangled_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names);
+                    foreach (var sd in tmpl_cd.signals) {
+                        var nsd_sig = new SignalDecl () {
+                            name = sd.name,
+                            handler_delegate_name = sd.handler_delegate_name,
+                            line = sd.line,
+                            column = sd.column
+                        };
+                        foreach (var p in sd.params) {
+                            var pt = p.param_type;
+                            var pn = p.type_name;
+                            substitute_type (ref pt, ref pn, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names);
+                            nsd_sig.params.add (new Param () {
+                                param_type = pt,
+                                type_name = pn,
+                                name = p.name,
+                                is_ref = p.is_ref,
+                                is_out = p.is_out,
+                                unmanaged = p.unmanaged
+                            });
+                        }
+                        ncd.signals.add (nsd_sig);
+                    }
                     classes.add (ncd);
                 }
             }
@@ -1849,6 +1974,7 @@ namespace Planc {
     // code before main.
     public class GlobalVar : Object {
         public ValaType var_type { get; set; default = ValaType.INT; }
+        public string file { get; set; default = ""; }
         public string var_type_name { get; set; default = ""; }
         public string name { get; set; }
         public int64 value { get; set; }

@@ -319,10 +319,27 @@ namespace C2Vala {
         public GenericArray<CExpr> items = new GenericArray<CExpr> ();
     }
 
+    public class GlobalVarDef : Object {
+        public string name;
+        public CType ctype;
+        public CExpr? init = null;
+        public string file = "";
+        public int line = 0;
+
+        public GlobalVarDef (string name, CType ctype, CExpr? init, string file, int line) {
+            this.name = name;
+            this.ctype = ctype;
+            this.init = init;
+            this.file = file;
+            this.line = line;
+        }
+    }
+
     public class TranslationUnit : Object {
         public GenericArray<EnumDef> enums = new GenericArray<EnumDef> ();
         public GenericArray<StructDef> structs = new GenericArray<StructDef> ();
         public GenericArray<FuncDef> funcs = new GenericArray<FuncDef> ();
+        public GenericArray<GlobalVarDef> globals = new GenericArray<GlobalVarDef> ();
         public GenericArray<string> top_order = new GenericArray<string> ();
         public GenericArray<string> top_kinds = new GenericArray<string> ();
         public string? refused_global_file = null;

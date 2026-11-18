@@ -71,7 +71,8 @@ namespace Planc {
         JB,    // 0F 82 rel32   jump if CF (unsigned <)
         JS,    // 0F 88 rel32   jump if SF (signed < 0)
         JNS,   // 0F 89 rel32   jump if !SF (signed >= 0)
-        JP     // 0F 8A rel32   jump if PF (parity / NaN)
+        JP,    // 0F 8A rel32   jump if PF (parity / NaN)
+        JO     // 0F 80 rel32   jump if OF (signed overflow)
     }
 
     public class BranchPatch : Object {
@@ -377,6 +378,10 @@ namespace Planc {
                 case BranchKind.JNS:
                     p.displacement = code.length + 2;
                     code.u8 (0x0F); code.u8 (0x89);
+                    break;
+                case BranchKind.JO:
+                    p.displacement = code.length + 2;
+                    code.u8 (0x0F); code.u8 (0x80);
                     break;
                 case BranchKind.JP:
                     p.displacement = code.length + 2;

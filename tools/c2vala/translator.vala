@@ -189,7 +189,21 @@ namespace C2Vala {
                 if (b.op == "&") return l & r;
                 if (b.op == "|") return l | r;
                 if (b.op == "^") return l ^ r;
+                if (b.op == "==") return (l == r) ? 1 : 0;
+                if (b.op == "!=") return (l != r) ? 1 : 0;
+                if (b.op == "<") return (l < r) ? 1 : 0;
+                if (b.op == "<=") return (l <= r) ? 1 : 0;
+                if (b.op == ">") return (l > r) ? 1 : 0;
+                if (b.op == ">=") return (l >= r) ? 1 : 0;
+                if (b.op == "&&") return (l != 0 && r != 0) ? 1 : 0;
+                if (b.op == "||") return (l != 0 || r != 0) ? 1 : 0;
                 refuse_loc (e.file, e.line, @"unsupported constant operator '$(b.op)'");
+            }
+            if (e is ExprTernary) {
+                var te = (ExprTernary) e;
+                return (eval_const_expr (te.cond) != 0)
+                    ? eval_const_expr (te.if_true)
+                    : eval_const_expr (te.if_false);
             }
             refuse_loc (e.file, e.line, "non-constant enum initializer");
             throw new RefuseError.FAILED ("unreachable");
@@ -515,6 +529,7 @@ namespace C2Vala {
             int ei = 0;
             int si = 0;
             int fi = 0;
+            int gi = 0;
             for (int ti = 0; ti < tu.top_order.length; ti++) {
                 string kind = tu.top_kinds[ti];
                 if (kind == "enum") {
@@ -522,6 +537,9 @@ namespace C2Vala {
                     sb.append ("\n");
                 } else if (kind == "struct") {
                     emit_struct (sb, tu.structs[si++]);
+                    sb.append ("\n");
+                } else if (kind == "global") {
+                    emit_global (sb, tu.globals[gi++]);
                     sb.append ("\n");
                 } else if (kind == "func") {
                     var fn = tu.funcs[fi];
@@ -550,6 +568,24 @@ namespace C2Vala {
             }
 
             return sb.str;
+        }
+
+        private void emit_global (StrBuilder sb, GlobalVarDef g) throws RefuseError {
+            bool is_arr = (g.ctype.kind == CTypeKind.ARRAY);
+            string vt = vala_type (g.ctype, is_arr);
+            if (g.init == null) {
+                sb.append (@"public $vt $(g.name);\n");
+                return;
+            }
+            if (g.init is ExprInitList) {
+                sb.append (@"public $vt $(g.name);\n");
+                return;
+            }
+            string iv = emit_expr ((CExpr) g.init);
+            if (g.ctype.is_const && !is_arr && (g.init is ExprInt || g.init is ExprStr || g.init is ExprChar))
+                sb.append (@"public const $vt $(g.name) = $iv;\n");
+            else
+                sb.append (@"public $vt $(g.name) = $iv;\n");
         }
 
         private void emit_enum (StrBuilder sb, EnumDef ed) {
@@ -581,6 +617,7 @@ namespace C2Vala {
         private GenericArray<GotoPlan> cur_gotos = new GenericArray<GotoPlan> ();
         private FuncDef? cur_fn = null;
         private FuncSig? cur_sig = null;
+        private int do_counter = 0;
 
         private void emit_func (StrBuilder sb, FuncDef fn, FuncSig sig) throws RefuseError {
             if (fn.is_varargs)
@@ -589,10 +626,36 @@ namespace C2Vala {
             cur_fn = fn;
             cur_sig = sig;
             cur_locals = new GenericArray<LocalInfo> ();
+            for (int gi = 0; gi < tu.globals.length; gi++) {
+                var g = tu.globals[gi];
+                var gli = new LocalInfo (g.name, g.ctype, false);
+                gli.is_array = (g.ctype.kind == CTypeKind.ARRAY);
+                cur_locals.add (gli);
+            }
             cur_gotos = new GenericArray<GotoPlan> ();
 
             if (fn.name == "main") {
                 sb.append ("int main (string[] args) {\n");
+                for (int gi = 0; gi < tu.globals.length; gi++) {
+                    var g = tu.globals[gi];
+                    if (g.ctype.kind == CTypeKind.ARRAY) {
+                        string elem_t = (g.ctype.inner != null) ? vala_type ((CType) g.ctype.inner, false) : "int";
+                        if (g.init != null && g.init is ExprInitList) {
+                            var il = (ExprInitList) g.init;
+                            string sz_s = (g.ctype.array_len != null)
+                                ? emit_expr ((CExpr) g.ctype.array_len)
+                                : @"$(il.items.length)";
+                            sb.append (@"    $(g.name) = new $elem_t[$sz_s];\n");
+                            for (int ii = 0; ii < il.items.length; ii++) {
+                                string iv = emit_expr (il.items[ii]);
+                                sb.append (@"    $(g.name)[$ii] = $iv;\n");
+                            }
+                        } else if (g.ctype.array_len != null) {
+                            string len_s = emit_expr ((CExpr) g.ctype.array_len);
+                            sb.append (@"    $(g.name) = new $elem_t[$len_s];\n");
+                        }
+                    }
+                }
             } else {
                 string ret_t = vala_type (fn.ret_type, sig.ret_is_array);
                 sb.append (@"$ret_t $(fn.name) (");
@@ -751,13 +814,27 @@ namespace C2Vala {
                 var ws = (StmtWhile) s;
                 string? gf = cur_gotos.length > 0 ? cur_gotos[0].flag_name : null;
                 if (ws.is_do) {
+                    string dw_flag = @"_dw$(ws.line)_$(do_counter++)";
                     indent (sb, level);
-                    sb.append ("do ");
-                    emit_loop_body (sb, ws.body, level, gf);
+                    sb.append (@"bool $dw_flag = true;\n");
                     indent (sb, level);
-                    sb.append ("while (");
+                    sb.append (@"while ($dw_flag || (");
                     sb.append (emit_cond (ws.cond));
-                    sb.append (");\n");
+                    sb.append (")) {\n");
+                    indent (sb, level + 1);
+                    sb.append (@"$dw_flag = false;\n");
+                    if (ws.body is StmtBlock) {
+                        var blk = (StmtBlock) ws.body;
+                        emit_stmt_list (sb, blk.stmts, level + 1);
+                    } else {
+                        emit_stmt (sb, ws.body, level + 1);
+                    }
+                    if (gf != null) {
+                        indent (sb, level + 1);
+                        sb.append (@"if ($gf) break;\n");
+                    }
+                    indent (sb, level);
+                    sb.append ("}\n");
                 } else {
                     indent (sb, level);
                     sb.append ("while (");

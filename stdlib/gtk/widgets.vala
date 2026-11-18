@@ -27,7 +27,7 @@ namespace Gtk {
         }
 
         public override void draw (Context cr) {
-            if (!visible)
+            if (!visible || label.length == 0)
                 return;
             int tw = 0;
             int th = 0;
@@ -86,8 +86,23 @@ namespace Gtk {
             TextHelper.measure_text (label, font_size, out tw, out th);
             int tx = x + (width - tw) / 2;
             int ty = y + (height - th) / 2;
-            cr.set_source_rgb (0.96, 0.97, 0.99);
+            if (sensitive)
+                cr.set_source_rgb (0.96, 0.97, 0.99);
+            else
+                cr.set_source_rgb (0.50, 0.54, 0.60);
             TextHelper.draw_text (cr, label, tx, ty, font_size);
+        }
+
+        public override bool on_pointer_motion (int mx, int my) {
+            if (!visible || !sensitive) {
+                bool changed = hovered || pressed;
+                hovered = false;
+                pressed = false;
+                return changed;
+            }
+            bool prev = hovered;
+            hovered = contains (mx, my);
+            return hovered != prev;
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {
@@ -131,13 +146,17 @@ namespace Gtk {
             return text.substring (0, text.length);
         }
 
+        public void set_placeholder_text (string p) {
+            placeholder = p;
+        }
+
         public override void measure (out int min_w, out int min_h) {
             min_w = (req_w > 160) ? req_w : 160;
             min_h = (req_h > 34) ? req_h : 34;
         }
 
         public override void draw (Context cr) {
-            if (!visible)
+            if (!visible || width <= 12 || height <= 4)
                 return;
             cr.set_source_rgb (0.08, 0.10, 0.13);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
@@ -159,30 +178,32 @@ namespace Gtk {
                 cr.set_source_rgb (0.50, 0.55, 0.63);
                 TextHelper.measure_text (placeholder, font_size, out tw, out th);
             }
+            int inner_w = width - 20;
+            int scroll_x = (text.length > 0 && tw > inner_w) ? (tw - inner_w) : 0;
             int ty = y + (height - th) / 2;
             cr.save ();
             cr.rectangle ((double) (x + 6), (double) (y + 2), (double) (width - 12), (double) (height - 4));
             cr.clip ();
             if (text.length > 0)
-                TextHelper.draw_text (cr, text, x + 10, ty, font_size);
-            else
+                TextHelper.draw_text (cr, text, x + 10 - scroll_x, ty, font_size);
+            else if (placeholder.length > 0)
                 TextHelper.draw_text (cr, placeholder, x + 10, ty, font_size);
             if (focused) {
-                int cw = 0;
-                int ch = 0;
-                TextHelper.measure_text (text, font_size, out cw, out ch);
                 cr.set_source_rgb (0.45, 0.78, 1.0);
-                cr.rectangle ((double) (x + 11 + cw), (double) (y + 6), 2.0, (double) (height - 12));
+                cr.rectangle ((double) (x + 11 + tw - scroll_x), (double) (y + 6), 2.0, (double) (height - 12));
                 cr.fill ();
             }
             cr.restore ();
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {
-            if (!visible || !sensitive)
-                return false;
+            bool prev = focused;
+            if (!visible || !sensitive) {
+                focused = false;
+                return prev;
+            }
             focused = contains (mx, my);
-            return focused;
+            return focused || prev;
         }
 
         public override bool on_key_press (int key) {
@@ -309,7 +330,7 @@ namespace Gtk {
         public ProgressBar () {}
 
         public void set_fraction (double f) {
-            if (f < 0.0) f = 0.0;
+            if (!(f >= 0.0)) f = 0.0;
             if (f > 1.0) f = 1.0;
             fraction = f;
         }
@@ -324,7 +345,7 @@ namespace Gtk {
         }
 
         public override void draw (Context cr) {
-            if (!visible)
+            if (!visible || width <= 2 || height <= 2)
                 return;
             cr.set_source_rgb (0.08, 0.10, 0.13);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);

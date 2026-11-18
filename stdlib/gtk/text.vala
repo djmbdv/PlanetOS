@@ -16,9 +16,19 @@ namespace Gtk {
     private class FontSlot : Object {
         public SftFont? font = null;
         public GenericArray<GlyphEntry>? cache = null;
+        public int[]? htab = null;
         public double cached_asc = 14.0;
         public double cached_desc = -3.0;
         public int cached_size = 0;
+
+        public void ensure_htab () {
+            if (htab != null)
+                return;
+            var t = new int[1024];
+            for (int i = 0; i < 1024; i++)
+                t[i] = -1;
+            htab = t;
+        }
     }
 
     private FontSlot? gtk_sans_slot;
@@ -36,17 +46,22 @@ namespace Gtk {
             }
             var buf = new uint8[sz];
             int got = 0;
-            while (got < sz) {
+            int first = Sys.read (fd, buf, sz);
+            if (first > 0)
+                got = first;
+            if (got < sz) {
                 var chunk = new uint8[4096];
-                int want = sz - got;
-                if (want > 4096)
-                    want = 4096;
-                int r = Sys.read (fd, chunk, want);
-                if (r <= 0)
-                    break;
-                for (int i = 0; i < r; i++)
-                    buf[got + i] = chunk[i];
-                got += r;
+                while (got < sz) {
+                    int want = sz - got;
+                    if (want > 4096)
+                        want = 4096;
+                    int r = Sys.read (fd, chunk, want);
+                    if (r <= 0)
+                        break;
+                    for (int i = 0; i < r; i++)
+                        buf[got + i] = chunk[i];
+                    got += r;
+                }
             }
             Sys.close (fd);
             if (got != sz)
@@ -73,12 +88,21 @@ namespace Gtk {
         private static GlyphEntry? get_glyph_from (FontSlot? slot, int cp, int size_px) {
             if (slot == null || slot.font == null)
                 return null;
+            if (size_px < 1)
+                size_px = 1;
             if (slot.cache == null)
                 slot.cache = new GenericArray<GlyphEntry> ();
+            slot.ensure_htab ();
             int key = (cp << 12) | (size_px & 0xFFF);
-            for (int i = 0; i < slot.cache.length; i++) {
-                if (slot.cache[i].key == key)
-                    return slot.cache[i];
+            int h = ((key * 2654435761) >> 16) & 1023;
+            int probe = h;
+            for (int step = 0; step < 1024; step++) {
+                int idx = slot.htab[probe];
+                if (idx < 0)
+                    break;
+                if (slot.cache[idx].key == key)
+                    return slot.cache[idx];
+                probe = (probe + 1) & 1023;
             }
             var sft = new Sft ();
             sft.font = slot.font;
@@ -109,20 +133,49 @@ namespace Gtk {
                 if (sft.render (gid, img) == 0)
                     ge.img = img;
             }
-            if (slot.cache.length < 512)
+            if (slot.cache.length < 512) {
+                int new_idx = slot.cache.length;
                 slot.cache.add (ge);
+                slot.htab[probe] = new_idx;
+            }
             return ge;
+        }
+
+        private static int next_utf8 (string text, ref int pos) {
+            int n = text.length;
+            uint8 b0 = text[pos++];
+            if (b0 < 0x80)
+                return (int) b0;
+            if ((b0 & 0xE0) == 0xC0 && pos < n) {
+                uint8 b1 = text[pos++];
+                return ((int) (b0 & 0x1F) << 6) | (int) (b1 & 0x3F);
+            }
+            if ((b0 & 0xF0) == 0xE0 && pos + 1 < n) {
+                uint8 b1 = text[pos++];
+                uint8 b2 = text[pos++];
+                return ((int) (b0 & 0x0F) << 12) | ((int) (b1 & 0x3F) << 6) | (int) (b2 & 0x3F);
+            }
+            if ((b0 & 0xF8) == 0xF0 && pos + 2 < n) {
+                uint8 b1 = text[pos++];
+                uint8 b2 = text[pos++];
+                uint8 b3 = text[pos++];
+                return ((int) (b0 & 0x07) << 18) | ((int) (b1 & 0x3F) << 12) | ((int) (b2 & 0x3F) << 6) | (int) (b3 & 0x3F);
+            }
+            return (int) b0;
         }
 
         private static void measure_slot (FontSlot? slot, string text, double size_px, out int out_w, out int out_h) {
             int px = (int) size_px;
+            if (px < 1) px = 1;
             if (slot != null && slot.font != null) {
                 int cx = 0;
-                for (int i = 0; i < text.length; i++) {
-                    var ge = get_glyph_from (slot, (int) text[i], px);
+                int pos = 0;
+                while (pos < text.length) {
+                    int cp = next_utf8 (text, ref pos);
+                    var ge = get_glyph_from (slot, cp, px);
                     cx += (ge != null) ? ge.adv : (px / 2);
                 }
-                out_w = cx + 2;
+                out_w = (text.length == 0) ? 0 : (cx + 2);
                 int lh = (int) (slot.cached_asc - slot.cached_desc + 1.0);
                 out_h = (lh > px) ? lh : px;
                 return;
@@ -135,11 +188,16 @@ namespace Gtk {
         }
 
         private static void draw_slot (FontSlot? slot, Context cr, string text, int x, int y, double size_px) {
+            if (text.length == 0)
+                return;
             int px = (int) size_px;
+            if (px < 1) px = 1;
             if (slot != null && slot.font != null) {
                 int cx = x;
-                for (int i = 0; i < text.length; i++) {
-                    var ge = get_glyph_from (slot, (int) text[i], px);
+                int pos = 0;
+                while (pos < text.length) {
+                    int cp = next_utf8 (text, ref pos);
+                    var ge = get_glyph_from (slot, cp, px);
                     if (ge != null) {
                         if (ge.img != null) {
                             int gx = cx + ge.lsb;
