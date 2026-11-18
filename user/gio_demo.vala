@@ -416,8 +416,25 @@ namespace GioDemo {
         demo_enumerate ();
         demo_application (args);
         demo_phase1_models ();
+        demo_regex ();
 
         print (@"gio:summary checks=$checks failures=$failures\n");
         return (failures == 0) ? 0 : 1;
+    }
+
+    private void demo_regex () {
+        try {
+            var re = new Regex ("\\d+");
+            MatchInfo? mi = null;
+            bool ok = re.match ("id=42 port=8080", out mi);
+            check ("regex-match", ok && mi != null && mi.matches () && mi.fetch (0) == "42");
+            check ("regex-next", mi != null && mi.next () && mi.fetch (0) == "8080");
+            check ("regex-end", mi != null && !mi.next ());
+            check ("regex-anchor", Regex.match_simple ("^[a-z]+$", "planet") && !Regex.match_simple ("^[a-z]+$", "planet9"));
+            check ("regex-class", Regex.match_simple ("[A-Z][0-9]+", "v2 X99"));
+            check ("regex-replace", re.replace ("a1b22", "#") == "a#b#");
+        } catch (RegexError e) {
+            check ("regex-compile", false);
+        }
     }
 }

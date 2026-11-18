@@ -15,7 +15,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 30  # image + 29 files
+ARG_COUNT = 32  # image + 31 files
 
 
 def blk(b):
@@ -56,6 +56,8 @@ def main():
     lmono_b = open(sys.argv[27], "rb").read()
     cur_b = open(sys.argv[28], "rb").read()
     pm_b = open(sys.argv[29], "rb").read()
+    dl_b = open(sys.argv[30], "rb").read()
+    pd_b = open(sys.argv[31], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -86,7 +88,9 @@ def main():
     b_lmono = b_lsans + blk(lsans_b)
     b_cur = b_lmono + blk(lmono_b)
     b_pm = b_cur + blk(cur_b)
-    INO_BLK = max(1000, b_pm + blk(pm_b) + 4)
+    b_dl = b_pm + blk(pm_b)
+    b_pd = b_dl + blk(dl_b)
+    INO_BLK = max(1000, b_pd + blk(pd_b) + 4)
     total_blocks = INO_BLK + 264 # 8 inode blocks (128 inodes) + 256 free data blocks (1 MiB)
     img = bytearray(total_blocks * 4096)
 
@@ -137,6 +141,8 @@ def main():
         (b"LiberationMono-Regular.ttf", lmono_b, b_lmono, 0x81A4),
         (b"cursor.svg", cur_b, b_cur, 0x81A4),
         (b"pcm4.elf", pm_b, b_pm, 0x81ED),
+        (b"mathlib.dlib", dl_b, b_dl, 0x81A4),
+        (b"plan_demo.plan", pd_b, b_pd, 0x81ED),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

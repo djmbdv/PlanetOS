@@ -38,6 +38,23 @@ namespace Planet {
     ")]
     private extern int __arr_data (uint8[] a);
 
+    [AsmBody(@"
+        # __call_ptr2(fn in rdi, a0 in rsi, a1 in rdx) -> rax
+        mov %rdi, %rax
+        mov %rsi, %rdi
+        mov %rdx, %rsi
+        .byte 0xff, 0xd0
+        ret
+    ")]
+    private extern int __call_ptr2 (int fn_addr, int a0, int a1);
+
+    [AsmBody(@"
+        # __sys_poke8(addr in rdi, val in rsi)
+        mov %sil, (%rdi)
+        ret
+    ")]
+    private extern void __sys_poke8 (int addr, int val);
+
     public class Sys : Object {
         public const int MAX_PATH = 512;
         public const int MAX_IO = 65536;
@@ -248,6 +265,18 @@ namespace Planet {
 
         public static int kill (int tid) {
             return __sys4 (49, tid, 0, 0, 0);
+        }
+
+        public static int map_user_at (int vaddr, int size) {
+            return __sys4 (50, vaddr, size, 0, 0);
+        }
+
+        public static void poke8 (int addr, int val) {
+            __sys_poke8 (addr, val);
+        }
+
+        public static int call_ptr2 (int fn_addr, int a0, int a1) {
+            return __call_ptr2 (fn_addr, a0, a1);
         }
 
         public static int list_tasks (uint8[] buf, int max_bytes) {

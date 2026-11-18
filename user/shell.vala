@@ -1144,7 +1144,20 @@ namespace PlanetShell {
         set_var ("OS", Sys.getenv ("OS"));
         set_var ("ARCH", Sys.getenv ("ARCH"));
         set_var ("TARGET", Sys.getenv ("TARGET"));
+        string env_cwd = Sys.getenv ("PLANET_CWD");
+        if (env_cwd.length > 0)
+            cwd = canonical_path (env_cwd);
 
+        if (args.length > 2 && args[1] == "-c") {
+            var cmd_sb = new StringBuilder ();
+            for (int i = 2; i < args.length; i++) {
+                if (i > 2)
+                    cmd_sb.append (" ");
+                cmd_sb.append (args[i]);
+            }
+            bool should_exit_c = false;
+            return eval_line (cmd_sb.str, out should_exit_c);
+        }
         if (args.length > 1)
             return run_script (canonical_path (abs_path (args[1])));
 
@@ -1153,10 +1166,15 @@ namespace PlanetShell {
 
         var line = new uint8[480];
         var one = new uint8[1];
+        var history = new GenericArray<string> ();
+        int hist_idx = -1;
+        string draft_line = "";
 
         while (true) {
             print (get_var ("PS1"));
             int len = 0;
+            hist_idx = -1;
+            draft_line = "";
             while (true) {
                 int ch = Sys.read_key ();
                 if (ch < 0) {
@@ -1167,6 +1185,110 @@ namespace PlanetShell {
                     one[0] = (uint8) '\n';
                     Sys.write (1, one, 1);
                     break;
+                }
+                if (ch == 0x81 || ch == 0x82) {
+                    if (history.length == 0)
+                        continue;
+                    string? next_cmd = null;
+                    if (ch == 0x81) {
+                        if (hist_idx < 0) {
+                            var dsb = new StringBuilder ();
+                            for (int k = 0; k < len; k++) dsb.append_c ((char) line[k]);
+                            draft_line = dsb.str;
+                            hist_idx = history.length - 1;
+                            next_cmd = history[hist_idx];
+                        } else if (hist_idx > 0) {
+                            hist_idx = hist_idx - 1;
+                            next_cmd = history[hist_idx];
+                        }
+                    } else if (hist_idx >= 0) {
+                        if (hist_idx + 1 < history.length) {
+                            hist_idx = hist_idx + 1;
+                            next_cmd = history[hist_idx];
+                        } else {
+                            hist_idx = -1;
+                            next_cmd = draft_line;
+                        }
+                    }
+                    if (next_cmd != null) {
+                        for (int k = 0; k < len; k++) {
+                            one[0] = (uint8) 8; Sys.write (1, one, 1);
+                            one[0] = (uint8) ' '; Sys.write (1, one, 1);
+                            one[0] = (uint8) 8; Sys.write (1, one, 1);
+                        }
+                        int nlen = (next_cmd.length < 480) ? next_cmd.length : 480;
+                        for (int k = 0; k < nlen; k++) {
+                            line[k] = (uint8) next_cmd[k];
+                            one[0] = line[k];
+                            Sys.write (1, one, 1);
+                        }
+                        len = nlen;
+                    }
+                    continue;
+                }
+                if (ch == '\t') {
+                    var cur_sb = new StringBuilder ();
+                    for (int k = 0; k < len; k++) cur_sb.append_c ((char) line[k]);
+                    string cur_str = cur_sb.str;
+                    int sp = -1;
+                    for (int k = cur_str.length - 1; k >= 0; k--) {
+                        if (cur_str[k] == ' ') { sp = k; break; }
+                    }
+                    string pref = (sp >= 0) ? cur_str.substring (sp + 1) : cur_str;
+                    bool completed = false;
+                    if (pref.length > 0) {
+                        var dbuf = new uint8[4096];
+                        int dn = Sys.readdir_path (cwd, dbuf, 4096);
+                        if (dn > 0) {
+                            var matches = new GenericArray<string> ();
+                            int st = 0;
+                            for (int i = 0; i <= dn; i++) {
+                                if (i == dn || dbuf[i] == 0 || dbuf[i] == '\n') {
+                                    if (i > st) {
+                                        var msb = new StringBuilder ();
+                                        for (int j = st; j < i; j++) msb.append_c ((char) dbuf[j]);
+                                        string nm = msb.str;
+                                        if (nm.has_prefix (pref))
+                                            matches.add (nm);
+                                    }
+                                    st = i + 1;
+                                }
+                            }
+                            if (matches.length == 1) {
+                                string rest = matches[0].substring (pref.length);
+                                for (int k = 0; k < rest.length && len < 480; k++) {
+                                    line[len] = (uint8) rest[k];
+                                    len = len + 1;
+                                    one[0] = (uint8) rest[k];
+                                    Sys.write (1, one, 1);
+                                }
+                                completed = true;
+                            } else if (matches.length > 1) {
+                                print ("\n");
+                                for (int m = 0; m < matches.length; m++) {
+                                    if (m > 0) print ("  ");
+                                    print (matches[m]);
+                                }
+                                print ("\n");
+                                print (get_var ("PS1"));
+                                for (int k = 0; k < len; k++) {
+                                    one[0] = line[k];
+                                    Sys.write (1, one, 1);
+                                }
+                                completed = true;
+                            }
+                        }
+                    }
+                    if (!completed) {
+                        int spaces = 4 - (len % 4);
+                        for (int s = 0; s < spaces && len < 480; s++) {
+                            line[len] = (uint8) ' ';
+                            len = len + 1;
+                            one[0] = (uint8) ' ';
+                            Sys.write (1, one, 1);
+                        }
+                    }
+                    continue;
                 }
                 if (ch == 8 || ch == 127) {
                     if (len > 0) {
@@ -1179,6 +1301,8 @@ namespace PlanetShell {
                     }
                     continue;
                 }
+                if (ch >= 0x80 && ch <= 0x8F)
+                    continue;
                 if (len < 480) {
                     line[len] = (uint8) ch;
                     len = len + 1;
@@ -1190,6 +1314,14 @@ namespace PlanetShell {
             var sb = new StringBuilder ();
             for (int k = 0; k < len; k++)
                 sb.append_c ((char) line[k]);
+
+            if (len > 0) {
+                if (history.length == 0 || history[history.length - 1] != sb.str) {
+                    history.add (sb.str);
+                    if (history.length > 32)
+                        history.remove_index (0);
+                }
+            }
 
             bool should_exit = false;
             int rc = eval_line (sb.str, out should_exit);

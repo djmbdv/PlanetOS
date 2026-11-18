@@ -65,10 +65,49 @@ namespace Planet.Kernel {
             return read_u8 (addr) | (read_u8 (addr + 1) << 8);
         }
 
+        private static int load_plan_image (int buf, int size, int user_cr3) {
+            if (size < 64)
+                return 0;
+            int kind = read_u16 (buf + 6);
+            if (kind != 0) {
+                print ("plan: cannot execute .dlib directly\n");
+                return 0;
+            }
+            int entry = mmio_read64 (buf + 16);
+            int sec_count = mmio_read32 (buf + 24) & 0xFFFFFFFF;
+            if (sec_count <= 0 || 64 + sec_count * 32 > size) {
+                print ("plan: bad section table\n");
+                return 0;
+            }
+            for (int i = 0; i < sec_count; i++) {
+                int sh = buf + 64 + i * 32;
+                int vaddr = mmio_read64 (sh + 0);
+                int foff = mmio_read64 (sh + 8);
+                int fsz = mmio_read64 (sh + 16);
+                int msz = mmio_read64 (sh + 24);
+                if (msz <= 0)
+                    continue;
+                if (vaddr < 0x800000 || vaddr + msz > 0x40000000 || foff + fsz > size) {
+                    print ("plan: invalid section bounds\n");
+                    return 0;
+                }
+                Pmm.reserve_range (vaddr, msz);
+                if (user_cr3 != 0)
+                    Vmm.map_user_range (user_cr3, vaddr, msz);
+                for (int b = 0; b < fsz; b++)
+                    mmio_write8 (vaddr + b, read_u8 (buf + foff + b));
+                for (int b = fsz; b < msz; b++)
+                    mmio_write8 (vaddr + b, 0);
+            }
+            return entry;
+        }
+
         public static int load_image (int buf, int size, int user_cr3 = 0) {
             if (size < 64)
                 return 0;
             int magic = mmio_read32 (buf) & 0xFFFFFFFF;
+            if (magic == 0x4E414C50)
+                return load_plan_image (buf, size, user_cr3);
             if (magic != 0x464C457F) {
                 print ("elf: bad magic\n");
                 return 0;

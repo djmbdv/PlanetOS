@@ -173,6 +173,13 @@ namespace Planet.Kernel {
                     vga_row = vga_row + 1;
                 } else if (b == '\r') {
                     vga_col = 0;
+                } else if (b == '\t') {
+                    int next_col = (vga_col + 4) & ~3;
+                    if (next_col > COLS)
+                        next_col = COLS;
+                    while (vga_col < next_col)
+                        put_glyph (' ');
+                    return;
                 } else if (b == 8) {
                     if (vga_col > 0) {
                         vga_col = vga_col - 1;

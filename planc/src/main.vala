@@ -29,6 +29,7 @@ namespace Planc {
         var freestanding = false;
         var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
+        int emit_format = 0; // 0 = elf, 1 = plan, 2 = dlib
         uint64 image_base = 0;
 
         for (int i = 1; i < args.length; i++) {
@@ -69,6 +70,12 @@ namespace Planc {
                 target_planetos = true;
             } else if (a == "--target=spirv") {
                 target_spirv = true;
+            } else if (a == "--format=elf") {
+                emit_format = 0;
+            } else if (a == "--format=plan") {
+                emit_format = 1;
+            } else if (a == "--format=dlib") {
+                emit_format = 2;
             } else if (a.has_prefix ("--image-base=")) {
                 var val_str = a.substring (13);
                 uint64 parsed = 0;
@@ -104,6 +111,15 @@ namespace Planc {
         if (source_paths.length == 0 || output_path == "") {
             Host.eprintln (USAGE);
             return 2;
+        }
+        if (emit_format == 0) {
+            if (output_path.has_suffix (".plan"))
+                emit_format = 1;
+            else if (output_path.has_suffix (".dlib"))
+                emit_format = 2;
+        }
+        if (emit_format == 2 && image_base == 0) {
+            image_base = (uint64) 0x1800000;
         }
 
         var sources = new GenericArray<string> ();
@@ -184,8 +200,14 @@ namespace Planc {
                 }
             }
             program.monomorphize_all ();
-            if (program.find ("main") == null)
-                throw new ParseError.MISSING_MAIN ("the program does not define main");
+            if (program.find ("main") == null) {
+                if (emit_format == 2) {
+                    var stub_p = new Parser.with_program ("int main () { return 0; }", program);
+                    stub_p.parse_unit ();
+                } else {
+                    throw new ParseError.MISSING_MAIN ("the program does not define main");
+                }
+            }
         } catch (LexError e) {
             string fpref = (current_parse_file != "") ? @"$current_parse_file: " : "";
             Host.eprintln (@"planc: $(fpref)lexical error: $(e.message)");
@@ -359,8 +381,14 @@ namespace Planc {
                 }
             }
         }
-        var image = Elf.build (text, rodata, data, codegen.symbols, layout,
+        uint8[] image;
+        if (emit_format > 0) {
+            image = Elf.build_plan (text, rodata, data, codegen.symbols, layout,
+                                    entry_sym, emit_format == 2);
+        } else {
+            image = Elf.build (text, rodata, data, codegen.symbols, layout,
                                debug_line, debug_abbrev, debug_info, entry_sym);
+        }
 
         try {
             Host.write_file (output_path, image);

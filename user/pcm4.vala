@@ -147,7 +147,7 @@ void open_item (Pcm4State st, string name) {
             }
         }
         string ctype = info.get_content_type ();
-        if (ctype == "application/x-executable") {
+        if (ctype == "application/x-executable" || name.has_suffix (".plan")) {
             string fp = full.has_prefix ("/") ? full.substring (1, full.length - 1) : full;
             if (!is_gui_elf (name)) {
                 run_cli_capture (st, fp, name);

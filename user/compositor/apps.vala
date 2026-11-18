@@ -66,19 +66,48 @@ namespace Wm {
 
     public class VteTerminal : Object {
         public GenericArray<string> lines;
+        public GenericArray<string> history;
+        public int hist_idx = -1;
+        public string draft_input = "";
         public string input = "";
+        public string cwd = "/";
         public bool active = false;
         public bool want_pcm4 = false;
+        public string want_gui_exec = "";
+        public string want_gui_title = "";
+        public int scroll_off = 0;
+        public int child_tid = -1;
+        public string out_file = "";
+        public int out_read_pos = 0;
+        private string partial_line = "";
+        private int vte_seq = 0;
 
         public VteTerminal () {
             lines = new GenericArray<string> ();
-            lines.add ("PlanetOS VTE v0.1 (click & type 'help')");
+            history = new GenericArray<string> ();
+            lines.add ("PlanetOS VTE v0.2 (shell.elf integrated, type 'help')");
+        }
+
+        public bool busy () {
+            return child_tid > 0;
         }
 
         private void push_line (string s) {
-            lines.add (s);
-            if (lines.length > 64)
+            // Wrap long lines cleanly at 64 chars so output stays inside VTE bounds.
+            if (s.length <= 64) {
+                lines.add (s);
+            } else {
+                int pos = 0;
+                while (pos < s.length) {
+                    int take = s.length - pos;
+                    if (take > 64) take = 64;
+                    lines.add (s.substring (pos, take));
+                    pos = pos + take;
+                }
+            }
+            while (lines.length > 256)
                 lines.remove_index (0);
+            scroll_off = 0;
         }
 
         private static string bytes_to_str (uint8[] buf, int off, int len) {
@@ -99,78 +128,287 @@ namespace Wm {
             return s.substring (a, b - a);
         }
 
+        private string resolve_path (string p) {
+            if (p.length == 0 || p == ".")
+                return cwd;
+            if (p == "..") {
+                if (cwd == "/") return "/";
+                int last = -1;
+                for (int i = cwd.length - 1; i >= 0; i--) {
+                    if (cwd[i] == '/') { last = i; break; }
+                }
+                return (last <= 0) ? "/" : cwd.substring (0, last);
+            }
+            if (p.has_prefix ("/"))
+                return p;
+            return (cwd == "/") ? ("/" + p) : (cwd + "/" + p);
+        }
+
+        private void feed_output_bytes (uint8[] buf, int count) {
+            for (int i = 0; i < count; i++) {
+                uint8 c = buf[i];
+                if (c == '\n') {
+                    push_line (partial_line);
+                    partial_line = "";
+                } else if (c == '\r') {
+                    partial_line = "";
+                } else if (c >= 32 && c < 127) {
+                    string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+                    partial_line = partial_line + ascii.substring ((int) c - 32, 1);
+                    if (partial_line.length >= 64) {
+                        push_line (partial_line);
+                        partial_line = "";
+                    }
+                }
+            }
+        }
+
+        private void drain_out_file () {
+            if (out_file.length == 0)
+                return;
+            int fd = Sys.open (out_file);
+            if (fd < 0)
+                return;
+            int sz = Sys.file_size (fd);
+            if (sz > out_read_pos) {
+                Sys.seek (fd, out_read_pos);
+                var buf = new uint8[1024];
+                while (out_read_pos < sz) {
+                    int nr = Sys.read (fd, buf, 1024);
+                    if (nr <= 0)
+                        break;
+                    feed_output_bytes (buf, nr);
+                    out_read_pos = out_read_pos + nr;
+                }
+            }
+            Sys.close (fd);
+        }
+
+        public bool poll_proc () {
+            if (child_tid <= 0)
+                return false;
+            int prev_len = lines.length;
+            int prev_part = partial_line.length;
+            drain_out_file ();
+            int rc = Sys.wait_nb (child_tid);
+            if (rc != -2) {
+                drain_out_file ();
+                if (partial_line.length > 0) {
+                    push_line (partial_line);
+                    partial_line = "";
+                }
+                if (rc != 0)
+                    push_line (@"[exit=$rc]");
+                child_tid = -1;
+                if (out_file.length > 0) {
+                    Sys.unlink (out_file);
+                    out_file = "";
+                }
+                out_read_pos = 0;
+                return true;
+            }
+            return (lines.length != prev_len || partial_line.length != prev_part);
+        }
+
+        private void spawn_shell_cmd (string cmd) {
+            vte_seq = vte_seq + 1;
+            out_file = @"_vte_$(vte_seq).txt";
+            out_read_pos = 0;
+            partial_line = "";
+            int out_fd = Sys.create (out_file);
+            if (out_fd < 0) {
+                push_line ("vte: cannot allocate output buffer");
+                out_file = "";
+                return;
+            }
+            Sys.setenv ("PLANET_CWD", cwd);
+            Sys.sys (19, 0, out_fd, 0);
+            child_tid = Sys.spawn ("shell.elf", @"shell.elf -c $cmd");
+            Sys.sys (19, 0, 1, 0);
+            Sys.close (out_fd);
+            if (child_tid < 0) {
+                Sys.unlink (out_file);
+                out_file = "";
+                push_line (@"vte: failed to spawn shell for '$cmd'");
+            }
+        }
+
+        private static bool is_gui_binary (string nm) {
+            return nm == "gtk_demo.elf" || nm == "pcm4.elf" || nm == "cairo_demo.elf"
+                || nm == "spv_demo.elf" || nm == "vk_demo.elf" || nm == "pango_demo.elf"
+                || nm == "compositor.elf";
+        }
+
         private void run_cmd (string raw) {
             string cmd = trim_str (raw);
-            push_line ("planet> " + cmd);
+            push_line (@"planet:$cwd> $cmd");
             if (cmd == "")
                 return;
+            if (history.length == 0 || history[history.length - 1] != cmd) {
+                history.add (cmd);
+                if (history.length > 32)
+                    history.remove_index (0);
+            }
+            hist_idx = -1;
+            draft_input = "";
+
+            if (cmd == "clear") {
+                lines.length = 0;
+                scroll_off = 0;
+                return;
+            }
             if (cmd == "help") {
-                push_line ("cmds: help ls cat ticks uname echo clear pcm4");
-            } else if (cmd == "pcm4" || cmd == "files") {
+                push_line ("vte: builtins: help clear cd pwd history pcm4");
+                push_line ("vte: shell.elf -c runs ls cat echo wc exec .elf/.plan pipes");
+                return;
+            }
+            if (cmd == "history") {
+                for (int i = 0; i < history.length; i++)
+                    push_line (@"  $(i + 1): $(history[i])");
+                return;
+            }
+            if (cmd == "pcm4" || cmd == "files") {
                 want_pcm4 = true;
                 push_line ("opening pcm4 window...");
-            } else if (cmd == "clear") {
-                lines.length = 0;
-            } else if (cmd == "uname") {
-                push_line ("PlanetOS x86_64 Long Mode (Ring 3 + VTE)");
-            } else if (cmd == "ticks") {
-                push_line (@"ticks: $(Sys.ticks ())");
-            } else if (cmd.has_prefix ("echo ")) {
-                push_line (cmd.substring (5, cmd.length - 5));
-            } else if (cmd == "ls") {
-                var buf = new uint8[2048];
-                int n = Sys.readdir_path ("/", buf, 2048);
-                if (n <= 0) {
-                    push_line ("(empty)");
+                return;
+            }
+            if (cmd == "pwd") {
+                push_line (cwd);
+                return;
+            }
+            if (cmd == "cd" || cmd.has_prefix ("cd ")) {
+                string arg = (cmd.length > 3) ? trim_str (cmd.substring (3, cmd.length - 3)) : "/";
+                string target = resolve_path (arg);
+                if (target == "/") {
+                    cwd = "/";
+                } else {
+                    string rel = target.has_prefix ("/") ? target.substring (1, target.length - 1) : target;
+                    if (Sys.stat (rel) == 2)
+                        cwd = target;
+                    else
+                        push_line (@"cd: not a directory: $arg");
+                }
+                return;
+            }
+            if (cmd.has_prefix ("exec ")) {
+                string rest = trim_str (cmd.substring (5, cmd.length - 5));
+                if (is_gui_binary (rest)) {
+                    if (rest == "pcm4.elf")
+                        want_pcm4 = true;
+                    else {
+                        want_gui_exec = rest;
+                        want_gui_title = rest;
+                    }
+                    push_line (@"launching $rest in compositor...");
                     return;
                 }
-                string cur = "";
-                int start = 0;
-                for (int i = 0; i <= n; i++) {
-                    if (i == n || buf[i] == 0 || buf[i] == '\n') {
-                        if (i > start) {
-                            string name = bytes_to_str (buf, start, i - start);
-                            if (cur.length + name.length + 1 > 40) {
-                                push_line (cur);
-                                cur = name;
-                            } else {
-                                cur = (cur.length > 0) ? (cur + " " + name) : name;
-                            }
-                        }
-                        start = i + 1;
+            } else if (is_gui_binary (cmd)) {
+                if (cmd == "pcm4.elf")
+                    want_pcm4 = true;
+                else {
+                    want_gui_exec = cmd;
+                    want_gui_title = cmd;
+                }
+                push_line (@"launching $cmd in compositor...");
+                return;
+            }
+            spawn_shell_cmd (cmd);
+        }
+
+        private void autocomplete () {
+            if (input.length == 0)
+                return;
+            int sp = -1;
+            for (int i = input.length - 1; i >= 0; i--) {
+                if (input[i] == ' ') { sp = i; break; }
+            }
+            string pref = (sp >= 0) ? input.substring (sp + 1, input.length - sp - 1) : input;
+            string head = (sp >= 0) ? input.substring (0, sp + 1) : "";
+            string fs_dir = (cwd == "/") ? "/" : cwd.substring (1, cwd.length - 1);
+            var buf = new uint8[4096];
+            int n = Sys.readdir_path (fs_dir.length == 0 ? "/" : fs_dir, buf, 4096);
+            if (n <= 0)
+                return;
+            var matches = new GenericArray<string> ();
+            int start = 0;
+            for (int i = 0; i <= n; i++) {
+                if (i == n || buf[i] == 0 || buf[i] == '\n') {
+                    if (i > start) {
+                        string nm = bytes_to_str (buf, start, i - start);
+                        if (pref.length == 0 || nm.has_prefix (pref))
+                            matches.add (nm);
+                    }
+                    start = i + 1;
+                }
+            }
+            if (matches.length == 1) {
+                input = head + matches[0];
+            } else if (matches.length > 1) {
+                string line = "";
+                for (int i = 0; i < matches.length; i++) {
+                    if (line.length + matches[i].length + 1 > 58) {
+                        push_line (line);
+                        line = matches[i];
+                    } else {
+                        line = (line.length > 0) ? (line + " " + matches[i]) : matches[i];
                     }
                 }
-                if (cur.length > 0)
-                    push_line (cur);
-            } else if (cmd.has_prefix ("cat ")) {
-                string path = trim_str (cmd.substring (4, cmd.length - 4));
-                int fd = Sys.open (path);
-                if (fd < 0) {
-                    push_line (@"cat: not found: $path");
-                } else {
-                    var fbuf = new uint8[512];
-                    int nr = Sys.read (fd, fbuf, 511);
-                    Sys.close (fd);
-                    if (nr > 0) {
-                        int st = 0;
-                        for (int i = 0; i <= nr; i++) {
-                            if (i == nr || fbuf[i] == '\n') {
-                                if (i > st)
-                                    push_line (bytes_to_str (fbuf, st, i - st));
-                                st = i + 1;
-                            }
-                        }
-                    }
-                }
-            } else {
-                push_line (@"unknown: $cmd");
+                if (line.length > 0)
+                    push_line (line);
             }
         }
 
         public bool on_key_press (int key) {
             if (!active)
                 return false;
+            if (key == 3) { // Ctrl+C
+                if (child_tid > 0) {
+                    Sys.kill (child_tid);
+                    child_tid = -1;
+                    if (out_file.length > 0) {
+                        Sys.unlink (out_file);
+                        out_file = "";
+                    }
+                    push_line ("^C");
+                } else {
+                    input = "";
+                }
+                return true;
+            }
+            if (key == 0x81) { // Up arrow -> history prev
+                if (history.length > 0) {
+                    if (hist_idx < 0) {
+                        draft_input = input;
+                        hist_idx = history.length - 1;
+                    } else if (hist_idx > 0) {
+                        hist_idx = hist_idx - 1;
+                    }
+                    input = history[hist_idx];
+                }
+                return true;
+            }
+            if (key == 0x82) { // Down arrow -> history next
+                if (hist_idx >= 0) {
+                    if (hist_idx + 1 < history.length) {
+                        hist_idx = hist_idx + 1;
+                        input = history[hist_idx];
+                    } else {
+                        hist_idx = -1;
+                        input = draft_input;
+                    }
+                }
+                return true;
+            }
+            if (key == 9) { // Tab -> autocomplete
+                if (input.length > 0) {
+                    autocomplete ();
+                    return true;
+                }
+                return false;
+            }
             if (key == '\n' || key == '\r') {
+                if (child_tid > 0)
+                    return true;
                 string cmd = input.substring (0, input.length);
                 input = "";
                 run_cmd (cmd);
@@ -197,15 +435,19 @@ namespace Wm {
             int max_rows = (ch - 12) / row_h;
             if (max_rows < 2) max_rows = 2;
             int hist_rows = max_rows - 1;
-            int start = (lines.length > hist_rows) ? (lines.length - hist_rows) : 0;
+            int end = lines.length - scroll_off;
+            if (end < 0) end = 0;
+            int start = (end > hist_rows) ? (end - hist_rows) : 0;
             int y = cy + 8;
             cr.set_source_rgb (0.78, 0.83, 0.90);
-            for (int i = start; i < lines.length; i++) {
+            for (int i = start; i < end; i++) {
                 TextHelper.draw_mono (cr, lines[i], cx + 10, y, 14.0);
                 y += row_h;
             }
             cr.set_source_rgb (ar, ag, ab);
-            string prompt = "planet> " + input + (focused ? "_" : "");
+            string prompt = (child_tid > 0)
+                ? (@"[$cwd running... ^C to stop]")
+                : (@"planet:$cwd> " + input + (focused ? "_" : ""));
             TextHelper.draw_mono (cr, prompt, cx + 10, y, 14.0);
         }
     }
@@ -260,7 +502,7 @@ namespace Wm {
                             icons.add ("folder");
                         } else {
                             items.add (nm);
-                            if (nm.has_suffix (".elf") || nm.has_suffix (".desktop"))
+                            if (nm.has_suffix (".elf") || nm.has_suffix (".plan") || nm.has_suffix (".desktop"))
                                 icons.add ("application-x-executable");
                             else if (nm.has_suffix (".txt") || nm.has_suffix (".vala") || nm.has_suffix (".c"))
                                 icons.add ("text-x-generic");
@@ -376,7 +618,7 @@ namespace Wm {
                     }
                 }
             }
-            if (nm.has_suffix (".elf")) {
+            if (nm.has_suffix (".elf") || nm.has_suffix (".plan")) {
                 if (is_gui_app (nm)) {
                     want_gui_exec = fp;
                     want_gui_title = nm;

@@ -622,6 +622,14 @@ namespace Wm {
             var w = find (id);
             if (w == null)
                 return;
+            if (w.kind == Kind.TERMINAL && w.term != null && w.term.child_tid > 0) {
+                Sys.kill (w.term.child_tid);
+                w.term.child_tid = -1;
+                if (w.term.out_file.length > 0) {
+                    Sys.unlink (w.term.out_file);
+                    w.term.out_file = "";
+                }
+            }
             if (w.kind == Kind.EXT) {
                 if (w.ext_tid > 0) {
                     Sys.kill (w.ext_tid);
@@ -798,7 +806,13 @@ namespace Wm {
         private void poll_ext_surfaces () {
             for (int i = 0; i < wins.length; i++) {
                 var w = wins[i];
-                if (!w.alive || w.kind != Kind.EXT || w.ext_file.length == 0)
+                if (!w.alive)
+                    continue;
+                if (w.kind == Kind.TERMINAL && w.term != null && w.term.busy ()) {
+                    if (w.term.poll_proc ())
+                        damage_window (w.id);
+                }
+                if (w.kind != Kind.EXT || w.ext_file.length == 0)
                     continue;
                 if (w.ext_tid > 0) {
                     int rc = Sys.wait_nb (w.ext_tid);
@@ -1024,6 +1038,12 @@ namespace Wm {
                     if (fw.term.want_pcm4) {
                         fw.term.want_pcm4 = false;
                         add ("pcm4", 120, 90, 680, 400, Kind.FILES);
+                    }
+                    if (fw.term.want_gui_exec.length > 0) {
+                        string ex = fw.term.want_gui_exec;
+                        string tt = fw.term.want_gui_title;
+                        fw.term.want_gui_exec = "";
+                        launch_gui_app (ex, tt, 560, 380);
                     }
                     damage_window (fw.id);
                     return;

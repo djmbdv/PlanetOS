@@ -409,5 +409,71 @@ namespace Planc {
             f.u64le (align);
             f.u64le (entry_size);
         }
+
+        // Native PlanetOS image builder for .plan (app) and .dlib (dynamic library).
+        public static uint8[] build_plan (uint8[] text, uint8[] rodata, uint8[] data,
+                                          GenericArray<Symbol> symbols, Layout l,
+                                          string entry_sym, bool is_dlib) {
+            var exports = new GenericArray<Symbol> ();
+            uint64 entry_vaddr = l.text_vaddr;
+            for (int i = 0; i < symbols.length; i++) {
+                var s = symbols[i];
+                if (s.name == entry_sym)
+                    entry_vaddr = l.text_vaddr + (uint64) s.offset;
+                if (is_dlib && s.name.length > 0 && !s.name.has_prefix ("_") && s.name != "main")
+                    exports.add (s);
+            }
+
+            uint32 sec_count = 3;
+            uint64 hdr_size = 64 + (uint64) sec_count * 32;
+            uint64 off_text = hdr_size;
+            uint64 off_rodata = off_text + (uint64) text.length;
+            uint64 off_data = off_rodata + (uint64) rodata.length;
+            uint64 meta_off = off_data + (uint64) data.length;
+            uint64 total_mem = (l.data_vaddr + (uint64) l.data_size + (uint64) l.bss_size) - l.text_vaddr;
+
+            var f = new Buffer ();
+            f.u32le (0x4E414C50); // "PLAN"
+            f.u16le (1);          // version
+            f.u16le (is_dlib ? 1 : 0);
+            f.u64le (l.text_vaddr);
+            f.u64le (entry_vaddr);
+            f.u32le (sec_count);
+            f.u32le ((uint32) exports.length);
+            f.u32le (0);          // import_count
+            f.u32le (0);          // reloc_count
+            f.u64le (meta_off);
+            f.u64le (l.text_vaddr);
+            f.u64le (total_mem);
+
+            // Section 0: .text
+            f.u64le (l.text_vaddr);
+            f.u64le (off_text);
+            f.u64le ((uint64) text.length);
+            f.u64le ((uint64) text.length);
+            // Section 1: .rodata
+            f.u64le (l.rodata_vaddr);
+            f.u64le (off_rodata);
+            f.u64le ((uint64) rodata.length);
+            f.u64le ((uint64) rodata.length);
+            // Section 2: .data + .bss
+            f.u64le (l.data_vaddr);
+            f.u64le (off_data);
+            f.u64le ((uint64) data.length);
+            f.u64le ((uint64) (l.data_size + l.bss_size));
+
+            f.bytes (text);
+            f.bytes (rodata);
+            f.bytes (data);
+
+            for (int i = 0; i < exports.length; i++) {
+                var ex = exports[i];
+                f.u64le (l.text_vaddr + (uint64) ex.offset);
+                f.u32le ((uint32) ex.name.length);
+                for (int k = 0; k < ex.name.length; k++)
+                    f.u8 ((uint8) ex.name[k]);
+            }
+            return f.to_array ();
+        }
     }
 }

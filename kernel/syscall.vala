@@ -477,6 +477,15 @@ namespace Planet.Kernel {
         if (num == 49) { // SYS_KILL(tid) -> exit_code or -1
             return Sched.kill_tid (a0);
         }
+        if (num == 50) { // SYS_MAP_USER_AT(vaddr, size) -> 0 or -1 (for .dlib loading)
+            if (a0 < 0x1000000 || a1 <= 0 || a1 > 0x800000 || a0 + a1 > 0x40000000)
+                return -1;
+            int ucr3 = Sched.current_cr3 ();
+            Pmm.reserve_range (a0, a1);
+            if (ucr3 != 0)
+                Vmm.map_user_range (ucr3, a0, a1);
+            return 0;
+        }
         return -1;
     }
 
