@@ -453,8 +453,11 @@ namespace Planet.Kernel {
                 return Klog.total ();
             return -1;
         }
-        if (num == 46) { // SYS_GPU_BLOB_DESTROY(ctx_id, res_id, pa, size)
-            return VirtioGpu.blob_destroy (a0, a1, a2, a3) ? 0 : -1;
+        if (num == 46) { // SYS_GPU_RESOURCE_DESTROY(ctx_id, res_id, pa, size)
+            return VirtioGpu.resource_destroy (a0, a1, a2, a3) ? 0 : -1;
+        }
+        if (num == 47) { // SYS_GPU_3D_CREATE(ctx_id, res_id, width, height) -> pa or 0
+            return VirtioGpu.create_3d_mapped (a0, a1, a2, a3);
         }
         return -1;
     }

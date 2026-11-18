@@ -2,6 +2,7 @@
 ~spv_demo: frag.spv words=[0-9]+ insns=[0-9]+ bound=[0-9]+ rgb=\([0-9]+,[0-9]+,[0-9]+\)
 ~compositor: shader=frag.spv ok=1
 ~compositor: pattern=frag_pattern.spv ok=1 samples=[0-9]+
+~compositor: cursor_svg=1 hotspot=[0-9]+x[0-9]+
 ~compositor:summary checks=[0-9]+ failures=0
 ~compositor: backend=vulkan ok=0
 ~compositor:summary checks=[0-9]+ failures=0

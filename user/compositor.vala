@@ -21,6 +21,7 @@ using Spv;
 using Cairo;
 using Gdk;
 using Gtk;
+using Gsk;
 using Wm;
 
 namespace Wm {
@@ -352,6 +353,14 @@ namespace Wm {
         private Layout dock_lay;
         private Layout notes_lay;
 
+        // Cursor rasterised from cursor.svg at startup. The same 64x64 BGRA
+        // image feeds the software blit and the VirtIO-GPU hardware cursor.
+        private const int CURSOR_TEX = 64;
+        private bool cursor_svg_ok = false;
+        private uint8[] cursor_pix;
+        private int cursor_hot_x = 0;
+        private int cursor_hot_y = 0;
+
         public Compositor () {
             wins = new GenericArray<Win> ();
             shader = new Module ();
@@ -370,15 +379,111 @@ namespace Wm {
             // highlight the last line ("spir-v accent pipeline")
             notes_lay.add_color_attribute (103, 125, 0.22, 0.74, 0.97);
             pat = new int[1];
+            load_cursor_svg ();
         }
 
         // --- plumbing -------------------------------------------------
 
         private bool hw_cursor = false;
 
+        private static string? read_text (string path) {
+            int fd = Sys.open (path);
+            if (fd < 0)
+                return null;
+            int sz = Sys.file_size (fd);
+            if (sz <= 0 || sz > 65536) {
+                Sys.close (fd);
+                return null;
+            }
+            var sb = new StringBuilder ();
+            int got = 0;
+            while (got < sz) {
+                var chunk = new uint8[512];
+                int want = sz - got;
+                if (want > 512)
+                    want = 512;
+                int r = Sys.read (fd, chunk, want);
+                if (r <= 0)
+                    break;
+                for (int i = 0; i < r; i++)
+                    sb.append_c ((char) chunk[i]);
+                got += r;
+            }
+            Sys.close (fd);
+            if (got != sz)
+                return null;
+            return sb.str;
+        }
+
+        private static string? svg_path_data (string svg) {
+            int k = svg.index_of ("d=\"");
+            if (k < 0)
+                return null;
+            k = k + 3;
+            int e = svg.index_of ("\"", k);
+            if (e <= k)
+                return null;
+            return svg[k:e];
+        }
+
+        // Rasterises cursor.svg once. The soft cursor and the GPU cursor share
+        // the same BGRA image, so they cannot drift apart.
+        private void load_cursor_svg () {
+            string? svg = read_text ("cursor.svg");
+            if (svg == null)
+                return;
+            string? d = svg_path_data (svg);
+            if (d == null)
+                return;
+            var path = Path.parse (d);
+            if (path == null)
+                return;
+            cursor_hot_x = (int) path.first_x;
+            cursor_hot_y = (int) path.first_y;
+            var surf = new ImageSurface (Format.ARGB32, CURSOR_TEX, CURSOR_TEX);
+            if (surf.buf_addr == 0)
+                return;
+            var cr = new Context (surf);
+            cr.clear ();
+            cr.set_source_rgba (0.04, 0.06, 0.10, 0.85);
+            path.fill_translated (cr, 1.2, 1.2);
+            cr.set_source_rgba (0.97, 0.98, 1.0, 1.0);
+            path.fill (cr);
+            cursor_pix = new uint8[CURSOR_TEX * CURSOR_TEX * 4];
+            for (int y = 0; y < CURSOR_TEX; y++) {
+                for (int x = 0; x < CURSOR_TEX; x++) {
+                    int px = cr.pixel_at (x, y);
+                    int off = (y * CURSOR_TEX + x) * 4;
+                    cursor_pix[off + 0] = (uint8) (px & 0xFF);
+                    cursor_pix[off + 1] = (uint8) ((px >> 8) & 0xFF);
+                    cursor_pix[off + 2] = (uint8) ((px >> 16) & 0xFF);
+                    cursor_pix[off + 3] = (uint8) ((px >> 24) & 0xFF);
+                }
+            }
+            cursor_svg_ok = true;
+        }
+
+        public bool cursor_from_svg () {
+            return cursor_svg_ok;
+        }
+
+        public int cursor_hotspot_x () { return cursor_hot_x; }
+        public int cursor_hotspot_y () { return cursor_hot_y; }
+
+        public int cursor_alpha (int x, int y) {
+            if (!cursor_svg_ok || x < 0 || y < 0 || x >= CURSOR_TEX || y >= CURSOR_TEX)
+                return 0;
+            return (int) cursor_pix[(y * CURSOR_TEX + x) * 4 + 3];
+        }
+
         private void init_hw_cursor () {
             if ((Sys.gpu_info () & 1) == 0)
                 return;
+            if (cursor_svg_ok) {
+                if (Sys.gpu_cursor_set (cursor_pix, cursor_hot_x, cursor_hot_y) == 0)
+                    hw_cursor = true;
+                return;
+            }
             var cb = new uint8[16384]; // 64x64 BGRA
             // Crisp 12x18 arrow cursor with 1px dark outline
             for (int y = 0; y < 18; y++) {
@@ -1656,6 +1761,11 @@ namespace Wm {
         private void draw_cursor (Context cr, int mx, int my) {
             int x = (mx < 0) ? 0 : ((mx >= SCREEN_W) ? (SCREEN_W - 1) : mx);
             int y = (my < 0) ? 0 : ((my >= SCREEN_H) ? (SCREEN_H - 1) : my);
+            if (cursor_svg_ok) {
+                cr.draw_rgba (cursor_pix, CURSOR_TEX, CURSOR_TEX,
+                              x - cursor_hot_x, y - cursor_hot_y);
+                return;
+            }
             cr.set_source_rgba (0.0, 0.0, 0.0, 0.55);
             cr.set_line_width (1);
             cr.move_to (x + 1, y + 1);
@@ -1787,6 +1897,9 @@ private int self_test_run (Compositor comp) {
     var cr = new Context (surf);
     kb.render (cr, 200, 200);
     check (surf.buf_addr != 0 && kb.count () == 2, "render-survives");
+    check (comp.cursor_from_svg (), "cursor-svg-loaded");
+    check (comp.cursor_alpha (9, 5) > 128, "cursor-svg-shape");
+    check (comp.cursor_alpha (0, 0) == 0, "cursor-svg-clear");
 
     // spir-v accent pipeline
     check (comp.shader_valid (), "shader-module-valid");
@@ -1908,6 +2021,7 @@ private int self_test_run (Compositor comp) {
     termc.key_press ('\n');
     check (termc.alive (tw), "vte-term-alive");
 
+    print (@"compositor: cursor_svg=$(comp.cursor_from_svg () ? 1 : 0) hotspot=$(comp.cursor_hotspot_x ())x$(comp.cursor_hotspot_y ())\n");
     print (@"compositor:summary checks=$st_checks failures=$st_fails\n");
     return (st_fails == 0) ? 0 : 1;
 }
@@ -1920,7 +2034,7 @@ private int interactive (Compositor comp) {
         print ("compositor: no framebuffer available\n");
         return 1;
     }
-    comp.attach (win);
+    comp.attach (win, true);
     print (@"compositor: cursor=$(comp.hardware_cursor () ? "hw" : "sw") screen=$(SCREEN_W)x$(SCREEN_H)\n");
     var loop = new MainLoop ();
     timeout_add (16, () => {

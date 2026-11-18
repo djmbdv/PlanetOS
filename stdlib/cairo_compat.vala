@@ -146,28 +146,145 @@ namespace Cairo {
             font_scale = (s < 1) ? 1 : ((s > 4) ? 4 : s);
         }
 
-        private void put_px (int x, int y) {
+        private void blend_px (int x, int y, int a) {
+            if (a <= 0)
+                return;
             if (x < 0 || y < 0 || x >= surf.width || y >= surf.height)
                 return;
             if (clip_on && (x < clip_x0 || y < clip_y0 || x >= clip_x1 || y >= clip_y1))
                 return;
             int addr = surf.buf_addr + (y * surf.width + x) * 4;
-            if (src_a == 255) {
+            if (a >= 255) {
                 int col = (255 << 24) | (src_r << 16) | (src_g << 8) | src_b;
                 __c_poke32 (addr, col);
                 return;
             }
-            if (src_a == 0)
-                return;
             int dst = __c_peek32 (addr);
             int dr = (dst >> 16) & 0xFF;
             int dg = (dst >> 8) & 0xFF;
             int db = dst & 0xFF;
-            int ia = 255 - src_a;
-            int rr = ((src_r * src_a + dr * ia + 128) * 257) >> 16;
-            int rg = ((src_g * src_a + dg * ia + 128) * 257) >> 16;
-            int rb = ((src_b * src_a + db * ia + 128) * 257) >> 16;
+            int ia = 255 - a;
+            int rr = ((src_r * a + dr * ia + 128) * 257) >> 16;
+            int rg = ((src_g * a + dg * ia + 128) * 257) >> 16;
+            int rb = ((src_b * a + db * ia + 128) * 257) >> 16;
             __c_poke32 (addr, (255 << 24) | (rr << 16) | (rg << 8) | rb);
+        }
+
+        private void put_px (int x, int y) {
+            blend_px (x, y, src_a);
+        }
+
+        // Fills a closed polygon with 4x4 supersampling. Cairo's fill covers
+        // arbitrary paths; the compat layer only had rect/circle, which is not
+        // enough for an SVG path such as the cursor.
+        public void fill_polygon_range (double[] xs, double[] ys, int start, int n) {
+            if (n < 3 || start < 0 || start + n > xs.length || start + n > ys.length)
+                return;
+            double min_x = xs[start];
+            double max_x = xs[start];
+            double min_y = ys[start];
+            double max_y = ys[start];
+            for (int i = start + 1; i < start + n; i++) {
+                if (xs[i] < min_x) min_x = xs[i];
+                if (xs[i] > max_x) max_x = xs[i];
+                if (ys[i] < min_y) min_y = ys[i];
+                if (ys[i] > max_y) max_y = ys[i];
+            }
+            int x0 = (int) min_x;
+            int y0 = (int) min_y;
+            int x1 = (int) max_x + 1;
+            int y1 = (int) max_y + 1;
+            if (min_x < 0) x0 = x0 - 1;
+            if (min_y < 0) y0 = y0 - 1;
+            if (x0 < 0) x0 = 0;
+            if (y0 < 0) y0 = 0;
+            if (x1 > surf.width) x1 = surf.width;
+            if (y1 > surf.height) y1 = surf.height;
+            if (clip_on) {
+                if (x0 < clip_x0) x0 = clip_x0;
+                if (y0 < clip_y0) y0 = clip_y0;
+                if (x1 > clip_x1) x1 = clip_x1;
+                if (y1 > clip_y1) y1 = clip_y1;
+            }
+            if (x1 <= x0 || y1 <= y0)
+                return;
+            for (int y = y0; y < y1; y++) {
+                for (int x = x0; x < x1; x++) {
+                    int hits = 0;
+                    for (int sy = 0; sy < 4; sy++) {
+                        double py = y + (sy + 0.5) / 4.0;
+                        for (int sx = 0; sx < 4; sx++) {
+                            double px = x + (sx + 0.5) / 4.0;
+                            bool inside = false;
+                            int j = start + n - 1;
+                            for (int i = start; i < start + n; i++) {
+                                double yi = ys[i];
+                                double yj = ys[j];
+                                if ((yi > py) != (yj > py)) {
+                                    double xc = (xs[j] - xs[i]) * (py - yi) / (yj - yi) + xs[i];
+                                    if (px < xc)
+                                        inside = !inside;
+                                }
+                                j = i;
+                            }
+                            if (inside)
+                                hits++;
+                        }
+                    }
+                    if (hits > 0)
+                        blend_px (x, y, (src_a * hits + 8) / 16);
+                }
+            }
+        }
+
+        public void fill_polygon (double[] xs, double[] ys, int n) {
+            fill_polygon_range (xs, ys, 0, n);
+        }
+
+        public void clear () {
+            for (int y = 0; y < surf.height; y++)
+                __c_fill32 (surf.buf_addr + (y * surf.width) * 4, 0, surf.width);
+        }
+
+        // Blits a BGRA byte buffer (the layout the VirtIO-GPU cursor uses).
+        public void draw_rgba (uint8[] pix, int w, int h, int dx, int dy) {
+            if (w <= 0 || h <= 0 || pix.length < w * h * 4)
+                return;
+            for (int y = 0; y < h; y++) {
+                int ty = dy + y;
+                if (ty < 0 || ty >= surf.height)
+                    continue;
+                if (clip_on && (ty < clip_y0 || ty >= clip_y1))
+                    continue;
+                for (int x = 0; x < w; x++) {
+                    int tx = dx + x;
+                    if (tx < 0 || tx >= surf.width)
+                        continue;
+                    if (clip_on && (tx < clip_x0 || tx >= clip_x1))
+                        continue;
+                    int off = (y * w + x) * 4;
+                    int a = (int) pix[off + 3];
+                    if (a == 0)
+                        continue;
+                    int r = (int) pix[off + 2];
+                    int g = (int) pix[off + 1];
+                    int b = (int) pix[off + 0];
+                    int addr = surf.buf_addr + (ty * surf.width + tx) * 4;
+                    if (a >= 255) {
+                        __c_poke32 (addr, (255 << 24) | (r << 16) | (g << 8) | b);
+                        continue;
+                    }
+                    int dst = __c_peek32 (addr);
+                    int dr = (dst >> 16) & 0xFF;
+                    int dg = (dst >> 8) & 0xFF;
+                    int db = dst & 0xFF;
+                    int ia = 255 - a;
+                    int rr = ((r * a + dr * ia + 128) * 257) >> 16;
+                    int rg = ((g * a + dg * ia + 128) * 257) >> 16;
+                    int rb = ((b * a + db * ia + 128) * 257) >> 16;
+                    __c_poke32 (addr, (255 << 24) | (rr << 16) | (rg << 8) | rb);
+                }
+            }
         }
 
         public void paint () {

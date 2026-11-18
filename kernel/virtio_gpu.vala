@@ -70,6 +70,7 @@ namespace Planet.Kernel {
     private const int GPU_RES_STRIDE = 32;
     private const int GPU_RES_CTX = 1;
     private const int GPU_RES_BLOB = 2;
+    private const int GPU_RES_3D = 3;
 
     public class VirtioGpu : Object {
         private const int VENDOR_VIRTIO = 0x1AF4;
@@ -102,6 +103,7 @@ namespace Planet.Kernel {
         private const int CMD_CTX_DESTROY             = 0x0201;
         private const int CMD_CTX_ATTACH_RESOURCE     = 0x0202;
         private const int CMD_CTX_DETACH_RESOURCE     = 0x0203;
+        private const int CMD_RESOURCE_CREATE_3D      = 0x0204;
         private const int CMD_SUBMIT_3D               = 0x0207;
         private const int CMD_UPDATE_CURSOR           = 0x0300;
         private const int CMD_MOVE_CURSOR             = 0x0301;
@@ -120,6 +122,10 @@ namespace Planet.Kernel {
 
         private const int BLOB_MEM_GUEST        = 1;
         private const int BLOB_FLAG_USE_MAPPABLE = 1;
+
+        // virgl object flags for RESOURCE_CREATE_3D
+        private const int TARGET_TEXTURE_2D  = 2; // PIPE_TEXTURE_2D
+        private const int VIRGL_BIND_RENDER_TARGET = 1 << 1;
 
         private const int FMT_B8G8R8A8_UNORM = 1;
         private const int FMT_B8G8R8X8_UNORM = 2;
@@ -362,8 +368,11 @@ namespace Planet.Kernel {
             return -1;
         }
 
-        private static void res_clear (int index) {
-            if (index < 0 || vgpu_res_table == 0)
+        private static bool res_exists (int res_id) {
+            return res_find (GPU_RES_BLOB, res_id) >= 0 || res_find (GPU_RES_3D, res_id) >= 0;
+        }
+
+        private static void res_clear (int index) {            if (index < 0 || vgpu_res_table == 0)
                 return;
             int slot = res_slot (index);
             for (int o = 0; o < GPU_RES_STRIDE; o += 4)
@@ -906,7 +915,7 @@ namespace Planet.Kernel {
         public static int create_blob_mapped (int ctx_id, int res_id, int size) {
             if (vgpu_found == 0 || !has_blob () || ctx_id <= 0 || res_id <= 0 || size <= 0)
                 return 0;
-            if (res_find (GPU_RES_BLOB, res_id) >= 0)
+            if (res_exists (res_id))
                 return 0;
             if (size > 256 * 4096)
                 return 0; // cap at 1 MiB per blob, and never silently shrink
@@ -964,14 +973,99 @@ namespace Planet.Kernel {
             return pa;
         }
 
-        // Releases a blob created by create_blob_mapped, and only that blob:
-        // the address, size and context must match the table entry the kernel
-        // recorded, so a bad argument cannot free somebody else's frames.
-        public static bool blob_destroy (int ctx_id, int res_id, int pa, int size) {
+        // Classic VirGL resource path: a 2D texture created through
+        // RESOURCE_CREATE_3D and backed by guest pages. It does not depend on
+        // RESOURCE_BLOB, so it works on hosts where blobs are refused.
+        public static int create_3d_mapped (int ctx_id, int res_id, int width, int height) {
+            if (vgpu_found == 0 || (vgpu_features_lo & F_VIRGL) == 0
+                || ctx_id <= 0 || res_id <= 0 || width <= 0 || height <= 0)
+                return 0;
+            if (res_exists (res_id))
+                return 0;
+            int bytes = width * height * 4;
+            if (bytes <= 0 || bytes > 256 * 4096)
+                return 0;
+            int pages = (bytes + 4095) / 4096;
+            int aligned = pages * 4096;
+            int pa = Pmm.alloc_contiguous (pages);
+            if (pa == 0)
+                return 0;
+
+            // virtio_gpu_resource_create_3d: hdr, resource_id, target, format,
+            // bind, width, height, depth, array_size, last_level, nr_samples,
+            // flags, padding.
+            clear_cmd (72);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_CREATE_3D);
+            mmio_write32 (vgpu_cmd_page + 16, ctx_id);
+            mmio_write32 (vgpu_cmd_page + 24, res_id);
+            mmio_write32 (vgpu_cmd_page + 28, TARGET_TEXTURE_2D);
+            mmio_write32 (vgpu_cmd_page + 32, FMT_B8G8R8A8_UNORM);
+            mmio_write32 (vgpu_cmd_page + 36, VIRGL_BIND_RENDER_TARGET);
+            mmio_write32 (vgpu_cmd_page + 40, width);
+            mmio_write32 (vgpu_cmd_page + 44, height);
+            mmio_write32 (vgpu_cmd_page + 48, 1); // depth
+            mmio_write32 (vgpu_cmd_page + 52, 1); // array_size
+            if (!send_cmd (72, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"res3d_create failed: $(resp_name (resp_type ()))");
+                for (int p = 0; p < pages; p++)
+                    Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+
+            clear_cmd (48);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_ATTACH_BACKING);
+            mmio_write32 (vgpu_cmd_page + 24, res_id);
+            mmio_write32 (vgpu_cmd_page + 28, 1);
+            mmio_write64 (vgpu_cmd_page + 32, pa);
+            mmio_write32 (vgpu_cmd_page + 40, aligned);
+            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"res3d_attach failed: $(resp_name (resp_type ()))");
+                if (resource_unref (res_id))
+                    for (int p = 0; p < pages; p++)
+                        Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+            if (!ctx_attach (ctx_id, res_id)) {
+                Klog.warn (Klog.CAT_GPU, "res3d ctx_attach failed");
+                if (resource_unref (res_id))
+                    for (int p = 0; p < pages; p++)
+                        Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+            int idx = res_alloc (GPU_RES_3D, res_id, ctx_id, pa, aligned, pages);
+            if (idx < 0) {
+                ctx_detach (ctx_id, res_id);
+                if (resource_unref (res_id))
+                    for (int p = 0; p < pages; p++)
+                        Pmm.free_frame (pa + p * 4096);
+                return 0;
+            }
+            int ucr3 = Sched.current_cr3 ();
+            if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES) {
+                if (Vmm.map_user_range_checked (ucr3, pa, aligned) == 0) {
+                    Klog.warn (Klog.CAT_GPU, "res3d map failed: no page tables");
+                    ctx_detach (ctx_id, res_id);
+                    if (resource_unref (res_id))
+                        for (int p = 0; p < pages; p++)
+                            Pmm.free_frame (pa + p * 4096);
+                    res_clear (idx);
+                    return 0;
+                }
+            }
+            return pa;
+        }
+
+        // Releases a GPU resource created by create_blob_mapped or
+        // create_3d_mapped, and only that resource: the address, size and
+        // context must match the table entry the kernel recorded, so a bad
+        // argument cannot free somebody else's frames.
+        public static bool resource_destroy (int ctx_id, int res_id, int pa, int size) {
             if (vgpu_found == 0 || ctx_id <= 0 || res_id <= 0 || pa <= 0 || size <= 0)
                 return false;
             int aligned = align_page (size);
             int idx = res_find (GPU_RES_BLOB, res_id);
+            if (idx < 0)
+                idx = res_find (GPU_RES_3D, res_id);
             if (idx < 0)
                 return false;
             int slot = res_slot (idx);
@@ -1005,7 +1099,8 @@ namespace Planet.Kernel {
                 int slot = res_slot (i);
                 if (mmio_read32 (slot + 0) == 0 || mmio_read32 (slot + 12) != tid)
                     continue;
-                if (mmio_read32 (slot + 4) != GPU_RES_BLOB)
+                if (mmio_read32 (slot + 4) != GPU_RES_BLOB
+                    && mmio_read32 (slot + 4) != GPU_RES_3D)
                     continue;
                 int res_id = mmio_read32 (slot + 8);
                 int ctx_id = mmio_read32 (slot + 16);

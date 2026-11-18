@@ -201,7 +201,7 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_pattern.vala'), '-o', (Out-Path 'frag_pattern.spv'))
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf'))
     Invoke-Planc @('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $StdDir 'gsk_compat.vala'), (Join-Path $UserDir 'vk_demo.vala'), '-o', (Out-Path 'vk_demo.elf'))
-    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'gtk\text.vala'), (Join-Path $StdDir 'gtk\widget.vala'), (Join-Path $StdDir 'gtk\widgets.vala'), (Join-Path $StdDir 'gtk\container.vala'), (Join-Path $StdDir 'gtk\window.vala'), (Join-Path $UserDir 'compositor.vala'), '-o', (Out-Path 'compositor.elf'))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'glib_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'gdk_compat.vala'), (Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'gsk_path.vala'), (Join-Path $StdDir 'gtk\text.vala'), (Join-Path $StdDir 'gtk\widget.vala'), (Join-Path $StdDir 'gtk\widgets.vala'), (Join-Path $StdDir 'gtk\container.vala'), (Join-Path $StdDir 'gtk\window.vala'), (Join-Path $UserDir 'compositor.vala'), '-o', (Out-Path 'compositor.elf'))
     Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'cairo_compat.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf'))
     Invoke-Planc @('--target=planetos', (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf'))
     Invoke-Planc @('--target=planetos', (Join-Path (Join-Path $Root 'planc\src') 'buffer.vala'), (Join-Path (Join-Path $Root 'planc\src') 'host_planetos.vala'), (Join-Path $StdDir 'planet_sys.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'ast.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'preproc.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'lexer.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'parser.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'translator.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'main.vala'), '-o', (Out-Path 'c2vala.elf'))
@@ -289,7 +289,8 @@ if (-not $NoBuild) {
         (Out-Path 'gtk_demo.elf') `
         (Out-Path 'vk_demo.elf') `
         (Join-Path (Join-Path $Root 'assets') 'LiberationSans-Regular.ttf') `
-        (Join-Path (Join-Path $Root 'assets') 'LiberationMono-Regular.ttf')
+        (Join-Path (Join-Path $Root 'assets') 'LiberationMono-Regular.ttf') `
+        (Join-Path $Root 'cursor.svg')
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'
     }

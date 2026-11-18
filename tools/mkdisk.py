@@ -6,6 +6,7 @@ Usage:
               <worker.elf> <wc.elf> <cairo_demo.elf> <frag.spv> <spv_demo.elf>
               <gio_demo.elf> <utf8.vala> <class_basic.vala>
               <gobject_demo.elf> <gmodule_demo.elf> <mainloop_demo.elf> <compositor.elf> <pango_demo.elf> <jsmn_demo.elf> <c2vala.elf> <arith.c> <frag_pattern.spv>
+              <gtk_demo.elf> <vk_demo.elf> <LiberationSans-Regular.ttf> <LiberationMono-Regular.ttf> <cursor.svg>
 
 Shared by run-qemu.sh and run-qemu.ps1 so both launchers produce the same
 image layout.
@@ -14,7 +15,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 27  # image + 26 files
+ARG_COUNT = 28  # image + 27 files
 
 
 def blk(b):
@@ -52,6 +53,7 @@ def main():
     vk_b = open(sys.argv[24], "rb").read()
     lsans_b = open(sys.argv[25], "rb").read()
     lmono_b = open(sys.argv[26], "rb").read()
+    cur_b = open(sys.argv[27], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -79,7 +81,8 @@ def main():
     b_vk = b_gt + blk(gt_b)
     b_lsans = b_vk + blk(vk_b)
     b_lmono = b_lsans + blk(lsans_b)
-    INO_BLK = max(1000, b_lmono + blk(lmono_b) + 4)
+    b_cur = b_lmono + blk(lmono_b)
+    INO_BLK = max(1000, b_cur + blk(cur_b) + 4)
     total_blocks = max(1024, INO_BLK + 4)
     img = bytearray(total_blocks * 4096)
 
@@ -126,6 +129,7 @@ def main():
         (b"vk_demo.elf", vk_b, b_vk, 0x81ED),
         (b"LiberationSans-Regular.ttf", lsans_b, b_lsans, 0x81A4),
         (b"LiberationMono-Regular.ttf", lmono_b, b_lmono, 0x81A4),
+        (b"cursor.svg", cur_b, b_cur, 0x81A4),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

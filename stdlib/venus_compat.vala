@@ -174,6 +174,7 @@ namespace Venus {
         public bool virgl { get; private set; }
         public bool context { get; private set; }
         public bool submit { get; private set; }
+        public bool res3d { get; private set; }
         public bool blob { get; private set; }
         public bool venus_ctx { get; private set; }
         public bool cleanup { get; private set; }
@@ -195,13 +196,22 @@ namespace Venus {
             if (Sys.gpu_submit_3d (ctx_id, nop, 4) == 0)
                 submit = true;
 
+            int res3d_id = 0x101;
+            int res3d_bytes = 16 * 16 * 4;
+            int res3d_pa = Sys.gpu_3d_create (ctx_id, res3d_id, 16, 16);
+            if (res3d_pa != 0) {
+                res3d = true;
+                if (Sys.gpu_resource_destroy (ctx_id, res3d_id, res3d_pa, res3d_bytes) != 0)
+                    cleanup = false;
+            }
+
             if (caps.blob) {
                 int res_id = 0x100;
                 int size = 4096;
                 int pa = Sys.gpu_blob_create (ctx_id, res_id, size);
                 if (pa != 0) {
                     blob = true;
-                    if (Sys.gpu_blob_destroy (ctx_id, res_id, pa, size) != 0)
+                    if (Sys.gpu_resource_destroy (ctx_id, res_id, pa, size) != 0)
                         cleanup = false;
                 }
             }
@@ -224,14 +234,14 @@ namespace Venus {
                 return "skipped (no virtio-gpu)";
             if (!virgl)
                 return "skipped (no virgl)";
-            return @"ctx=$(context ? 1 : 0) submit=$(submit ? 1 : 0) blob=$(blob ? 1 : 0) venus=$(venus_ctx ? 1 : 0) cleanup=$(cleanup ? 1 : 0)";
+            return @"ctx=$(context ? 1 : 0) submit=$(submit ? 1 : 0) res3d=$(res3d ? 1 : 0) blob=$(blob ? 1 : 0) venus=$(venus_ctx ? 1 : 0) cleanup=$(cleanup ? 1 : 0)";
         }
 
         // A device without VirGL has nothing to probe, so skipping is success.
         public bool ok () {
             if (!present || !virgl)
                 return true;
-            return context && submit && cleanup;
+            return context && submit && res3d && cleanup;
         }
     }
 

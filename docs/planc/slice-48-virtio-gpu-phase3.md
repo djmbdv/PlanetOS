@@ -46,10 +46,11 @@ page count. On top of it:
 
 - `ctx_detach` (`CTX_DETACH_RESOURCE`, `0x0203`) and `resource_unref`
   (`RESOURCE_UNREF`, `0x0102`) complete the lifecycle.
-- `blob_destroy` only releases a blob the kernel recorded for the calling
-  task with the same context, address and size, so a bad argument cannot free
-  frames that belong to somebody else. It unmaps the user range before
-  returning the frames to the PMM.
+- `resource_destroy` (named `blob_destroy` in this slice, generalised in
+  [slice 49](slice-49-gpu-res3d-and-svg-cursor.md)) only releases a resource
+  the kernel recorded for the calling task with the same context, address and
+  size, so a bad argument cannot free frames that belong to somebody else. It
+  unmaps the user range before returning the frames to the PMM.
 - `create_blob_mapped` uses `Vmm.map_user_range_checked` and unwinds the
   blob, the attach and the frames when the mapping fails, instead of handing
   userland an address whose first write would fault.
@@ -57,7 +58,8 @@ page count. On top of it:
   destroyed: it detaches/unrefs/ frees the task's blobs and destroys its
   contexts.
 
-`SYS_GPU_BLOB_DESTROY` (46) exposes the blob release to userland.
+`SYS_GPU_RESOURCE_DESTROY` (46) exposes the release to userland; slice 49
+extends the same entry to 3D resources and adds `SYS_GPU_3D_CREATE` (47).
 
 ## 3. Probe
 
@@ -70,7 +72,7 @@ gpu: present=1 virgl=1 blob=1 ctx=1 venus=0 display=1280x800
 
 planet> gpu probe
 gpu: present=1 virgl=1 blob=1 ctx=1 venus=0 display=1280x800
-gpu: probe ctx=1 submit=1 blob=0 venus=0 cleanup=1
+gpu: probe ctx=1 submit=1 res3d=1 blob=0 venus=0 cleanup=1
 ```
 
 `gpu` reads `SYS_GPU_INFO`. `gpu probe` runs `vk_demo.elf --probe`, which uses
@@ -102,7 +104,7 @@ That covers the absent-device path and the `!fault:` assertion.
 ```
 virtio_gpu:found=1 w=1280 h=800 virgl=1 blob=1 ctx=1 venus=0
 ...
-gpu: probe ctx=1 submit=1 blob=0 venus=0 cleanup=1
+gpu: probe ctx=1 submit=1 res3d=1 blob=0 venus=0 cleanup=1
 ```
 
 Running `gpu probe` twice in the same boot produces the same result, which is
@@ -141,8 +143,8 @@ for the whole session.
 
 ## 7. Next
 
-1. `RESOURCE_CREATE_3D` + attach/detach for the classic VirGL resource path,
-   which works without blobs.
+1. ~~`RESOURCE_CREATE_3D` + attach for the classic VirGL resource path.~~ Done
+   in [slice 49](slice-49-gpu-res3d-and-svg-cursor.md).
 2. HOST3D blob + `RESOURCE_MAP_BLOB`/`UNMAP_BLOB` once the host accepts blobs.
 3. Venus command ring and `vkQueueSubmit` encoding over the blob, then wire
    `GpuDevice` to submit the commands it already encodes.

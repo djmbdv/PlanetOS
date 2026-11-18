@@ -111,14 +111,41 @@ namespace Planet.Kernel {
             reserve_range (0x800000, 0x800000);
         }
 
-        public static int alloc_frame () {
-            int first_free = KernelLayout.RESERVED_END / PAGE_SIZE;
+        // Frame zeroing and poisoning are scratch writes to a physical page. A
+        // user CR3 can have that page unmapped (a resource destroy unmaps it
+        // before releasing the frame), so do them under the kernel identity map
+        // and restore the caller's CR3 afterwards.
+        private static int kernel_cr3_enter () {
+            int cur = vmm_read_cr3 ();
+            if (cur != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (KernelLayout.PAGE_TABLES);
+            return cur;
+        }
+
+        private static void kernel_cr3_leave (int saved) {
+            if (saved != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (saved);
+        }
+
+        private static void zero_frame (int phys) {
+            int saved = kernel_cr3_enter ();
+            zero_page_4k (phys);
+            kernel_cr3_leave (saved);
+        }
+
+        private static void poison_frame (int phys) {
+            int saved = kernel_cr3_enter ();
+            poison_page_4k (phys);
+            kernel_cr3_leave (saved);
+        }
+
+        public static int alloc_frame () {            int first_free = KernelLayout.RESERVED_END / PAGE_SIZE;
             for (int f = first_free; f < pmm_total_frames; f++) {
                 if (!test_bit (f)) {
                     set_bit (f);
                     pmm_free_count = pmm_free_count - 1;
                     int phys = f * PAGE_SIZE;
-                    zero_page_4k (phys);
+                    zero_frame (phys);
                     return phys;
                 }
             }
@@ -136,7 +163,7 @@ namespace Planet.Kernel {
                 print ("pmm:double_free\n");
                 return;
             }
-            poison_page_4k (phys);
+            poison_frame (phys);
             clear_bit (f);
             pmm_free_count = pmm_free_count + 1;
         }
@@ -156,8 +183,15 @@ namespace Planet.Kernel {
                         for (int k = 0; k < num_pages; k++) {
                             set_bit (start_f + k);
                             pmm_free_count = pmm_free_count - 1;
-                            zero_page_4k ((start_f + k) * PAGE_SIZE);
                         }
+                        // The caller may run with a user CR3 where the frames
+                        // were unmapped by a previous destroy. Zeroing through
+                        // that CR3 would fault, so use the kernel's identity map
+                        // for the whole run.
+                        int saved = kernel_cr3_enter ();
+                        for (int k = 0; k < num_pages; k++)
+                            zero_page_4k ((start_f + k) * PAGE_SIZE);
+                        kernel_cr3_leave (saved);
                         return start_f * PAGE_SIZE;
                     }
                 } else {

@@ -286,8 +286,12 @@ namespace Planet {
             return __sys4 (43, ctx_id, res_id, size, 0);
         }
 
-        public static int gpu_blob_destroy (int ctx_id, int res_id, int pa, int size) {
+        public static int gpu_resource_destroy (int ctx_id, int res_id, int pa, int size) {
             return __sys4 (46, ctx_id, res_id, pa, size);
+        }
+
+        public static int gpu_3d_create (int ctx_id, int res_id, int width, int height) {
+            return __sys4 (47, ctx_id, res_id, width, height);
         }
 
         // --- kernel log ----------------------------------------------------
