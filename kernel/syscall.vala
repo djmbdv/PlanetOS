@@ -108,11 +108,12 @@ namespace Planet.Kernel {
             int in_fd = Sched.get_stdio_in ();
             if (in_fd >= 3 && in_fd < MAX_FDS) {
                 int slot = KernelLayout.FD_TABLE + in_fd * 32;
-                if (mmio_read64 (slot) == 2) {
+                int fkind = mmio_read64 (slot);
+                if (fkind == 1 || fkind == 2) {
                     int rslot = mmio_read64 (slot + 8);
                     int pos = mmio_read64 (slot + 24);
                     int bbuf = KernelLayout.SYSCALL_SCRATCH;
-                    int nr = Ramfs.read (rslot, pos, bbuf, 1);
+                    int nr = (fkind == 1) ? Xfs.read_file (rslot, pos, bbuf, 1) : Ramfs.read (rslot, pos, bbuf, 1);
                     if (nr <= 0)
                         return -2; // EOF
                     mmio_write64 (slot + 24, pos + 1);

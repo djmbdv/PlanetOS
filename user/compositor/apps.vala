@@ -576,34 +576,14 @@ namespace Wm {
                 return;
             }
             if (nm.has_suffix (".desktop")) {
-                int dfd = Sys.open (fp);
-                if (dfd >= 0) {
-                    var dbuf = new uint8[512];
-                    int dnr = Sys.read (dfd, dbuf, 511);
-                    Sys.close (dfd);
-                    if (dnr > 0) {
-                        var dsl = new uint8[dnr];
-                        for (int i = 0; i < dnr; i++)
-                            dsl[i] = dbuf[i];
-                        string raw = __planc_host_bytes_to_str (dsl, dnr);
-                        string exec_nm = "";
-                        string app_nm = nm;
-                        bool term_app = false;
-                        int start = 0;
-                        for (int i = 0; i <= raw.length; i++) {
-                            if (i == raw.length || raw[i] == '\n' || raw[i] == '\r') {
-                                if (i > start) {
-                                    string ln = raw.substring (start, i - start);
-                                    if (ln.has_prefix ("Exec="))
-                                        exec_nm = ln.substring (5, ln.length - 5);
-                                    else if (ln.has_prefix ("Name="))
-                                        app_nm = ln.substring (5, ln.length - 5);
-                                    else if (ln == "Terminal=true")
-                                        term_app = true;
-                                }
-                                start = i + 1;
-                            }
-                        }
+                var kf = new KeyFile ();
+                try {
+                    if (kf.load_from_file (fp)) {
+                        string exec_nm = kf.get_string ("Desktop Entry", "Exec");
+                        string app_nm = kf.get_string ("Desktop Entry", "Name");
+                        if (app_nm.length == 0)
+                            app_nm = nm;
+                        bool term_app = kf.get_boolean ("Desktop Entry", "Terminal");
                         if (exec_nm.length > 0) {
                             if (term_app) {
                                 run_cli_capture (exec_nm, app_nm);
@@ -616,6 +596,10 @@ namespace Wm {
                             return;
                         }
                     }
+                } catch (KeyFileError ke) {
+                    if (status != null)
+                        status.set_text (@"Desktop error: $(ke.message)");
+                    return;
                 }
             }
             if (nm.has_suffix (".elf") || nm.has_suffix (".plan")) {

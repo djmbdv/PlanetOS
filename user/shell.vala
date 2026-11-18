@@ -661,6 +661,51 @@ namespace PlanetShell {
             print (contents);
             return 0;
         }
+        if (cmd == "grep") {
+            if (args.length < 2) {
+                print ("usage: grep <regex> [file]\n");
+                return 1;
+            }
+            Regex re;
+            try {
+                re = new Regex (args[1]);
+            } catch (RegexError e) {
+                print (@"grep: $(e.message)\n");
+                return 2;
+            }
+            string contents = "";
+            if (args.length >= 3) {
+                if (!FileUtils.get_contents (canonical_path (abs_path (args[2])), out contents)) {
+                    print ("grep: not found\n");
+                    return 1;
+                }
+            } else {
+                var sb = new StringBuilder ();
+                while (true) {
+                    int ch = Sys.read_key ();
+                    if (ch == -2) break;
+                    if (ch < 0) { Sys.yield_cpu (); continue; }
+                    sb.append_c ((char) ch);
+                }
+                contents = sb.str;
+            }
+            int st = 0;
+            bool any = false;
+            for (int i = 0; i <= contents.length; i++) {
+                if (i == contents.length || contents[i] == '\n') {
+                    if (i > st) {
+                        string ln = contents.substring (st, i - st);
+                        MatchInfo? mi = null;
+                        if (re.match (ln, out mi)) {
+                            print (@"$ln\n");
+                            any = true;
+                        }
+                    }
+                    st = i + 1;
+                }
+            }
+            return any ? 0 : 1;
+        }
         if (cmd == "write") {
             if (args.length < 2) {
                 print ("usage: write <file> <text>\n");

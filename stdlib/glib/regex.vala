@@ -100,6 +100,9 @@ namespace GLib {
     public class Regex : Object {
         private GenericArray<ReNode> nodes;
         private GenericArray<uint8> ccl_buf;
+        private ReNode unused_node = new ReNode (ReKind.UNUSED);
+        private bool has_first_ch = false;
+        private uint8 first_ch = 0;
         private string pattern_str;
 
         // Character helpers derived from tiny-regex-c (via c2vala).
@@ -245,7 +248,7 @@ namespace GLib {
             int ti = t_idx;
             while (true) {
                 ReNode p0 = nodes[pi];
-                ReNode p1 = (pi + 1 < nodes.length) ? nodes[pi + 1] : new ReNode (ReKind.UNUSED);
+                ReNode p1 = (pi + 1 < nodes.length) ? nodes[pi + 1] : unused_node;
                 if (p0.kind == ReKind.UNUSED)
                     return true;
                 if (p1.kind == ReKind.QUESTIONMARK)
@@ -338,7 +341,14 @@ namespace GLib {
                 }
                 i++;
             }
-            nodes.add (new ReNode (ReKind.UNUSED));
+            nodes.add (unused_node);
+            if (nodes.length >= 2 && nodes[0].kind == ReKind.CHAR) {
+                ReKind k1 = nodes[1].kind;
+                if (k1 != ReKind.STAR && k1 != ReKind.QUESTIONMARK) {
+                    has_first_ch = true;
+                    first_ch = nodes[0].ch;
+                }
+            }
         }
 
         public string get_pattern () {
@@ -362,6 +372,12 @@ namespace GLib {
                 return false;
             }
             for (int pos = start_at; pos <= text.length; pos++) {
+                if (has_first_ch) {
+                    while (pos < text.length && (uint8) text[pos] != first_ch)
+                        pos++;
+                    if (pos >= text.length)
+                        return false;
+                }
                 int ml = 0;
                 if (match_pattern (0, text, pos, ref ml)) {
                     if (pos == text.length && ml == 0)
@@ -393,16 +409,15 @@ namespace GLib {
         }
 
         public string replace (string str, string replacement) {
+            int first_idx = -1;
+            int first_ml = 0;
+            if (!find_from (str, 0, out first_idx, out first_ml))
+                return str;
             var sb = new StringBuilder ("");
             int pos = 0;
-            while (pos <= str.length) {
-                int idx = -1;
-                int ml = 0;
-                if (!find_from (str, pos, out idx, out ml)) {
-                    if (pos < str.length)
-                        sb.append (str.substring (pos));
-                    break;
-                }
+            int idx = first_idx;
+            int ml = first_ml;
+            while (true) {
                 if (idx > pos)
                     sb.append (str.substring (pos, idx - pos));
                 sb.append (replacement);
@@ -412,6 +427,11 @@ namespace GLib {
                     pos = idx + 1;
                 } else {
                     pos = idx + ml;
+                }
+                if (pos > str.length || !find_from (str, pos, out idx, out ml)) {
+                    if (pos < str.length)
+                        sb.append (str.substring (pos));
+                    break;
                 }
             }
             return sb.str;
