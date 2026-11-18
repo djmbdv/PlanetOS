@@ -128,7 +128,7 @@ namespace Planc {
             var atypes = new GenericArray<ValaType> ();
             var anames = new GenericArray<string> ();
             while (true) {
-                bool mem_is_weak = parse_ownership_weak ();
+                parse_ownership_weak ();
                 ValaType at = ValaType.VOID;
                 string an = "";
                 if (current.kind != TokenKind.IDENTIFIER
@@ -990,7 +990,7 @@ namespace Planc {
                     else is_virt = true;
                     advance ();
                 }
-                bool mem_is_weak = parse_ownership_weak ();
+                parse_ownership_weak ();
                 var ml = current.line;
                 var mc = current.column;
                 ValaType rt = ValaType.VOID;
@@ -1262,7 +1262,7 @@ namespace Planc {
                         is_static = true;
                         advance ();
                     }
-                    bool mem_is_weak = parse_ownership_weak ();
+                    parse_ownership_weak ();
                     var ml = current.line;
                     var mc = current.column;
                     ValaType rt = ValaType.VOID;
@@ -1319,7 +1319,7 @@ namespace Planc {
                     throw new ParseError.UNEXPECTED_TOKEN (@"unterminated property '$mname' at $mem_l:$mem_c");
                 while (current.kind == TokenKind.IDENTIFIER && is_visibility_modifier (current.text))
                     advance ();
-                bool mem_is_weak = parse_ownership_weak ();
+                parse_ownership_weak ();
                 if (current.kind == TokenKind.IDENTIFIER && current.text == "default") {
                     if (!is_class)
                         throw new ParseError.UNEXPECTED_TOKEN (
@@ -1501,7 +1501,7 @@ namespace Planc {
                     is_static = true;
                     advance ();
                 }
-                bool mem_is_weak = parse_ownership_weak ();
+                parse_ownership_weak ();
                 ValaType ft = ValaType.VOID;
                 string ft_name = "";
                 if (current.kind != TokenKind.IDENTIFIER
@@ -1624,7 +1624,7 @@ namespace Planc {
                         is_out = true;
                         advance ();
                     }
-                    bool mem_is_weak = parse_ownership_weak ();
+                    parse_ownership_weak ();
                     ValaType pt = ValaType.VOID;
                     string pt_name = "";
                     if (current.kind != TokenKind.IDENTIFIER
@@ -2371,7 +2371,7 @@ namespace Planc {
                 if (name == "foreach") {
                     advance ();
                     expect (TokenKind.LPAREN, "'('");
-                    bool mem_is_weak = parse_ownership_weak ();
+                    parse_ownership_weak ();
                     bool infer_v = false;
                     ValaType vt = ValaType.VOID;
                     string vt_name = "";

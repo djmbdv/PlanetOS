@@ -67,6 +67,8 @@ namespace Gdk {
         private int last_mx = -1;
         private int last_my = -1;
         private int last_mb = 0;
+        public string comp_file = "";
+        private int comp_seq = 0;
 
         public Window (int w, int h) {
             width = w;
@@ -75,16 +77,66 @@ namespace Gdk {
             mouse_buf = Sys.alloc_pages (1);
         }
 
+        public Window.compositor_surface (int w, int h, string file_path) {
+            width = w;
+            height = h;
+            comp_file = file_path;
+            surface = new ImageSurface (Format.ARGB32, w, h);
+        }
+
         public Context create_cairo_context () {
             return new Context (surface);
         }
 
+        private void flush_to_comp_file () {
+            int fd = Sys.create (comp_file);
+            if (fd < 0)
+                return;
+            comp_seq = comp_seq + 1;
+            var hdr = new uint8[16];
+            // Magic "PWIN" = 0x5057494E
+            hdr[0] = 0x4E; hdr[1] = 0x49; hdr[2] = 0x57; hdr[3] = 0x50;
+            hdr[4] = (uint8) (width & 0xFF);
+            hdr[5] = (uint8) ((width >> 8) & 0xFF);
+            hdr[6] = (uint8) ((width >> 16) & 0xFF);
+            hdr[7] = (uint8) ((width >> 24) & 0xFF);
+            hdr[8] = (uint8) (height & 0xFF);
+            hdr[9] = (uint8) ((height >> 8) & 0xFF);
+            hdr[10] = (uint8) ((height >> 16) & 0xFF);
+            hdr[11] = (uint8) ((height >> 24) & 0xFF);
+            hdr[12] = (uint8) (comp_seq & 0xFF);
+            hdr[13] = (uint8) ((comp_seq >> 8) & 0xFF);
+            hdr[14] = (uint8) ((comp_seq >> 16) & 0xFF);
+            hdr[15] = (uint8) ((comp_seq >> 24) & 0xFF);
+            Sys.write (fd, hdr, 16);
+            int total = width * height * 4;
+            int off = 0;
+            while (off < total) {
+                int chunk = total - off;
+                if (chunk > 65536)
+                    chunk = 65536;
+                int w = Sys.sys (15, fd, surface.buf_addr + off, chunk);
+                if (w <= 0)
+                    break;
+                off = off + w;
+            }
+            Sys.close (fd);
+        }
+
         public void present () {
+            if (comp_file.length > 0) {
+                flush_to_comp_file ();
+                return;
+            }
             Sys.sys (22, surface.buf_addr, width, height);
         }
 
         // Blits one dirty rectangle instead of the whole surface (SYS_FB_BLIT_RECT).
         public void present_rect (int x, int y, int w, int h) {
+            if (comp_file.length > 0) {
+                flush_to_comp_file ();
+                return;
+            }
             if (w <= 0 || h <= 0 || x < 0 || y < 0)
                 return;
             if (x + w > width) w = width - x;
@@ -118,6 +170,8 @@ namespace Gdk {
 
         public Event poll_event () {
             var ev = new Event ();
+            if (comp_file.length > 0)
+                return ev;
             int key = Sys.read_key ();
             if (key > 0) {
                 ev.type = EventType.KEY_PRESS;
@@ -162,7 +216,11 @@ namespace Gdk {
         }
 
         public void close () {
-            Sys.sys (23, 0, 0, 0);
+            if (comp_file.length > 0) {
+                Sys.unlink (comp_file);
+            } else {
+                Sys.sys (23, 0, 0, 0);
+            }
             if (mouse_buf != 0) {
                 Sys.free_page (mouse_buf);
                 mouse_buf = 0;
@@ -177,7 +235,26 @@ namespace Gdk {
     }
 
     public class Display : Object {
+        private static int parse_pos_int (string s, int fallback) {
+            if (s.length == 0)
+                return fallback;
+            int v = 0;
+            for (int i = 0; i < s.length; i++) {
+                uint8 c = (uint8) s[i];
+                if (c < '0' || c > '9')
+                    return fallback;
+                v = v * 10 + (int) (c - '0');
+            }
+            return (v >= 64) ? v : fallback;
+        }
+
         public static Window? open_window (int w = 800, int h = 600) {
+            string comp_path = Sys.getenv ("PLANET_WIN_FILE");
+            if (comp_path.length > 0) {
+                int cw = parse_pos_int (Sys.getenv ("PLANET_WIN_W"), w);
+                int ch = parse_pos_int (Sys.getenv ("PLANET_WIN_H"), h);
+                return new Window.compositor_surface (cw, ch, comp_path);
+            }
             int fb = Sys.sys (21, w, h, 0);
             if (fb == 0)
                 return null;

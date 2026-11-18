@@ -24,7 +24,7 @@ namespace GModuleDemo {
         check ("not-supported", !Module.supported ());
 
         try {
-            var handle = Module.open ("libdemo.so");
+            Module.open ("libdemo.so");
             check ("open-refused", false);
         } catch (ModuleError e) {
             check ("open-refused", true);
@@ -56,7 +56,7 @@ namespace GModuleDemo {
         }
 
         try {
-            var missing = Module.open_static ("missing");
+            Module.open_static ("missing");
             check ("open-missing", false);
         } catch (ModuleError e) {
             check ("open-missing", true);

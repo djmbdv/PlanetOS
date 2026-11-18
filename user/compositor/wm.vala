@@ -1,18 +1,4 @@
-// PlanetOS compositor -- an Openbox-style window manager with Gala-inspired
-// visuals, written in 100% Vala.
-//
-// There is no Mutter, no X11 and no Wayland here. Window management is a pure
-// Vala model (Win/Compositor) and the screen is painted through Gdk + Cairo
-// into the framebuffer. The fragment stage is fed by the SPIR-V module
-// (frag.spv) through Module: the same IR a Vulkan backend will upload once
-// an ICD exists (docs/planc/slice-38.md, decision D-13).
-//
-// Usage:
-//   compositor.elf                 interactive session (framebuffer)
-//   compositor.elf --self-test     headless model + render smoke test
-//   compositor.elf --no-shader     ignore frag.spv, use the built-in accent
-//   compositor.elf --shader FILE   load another SPIR-V fragment module
-
+// Compositor window manager, damage tracking, input, shader, and rendering.
 using GLib;
 using Planet;
 using Pango;
@@ -25,281 +11,6 @@ using Gsk;
 using Wm;
 
 namespace Wm {
-    public const int SCREEN_W = 1280;
-    public const int SCREEN_H = 720;
-    public const int TOP_H = 26;
-    public const int DOCK_H = 34;
-    public const int TITLE_H = 26;
-    public const int BORDER = 1;
-    public const int SHADOW = 2;
-    public const int BTN = 16;
-    public const int BTN_GAP = 4;
-    public const int DOCK_X0 = 10;
-    public const int DOCK_BTN_W = 132;
-    public const int DOCK_BTN_GAP = 6;
-    public const int MOVE_STEP = 8;
-    public const int WORK_H = 540; // SCREEN_H - TOP_H - DOCK_H
-
-    public const int ACT_NONE = 0;
-    public const int ACT_FOCUS = 1;
-    public const int ACT_DRAG = 2;
-    public const int ACT_CLOSE = 3;
-    public const int ACT_MAXIMIZE = 4;
-    public const int ACT_DOCK = 5;
-
-    public const int BACKEND_CAIRO = 0;
-    public const int BACKEND_VULKAN = 1;
-
-    public const int LAYOUT_NORMAL = 0;
-    public const int LAYOUT_MAX = 1;
-    public const int LAYOUT_LEFT = 2;
-    public const int LAYOUT_RIGHT = 3;
-
-    public const int DMG_RECTS = 32;
-    public const int PAT_STEP = 8;
-
-    public enum Kind { TERMINAL, CLOCK, SHADER, NOTES, GTK }
-
-    public class GtkCompState : Object {
-        public int clicks = 0;
-    }
-
-    public class VteTerminal : Object {
-        public GenericArray<string> lines;
-        public string input = "";
-        public bool active = false;
-
-        public VteTerminal () {
-            lines = new GenericArray<string> ();
-            lines.add ("PlanetOS VTE v0.1 (click & type 'help')");
-        }
-
-        private void push_line (string s) {
-            lines.add (s);
-            if (lines.length > 64)
-                lines.remove_index (0);
-        }
-
-        private static string bytes_to_str (uint8[] buf, int off, int len) {
-            var sb = new StringBuilder ("");
-            for (int i = 0; i < len; i++) {
-                uint8 c = buf[off + i];
-                if (c >= 32 && c < 127)
-                    sb.append_c ((char) c);
-            }
-            return sb.str;
-        }
-
-        private static string trim_str (string s) {
-            int a = 0;
-            int b = s.length;
-            while (a < b && s[a] == ' ') a++;
-            while (b > a && s[b - 1] == ' ') b--;
-            return s.substring (a, b - a);
-        }
-
-        private void run_cmd (string raw) {
-            string cmd = trim_str (raw);
-            push_line ("planet> " + cmd);
-            if (cmd == "")
-                return;
-            if (cmd == "help") {
-                push_line ("cmds: help ls cat ticks uname echo clear");
-            } else if (cmd == "clear") {
-                lines.length = 0;
-            } else if (cmd == "uname") {
-                push_line ("PlanetOS x86_64 Long Mode (Ring 3 + VTE)");
-            } else if (cmd == "ticks") {
-                push_line (@"ticks: $(Sys.ticks ())");
-            } else if (cmd.has_prefix ("echo ")) {
-                push_line (cmd.substring (5, cmd.length - 5));
-            } else if (cmd == "ls") {
-                var buf = new uint8[2048];
-                int n = Sys.readdir_path ("/", buf, 2048);
-                if (n <= 0) {
-                    push_line ("(empty)");
-                    return;
-                }
-                string cur = "";
-                int start = 0;
-                for (int i = 0; i <= n; i++) {
-                    if (i == n || buf[i] == 0 || buf[i] == '\n') {
-                        if (i > start) {
-                            string name = bytes_to_str (buf, start, i - start);
-                            if (cur.length + name.length + 1 > 40) {
-                                push_line (cur);
-                                cur = name;
-                            } else {
-                                cur = (cur.length > 0) ? (cur + " " + name) : name;
-                            }
-                        }
-                        start = i + 1;
-                    }
-                }
-                if (cur.length > 0)
-                    push_line (cur);
-            } else if (cmd.has_prefix ("cat ")) {
-                string path = trim_str (cmd.substring (4, cmd.length - 4));
-                int fd = Sys.open (path);
-                if (fd < 0) {
-                    push_line (@"cat: not found: $path");
-                } else {
-                    var fbuf = new uint8[512];
-                    int nr = Sys.read (fd, fbuf, 511);
-                    Sys.close (fd);
-                    if (nr > 0) {
-                        int st = 0;
-                        for (int i = 0; i <= nr; i++) {
-                            if (i == nr || fbuf[i] == '\n') {
-                                if (i > st)
-                                    push_line (bytes_to_str (fbuf, st, i - st));
-                                st = i + 1;
-                            }
-                        }
-                    }
-                }
-            } else {
-                push_line (@"unknown: $cmd");
-            }
-        }
-
-        public bool on_key_press (int key) {
-            if (!active)
-                return false;
-            if (key == '\n' || key == '\r') {
-                string cmd = input.substring (0, input.length);
-                input = "";
-                run_cmd (cmd);
-                return true;
-            }
-            if (key == 8 || key == 127) {
-                if (input.length > 0)
-                    input = input.substring (0, input.length - 1);
-                return true;
-            }
-            if (key >= 32 && key < 127) {
-                string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-                input = input + ascii.substring (key - 32, 1);
-                return true;
-            }
-            return false;
-        }
-
-        public void draw (Context cr, int cx, int cy, int cw, int ch, bool focused, double ar, double ag, double ab) {
-            cr.set_source_rgb (0.051, 0.063, 0.090);
-            cr.rectangle (cx, cy, cw, ch);
-            cr.fill ();
-            int row_h = 18;
-            int max_rows = (ch - 12) / row_h;
-            if (max_rows < 2) max_rows = 2;
-            int hist_rows = max_rows - 1;
-            int start = (lines.length > hist_rows) ? (lines.length - hist_rows) : 0;
-            int y = cy + 8;
-            cr.set_source_rgb (0.78, 0.83, 0.90);
-            for (int i = start; i < lines.length; i++) {
-                TextHelper.draw_mono (cr, lines[i], cx + 10, y, 14.0);
-                y += row_h;
-            }
-            cr.set_source_rgb (ar, ag, ab);
-            string prompt = "planet> " + input + (focused ? "_" : "");
-            TextHelper.draw_mono (cr, prompt, cx + 10, y, 14.0);
-        }
-    }
-
-    public class Win : Object {
-        public int id;
-        public string title;
-        public Kind kind;
-        public int x;
-        public int y;
-        public int w;
-        public int h;
-        public int z;
-        public bool alive = true;
-        public bool maximized = false;
-        public int layout_state = 0;
-        public int rx;
-        public int ry;
-        public int rw;
-        public int rh;
-        public Box? gtk_root = null;
-        public VteTerminal? term = null;
-
-        public Win (int id, string title, int x, int y, int w, int h, Kind kind) {
-            this.id = id;
-            this.title = title;
-            this.x = x;
-            this.y = y;
-            this.w = w;
-            this.h = h;
-            this.kind = kind;
-            if (kind == Kind.TERMINAL) {
-                term = new VteTerminal ();
-            } else if (kind == Kind.GTK) {
-                var box = new Box (Orientation.VERTICAL, 8);
-                var lbl = new Label ("GTK + TrueType (7)");
-                lbl.font_size = 18.0;
-                var ent = new Entry ("PlanetOS 7");
-                var chk = new CheckButton ("Auto-progress", true);
-                var pbar = new ProgressBar ();
-                pbar.set_text ("0%");
-                var st_lbl = new Label ("Clicks: 0");
-                var gst = new GtkCompState ();
-                var btn = new Button ("Increment (+1)");
-                btn.clicked.connect ((sender) => {
-                    gst.clicks = gst.clicks + 1;
-                    st_lbl.set_text (@"Clicks: $(gst.clicks) | $(ent.get_text ())");
-                    if (chk.get_active ()) {
-                        int pct = (gst.clicks * 10) % 110;
-                        if (pct > 100) pct = 100;
-                        pbar.set_fraction ((double) pct / 100.0);
-                        pbar.set_text (@"$pct%");
-                    }
-                });
-                box.pack_start (lbl);
-                box.pack_start (ent);
-                box.pack_start (chk);
-                box.pack_start (pbar);
-                box.pack_start (new Separator ());
-                box.pack_start (btn);
-                box.pack_start (st_lbl);
-                gtk_root = box;
-            }
-        }
-
-        public bool contains (int px, int py) {
-            return px >= x && px < x + w && py >= y && py < y + h;
-        }
-
-        public bool in_title (int px, int py) {
-            return px >= x + BORDER && px < x + w - BORDER
-                && py >= y + BORDER && py < y + BORDER + TITLE_H;
-        }
-
-        public int close_x () { return x + w - BORDER - BTN_GAP - BTN; }
-        public int max_x () { return x + w - BORDER - BTN_GAP - BTN - BTN_GAP - BTN; }
-        public int btn_y () { return y + BORDER + (TITLE_H - BTN) / 2; }
-
-        public bool in_close (int px, int py) {
-            int bx = close_x ();
-            int by = btn_y ();
-            return px >= bx && px < bx + BTN && py >= by && py < by + BTN;
-        }
-
-        public bool in_max (int px, int py) {
-            int bx = max_x ();
-            int by = btn_y ();
-            return px >= bx && px < bx + BTN && py >= by && py < by + BTN;
-        }
-
-        public bool in_resize (int px, int py) {
-            return !maximized && px >= x + w - 14 && px < x + w && py >= y + h - 14 && py < y + h;
-        }
-
-        public int content_y () { return y + BORDER + TITLE_H; }
-        public int content_h () { return h - TITLE_H - 2 * BORDER; }
-    }
-
     public class Compositor : Object {
         private GenericArray<Win> wins;
         private Window screen;
@@ -595,6 +306,8 @@ namespace Wm {
                     animate_pattern ((double) (now % 800) / 100.0);
                 }
             }
+            if ((frames & 3) == 0)
+                poll_ext_surfaces ();
             animate_damage (mx, my);
             bool was_full = dmg_full;
             last_n = ndmg;
@@ -673,7 +386,7 @@ namespace Wm {
             var w = find (id);
             if (w == null)
                 return;
-            damage (w.x - 1, w.y - 1, w.w + SHADOW + 2, w.h + SHADOW + 2);
+            damage (w.x - 2, w.y - 2, w.w + SHADOW + 4, w.h + SHADOW + 4);
         }
 
         public void damage_full () {
@@ -701,6 +414,17 @@ namespace Wm {
         // Repaints only the pending damage regions; every draw is clipped, so
         // the cost of a frame is proportional to what actually changed.
         public void flush (Context cr, int mx, int my) {
+            if (!dmg_full && ndmg == 0)
+                return;
+            if (!dmg_full && ndmg > 1) {
+                int dmg_px = 0;
+                for (int i = 0; i < ndmg; i++) {
+                    dmg_px += dmg[i * 4 + 2] * dmg[i * 4 + 3];
+                }
+                if (dmg_px * 2 >= SCREEN_W * SCREEN_H) {
+                    dmg_full = true;
+                }
+            }
             if (dmg_full) {
                 cr.reset_clip ();
                 render (cr, mx, my);
@@ -712,10 +436,11 @@ namespace Wm {
                 int y = dmg[i * 4 + 1];
                 int w = dmg[i * 4 + 2];
                 int h = dmg[i * 4 + 3];
+                cr.save ();
                 cr.rectangle (x, y, w, h);
                 cr.clip ();
                 render (cr, mx, my);
-                cr.reset_clip ();
+                cr.restore ();
             }
             clear_damage ();
         }
@@ -897,6 +622,16 @@ namespace Wm {
             var w = find (id);
             if (w == null)
                 return;
+            if (w.kind == Kind.EXT) {
+                if (w.ext_tid > 0) {
+                    Sys.kill (w.ext_tid);
+                    w.ext_tid = -1;
+                }
+                if (w.ext_file.length > 0) {
+                    Sys.unlink (w.ext_file);
+                    w.ext_file = "";
+                }
+            }
             w.alive = false;
             if (focused_id == id) {
                 focused_id = 0;
@@ -1037,6 +772,84 @@ namespace Wm {
 
         // --- input ----------------------------------------------------
 
+        public int launch_gui_app (string exec_path, string title, int w, int h) {
+            int id = add (title, 110, 84, w, h, Kind.EXT);
+            var win = find (id);
+            if (win != null) {
+                win.ext_file = @"_comp_w$id.argb";
+                win.ext_seq = 0;
+                int cw = w - BORDER * 2;
+                int ch = h - BORDER * 2 - TITLE_H;
+                if (cw < 64) cw = 64;
+                if (ch < 64) ch = 64;
+                Sys.setenv ("PLANET_WIN_FILE", win.ext_file);
+                Sys.setenv ("PLANET_WIN_W", @"$cw");
+                Sys.setenv ("PLANET_WIN_H", @"$ch");
+                win.ext_tid = Sys.spawn (exec_path, "");
+            }
+            return id;
+        }
+
+        private static int le32 (uint8[] b, int off) {
+            return ((int) b[off]) | (((int) b[off + 1]) << 8)
+                | (((int) b[off + 2]) << 16) | (((int) b[off + 3]) << 24);
+        }
+
+        private void poll_ext_surfaces () {
+            for (int i = 0; i < wins.length; i++) {
+                var w = wins[i];
+                if (!w.alive || w.kind != Kind.EXT || w.ext_file.length == 0)
+                    continue;
+                if (w.ext_tid > 0) {
+                    int rc = Sys.wait_nb (w.ext_tid);
+                    if (rc != -2)
+                        w.ext_tid = -1;
+                }
+                int fd = Sys.open (w.ext_file);
+                if (fd < 0)
+                    continue;
+                var hdr = new uint8[16];
+                int hn = Sys.read (fd, hdr, 16);
+                if (hn == 16 && le32 (hdr, 0) == 0x5057494E) {
+                    int sw = le32 (hdr, 4);
+                    int sh = le32 (hdr, 8);
+                    int seq = le32 (hdr, 12);
+                    if (seq != w.ext_seq && sw >= 64 && sw <= SCREEN_W && sh >= 64 && sh <= SCREEN_H) {
+                        if (w.ext_surf == null || w.ext_surf.width != sw || w.ext_surf.height != sh)
+                            w.ext_surf = new ImageSurface (Format.ARGB32, sw, sh);
+                        int total = sw * sh * 4;
+                        int off = 0;
+                        while (off < total) {
+                            int chunk = total - off;
+                            if (chunk > 65536)
+                                chunk = 65536;
+                            int r = Sys.sys (7, fd, w.ext_surf.buf_addr + off, chunk);
+                            if (r <= 0)
+                                break;
+                            off = off + r;
+                        }
+                        w.ext_seq = seq;
+                        damage_window (w.id);
+                    }
+                }
+                Sys.close (fd);
+            }
+        }
+
+        private void flush_pending_gui (Win w) {
+            if (w.pcm4_state != null && w.pcm4_state.want_gui_exec.length > 0) {
+                string ex = w.pcm4_state.want_gui_exec;
+                string tt = w.pcm4_state.want_gui_title;
+                int gw = w.pcm4_state.want_gui_w;
+                int gh = w.pcm4_state.want_gui_h;
+                w.pcm4_state.want_gui_exec = "";
+                if (ex == "pcm4.elf")
+                    add ("pcm4", 130, 96, 680, 400, Kind.FILES);
+                else
+                    launch_gui_app (ex, tt, gw, gh);
+            }
+        }
+
         public int pointer_press (int px, int py) {
             if (py >= SCREEN_H - DOCK_H)
                 return dock_press (px);
@@ -1068,9 +881,11 @@ namespace Wm {
                 resize_id = id;
                 return ACT_DRAG;
             }
-            if (w.kind == Kind.GTK && w.gtk_root != null) {
-                if (w.gtk_root.on_pointer_press (px, py, 1))
+            if ((w.kind == Kind.GTK || w.kind == Kind.FILES) && w.gtk_root != null) {
+                if (w.gtk_root.on_pointer_press (px, py, 1)) {
+                    flush_pending_gui (w);
                     damage_window (id);
+                }
             }
             if (w.kind == Kind.TERMINAL && w.term != null) {
                 w.term.active = true;
@@ -1117,7 +932,7 @@ namespace Wm {
                 return;
             }
             var fw = find (focused_id);
-            if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
+            if (fw != null && (fw.kind == Kind.GTK || fw.kind == Kind.FILES) && fw.gtk_root != null) {
                 if (fw.gtk_root.on_pointer_motion (px, py))
                     damage_window (fw.id);
             }
@@ -1129,7 +944,7 @@ namespace Wm {
             resizing = false;
             resize_id = 0;
             var fw = find (focused_id);
-            if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
+            if (fw != null && (fw.kind == Kind.GTK || fw.kind == Kind.FILES) && fw.gtk_root != null) {
                 if (fw.gtk_root.on_pointer_release (last_ptr_x, last_ptr_y, 1))
                     damage_window (fw.id);
             }
@@ -1197,20 +1012,29 @@ namespace Wm {
                 return;
             }
             var fw = find (focused_id);
-            if (fw != null && fw.kind == Kind.GTK && fw.gtk_root != null) {
+            if (fw != null && (fw.kind == Kind.GTK || fw.kind == Kind.FILES) && fw.gtk_root != null) {
                 if (fw.gtk_root.on_key_press (k)) {
+                    flush_pending_gui (fw);
                     damage_window (fw.id);
                     return;
                 }
             }
             if (fw != null && fw.kind == Kind.TERMINAL && fw.term != null) {
                 if (fw.term.on_key_press (k)) {
+                    if (fw.term.want_pcm4) {
+                        fw.term.want_pcm4 = false;
+                        add ("pcm4", 120, 90, 680, 400, Kind.FILES);
+                    }
                     damage_window (fw.id);
                     return;
                 }
             }
             if (k == 'q' || k == 'Q') {
                 quit = true;
+                return;
+            }
+            if (k == 'f' || k == 'F') {
+                add ("pcm4", 120, 90, 680, 400, Kind.FILES);
                 return;
             }
             if (k == 'g' || k == 'G') {
@@ -1350,8 +1174,9 @@ namespace Wm {
             add ("terminal", 48, 56, 420, 260, Kind.TERMINAL);
             add ("shader", 500, 56, 360, 230, Kind.SHADER);
             add ("clock", 900, 56, 320, 230, Kind.CLOCK);
-            add ("gtk-demo", 80, 340, 480, 280, Kind.GTK);
-            focus_nth (3);
+            add ("gtk-demo", 80, 340, 460, 280, Kind.GTK);
+            add ("pcm4", 570, 320, 650, 320, Kind.FILES);
+            focus_nth (4);
         }
 
         public int add_demo () {
@@ -1712,12 +1537,22 @@ namespace Wm {
                 else if ((gcaps & 1) != 0)
                     gmsg = "gpu: virtio-gpu 2d + spv/simd";
                 TextHelper.draw_mono (cr, gmsg, cx + 14, cy + 116, 14.0);
-            } else if (w.kind == Kind.GTK && w.gtk_root != null) {
+            } else if ((w.kind == Kind.GTK || w.kind == Kind.FILES) && w.gtk_root != null) {
                 cr.set_source_rgb (0.09, 0.11, 0.14);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 w.gtk_root.allocate (cx + 12, cy + 12, cw - 24, ch - 24);
                 w.gtk_root.draw (cr);
+            } else if (w.kind == Kind.EXT) {
+                cr.set_source_rgb (0.09, 0.11, 0.14);
+                cr.rectangle (cx, cy, cw, ch);
+                cr.fill ();
+                if (w.ext_surf != null) {
+                    cr.blit_surface (w.ext_surf, cx, cy, cw, ch);
+                } else {
+                    cr.set_source_rgb (0.72, 0.78, 0.86);
+                    TextHelper.draw_mono (cr, "Starting GUI app...", cx + 16, cy + 20, 14.0);
+                }
             } else {
                 cr.set_source_rgb (0.086, 0.102, 0.137);
                 cr.rectangle (cx, cy, cw, ch);
@@ -1820,323 +1655,4 @@ namespace Wm {
             cr.stroke ();
         }
     }
-}
-
-// --- self test ---------------------------------------------------------
-
-private int st_checks = 0;
-private int st_fails = 0;
-
-private void check (bool ok, string name) {
-    st_checks = st_checks + 1;
-    if (ok)
-        return;
-    st_fails = st_fails + 1;
-    print (@"compositor: FAIL $name\n");
-}
-
-private int top_id (Compositor comp) {
-    int id = 0;
-    var t = comp.top_win ();
-    if (t != null)
-        id = t.id;
-    return id;
-}
-
-private int at_id (Compositor comp, int px, int py) {
-    int id = 0;
-    var t = comp.top_at (px, py);
-    if (t != null)
-        id = t.id;
-    return id;
-}
-
-private int self_test_run (Compositor comp) {
-    // stack ordering and hit testing
-    int a = comp.add ("alpha", 100, 80, 320, 200, Kind.TERMINAL);
-    int b = comp.add ("beta", 180, 150, 300, 180, Kind.CLOCK);
-    int c = comp.add ("gamma", 420, 100, 260, 160, Kind.NOTES);
-    check (a == 1 && b == 2 && c == 3, "ids-sequential");
-    check (comp.count () == 3, "count-is-3");
-    check (top_id (comp) == 3, "top-is-last-added");
-    check (comp.focus_id () == 3, "focus-is-last-added");
-    check (at_id (comp, 150, 100) == 1, "hit-alpha");
-    check (at_id (comp, 200, 160) == 2, "hit-topmost-on-overlap");
-    check (at_id (comp, 770, 400) == 0, "hit-desktop-empty");
-    check (comp.pointer_press (150, 200) == ACT_FOCUS, "click-content-focus");
-    check (comp.focus_id () == 1, "click-raises-focus");
-    check (top_id (comp) == 1, "click-raises-z");
-    check (comp.pointer_press (770, 400) == ACT_NONE, "click-desktop-noop");
-    check (comp.focus_id () == 1, "click-desktop-keeps-focus");
-
-    // drag, clamp, close button
-    var drag = new Compositor ();
-    int p = drag.add ("p", 60, 60, 300, 200, Kind.TERMINAL);
-    int q = drag.add ("q", 420, 300, 300, 200, Kind.CLOCK);
-    check (drag.pointer_press (100, 70) == ACT_DRAG, "title-starts-drag");
-    check (drag.dragging_active (), "drag-active");
-    drag.drag_to (140, 90);
-    check (drag.wx (p) == 100 && drag.wy (p) == 80, "drag-moves-window");
-    drag.drag_to (-5000, -5000);
-    check (drag.wx (p) == -220, "drag-clamps-left");
-    check (drag.wy (p) == TOP_H, "drag-clamps-top");
-    drag.pointer_release ();
-    check (!drag.dragging_active (), "release-ends-drag");
-    int cxp = -220 + 300 - BORDER - BTN_GAP - BTN + 2;
-    int cyp = TOP_H + BORDER + (TITLE_H - BTN) / 2 + 2;
-    check (drag.pointer_press (cxp, cyp) == ACT_CLOSE, "close-button-hit");
-    check (!drag.alive (p), "close-button-closes");
-    check (drag.count () == 1, "count-after-close");
-    check (drag.focus_id () == q, "focus-falls-back-to-top");
-
-    // maximize, keyboard moves, cycling, dock
-    var kb = new Compositor ();
-    int k1 = kb.add ("one", 50, 50, 300, 200, Kind.TERMINAL);
-    int k2 = kb.add ("two", 380, 60, 300, 200, Kind.CLOCK);
-    int k3 = kb.add ("three", 100, 320, 300, 180, Kind.NOTES);
-    kb.key_press ('m');
-    check (kb.maximized (k3) && kb.ww (k3) == SCREEN_W, "maximize-sizes");
-    check (kb.wy (k3) == TOP_H, "maximize-offsets-top-bar");
-    kb.key_press ('m');
-    check (!kb.maximized (k3) && kb.ww (k3) == 300 && kb.wy (k3) == 320, "maximize-restores");
-    kb.focus_nth (0);
-    check (kb.focus_id () == k1, "focus-nth-first");
-    kb.key_press ('l');
-    check (kb.wx (k1) == 58, "key-moves-right");
-    kb.key_press ('j');
-    check (kb.wy (k1) == 58, "key-moves-down");
-    kb.key_press (0x84);
-    check (kb.wx (k1) == 66, "arrow-key-moves-right");
-    int order1 = kb.focus_id ();
-    kb.key_press (9);
-    check (kb.focus_id () != order1, "tab-changes-focus");
-    kb.key_press (9);
-    kb.key_press (9);
-    check (kb.focus_id () == order1, "tab-wraps-around");
-    int dockx = DOCK_X0 + (DOCK_BTN_W + DOCK_BTN_GAP) + 10;
-    check (kb.pointer_press (dockx, SCREEN_H - 10) == ACT_DOCK, "dock-button-hit");
-    check (kb.focus_id () == k2, "dock-focuses-second");
-    kb.key_press ('c');
-    check (!kb.alive (k2) && kb.count () == 2, "key-closes-focused");
-
-    // rendering smoke test (no framebuffer needed)
-    // One 1280x720 surface is 900 contiguous frames and every block below starts
-    // with a full flush, so the whole self-test shares this one: allocating five
-    // of them (18 MiB) is more than the allocator can serve in --animate mode.
-    var surf = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
-    check (surf.buf_addr != 0, "surface-alloc");
-    var cr = new Context (surf);
-    kb.render (cr, 200, 200);
-    check (surf.buf_addr != 0 && kb.count () == 2, "render-survives");
-    check (comp.cursor_from_svg (), "cursor-svg-loaded");
-    check (comp.cursor_alpha (9, 5) > 128, "cursor-svg-shape");
-    check (comp.cursor_alpha (0, 0) == 0, "cursor-svg-clear");
-
-    // spir-v accent pipeline
-    check (comp.shader_valid (), "shader-module-valid");
-    check (comp.shader_words () > 0, "shader-words");
-    check (comp.accent_ir () >= 0 && comp.accent_ir () <= 255, "accent-in-range");
-    check (!comp.select_backend (BACKEND_VULKAN), "vulkan-needs-icd");
-    check (comp.select_backend (BACKEND_CAIRO) && comp.backend () == BACKEND_CAIRO, "cairo-backend");
-
-    // per-pixel SPIR-V background (gl_FragCoord) baked into PAT_STEP blocks
-    check (comp.has_pattern (), "pattern-valid");
-    int ps = comp.pattern_step ();
-    check (comp.pattern_samples () == ((SCREEN_W + ps - 1) / ps) * ((SCREEN_H + ps - 1) / ps), "pattern-samples");
-    check (comp.pattern_at (100, 100) != comp.pattern_at (700, 500), "pattern-varies-per-pixel");
-    check (comp.pattern_has_uniforms (), "pattern-uniforms");
-    int col_before = comp.pattern_at (400, 100);
-    check (comp.animate_pattern (4.0), "pattern-animate-runs");
-    check (comp.pattern_at (400, 100) != col_before, "pattern-animates-with-time");
-    check (comp.animation_count () == 1, "animate-count");
-
-    // damage merging and occlusion culling
-    var mg = new Compositor ();
-    var surf4 = surf;
-    check (surf4.buf_addr != 0, "merge-surface-alloc");
-    var cr4 = new Context (surf4);
-    mg.flush (cr4, 0, 0);
-    mg.damage (10, 10, 20, 20);
-    mg.damage (25, 25, 20, 20);
-    check (mg.damage_count () == 1, "damage-merges");
-    check (mg.damage_pixels () == 35 * 35, "damage-merge-area");
-    mg.damage (500, 400, 20, 20);
-    check (mg.damage_count () == 2, "damage-keeps-distant");
-    mg.flush (cr4, 0, 0);
-    check (mg.damage_count () == 0, "merge-flush-clears");
-
-    var occ = new Compositor ();
-    occ.add ("low", 100, 100, 300, 200, Kind.TERMINAL);
-    occ.add ("high", 60, 60, 420, 320, Kind.NOTES);
-    var surv5 = surf;
-    check (surv5.buf_addr != 0, "occlusion-surface-alloc");
-    var cr5 = new Context (surv5);
-    occ.flush (cr5, 0, 0);
-    check (occ.occluded_count () == 1, "occlusion-skips-covered");
-    occ.focus_nth (0);
-    occ.flush (cr5, 0, 0);
-    check (occ.occluded_count () == 0, "occlusion-none-when-raised");
-
-    // damage tracking: only the dirty region is repainted
-    var dmgc = new Compositor ();
-    dmgc.add ("d", 200, 200, 200, 150, Kind.NOTES);
-    check (dmgc.damage_is_full (), "add-damages-all");
-    var surf2 = surf;
-    check (surf2.buf_addr != 0, "damage-surface-alloc");
-    var cr2 = new Context (surf2);
-    dmgc.flush (cr2, 0, 0);
-    check (!dmgc.damage_is_full () && dmgc.damage_count () == 0, "flush-clears-damage");
-    cr2.set_source_rgb (1.0, 0.0, 1.0);
-    cr2.paint ();
-    dmgc.damage (300, 300, 40, 40);
-    check (dmgc.damage_count () == 1 && dmgc.damage_pixels () == 1600, "damage-recorded");
-    dmgc.flush (cr2, 0, 0);
-    check (cr2.pixel_at (310, 310) != ((255 << 24) | (255 << 16) | (0 << 8) | 255), "damage-repaints-inside");
-    check (cr2.pixel_at (700, 100) == ((255 << 24) | (255 << 16) | (0 << 8) | 255), "damage-keeps-outside");
-
-    // modifiers: Alt+Tab, Alt+Q and Super+arrows
-    var mod = new Compositor ();
-    int m1 = mod.add ("m1", 40, 40, 260, 180, Kind.TERMINAL);
-    int m2 = mod.add ("m2", 340, 60, 260, 180, Kind.CLOCK);
-    int m3 = mod.add ("m3", 120, 300, 260, 160, Kind.NOTES);
-    check (mod.focus_id () == m3, "mods-focus-last");
-    mod.key_press_mod (9, Sys.MOD_ALT);
-    check (mod.focus_id () != m3, "alt-tab-cycles");
-    mod.focus_nth (1);
-    check (mod.focus_id () == m2, "focus-second-window");
-    mod.key_press_mod (0x84, Sys.MOD_SUPER);
-    check (mod.layout_of (m2) == LAYOUT_RIGHT, "super-right-tiles");
-    check (mod.ww (m2) == SCREEN_W / 2 && mod.wx (m2) == SCREEN_W / 2, "super-right-geometry");
-    mod.key_press_mod (0x83, Sys.MOD_SUPER);
-    check (mod.layout_of (m2) == LAYOUT_LEFT && mod.wx (m2) == 0, "super-left-tiles");
-    mod.key_press_mod (0x81, Sys.MOD_SUPER);
-    check (mod.layout_of (m2) == LAYOUT_MAX && mod.ww (m2) == SCREEN_W, "super-up-maximizes");
-    mod.key_press_mod (0x82, Sys.MOD_SUPER);
-    check (mod.layout_of (m2) == LAYOUT_NORMAL && mod.ww (m2) == 260, "super-down-restores");
-    mod.key_press_mod ('q', Sys.MOD_ALT);
-    check (!mod.alive (m2), "alt-q-closes-focused");
-    check (mod.focus_id () != m2, "alt-q-moves-focus");
-
-    // quit handling
-    var qq = new Compositor ();
-    qq.add ("x", 10, 40, 200, 150, Kind.NOTES);
-    check (!qq.quit_requested (), "no-quit-by-default");
-    qq.key_press (27);
-    check (qq.quit_requested (), "esc-quits");
-
-    // GTK window widget click + entry typing
-    var gtkc = new Compositor ();
-    int gw = gtkc.add ("gtk", 100, 100, 380, 240, Kind.GTK);
-    var gsurf = surf;
-    check (gsurf.buf_addr != 0, "gtk-surface-alloc");
-    var gcr = new Context (gsurf);
-    gtkc.flush (gcr, 0, 0);
-    // Click Entry (around y = 100 + 24 + 12 + 30 = 166) and type 'x'
-    gtkc.pointer_press (150, 166);
-    gtkc.pointer_release ();
-    gtkc.key_press ('x');
-    // Click Increment button (around y = 205)
-    gtkc.pointer_press (150, 205);
-    gtkc.pointer_release ();
-    gtkc.flush (gcr, 799, 599);
-    check (gtkc.alive (gw), "gtk-win-alive-after-input");
-
-    // VTE terminal typing
-    var termc = new Compositor ();
-    int tw = termc.add ("term", 40, 50, 400, 240, Kind.TERMINAL);
-    termc.pointer_press (100, 120);
-    termc.key_press ('h');
-    termc.key_press ('e');
-    termc.key_press ('l');
-    termc.key_press ('p');
-    termc.key_press ('\n');
-    check (termc.alive (tw), "vte-term-alive");
-
-    print (@"compositor: cursor_svg=$(comp.cursor_from_svg () ? 1 : 0) hotspot=$(comp.cursor_hotspot_x ())x$(comp.cursor_hotspot_y ())\n");
-    print (@"compositor:summary checks=$st_checks failures=$st_fails\n");
-    return (st_fails == 0) ? 0 : 1;
-}
-
-// --- interactive -------------------------------------------------------
-
-private int interactive (Compositor comp) {
-    var win = Display.open_window (SCREEN_W, SCREEN_H);
-    if (win == null) {
-        print ("compositor: no framebuffer available\n");
-        return 1;
-    }
-    comp.attach (win, false);
-    print (@"compositor: cursor=$(comp.hardware_cursor () ? "hw" : "sw") screen=$(SCREEN_W)x$(SCREEN_H)\n");
-    var loop = new MainLoop ();
-    timeout_add (16, () => {
-        if (!comp.frame ()) {
-            loop.quit ();
-            return false;
-        }
-        return true;
-    });
-    loop.run ();
-    comp.shutdown ();
-    print (@"compositor: frames=$(comp.frame_count ()) moves=$(comp.motion_count ()) windows=$(comp.count ()) dirty=$(comp.dirty_frame_count ()) flush_ms=$(comp.avg_flush_ms ()) blit_ms=$(comp.avg_blit_ms ())\n");
-    return 0;
-}
-
-int main (string[] args) {
-    bool self_test = false;
-    bool want_shader = true;
-    bool want_vulkan = false;
-    bool want_pattern = true;
-    bool want_animate = false;
-    string shader_path = "frag.spv";
-    string pattern_path = "frag_pattern.spv";
-    for (int i = 1; i < args.length; i++) {
-        if (args[i] == "--self-test") {
-            self_test = true;
-        } else if (args[i] == "--no-shader") {
-            want_shader = false;
-        } else if (args[i] == "--no-pattern") {
-            want_pattern = false;
-        } else if (args[i] == "--animate") {
-            want_animate = true;
-        } else if (args[i] == "--vulkan") {
-            want_vulkan = true;
-        } else if (args[i] == "--pattern") {
-            if (i + 1 < args.length) {
-                i = i + 1;
-                pattern_path = args[i];
-            }
-        } else if (args[i] == "--shader") {
-            if (i + 1 < args.length) {
-                i = i + 1;
-                shader_path = args[i];
-            }
-        } else {
-            shader_path = args[i];
-        }
-    }
-
-    var comp = new Compositor ();
-    if (want_shader) {
-        bool ok = comp.load_shader (shader_path);
-        print (@"compositor: shader=$shader_path ok=$(ok ? 1 : 0) rgba=$(comp.accent_ir ()),$(comp.accent_ig ()),$(comp.accent_ib ())\n");
-    }
-    if (want_vulkan) {
-        bool ok = comp.select_backend (BACKEND_VULKAN);
-        print (@"compositor: backend=vulkan ok=$(ok ? 1 : 0) (no ICD yet, cairo fallback)\n");
-    }
-    if (want_animate)
-        comp.set_pattern_step (16);
-    if (want_pattern) {
-        bool pok = comp.load_pattern (pattern_path);
-        print (@"compositor: pattern=$pattern_path ok=$(pok ? 1 : 0) samples=$(comp.pattern_samples ()) uniforms=$(comp.pattern_has_uniforms () ? 1 : 0)\n");
-        if (want_animate)
-            comp.set_animation (true, 400);
-        print (@"compositor: animate=$(want_animate ? 1 : 0) period_ms=400\n");
-    }
-    if (self_test)
-        return self_test_run (comp);
-
-    comp.seed ();
-    print ("compositor: keys: tab cycle  drag=move  m max  c close  n new  1-9 focus  q quit\n");
-    return interactive (comp);
 }

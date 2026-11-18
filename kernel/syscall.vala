@@ -11,8 +11,6 @@ namespace Planet.Kernel {
     private const int USER_LIMIT = 0x4000000; // 64 MiB, the PMM cap
     private const int MAX_PATH = 512;
     private const int MAX_XFER = 1048576;
-    private int stdio_in_fd = -1;
-    private int stdio_out_fd = -1;
 
     // Userland and the kernel share one address space, so every pointer that
     // arrives through int 0x80 is checked before the kernel dereferences it.
@@ -33,30 +31,45 @@ namespace Planet.Kernel {
         return fd == -1 || (fd >= 3 && fd < MAX_FDS);
     }
 
+    private int write_fd_data (int fd, int buf, int len) {
+        if (fd < 3 || fd >= MAX_FDS)
+            return -1;
+        int slot = KernelLayout.FD_TABLE + fd * 32;
+        int fkind = mmio_read64 (slot);
+        if (fkind != 1 && fkind != 2)
+            return -1;
+        int rslot = mmio_read64 (slot + 8);
+        int pos = mmio_read64 (slot + 24);
+        int nw = (fkind == 1) ? Xfs.write_file (rslot, pos, buf, len) : Ramfs.write (rslot, pos, buf, len);
+        if (nw > 0) {
+            mmio_write64 (slot + 24, pos + nw);
+            int nsz = (fkind == 1) ? Xfs.file_size (rslot) : Ramfs.file_size (rslot);
+            mmio_write64 (slot + 16, nsz);
+        }
+        return nw;
+    }
+
+    private int write_console_or_stdio (int buf, int len) {
+        int out_fd = Sched.get_stdio_out ();
+        if (out_fd >= 3 && out_fd < MAX_FDS) {
+            int nw = write_fd_data (out_fd, buf, len);
+            if (nw >= 0)
+                return nw;
+        }
+        __planet_console_write (buf, len);
+        for (int i = 0; i < len; i++) {
+            int w = mmio_read32 ((buf + i) & ~3);
+            int b = (w >> (((buf + i) & 3) * 8)) & 0xFF;
+            Vga.write_byte (b);
+        }
+        return len;
+    }
+
     public int syscall_dispatch (int num, int a0, int a1, int a2, int a3) {
         if (num == 1) { // SYS_CONSOLE_WRITE(buf, len)
             if (!user_ok (a0, a1))
                 return -1;
-            if (stdio_out_fd >= 3 && stdio_out_fd < MAX_FDS) {
-                int slot = KernelLayout.FD_TABLE + stdio_out_fd * 32;
-                if (mmio_read64 (slot) == 2) {
-                    int rslot = mmio_read64 (slot + 8);
-                    int pos = mmio_read64 (slot + 24);
-                    int nw = Ramfs.write (rslot, pos, a0, a1);
-                    if (nw > 0) {
-                        mmio_write64 (slot + 24, pos + nw);
-                        mmio_write64 (slot + 16, Ramfs.file_size (rslot));
-                    }
-                    return nw;
-                }
-            }
-            __planet_console_write (a0, a1);
-            for (int i = 0; i < a1; i++) {
-                int w = mmio_read32 ((a0 + i) & ~3);
-                int b = (w >> (((a0 + i) & 3) * 8)) & 0xFF;
-                Vga.write_byte (b);
-            }
-            return a1;
+            return write_console_or_stdio (a0, a1);
         }
         if (num == 2) { // SYS_TICKS()
             return Hal.ticks ();
@@ -82,16 +95,19 @@ namespace Planet.Kernel {
             return phys;
         }
         if (num == 4) { // SYS_FREE_PAGE(phys)
-            Pmm.free_frame (a0);
+            if (a0 < 0x100000 || (a0 & 0xFFF) != 0)
+                return -1;
             int ucr3 = Sched.current_cr3 ();
             if (ucr3 != 0) {
                 Vmm.unmap_user_4k (ucr3, a0);
             }
+            Pmm.free_frame (a0);
             return 0;
         }
         if (num == 5) { // SYS_READ_KEY() -> ASCII char or -1
-            if (stdio_in_fd >= 3 && stdio_in_fd < MAX_FDS) {
-                int slot = KernelLayout.FD_TABLE + stdio_in_fd * 32;
+            int in_fd = Sched.get_stdio_in ();
+            if (in_fd >= 3 && in_fd < MAX_FDS) {
+                int slot = KernelLayout.FD_TABLE + in_fd * 32;
                 if (mmio_read64 (slot) == 2) {
                     int rslot = mmio_read64 (slot + 8);
                     int pos = mmio_read64 (slot + 24);
@@ -240,30 +256,9 @@ namespace Planet.Kernel {
         if (num == 15) { // SYS_WRITE(fd, buf, len)
             if (!user_ok (a1, a2))
                 return -1;
-            if (a0 == 1 || a0 == 2) {
-                __planet_console_write (a1, a2);
-                for (int i = 0; i < a2; i++) {
-                    int w = mmio_read32 ((a1 + i) & ~3);
-                    int b = (w >> (((a1 + i) & 3) * 8)) & 0xFF;
-                    Vga.write_byte (b);
-                }
-                return a2;
-            }
-            if (a0 < 3 || a0 >= MAX_FDS)
-                return -1;
-            int slot = KernelLayout.FD_TABLE + a0 * 32;
-            int fkind = mmio_read64 (slot);
-            if (fkind != 1 && fkind != 2)
-                return -1;
-            int rslot = mmio_read64 (slot + 8);
-            int pos = mmio_read64 (slot + 24);
-            int nw = (fkind == 1) ? Xfs.write_file (rslot, pos, a1, a2) : Ramfs.write (rslot, pos, a1, a2);
-            if (nw > 0) {
-                mmio_write64 (slot + 24, pos + nw);
-                int nsz = (fkind == 1) ? Xfs.file_size (rslot) : Ramfs.file_size (rslot);
-                mmio_write64 (slot + 16, nsz);
-            }
-            return nw;
+            if (a0 == 1 || a0 == 2)
+                return write_console_or_stdio (a1, a2);
+            return write_fd_data (a0, a1, a2);
         }
         if (num == 16) { // SYS_SPAWN(name_ptr, name_len, cmdline_ptr) -> tid
             if (!path_ok (a0, a1) || (a2 != 0 && !user_ok (a2, 1)))
@@ -281,8 +276,7 @@ namespace Planet.Kernel {
         if (num == 19) { // SYS_SET_STDIO(in_fd, out_fd)
             if (!fd_ok (a0) || !fd_ok (a1))
                 return -1;
-            stdio_in_fd = a0;
-            stdio_out_fd = a1;
+            Sched.set_stdio (a0, a1);
             return 0;
         }
         if (num == 20) { // SYS_SEEK(fd, offset; -1 = end)
@@ -476,6 +470,12 @@ namespace Planet.Kernel {
         }
         if (num == 47) { // SYS_GPU_3D_CREATE(ctx_id, res_id, width, height) -> pa or 0
             return VirtioGpu.create_3d_mapped (a0, a1, a2, a3);
+        }
+        if (num == 48) { // SYS_WAIT_NB(tid) -> exit_code, -2 if running, -1 if invalid
+            return Sched.try_wait_tid (a0);
+        }
+        if (num == 49) { // SYS_KILL(tid) -> exit_code or -1
+            return Sched.kill_tid (a0);
         }
         return -1;
     }

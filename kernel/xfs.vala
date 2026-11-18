@@ -264,10 +264,9 @@ namespace Planet.Kernel {
                 cur = ino_addr + ino_sz;
             }
             int ino_blk = (min_ino < 0x7FFFFFFF) ? (min_ino >> xfs_inopblog) : 1000;
-            int ino_pool_blks = 8; // INO_BLK..INO_BLK+7 = 128 inodes
-            xfs_max_ino = (ino_blk + ino_pool_blks) << xfs_inopblog;
+            xfs_max_ino = (ino_blk + 8) << xfs_inopblog; // 8 inode blocks = 128 inodes
             xfs_next_ino = (max_ino > 0) ? (max_ino + 1) : (ino_blk << xfs_inopblog);
-            int data_start = ino_blk + ino_pool_blks;
+            int data_start = ino_blk + 8;
             xfs_next_blk = (max_blk > data_start) ? max_blk : data_start;
             xfs_alloc_ready = 1;
             Pmm.free_frame (tmp_root);

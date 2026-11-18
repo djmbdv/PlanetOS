@@ -34,6 +34,23 @@ namespace Cairo {
     private extern void __c_fill32 (int addr, int val, int count);
 
     [AsmBody(@"
+        # __c_blit32(dst in rdi, src in rsi, count in rdx)
+        mov %rdx, %rcx
+        test %rcx, %rcx
+        jz _cb_done
+    _cb_loop:
+        mov (%rsi), %eax
+        mov %eax, (%rdi)
+        add $4, %rsi
+        add $4, %rdi
+        dec %rcx
+        jnz _cb_loop
+    _cb_done:
+        ret
+    ")]
+    private extern void __c_blit32 (int dst, int src, int count);
+
+    [AsmBody(@"
         # Escribe un pixel ARGB de 32 bits en la direccion 'addr' (rdi)
         mov %esi, (%rdi)
         ret
@@ -717,6 +734,37 @@ namespace Cairo {
                 }
             }
             cur_x = cx;
+        }
+
+        public void blit_surface (ImageSurface src, int dx, int dy, int w, int h) {
+            if (surf.buf_addr == 0 || src.buf_addr == 0 || w <= 0 || h <= 0)
+                return;
+            int bw = (w < src.width) ? w : src.width;
+            int bh = (h < src.height) ? h : src.height;
+            int x0 = dx;
+            int y0 = dy;
+            int x1 = dx + bw;
+            int y1 = dy + bh;
+            if (x0 < 0) x0 = 0;
+            if (y0 < 0) y0 = 0;
+            if (x1 > surf.width) x1 = surf.width;
+            if (y1 > surf.height) y1 = surf.height;
+            if (clip_on) {
+                if (x0 < clip_x0) x0 = clip_x0;
+                if (y0 < clip_y0) y0 = clip_y0;
+                if (x1 > clip_x1) x1 = clip_x1;
+                if (y1 > clip_y1) y1 = clip_y1;
+            }
+            int cw = x1 - x0;
+            if (cw <= 0 || y1 <= y0)
+                return;
+            int sx0 = x0 - dx;
+            for (int ry = y0; ry < y1; ry++) {
+                int sy = ry - dy;
+                int dst_row = surf.buf_addr + (ry * surf.width + x0) * 4;
+                int src_row = src.buf_addr + (sy * src.width + sx0) * 4;
+                __c_blit32 (dst_row, src_row, cw);
+            }
         }
     }
 }

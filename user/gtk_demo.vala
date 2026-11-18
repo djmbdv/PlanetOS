@@ -32,8 +32,8 @@ int main (string[] args) {
     var pbar = new ProgressBar ();
     pbar.set_text ("0%");
 
-    var status_lbl = new Label ("Clicks: 0");
     var state = new GtkDemoState ();
+    var status_lbl = new Label (@"Clicks: $(state.clicks)");
 
     var hbox = new Box (Orientation.HORIZONTAL, 12);
     var btn_inc = new Button ("Increment (+1)");

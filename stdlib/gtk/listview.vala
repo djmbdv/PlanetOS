@@ -290,9 +290,8 @@ namespace Gtk {
         }
 
         public override void measure (out int min_w, out int min_h) {
-            int max_w = 180;
             int total_h = labels.length * row_height;
-            min_w = (req_w > max_w) ? req_w : max_w;
+            min_w = (req_w > 180) ? req_w : 180;
             min_h = (req_h > total_h) ? req_h : total_h;
         }
 

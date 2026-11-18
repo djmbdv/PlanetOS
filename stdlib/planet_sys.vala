@@ -242,6 +242,14 @@ namespace Planet {
             return __sys4 (17, tid, 0, 0, 0);
         }
 
+        public static int wait_nb (int tid) {
+            return __sys4 (48, tid, 0, 0, 0);
+        }
+
+        public static int kill (int tid) {
+            return __sys4 (49, tid, 0, 0, 0);
+        }
+
         public static int list_tasks (uint8[] buf, int max_bytes) {
             if (!range_ok (buf, max_bytes))
                 return -1;

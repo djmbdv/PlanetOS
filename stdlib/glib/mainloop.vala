@@ -30,6 +30,7 @@ namespace GLib {
         private int iter_depth = 0;
         private int dead_count = 0;
         private int idle_cursor = 0;
+        private int timeout_cursor = 0;
 
         public MainContext () {
             sources = new GenericArray<Source> ();
@@ -56,6 +57,8 @@ namespace GLib {
             dead_count = 0;
             if (idle_cursor >= sources.length)
                 idle_cursor = 0;
+            if (timeout_cursor >= sources.length)
+                timeout_cursor = 0;
         }
 
         public bool has_sources () {
@@ -103,21 +106,27 @@ namespace GLib {
                 }
             }
             int now = Sys.ticks () * 10;
-            for (int i = 0; i < sources.length; i++) {
-                Source s = sources[i];
-                if (s.removed || s.kind != 1 || now < s.due)
-                    continue;
-                s.due = now + (int) s.interval;
-                iter_depth++;
-                bool keep = s.func ();
-                iter_depth--;
-                if (!keep && !s.removed) {
-                    s.removed = true;
-                    dead_count++;
+            int tn = sources.length;
+            if (tn > 0) {
+                int tstart = (timeout_cursor < tn) ? timeout_cursor : 0;
+                for (int k = 0; k < tn; k++) {
+                    int idx = (tstart + k) % tn;
+                    Source s = sources[idx];
+                    if (s.removed || s.kind != 1 || now < s.due)
+                        continue;
+                    timeout_cursor = (idx + 1) % tn;
+                    s.due = now + (int) s.interval;
+                    iter_depth++;
+                    bool keep = s.func ();
+                    iter_depth--;
+                    if (!keep && !s.removed) {
+                        s.removed = true;
+                        dead_count++;
+                    }
+                    if (iter_depth == 0 && dead_count > 0)
+                        compact ();
+                    return true;
                 }
-                if (iter_depth == 0 && dead_count > 0)
-                    compact ();
-                return true;
             }
             if (iter_depth == 0 && dead_count > 0)
                 compact ();
@@ -147,6 +156,8 @@ namespace GLib {
                         sources.remove_index (i);
                         if (idle_cursor >= sources.length)
                             idle_cursor = 0;
+                        if (timeout_cursor >= sources.length)
+                            timeout_cursor = 0;
                     } else {
                         s.removed = true;
                         dead_count++;

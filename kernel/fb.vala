@@ -128,6 +128,7 @@ namespace Planet.Kernel {
     public extern void vga_outb (int port, int val);
 
     private int fb_phys_addr = 0;
+    private int fb_owner_cr3 = 0;
     private int fb_width = 0;
     private int fb_height = 0;
     private int fb_page = 0;
@@ -261,6 +262,9 @@ namespace Planet.Kernel {
         }
 
         public static int init (int w, int h) {
+            int cur_cr3 = Sched.current_cr3 ();
+            if (fb_phys_addr != 0 && fb_owner_cr3 != 0 && cur_cr3 != fb_owner_cr3)
+                return 0;
             if (VirtioGpu.is_present ()) {
                 VirtioGpu.set_console_active (false);
                 int vfb = VirtioGpu.init_scanout (w, h);
@@ -270,6 +274,7 @@ namespace Planet.Kernel {
                     fb_width = w;
                     fb_height = h;
                     fb_page = 0;
+                    fb_owner_cr3 = cur_cr3;
                     return vfb;
                 }
             }
@@ -295,6 +300,7 @@ namespace Planet.Kernel {
             fb_width = w;
             fb_height = h;
             fb_page = 0;
+            fb_owner_cr3 = cur_cr3;
             return bar0;
         }
 
@@ -325,6 +331,8 @@ namespace Planet.Kernel {
         public static void blit (int src_buf, int w, int h) {
             if (fb_phys_addr == 0 || src_buf == 0)
                 return;
+            if (fb_owner_cr3 != 0 && Sched.current_cr3 () != fb_owner_cr3)
+                return;
             if (fb_backend == 2) {
                 VirtioGpu.present_full (src_buf, w, h);
                 return;
@@ -346,6 +354,8 @@ namespace Planet.Kernel {
 
         public static void blit_rect (int src_buf, int xy_packed, int wh_packed) {
             if (fb_phys_addr == 0 || src_buf == 0)
+                return;
+            if (fb_owner_cr3 != 0 && Sched.current_cr3 () != fb_owner_cr3)
                 return;
             int rx = (xy_packed >> 16) & 0xFFFF;
             int ry = xy_packed & 0xFFFF;
@@ -376,7 +386,16 @@ namespace Planet.Kernel {
             return fb_height;
         }
 
+        public static void release_for_cr3 (int cr3) {
+            if (fb_phys_addr != 0 && fb_owner_cr3 != 0 && fb_owner_cr3 == cr3) {
+                fb_owner_cr3 = 0;
+                close ();
+            }
+        }
+
         public static void close () {
+            if (fb_owner_cr3 != 0 && Sched.current_cr3 () != fb_owner_cr3)
+                return;
             if (fb_phys_addr != 0) {
                 if (fb_backend == 2) {
                     VirtioGpu.close_scanout ();
@@ -391,6 +410,7 @@ namespace Planet.Kernel {
                 fb_width = 0;
                 fb_height = 0;
                 fb_page = 0;
+                fb_owner_cr3 = 0;
                 Vga.init ();
             }
         }

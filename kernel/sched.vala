@@ -42,6 +42,8 @@ namespace Planet.Kernel {
     // +88: cr3 (8B)
     // +96: kstack_base (8B)
     // +104: rsp0 (8B)
+    // +112: stdio_in_fd (8B)
+    // +120: stdio_out_fd (8B)
 
     public int sched_tick (int cur_rsp) {
         // Increment the global system tick counter
@@ -158,6 +160,8 @@ namespace Planet.Kernel {
             mmio_write8 (KernelLayout.TCB_TABLE + 48 + 3, 'l');
             mmio_write8 (KernelLayout.TCB_TABLE + 48 + 4, 'l');
             mmio_write8 (KernelLayout.TCB_TABLE + 48 + 5, 0);
+            mmio_write64 (KernelLayout.TCB_TABLE + 112, 0);
+            mmio_write64 (KernelLayout.TCB_TABLE + 120, 1);
 
             mmio_write64 (KernelLayout.SCHED_CUR, 0);
             mmio_write64 (KernelLayout.SCHED_ENABLED, 1);
@@ -239,9 +243,42 @@ namespace Planet.Kernel {
             return tid;
         }
 
+        public static int get_stdio_in () {
+            int cur = current_tid ();
+            return mmio_read64 (KernelLayout.TCB_TABLE + cur * TCB_SIZE + 112);
+        }
+
+        public static int get_stdio_out () {
+            int cur = current_tid ();
+            int fd = mmio_read64 (KernelLayout.TCB_TABLE + cur * TCB_SIZE + 120);
+            return (fd == 0) ? 1 : fd;
+        }
+
+        public static void set_stdio (int in_fd, int out_fd) {
+            int cur = current_tid ();
+            int tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
+            mmio_write64 (tcb + 112, in_fd);
+            mmio_write64 (tcb + 120, out_fd);
+        }
+
         public static void exit_current (int code) {
             int cur = mmio_read64 (KernelLayout.SCHED_CUR);
             int tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
+            int ucr3 = mmio_read64 (tcb + 88);
+            if (ucr3 != 0) {
+                bool shared = false;
+                for (int ot = 0; ot < MAX_TASKS; ot++) {
+                    if (ot == cur)
+                        continue;
+                    int otcb = KernelLayout.TCB_TABLE + ot * TCB_SIZE;
+                    if (mmio_read64 (otcb) != TASK_FREE && mmio_read64 (otcb + 88) == ucr3) {
+                        shared = true;
+                        break;
+                    }
+                }
+                if (!shared)
+                    Fb.release_for_cr3 (ucr3);
+            }
             mmio_write64 (tcb + 24, code);
             mmio_write64 (tcb + 0, TASK_ZOMBIE);
             cpu_sti ();
@@ -290,6 +327,9 @@ namespace Planet.Kernel {
                     mmio_write64 (tcb + 88, user_cr3);
                     mmio_write64 (tcb + 96, kstack);
                     mmio_write64 (tcb + 104, ktop);
+                    int ptcb = KernelLayout.TCB_TABLE + parent * TCB_SIZE;
+                    mmio_write64 (tcb + 112, mmio_read64 (ptcb + 112));
+                    mmio_write64 (tcb + 120, mmio_read64 (ptcb + 120));
                     int nmax = (name_len < 31) ? name_len : 31;
                     for (int k = 0; k < nmax; k++) {
                         mmio_write8 (tcb + 48 + k, read_u8 (name_ptr + k));
@@ -311,16 +351,8 @@ namespace Planet.Kernel {
             mmio_write64 (KernelLayout.TCB_TABLE + tid * TCB_SIZE + 80, pages);
         }
 
-        public static int wait_tid (int tid) {
-            if (tid <= 0 || tid >= MAX_TASKS)
-                return -1;
+        private static int reap_zombie (int tid) {
             int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
-            if (mmio_read64 (tcb) == TASK_FREE)
-                return -1;
-            while (mmio_read64 (tcb) != TASK_ZOMBIE) {
-                cpu_sti ();
-                cpu_hlt ();
-            }
             int code = mmio_read64 (tcb + 24);
             int sbase = mmio_read64 (tcb + 16);
             int spages = mmio_read64 (tcb + 80);
@@ -351,6 +383,7 @@ namespace Planet.Kernel {
                     }
                 }
                 if (!shared) {
+                    Fb.release_for_cr3 (ucr3);
                     VirtioGpu.release_task (tid);
                     Vmm.destroy_user_space (ucr3);
                 }
@@ -358,8 +391,49 @@ namespace Planet.Kernel {
             mmio_write64 (tcb + 88, 0);
             mmio_write64 (tcb + 96, 0);
             mmio_write64 (tcb + 104, 0);
+            mmio_write64 (tcb + 112, 0);
+            mmio_write64 (tcb + 120, 1);
             mmio_write64 (tcb + 0, TASK_FREE);
             return code;
+        }
+
+        public static int wait_tid (int tid) {
+            if (tid <= 0 || tid >= MAX_TASKS)
+                return -1;
+            int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
+            if (mmio_read64 (tcb) == TASK_FREE)
+                return -1;
+            while (mmio_read64 (tcb) != TASK_ZOMBIE) {
+                cpu_sti ();
+                cpu_hlt ();
+            }
+            return reap_zombie (tid);
+        }
+
+        public static int try_wait_tid (int tid) {
+            if (tid <= 0 || tid >= MAX_TASKS)
+                return -1;
+            int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
+            int st = mmio_read64 (tcb);
+            if (st == TASK_FREE)
+                return -1;
+            if (st != TASK_ZOMBIE)
+                return -2;
+            return reap_zombie (tid);
+        }
+
+        public static int kill_tid (int tid) {
+            if (tid <= 0 || tid >= MAX_TASKS || tid == current_tid ())
+                return -1;
+            int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
+            int st = mmio_read64 (tcb);
+            if (st == TASK_FREE)
+                return -1;
+            if (st != TASK_ZOMBIE) {
+                mmio_write64 (tcb + 24, 143);
+                mmio_write64 (tcb + 0, TASK_ZOMBIE);
+            }
+            return reap_zombie (tid);
         }
 
         private static int append_str (int buf, int pos, int max_b, string s) {
