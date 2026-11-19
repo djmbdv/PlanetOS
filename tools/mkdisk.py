@@ -15,7 +15,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 35  # image + 34 files
+ARG_COUNT = 32  # image + 31 files
 
 
 def blk(b):
@@ -45,22 +45,19 @@ def main():
     ml_b = open(sys.argv[16], "rb").read()
     cp_b = open(sys.argv[17], "rb").read()
     pg_b = open(sys.argv[18], "rb").read()
-    jm_b = open(sys.argv[19], "rb").read()
+    vk_b = open(sys.argv[19], "rb").read()
     c2_b = open(sys.argv[20], "rb").read()
     ac_b = open(sys.argv[21], "rb").read()
     fp_b = open(sys.argv[22], "rb").read()
-    gt_b = open(sys.argv[23], "rb").read()
-    vk_b = open(sys.argv[24], "rb").read()
-    ge_b = open(sys.argv[25], "rb").read()
-    lsans_b = open(sys.argv[26], "rb").read()
-    lmono_b = open(sys.argv[27], "rb").read()
-    cur_b = open(sys.argv[28], "rb").read()
-    pm_b = open(sys.argv[29], "rb").read()
-    dl_b = open(sys.argv[30], "rb").read()
-    pd_b = open(sys.argv[31], "rb").read()
-    vsh_b = open(sys.argv[32], "rb").read()
-    plu_b = open(sys.argv[33], "rb").read()
-    sat_b = open(sys.argv[34], "rb").read()
+    lsans_b = open(sys.argv[23], "rb").read()
+    lmono_b = open(sys.argv[24], "rb").read()
+    cur_b = open(sys.argv[25], "rb").read()
+    pm_b = open(sys.argv[26], "rb").read()
+    dl_b = open(sys.argv[27], "rb").read()
+    pd_b = open(sys.argv[28], "rb").read()
+    vsh_b = open(sys.argv[29], "rb").read()
+    plu_b = open(sys.argv[30], "rb").read()
+    sat_b = open(sys.argv[31], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -80,14 +77,11 @@ def main():
     b_ml = b_gm + blk(gm_b)
     b_cp = b_ml + blk(ml_b)
     b_pg = b_cp + blk(cp_b)
-    b_jm = b_pg + blk(pg_b)
-    b_c2 = b_jm + blk(jm_b)
+    b_vk = b_pg + blk(pg_b)
+    b_c2 = b_vk + blk(vk_b)
     b_ac = b_c2 + blk(c2_b)
     b_fp = b_ac + blk(ac_b)
-    b_gt = b_fp + blk(fp_b)
-    b_vk = b_gt + blk(gt_b)
-    b_ge = b_vk + blk(vk_b)
-    b_lsans = b_ge + blk(ge_b)
+    b_lsans = b_fp + blk(fp_b)
     b_lmono = b_lsans + blk(lsans_b)
     b_cur = b_lmono + blk(lmono_b)
     b_pm = b_cur + blk(cur_b)
@@ -136,13 +130,10 @@ def main():
         (b"mainloop_demo.elf", ml_b, b_ml, 0x81ED),
         (b"compositor.elf", cp_b, b_cp, 0x81ED),
         (b"pango_demo.elf", pg_b, b_pg, 0x81ED),
-        (b"jsmn_demo.elf", jm_b, b_jm, 0x81ED),
+        (b"vk_demo.elf", vk_b, b_vk, 0x81ED),
         (b"c2vala.elf", c2_b, b_c2, 0x81ED),
         (b"arith.c", ac_b, b_ac, 0x81A4),
         (b"frag_pattern.spv", fp_b, b_fp, 0x81A4),
-        (b"gtk_demo.elf", gt_b, b_gt, 0x81ED),
-        (b"vk_demo.elf", vk_b, b_vk, 0x81ED),
-        (b"gee_demo.elf", ge_b, b_ge, 0x81ED),
         (b"LiberationSans-Regular.ttf", lsans_b, b_lsans, 0x81A4),
         (b"LiberationMono-Regular.ttf", lmono_b, b_lmono, 0x81A4),
         (b"cursor.svg", cur_b, b_cur, 0x81A4),

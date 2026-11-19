@@ -7,15 +7,15 @@ namespace Gdk {
      * RGBA color with channel values in [0.0, 1.0].
      */
     public class RGBA : Object {
-        public double red = 1.0;
-        public double green = 1.0;
-        public double blue = 1.0;
-        public double alpha = 1.0;
+        public float red = 1.0f;
+        public float green = 1.0f;
+        public float blue = 1.0f;
+        public float alpha = 1.0f;
 
-        private static double clamp01 (double v) {
-            if (v < 0.0) return 0.0;
-            if (v > 1.0) return 1.0;
-            return v;
+        private static float clamp01 (double v) {
+            if (v < 0.0) return 0.0f;
+            if (v > 1.0) return 1.0f;
+            return (float) v;
         }
 
         private static int hex_val (uint8 c) {
@@ -57,10 +57,10 @@ namespace Gdk {
                 int b = hex_val ((uint8) spec[3]);
                 if (r < 0 || g < 0 || b < 0)
                     return false;
-                red = (double) (r * 17) / 255.0;
-                green = (double) (g * 17) / 255.0;
-                blue = (double) (b * 17) / 255.0;
-                alpha = 1.0;
+                red = (float) (r * 17) / 255.0f;
+                green = (float) (g * 17) / 255.0f;
+                blue = (float) (b * 17) / 255.0f;
+                alpha = 1.0f;
                 return true;
             }
 
@@ -76,10 +76,10 @@ namespace Gdk {
                     if (a < 0)
                         return false;
                 }
-                red = (double) r / 255.0;
-                green = (double) g / 255.0;
-                blue = (double) b / 255.0;
-                alpha = (double) a / 255.0;
+                red = (float) r / 255.0f;
+                green = (float) g / 255.0f;
+                blue = (float) b / 255.0f;
+                alpha = (float) a / 255.0f;
                 return true;
             }
 
@@ -106,10 +106,10 @@ namespace Gdk {
         }
 
         public void from_argb32 (uint32 px) {
-            alpha = (double) ((px >> 24) & 0xFF) / 255.0;
-            red = (double) ((px >> 16) & 0xFF) / 255.0;
-            green = (double) ((px >> 8) & 0xFF) / 255.0;
-            blue = (double) (px & 0xFF) / 255.0;
+            alpha = (float) ((px >> 24) & 0xFF) / 255.0f;
+            red = (float) ((px >> 16) & 0xFF) / 255.0f;
+            green = (float) ((px >> 8) & 0xFF) / 255.0f;
+            blue = (float) (px & 0xFF) / 255.0f;
         }
     }
 

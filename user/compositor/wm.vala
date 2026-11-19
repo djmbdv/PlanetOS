@@ -801,7 +801,8 @@ namespace Wm {
             int id = add (title, 110, 84, w, h, Kind.EXT);
             var win = find (id);
             if (win != null) {
-                win.ext_file = @"_comp_w$id.argb";
+                Sys.mkdir ("/tmp");
+                win.ext_file = @"/tmp/_comp_w$id.argb";
                 win.ext_seq = 0;
                 int cw = w - BORDER * 2;
                 int ch = h - BORDER * 2 - TITLE_H;

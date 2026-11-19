@@ -67,14 +67,14 @@ namespace Cairo {
     private extern void __c_blit32 (int dst, int src, int count);
 
     [AsmBody(@"
-        # Escribe un pixel ARGB de 32 bits en la direccion 'addr' (rdi)
+        # Writes one 32-bit ARGB pixel at 'addr' (rdi)
         mov %esi, (%rdi)
         ret
     ")]
     private extern void __c_poke32 (int addr, int val);
 
     [AsmBody(@"
-        # Lee un pixel ARGB de 32 bits desde la direccion 'addr' (rdi)
+        # Reads one 32-bit ARGB pixel from 'addr' (rdi)
         mov (%rdi), %eax
         ret
     ")]
@@ -82,51 +82,53 @@ namespace Cairo {
 
     public class Context : Object {
         private ImageSurface surf;
-        private int src_r = 255;
-        private int src_g = 255;
-        private int src_b = 255;
-        private int src_a = 255;
-        private int line_w = 1;
+        private uint8 src_r = 255;
+        private uint8 src_g = 255;
+        private uint8 src_b = 255;
+        private uint8 src_a = 255;
+        private int16 line_w = 1;
 
         // Current path state (rect, circle/arc, line, rounded_rect)
-        private int path_kind = 0; // 0=none, 1=rect, 2=circle, 3=line, 4=rrect
-        private int px = 0;
-        private int py = 0;
-        private int pw = 0;
-        private int ph = 0;
-        private int pr = 0;
-        private int cur_x = 0;
-        private int cur_y = 0;
-        private int font_scale = 2;
+        private uint8 path_kind = 0; // 0=none, 1=rect, 2=circle, 3=line, 4=rrect
+        private int32 px = 0;
+        private int32 py = 0;
+        private int32 pw = 0;
+        private int32 ph = 0;
+        private int32 pr = 0;
+        private int32 cur_x = 0;
+        private int32 cur_y = 0;
+        private uint8 font_scale = 2;
 
         // Drawing clip + save/restore stack
-        private int clip_x0 = 0;
-        private int clip_y0 = 0;
-        private int clip_x1 = 0;
-        private int clip_y1 = 0;
+        private int32 clip_x0 = 0;
+        private int32 clip_y0 = 0;
+        private int32 clip_x1 = 0;
+        private int32 clip_y1 = 0;
         private bool clip_on = false;
 
-        private int saved_sp = 0;
-        private int[] sv_cx0 = new int[8];
-        private int[] sv_cy0 = new int[8];
-        private int[] sv_cx1 = new int[8];
-        private int[] sv_cy1 = new int[8];
-        private bool[] sv_con = new bool[8];
-        private int[] sv_sr = new int[8];
-        private int[] sv_sg = new int[8];
-        private int[] sv_sb = new int[8];
-        private int[] sv_sa = new int[8];
-        private int[] sv_lw = new int[8];
+        private const int SAVE_MAX = 16;
+        private uint8 saved_sp = 0;
+        private int32[] sv_cx0 = new int32[SAVE_MAX];
+        private int32[] sv_cy0 = new int32[SAVE_MAX];
+        private int32[] sv_cx1 = new int32[SAVE_MAX];
+        private int32[] sv_cy1 = new int32[SAVE_MAX];
+        private bool[] sv_con = new bool[SAVE_MAX];
+        private uint8[] sv_sr = new uint8[SAVE_MAX];
+        private uint8[] sv_sg = new uint8[SAVE_MAX];
+        private uint8[] sv_sb = new uint8[SAVE_MAX];
+        private uint8[] sv_sa = new uint8[SAVE_MAX];
+        private uint8[] sv_fs = new uint8[SAVE_MAX];
+        private int16[] sv_lw = new int16[SAVE_MAX];
 
         public Context (ImageSurface target) {
             surf = target;
         }
 
-        private static int clamp255 (double v) {
+        private static uint8 clamp255 (double v) {
             int iv = (int) (v * 255.0);
             if (iv < 0) return 0;
             if (iv > 255) return 255;
-            return iv;
+            return (uint8) iv;
         }
 
         public void set_source_rgb (double r, double g, double b) {
@@ -145,18 +147,20 @@ namespace Cairo {
 
         public void set_line_width (double w) {
             int iw = (int) w;
-            line_w = (iw < 1) ? 1 : iw;
+            if (iw < 1) iw = 1;
+            if (iw > 32767) iw = 32767;
+            line_w = (int16) iw;
         }
 
         public void select_font_face (string family, int slant, int weight) {}
 
         public void set_font_size (double sz) {
             int s = (int) (sz / 8.0);
-            font_scale = (s < 1) ? 1 : ((s > 4) ? 4 : s);
+            font_scale = (uint8) ((s < 1) ? 1 : ((s > 4) ? 4 : s));
         }
 
         private void blend_px (int x, int y, int a) {
-            if (a <= 0)
+            if (a <= 0 || surf == null || surf.buf_addr == 0)
                 return;
             if (x < 0 || y < 0 || x >= surf.width || y >= surf.height)
                 return;
@@ -194,7 +198,7 @@ namespace Cairo {
         private static extern double __c_fma (double a, double b, double c);
 
         public void fill_polygon_range (double[] xs, double[] ys, int start, int n) {
-            if (n < 3 || start < 0 || start + n > xs.length || start + n > ys.length)
+            if (surf == null || surf.buf_addr == 0 || n < 3 || start < 0 || start + n > xs.length || start + n > ys.length)
                 return;
             double min_x = xs[start];
             double max_x = xs[start];
@@ -226,27 +230,27 @@ namespace Cairo {
                 return;
 
             // Precompute non-horizontal edges that overlap [y0, y1).
-            var ey_min = new double[n];
-            var ey_max = new double[n];
-            var ex0 = new double[n];
-            var ey0 = new double[n];
-            var eslope = new double[n];
+            var ey_min = new float[n];
+            var ey_max = new float[n];
+            var ex0 = new float[n];
+            var ey0 = new float[n];
+            var eslope = new float[n];
             int ec = 0;
-            double dy0 = (double) y0;
-            double dy1 = (double) y1;
+            float dy0 = (float) y0;
+            float dy1 = (float) y1;
             int j = start + n - 1;
             for (int i = start; i < start + n; i++) {
-                double yi = ys[i];
-                double yj = ys[j];
+                float yi = (float) ys[i];
+                float yj = (float) ys[j];
                 if (yi != yj) {
-                    double emin = (yi < yj) ? yi : yj;
-                    double emax = (yi > yj) ? yi : yj;
+                    float emin = (yi < yj) ? yi : yj;
+                    float emax = (yi > yj) ? yi : yj;
                     if (emax > dy0 && emin < dy1) {
                         ey_min[ec] = emin;
                         ey_max[ec] = emax;
-                        ex0[ec] = xs[i];
+                        ex0[ec] = (float) xs[i];
                         ey0[ec] = yi;
-                        eslope[ec] = (xs[j] - xs[i]) / (yj - yi);
+                        eslope[ec] = ((float) xs[j] - (float) xs[i]) / (yj - yi);
                         ec++;
                     }
                 }
@@ -256,17 +260,17 @@ namespace Cairo {
                 return;
 
             int rw = x1 - x0;
-            var row_hits = new int[rw];
-            var row_edges = new int[ec];
-            var xcs = new double[ec];
+            var row_hits = new uint8[rw];
+            var row_edges = new int32[ec];
+            var xcs = new float[ec];
 
             for (int y = y0; y < y1; y++) {
-                double row_top = (double) y;
-                double row_bot = row_top + 1.0;
+                float row_top = (float) y;
+                float row_bot = row_top + 1.0f;
                 int rc = 0;
                 for (int e = 0; e < ec; e++) {
                     if (ey_min[e] < row_bot && ey_max[e] > row_top) {
-                        row_edges[rc] = e;
+                        row_edges[rc] = (int32) e;
                         rc++;
                     }
                 }
@@ -277,12 +281,12 @@ namespace Cairo {
                     row_hits[k] = 0;
 
                 for (int sy = 0; sy < 4; sy++) {
-                    double py = row_top + ((double) sy + 0.5) * 0.25;
+                    float py = row_top + ((float) sy + 0.5f) * 0.25f;
                     int nx = 0;
                     for (int ri = 0; ri < rc; ri++) {
-                        int e = row_edges[ri];
+                        int e = (int) row_edges[ri];
                         if (ey_min[e] <= py && py < ey_max[e]) {
-                            xcs[nx] = __c_fma (py - ey0[e], eslope[e], ex0[e]);
+                            xcs[nx] = (float) __c_fma ((double) (py - ey0[e]), (double) eslope[e], (double) ex0[e]);
                             nx++;
                         }
                     }
@@ -291,7 +295,7 @@ namespace Cairo {
 
                     // Insertion sort intersections (small per-scanline count).
                     for (int a = 1; a < nx; a++) {
-                        double key = xcs[a];
+                        float key = xcs[a];
                         int b = a - 1;
                         while (b >= 0 && xcs[b] > key) {
                             xcs[b + 1] = xcs[b];
@@ -301,34 +305,34 @@ namespace Cairo {
                     }
 
                     for (int k = 0; k + 1 < nx; k += 2) {
-                        double xa = xcs[k];
-                        double xb = xcs[k + 1];
-                        if (xb <= (double) x0 || xa >= (double) x1)
+                        float xa = xcs[k];
+                        float xb = xcs[k + 1];
+                        if (xb <= (float) x0 || xa >= (float) x1)
                             continue;
                         int p0 = (int) xa;
-                        if (xa < 0.0) p0 = p0 - 1;
+                        if (xa < 0.0f) p0 = p0 - 1;
                         if (p0 < x0) p0 = x0;
                         int p1 = (int) xb + 1;
                         if (p1 > x1) p1 = x1;
 
                         for (int x = p0; x < p1; x++) {
-                            double fx = (double) x;
-                            if (fx + 0.125 >= xa && fx + 0.875 < xb) {
+                            float fx = (float) x;
+                            if (fx + 0.125f >= xa && fx + 0.875f < xb) {
                                 row_hits[x - x0] += 4;
                             } else {
                                 int h = 0;
-                                if (fx + 0.125 >= xa && fx + 0.125 < xb) h++;
-                                if (fx + 0.375 >= xa && fx + 0.375 < xb) h++;
-                                if (fx + 0.625 >= xa && fx + 0.625 < xb) h++;
-                                if (fx + 0.875 >= xa && fx + 0.875 < xb) h++;
-                                row_hits[x - x0] += h;
+                                if (fx + 0.125f >= xa && fx + 0.125f < xb) h++;
+                                if (fx + 0.375f >= xa && fx + 0.375f < xb) h++;
+                                if (fx + 0.625f >= xa && fx + 0.625f < xb) h++;
+                                if (fx + 0.875f >= xa && fx + 0.875f < xb) h++;
+                                row_hits[x - x0] += (uint8) h;
                             }
                         }
                     }
                 }
 
                 for (int i = 0; i < rw; i++) {
-                    int hits = row_hits[i];
+                    int hits = (int) row_hits[i];
                     if (hits > 0)
                         blend_px (x0 + i, y, (src_a * hits + 8) / 16);
                 }
@@ -452,13 +456,13 @@ namespace Cairo {
 
         // Reads a pixel back (0xAARRGGBB), for tests and damage bookkeeping.
         public int pixel_at (int x, int y) {
-            if (x < 0 || y < 0 || x >= surf.width || y >= surf.height)
+            if (surf == null || surf.buf_addr == 0 || x < 0 || y < 0 || x >= surf.width || y >= surf.height)
                 return 0;
             return __c_peek32 (surf.buf_addr + (y * surf.width + x) * 4);
         }
 
         public void save () {
-            if (saved_sp >= 8)
+            if (saved_sp >= SAVE_MAX)
                 return;
             sv_cx0[saved_sp] = clip_x0;
             sv_cy0[saved_sp] = clip_y0;
@@ -469,6 +473,7 @@ namespace Cairo {
             sv_sg[saved_sp] = src_g;
             sv_sb[saved_sp] = src_b;
             sv_sa[saved_sp] = src_a;
+            sv_fs[saved_sp] = font_scale;
             sv_lw[saved_sp] = line_w;
             saved_sp++;
         }
@@ -486,6 +491,7 @@ namespace Cairo {
             src_g = sv_sg[saved_sp];
             src_b = sv_sb[saved_sp];
             src_a = sv_sa[saved_sp];
+            font_scale = sv_fs[saved_sp];
             line_w = sv_lw[saved_sp];
         }
 
@@ -842,7 +848,7 @@ namespace Cairo {
         }
 
         public void blit_surface (ImageSurface src, int dx, int dy, int w, int h) {
-            if (surf.buf_addr == 0 || src.buf_addr == 0 || w <= 0 || h <= 0)
+            if (surf == null || src == null || surf.buf_addr == 0 || src.buf_addr == 0 || w <= 0 || h <= 0)
                 return;
             int bw = (w < src.width) ? w : src.width;
             int bh = (h < src.height) ? h : src.height;
@@ -861,11 +867,15 @@ namespace Cairo {
                 if (y1 > clip_y1) y1 = clip_y1;
             }
             int cw = x1 - x0;
-            if (cw <= 0 || y1 <= y0)
-                return;
             int sx0 = x0 - dx;
+            if (cw <= 0 || y1 <= y0 || sx0 < 0 || sx0 >= src.width)
+                return;
+            if (sx0 + cw > src.width)
+                cw = src.width - sx0;
             for (int ry = y0; ry < y1; ry++) {
                 int sy = ry - dy;
+                if (sy < 0 || sy >= src.height)
+                    continue;
                 int dst_row = surf.buf_addr + (ry * surf.width + x0) * 4;
                 int src_row = src.buf_addr + (sy * src.width + sx0) * 4;
                 __c_blit32 (dst_row, src_row, cw);

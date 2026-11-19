@@ -56,11 +56,14 @@ namespace Gtk {
             child = w;
         }
 
-        public void show_all () {
+        public bool show_all () {
             if (gdk_win == null) {
                 gdk_win = Display.open_window (width, height);
-                if (gdk_win == null)
-                    gdk_win = new Window (width, height);
+                if (gdk_win == null) {
+                    print ("gtk: failed to open window (framebuffer busy or out of memory)\n");
+                    gtk_running = false;
+                    return false;
+                }
                 width = gdk_win.width;
                 height = gdk_win.height;
                 cr = gdk_win.create_cairo_context ();
@@ -71,6 +74,7 @@ namespace Gtk {
                 child.allocate (20, 56, cw, ch);
             }
             redraw ();
+            return true;
         }
 
         public void redraw () {
@@ -105,7 +109,8 @@ namespace Gtk {
 
         public void run (bool once = false) {
             gtk_running = true;
-            show_all ();
+            if (!show_all ())
+                return;
             if (once) {
                 if (gdk_win != null) {
                     gdk_win.close ();

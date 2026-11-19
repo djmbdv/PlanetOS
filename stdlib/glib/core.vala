@@ -159,7 +159,7 @@ namespace GLib {
             if (fd < 0)
                 return false;
             int sz = Sys.file_size (fd);
-            if (sz < 0) {
+            if (sz < 0 || sz > 4194304) {
                 Sys.close (fd);
                 return false;
             }
@@ -172,14 +172,19 @@ namespace GLib {
             int first = Sys.read (fd, buf, sz);
             if (first > 0)
                 got = first;
-            while (got < sz) {
-                var chunk = new uint8[sz - got];
-                int r = Sys.read (fd, chunk, sz - got);
-                if (r <= 0)
-                    break;
-                for (int i = 0; i < r; i++)
-                    buf[got + i] = chunk[i];
-                got = got + r;
+            if (got < sz) {
+                var chunk = new uint8[4096];
+                while (got < sz) {
+                    int want = sz - got;
+                    if (want > 4096)
+                        want = 4096;
+                    int r = Sys.read (fd, chunk, want);
+                    if (r <= 0)
+                        break;
+                    for (int i = 0; i < r; i++)
+                        buf[got + i] = chunk[i];
+                    got = got + r;
+                }
             }
             Sys.close (fd);
             contents = __planc_host_bytes_to_str (buf, got);
@@ -192,11 +197,20 @@ namespace GLib {
             int fd = Sys.create (path);
             if (fd < 0)
                 return false;
-            int nw = 0;
-            if (contents.length > 0)
-                nw = Sys.write_str (fd, contents, contents.length);
+            int off = 0;
+            int total = contents.length;
+            while (off < total) {
+                int chunk = total - off;
+                if (chunk > 32768)
+                    chunk = 32768;
+                string part = (off == 0 && chunk == total) ? contents : contents.substring (off, chunk);
+                int nw = Sys.write_str (fd, part, chunk);
+                if (nw <= 0)
+                    break;
+                off = off + nw;
+            }
             Sys.close (fd);
-            return nw == contents.length;
+            return off == total;
         }
     }
 
@@ -265,6 +279,25 @@ namespace GLib {
                 sb.append (parts[i]);
             }
             return sb.str;
+        }
+
+        public static GenericArray<string> split (string s, string sep) {
+            var res = new GenericArray<string> ();
+            if (sep.length == 0) {
+                res.add (s);
+                return res;
+            }
+            int pos = 0;
+            while (pos <= s.length) {
+                int idx = s.index_of (sep, pos);
+                if (idx < 0) {
+                    res.add (s.substring (pos));
+                    break;
+                }
+                res.add (s.substring (pos, idx - pos));
+                pos = idx + sep.length;
+            }
+            return res;
         }
     }
 

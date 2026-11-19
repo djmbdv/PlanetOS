@@ -6,25 +6,25 @@ using Schrift;
 namespace Gtk {
 
     private class GlyphEntry : Object {
-        public int key = 0; // (cp << 12) | size_px
+        public int32 key = 0; // (cp << 12) | size_px
         public SftImage? img = null;
-        public int adv = 0;
-        public int lsb = 0;
-        public int y_off = 0;
+        public int16 adv = 0;
+        public int16 lsb = 0;
+        public int16 y_off = 0;
     }
 
     private class FontSlot : Object {
         public SftFont? font = null;
         public GenericArray<GlyphEntry>? cache = null;
-        public int[]? htab = null;
-        public double cached_asc = 14.0;
-        public double cached_desc = -3.0;
-        public int cached_size = 0;
+        public int16[]? htab = null;
+        public float cached_asc = 14.0f;
+        public float cached_desc = -3.0f;
+        public int16 cached_size = 0;
 
         public void ensure_htab () {
             if (htab != null)
                 return;
-            var t = new int[1024];
+            var t = new int16[1024];
             for (int i = 0; i < 1024; i++)
                 t[i] = -1;
             htab = t;
@@ -93,11 +93,11 @@ namespace Gtk {
             if (slot.cache == null)
                 slot.cache = new GenericArray<GlyphEntry> ();
             slot.ensure_htab ();
-            int key = (cp << 12) | (size_px & 0xFFF);
+            int32 key = (int32) ((cp << 12) | (size_px & 0xFFF));
             int h = ((key * 2654435761) >> 16) & 1023;
             int probe = h;
             for (int step = 0; step < 1024; step++) {
-                int idx = slot.htab[probe];
+                int idx = (int) slot.htab[probe];
                 if (idx < 0)
                     break;
                 if (slot.cache[idx].key == key)
@@ -109,12 +109,12 @@ namespace Gtk {
             sft.x_scale = (double) size_px;
             sft.y_scale = (double) size_px;
             sft.flags = SFT_DOWNWARD_Y;
-            if (slot.cached_size != size_px) {
+            if ((int) slot.cached_size != size_px) {
                 var lm = new SftLMetrics ();
                 if (sft.lmetrics (lm) == 0) {
-                    slot.cached_asc = lm.ascender;
-                    slot.cached_desc = lm.descender;
-                    slot.cached_size = size_px;
+                    slot.cached_asc = (float) lm.ascender;
+                    slot.cached_desc = (float) lm.descender;
+                    slot.cached_size = (int16) size_px;
                 }
             }
             int gid = 0;
@@ -125,9 +125,9 @@ namespace Gtk {
                 return null;
             var ge = new GlyphEntry ();
             ge.key = key;
-            ge.adv = (int) (gm.advance_width + 0.5);
-            ge.lsb = (int) gm.left_side_bearing;
-            ge.y_off = gm.y_offset;
+            ge.adv = (int16) (gm.advance_width + 0.5);
+            ge.lsb = (int16) gm.left_side_bearing;
+            ge.y_off = (int16) gm.y_offset;
             if (gm.min_width > 0 && gm.min_height > 0) {
                 var img = new SftImage (gm.min_width, gm.min_height);
                 if (sft.render (gid, img) == 0)
@@ -136,7 +136,7 @@ namespace Gtk {
             if (slot.cache.length < 512) {
                 int new_idx = slot.cache.length;
                 slot.cache.add (ge);
-                slot.htab[probe] = new_idx;
+                slot.htab[probe] = (int16) new_idx;
             }
             return ge;
         }

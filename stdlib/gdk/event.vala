@@ -15,13 +15,13 @@ namespace Gdk {
      */
     public class Event : Object {
         public EventType type = EventType.NONE;
-        public int keyval = 0;
-        public int x = 0;
-        public int y = 0;
-        public int button = 0;
-        public int state = 0;
-        public int scroll_dx = 0;
-        public int scroll_dy = 0;
+        public int32 keyval = 0;
+        public int32 x = 0;
+        public int32 y = 0;
+        public int8 button = 0;
+        public uint8 state = 0;
+        public int16 scroll_dx = 0;
+        public int16 scroll_dy = 0;
 
         public void reset () {
             type = EventType.NONE;

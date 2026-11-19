@@ -499,12 +499,35 @@ namespace Planet.Kernel {
         return "CPU Exception";
     }
 
+    private static string hex64 (int v) {
+        string hex = "0123456789abcdef";
+        string out_s = "0x";
+        bool started = false;
+        for (int s = 60; s >= 0; s -= 4) {
+            int nib = (v >> s) & 0xF;
+            if (nib != 0 || started || s == 0) {
+                out_s = out_s + hex.substring (nib, 1);
+                started = true;
+            }
+        }
+        return out_s;
+    }
+
     public int fault_dispatch (int vec, int err, int rip, int cr2) {
         int cur_cr3 = Sched.current_cr3 ();
+        int tid = Sched.current_tid ();
         if (cur_cr3 != 0)
             Fb.release_for_cr3 (cur_cr3);
         Sched.set_stdio (0, 1);
-        string msg = @"\n[fault] $(fault_name (vec)) (vec=$vec err=$err rip=$rip cr2=$cr2)\n";
+        string pf_info = "";
+        if (vec == 14) {
+            string p_str = ((err & 1) != 0) ? "prot" : "unmapped";
+            string w_str = ((err & 2) != 0) ? "write" : "read";
+            string u_str = ((err & 4) != 0) ? "user" : "kernel";
+            pf_info = @" [$u_str/$w_str/$p_str]";
+        }
+        string msg = @"\n[fault] $(fault_name (vec))$pf_info (tid=$tid vec=$vec err=$err rip=$(hex64 (rip)) cr2=$(hex64 (cr2)))\n";
+        Klog.error (Klog.CAT_SCHED, msg);
         print (msg);
         for (int i = 0; i < msg.length; i++)
             Vga.write_byte ((int) msg[i]);

@@ -143,7 +143,7 @@ namespace GLib {
         }
 
         private bool match_range (uint8 c, int idx) {
-            if (c == '-')
+            if (c == '-' || idx + 2 >= ccl_buf.length)
                 return false;
             uint8 a = ccl_buf[idx];
             if (a == 0 || a == '-')
@@ -287,15 +287,24 @@ namespace GLib {
                     nodes.add (new ReNode (ReKind.DOT));
                 } else if (c == '*') {
                     if (nodes.length == 0)
-                        throw new RegexError.COMPILE ("unexpected '*' at start of pattern");
+                        throw new RegexError.COMPILE ("unexpected quantifier");
+                    ReKind prev = nodes[nodes.length - 1].kind;
+                    if (prev == ReKind.STAR || prev == ReKind.PLUS || prev == ReKind.QUESTIONMARK || prev == ReKind.BEGIN)
+                        throw new RegexError.COMPILE ("unexpected quantifier");
                     nodes.add (new ReNode (ReKind.STAR));
                 } else if (c == '+') {
                     if (nodes.length == 0)
-                        throw new RegexError.COMPILE ("unexpected '+' at start of pattern");
+                        throw new RegexError.COMPILE ("unexpected quantifier");
+                    ReKind prev = nodes[nodes.length - 1].kind;
+                    if (prev == ReKind.STAR || prev == ReKind.PLUS || prev == ReKind.QUESTIONMARK || prev == ReKind.BEGIN)
+                        throw new RegexError.COMPILE ("unexpected quantifier");
                     nodes.add (new ReNode (ReKind.PLUS));
                 } else if (c == '?') {
                     if (nodes.length == 0)
-                        throw new RegexError.COMPILE ("unexpected '?' at start of pattern");
+                        throw new RegexError.COMPILE ("unexpected quantifier");
+                    ReKind prev = nodes[nodes.length - 1].kind;
+                    if (prev == ReKind.STAR || prev == ReKind.PLUS || prev == ReKind.QUESTIONMARK || prev == ReKind.BEGIN)
+                        throw new RegexError.COMPILE ("unexpected quantifier");
                     nodes.add (new ReNode (ReKind.QUESTIONMARK));
                 } else if (c == '\\') {
                     i++;

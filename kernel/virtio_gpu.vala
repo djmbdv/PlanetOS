@@ -679,12 +679,15 @@ namespace Planet.Kernel {
 
             mmio_write16 (vgpu_notify_base + vgpu_q_notify_off * vgpu_notify_mult, 0);
 
-            for (int spin = 0; spin < 2000000; spin++) {
+            int deadline = Hal.ticks () + 50; // ~500 ms at 100 Hz for host GL thread
+            for (int spin = 0; spin < 40000000; spin++) {
                 int uidx = mmio_read32 (used_base) >> 16;
                 if ((uidx & 0xFFFF) == target_used) {
                     vgpu_last_used = target_used;
                     return;
                 }
+                if ((spin & 0x3FFF) == 0 && Hal.ticks () >= deadline)
+                    break;
             }
             vgpu_last_used = mmio_read32 (used_base) >> 16;
         }

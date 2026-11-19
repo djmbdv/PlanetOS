@@ -95,6 +95,8 @@ namespace GLib {
                 if (cur_group == "")
                     throw new KeyFileError.PARSE ("Key outside group");
                 string k = Str.strip (line.substring (0, eq));
+                if (k.length == 0)
+                    throw new KeyFileError.PARSE ("Empty key name");
                 string v = Str.strip (line.substring (eq + 1));
                 set_string (cur_group, k, v);
             }
@@ -181,7 +183,17 @@ namespace GLib {
         }
 
         public int get_integer (string group_name, string key) throws KeyFileError {
-            string s = get_string (group_name, key);
+            string s = Str.strip (get_string (group_name, key));
+            if (s.length == 0)
+                throw new KeyFileError.PARSE ("Invalid integer value");
+            int i = (s[0] == '+' || s[0] == '-') ? 1 : 0;
+            if (i >= s.length)
+                throw new KeyFileError.PARSE ("Invalid integer value");
+            for (; i < s.length; i++) {
+                uint8 c = (uint8) s[i];
+                if (c < '0' || c > '9')
+                    throw new KeyFileError.PARSE ("Invalid integer value");
+            }
             return int.parse (s);
         }
 

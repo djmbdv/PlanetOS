@@ -7,13 +7,13 @@ namespace GLib {
 
     private class Source : Object {
         public uint32 id;
-        public int kind;      // 0 = idle, 1 = timeout
+        public uint8 kind;      // 0 = idle, 1 = timeout
         public uint32 interval; // ms
         public int due;       // ms
         public bool removed;
         public SourceFunc func;
 
-        public Source (uint32 id, int kind, uint32 interval, int due, SourceFunc func) {
+        public Source (uint32 id, uint8 kind, uint32 interval, int due, SourceFunc func) {
             this.id = id;
             this.kind = kind;
             this.interval = interval;
@@ -50,10 +50,14 @@ namespace GLib {
         private void compact () {
             if (dead_count == 0)
                 return;
-            for (int i = sources.length - 1; i >= 0; i--) {
-                if (sources[i].removed)
-                    sources.remove_index (i);
+            int write_i = 0;
+            for (int i = 0; i < sources.length; i++) {
+                if (!sources[i].removed) {
+                    sources[write_i] = sources[i];
+                    write_i++;
+                }
             }
+            sources.length = write_i;
             dead_count = 0;
             if (idle_cursor >= sources.length)
                 idle_cursor = 0;

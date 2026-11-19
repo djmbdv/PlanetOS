@@ -199,24 +199,21 @@ if (-not $NoBuild) {
     $GskSrcs = @((Join-Path $StdDir 'gsk\types.vala'), (Join-Path $StdDir 'gsk\nodes.vala'), (Join-Path $StdDir 'gsk\renderer.vala'))
     $GtkSrcs = @((Join-Path $StdDir 'gtk\text.vala'), (Join-Path $StdDir 'gtk\widget.vala'), (Join-Path $StdDir 'gtk\widgets.vala'), (Join-Path $StdDir 'gtk\container.vala'), (Join-Path $StdDir 'gtk\scrolled.vala'), (Join-Path $StdDir 'gtk\listview.vala'), (Join-Path $StdDir 'gtk\image.vala'), (Join-Path $StdDir 'gtk\window.vala'))
     $CompositorSrcs = @((Join-Path $UserDir 'compositor\apps.vala'), (Join-Path $UserDir 'compositor\win.vala'), (Join-Path $UserDir 'compositor\wm.vala'), (Join-Path $UserDir 'compositor\main.vala'))
-    Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'wc.vala'), '-o', (Out-Path 'wc.elf')))
-    Invoke-Planc (@('--target=planetos', '-O2') + $GeeSrcs + @((Join-Path $UserDir 'gee_demo.vala'), '-o', (Out-Path 'gee_demo.elf')))
-    Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GioSrcs + @((Join-Path $UserDir 'gio_demo.vala'), '-o', (Out-Path 'gio_demo.elf')))
-    Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'gobject_compat.vala'), (Join-Path $UserDir 'gobject_demo.vala'), '-o', (Out-Path 'gobject_demo.elf'))
-    Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'gmodule_compat.vala'), (Join-Path $UserDir 'gmodule_demo.vala'), '-o', (Out-Path 'gmodule_demo.elf'))
-    Invoke-Planc @('--target=planetos', (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
-    Invoke-Planc @('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'gmodule_compat.vala'), (Join-Path $UserDir 'plan_demo.vala'), '-o', (Out-Path 'plan_demo.plan'))
-    Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GioSrcs + @((Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf')))
-    Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf')))
+    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'wc.vala'), '-o', (Out-Path 'wc.elf')))
+    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GioSrcs + @((Join-Path $UserDir 'gio_demo.vala'), '-o', (Out-Path 'gio_demo.elf')))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $StdDir 'gobject_compat.vala'), (Join-Path $UserDir 'gobject_demo.vala'), '-o', (Out-Path 'gobject_demo.elf'))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'gmodule_compat.vala'), (Join-Path $UserDir 'gmodule_demo.vala'), '-o', (Out-Path 'gmodule_demo.elf'))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'gmodule_compat.vala'), (Join-Path $UserDir 'plan_demo.vala'), '-o', (Out-Path 'plan_demo.plan'))
+    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GioSrcs + @((Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf')))
+    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf')))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_planet.vala'), '-o', (Out-Path 'frag.spv'))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_pattern.vala'), '-o', (Out-Path 'frag_pattern.spv'))
-    Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf')))
+    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $UserDir 'vk_demo.vala'), '-o', (Out-Path 'vk_demo.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', '--image-base=0xE00000', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + @((Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'gsk\path.vala')) + $GtkSrcs + $CompositorSrcs + @('-o', (Out-Path 'compositor.elf')))
-    Invoke-Planc (@('--target=planetos', (Join-Path $StdDir 'planet_sys.vala')) + $CairoSrcs + @((Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf')))
-    Invoke-Planc @('--target=planetos', (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf'))
-    Invoke-Planc @('--target=planetos', (Join-Path (Join-Path $Root 'planc\src') 'buffer.vala'), (Join-Path (Join-Path $Root 'planc\src') 'host_planetos.vala'), (Join-Path $StdDir 'planet_sys.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'ast.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'preproc.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'lexer.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'parser.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'translator.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'main.vala'), '-o', (Out-Path 'c2vala.elf'))
-    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala')) + $GtkSrcs + @((Join-Path $UserDir 'gtk_demo.vala'), '-o', (Out-Path 'gtk_demo.elf')))
+    Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $CairoSrcs + @((Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf')))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path (Join-Path $Root 'planc\src') 'buffer.vala'), (Join-Path (Join-Path $Root 'planc\src') 'host_planetos.vala'), (Join-Path $StdDir 'planet_sys.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'ast.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'preproc.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'lexer.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'parser.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'translator.vala'), (Join-Path (Join-Path $Root 'tools\c2vala') 'main.vala'), '-o', (Out-Path 'c2vala.elf'))
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + $GioSrcs + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala')) + $GtkSrcs + @((Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + @((Join-Path $UserDir 'pluto.vala'), '-o', (Out-Path 'pluto.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + $GioSrcs + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala')) + $GtkSrcs + @((Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf')))
@@ -297,13 +294,10 @@ if (-not $NoBuild) {
         (Out-Path 'mainloop_demo.elf') `
         (Out-Path 'compositor.elf') `
         (Out-Path 'pango_demo.elf') `
-        (Out-Path 'jsmn_demo.elf') `
+        (Out-Path 'vk_demo.elf') `
         (Out-Path 'c2vala.elf') `
         (Join-Path (Join-Path (Join-Path (Join-Path (Join-Path $Root 'tools') 'c2vala_tests') 'cases') 'arith') 'main.c') `
         (Out-Path 'frag_pattern.spv') `
-        (Out-Path 'gtk_demo.elf') `
-        (Out-Path 'vk_demo.elf') `
-        (Out-Path 'gee_demo.elf') `
         (Join-Path (Join-Path $Root 'assets') 'LiberationSans-Regular.ttf') `
         (Join-Path (Join-Path $Root 'assets') 'LiberationMono-Regular.ttf') `
         (Join-Path $Root 'cursor.svg') `

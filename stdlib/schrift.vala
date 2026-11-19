@@ -27,70 +27,70 @@ namespace Schrift {
     private const int CROSS_STREAM_KERNING    = 0x04;
 
     public class SftLMetrics : Object {
-        public double ascender = 0.0;
-        public double descender = 0.0;
-        public double line_gap = 0.0;
+        public float ascender = 0.0f;
+        public float descender = 0.0f;
+        public float line_gap = 0.0f;
     }
 
     public class SftGMetrics : Object {
-        public double advance_width = 0.0;
-        public double left_side_bearing = 0.0;
-        public int y_offset = 0;
-        public int min_width = 0;
-        public int min_height = 0;
+        public float advance_width = 0.0f;
+        public float left_side_bearing = 0.0f;
+        public int16 y_offset = 0;
+        public int16 min_width = 0;
+        public int16 min_height = 0;
     }
 
     public class SftKerning : Object {
-        public double x_shift = 0.0;
-        public double y_shift = 0.0;
+        public float x_shift = 0.0f;
+        public float y_shift = 0.0f;
     }
 
     public class SftImage : Object {
         public uint8[] pixels;
-        public int width = 0;
-        public int height = 0;
+        public int32 width = 0;
+        public int32 height = 0;
 
         public SftImage (int w, int h) {
-            width = w;
-            height = h;
+            width = (int32) w;
+            height = (int32) h;
             int n = (w > 0 && h > 0) ? (w * h) : 1;
             pixels = new uint8[n];
         }
     }
 
     private class SftOutline : Object {
-        public double[] px;
-        public double[] py;
-        public int num_points = 0;
-        public int cap_points = 64;
+        public float[] px;
+        public float[] py;
+        public int32 num_points = 0;
+        public int32 cap_points = 64;
 
-        public int[] cbeg;
-        public int[] cend;
-        public int[] cctrl;
-        public int num_curves = 0;
-        public int cap_curves = 64;
+        public int32[] cbeg;
+        public int32[] cend;
+        public int32[] cctrl;
+        public int32 num_curves = 0;
+        public int32 cap_curves = 64;
 
-        public int[] lbeg;
-        public int[] lend;
-        public int num_lines = 0;
-        public int cap_lines = 64;
+        public int32[] lbeg;
+        public int32[] lend;
+        public int32 num_lines = 0;
+        public int32 cap_lines = 64;
 
         public SftOutline () {
-            px = new double[64];
-            py = new double[64];
-            cbeg = new int[64];
-            cend = new int[64];
-            cctrl = new int[64];
-            lbeg = new int[64];
-            lend = new int[64];
+            px = new float[64];
+            py = new float[64];
+            cbeg = new int32[64];
+            cend = new int32[64];
+            cctrl = new int32[64];
+            lbeg = new int32[64];
+            lend = new int32[64];
         }
 
         public bool grow_points () {
             if (cap_points >= 32768)
                 return false;
-            int ncap = cap_points * 2;
-            var nx = new double[ncap];
-            var ny = new double[ncap];
+            int32 ncap = cap_points * 2;
+            var nx = new float[ncap];
+            var ny = new float[ncap];
             for (int i = 0; i < num_points; i++) {
                 nx[i] = px[i];
                 ny[i] = py[i];
@@ -104,10 +104,10 @@ namespace Schrift {
         public bool grow_curves () {
             if (cap_curves >= 32768)
                 return false;
-            int ncap = cap_curves * 2;
-            var nb = new int[ncap];
-            var ne = new int[ncap];
-            var nc = new int[ncap];
+            int32 ncap = cap_curves * 2;
+            var nb = new int32[ncap];
+            var ne = new int32[ncap];
+            var nc = new int32[ncap];
             for (int i = 0; i < num_curves; i++) {
                 nb[i] = cbeg[i];
                 ne[i] = cend[i];
@@ -123,9 +123,9 @@ namespace Schrift {
         public bool grow_lines () {
             if (cap_lines >= 32768)
                 return false;
-            int ncap = cap_lines * 2;
-            var nb = new int[ncap];
-            var ne = new int[ncap];
+            int32 ncap = cap_lines * 2;
+            var nb = new int32[ncap];
+            var ne = new int32[ncap];
             for (int i = 0; i < num_lines; i++) {
                 nb[i] = lbeg[i];
                 ne[i] = lend[i];
@@ -139,28 +139,28 @@ namespace Schrift {
         public int add_point (double x, double y) {
             if (num_points >= cap_points && !grow_points ())
                 return -1;
-            int idx = num_points++;
-            px[idx] = x;
-            py[idx] = y;
+            int idx = (int) num_points++;
+            px[idx] = (float) x;
+            py[idx] = (float) y;
             return idx;
         }
 
         public bool add_curve (int b, int e, int c) {
             if (num_curves >= cap_curves && !grow_curves ())
                 return false;
-            int idx = num_curves++;
-            cbeg[idx] = b;
-            cend[idx] = e;
-            cctrl[idx] = c;
+            int idx = (int) num_curves++;
+            cbeg[idx] = (int32) b;
+            cend[idx] = (int32) e;
+            cctrl[idx] = (int32) c;
             return true;
         }
 
         public bool add_line (int b, int e) {
             if (num_lines >= cap_lines && !grow_lines ())
                 return false;
-            int idx = num_lines++;
-            lbeg[idx] = b;
-            lend[idx] = e;
+            int idx = (int) num_lines++;
+            lbeg[idx] = (int32) b;
+            lend[idx] = (int32) e;
             return true;
         }
     }
@@ -301,9 +301,9 @@ namespace Schrift {
         }
 
         public int lmetrics (SftLMetrics metrics) {
-            metrics.ascender = 0.0;
-            metrics.descender = 0.0;
-            metrics.line_gap = 0.0;
+            metrics.ascender = 0.0f;
+            metrics.descender = 0.0f;
+            metrics.line_gap = 0.0f;
             if (font == null)
                 return -1;
             var f = (SftFont) font;
@@ -311,9 +311,9 @@ namespace Schrift {
             if (hhea < 0 || !f.is_safe_offset (hhea, 36))
                 return -1;
             double factor = y_scale / (double) f.units_per_em;
-            metrics.ascender  = (double) f.geti16 (hhea + 4) * factor;
-            metrics.descender = (double) f.geti16 (hhea + 6) * factor;
-            metrics.line_gap  = (double) f.geti16 (hhea + 8) * factor;
+            metrics.ascender  = (float) ((double) f.geti16 (hhea + 4) * factor);
+            metrics.descender = (float) ((double) f.geti16 (hhea + 6) * factor);
+            metrics.line_gap  = (float) ((double) f.geti16 (hhea + 8) * factor);
             return 0;
         }
 
@@ -521,8 +521,8 @@ namespace Schrift {
         }
 
         public int gmetrics (int glyph, SftGMetrics metrics) {
-            metrics.advance_width = 0.0;
-            metrics.left_side_bearing = 0.0;
+            metrics.advance_width = 0.0f;
+            metrics.left_side_bearing = 0.0f;
             metrics.y_offset = 0;
             metrics.min_width = 0;
             metrics.min_height = 0;
@@ -534,8 +534,8 @@ namespace Schrift {
             if (hor_metrics (f, glyph, out adv, out lsb) < 0)
                 return -1;
             double xs = x_scale / (double) f.units_per_em;
-            metrics.advance_width = (double) adv * xs;
-            metrics.left_side_bearing = (double) lsb * xs + x_offset;
+            metrics.advance_width = (float) ((double) adv * xs);
+            metrics.left_side_bearing = (float) ((double) lsb * xs + x_offset);
             int outline = 0;
             if (outline_offset (f, glyph, out outline) < 0)
                 return -1;
@@ -544,15 +544,15 @@ namespace Schrift {
             var box = new int[4];
             if (glyph_bbox (outline, box) < 0)
                 return -1;
-            metrics.min_width = box[2] - box[0] + 1;
-            metrics.min_height = box[3] - box[1] + 1;
-            metrics.y_offset = ((flags & SFT_DOWNWARD_Y) != 0) ? -box[3] : box[1];
+            metrics.min_width = (int16) (box[2] - box[0] + 1);
+            metrics.min_height = (int16) (box[3] - box[1] + 1);
+            metrics.y_offset = (int16) (((flags & SFT_DOWNWARD_Y) != 0) ? -box[3] : box[1]);
             return 0;
         }
 
         public int kerning (int left_glyph, int right_glyph, SftKerning kern) {
-            kern.x_shift = 0.0;
-            kern.y_shift = 0.0;
+            kern.x_shift = 0.0f;
+            kern.y_shift = 0.0f;
             if (font == null)
                 return -1;
             var f = (SftFont) font;
@@ -590,9 +590,9 @@ namespace Schrift {
                         if (pk == key) {
                             int val = f.geti16 (po + 4);
                             if ((fl & CROSS_STREAM_KERNING) != 0)
-                                kern.y_shift += (double) val;
+                                kern.y_shift += (float) val;
                             else
-                                kern.x_shift += (double) val;
+                                kern.x_shift += (float) val;
                             break;
                         }
                         if (key < pk)
@@ -604,8 +604,8 @@ namespace Schrift {
                 offset += length - 6;
                 num_tables--;
             }
-            kern.x_shift = kern.x_shift / (double) f.units_per_em * x_scale;
-            kern.y_shift = kern.y_shift / (double) f.units_per_em * y_scale;
+            kern.x_shift = (float) ((double) kern.x_shift / (double) f.units_per_em * x_scale);
+            kern.y_shift = (float) ((double) kern.y_shift / (double) f.units_per_em * y_scale);
             return 0;
         }
 
@@ -648,7 +648,7 @@ namespace Schrift {
                     accum += f.geti16 (offset);
                     offset += 2;
                 }
-                outl.px[base_pt + i] = (double) accum;
+                outl.px[base_pt + i] = (float) accum;
             }
 
             accum = 0;
@@ -668,7 +668,7 @@ namespace Schrift {
                     accum += f.geti16 (offset);
                     offset += 2;
                 }
-                outl.py[base_pt + i] = (double) accum;
+                outl.py[base_pt + i] = (float) accum;
             }
             return true;
         }
@@ -830,8 +830,8 @@ namespace Schrift {
                     for (int i = base_pt; i < outl.num_points; i++) {
                         double x = outl.px[i];
                         double y = outl.py[i];
-                        outl.px[i] = x * local[0] + y * local[2] + local[4];
-                        outl.py[i] = x * local[1] + y * local[3] + local[5];
+                        outl.px[i] = (float) (x * local[0] + y * local[2] + local[4]);
+                        outl.py[i] = (float) (x * local[1] + y * local[3] + local[5]);
                     }
                 }
                 if ((fl & THERE_ARE_MORE_COMPONENTS) == 0)
@@ -895,7 +895,7 @@ namespace Schrift {
             return true;
         }
 
-        private static void draw_line (double[] area, double[] cover, int w, int h, double ox, double oy, double gx, double gy) {
+        private static void draw_line (float[] area, float[] cover, int w, int h, double ox, double oy, double gx, double gy) {
             double dx = gx - ox;
             double dy = gy - oy;
             int dir_x = i_sign (dx);
@@ -945,8 +945,8 @@ namespace Schrift {
                 if (px >= 0 && px < w && py >= 0 && py < h) {
                     int ci = py * w + px;
                     if (ci >= 0 && ci < total) {
-                        cover[ci] += y_diff;
-                        area[ci] += (1.0 - (x_avg - (double) px)) * y_diff;
+                        cover[ci] += (float) y_diff;
+                        area[ci] += (float) ((1.0 - (x_avg - (double) px)) * y_diff);
                     }
                 }
                 prev_dist = next_dist;
@@ -965,8 +965,8 @@ namespace Schrift {
             if (px >= 0 && px < w && py >= 0 && py < h) {
                 int ci = py * w + px;
                 if (ci >= 0 && ci < total) {
-                    cover[ci] += y_diff_end;
-                    area[ci] += (1.0 - (x_avg_end - (double) px)) * y_diff_end;
+                    cover[ci] += (float) y_diff_end;
+                    area[ci] += (float) ((1.0 - (x_avg_end - (double) px)) * y_diff_end);
                 }
             }
         }
@@ -1002,8 +1002,8 @@ namespace Schrift {
                 if (x >= (double) image.width) x = max_x;
                 if (y < 0.0) y = 0.0;
                 if (y >= (double) image.height) y = max_y;
-                outl.px[i] = x;
-                outl.py[i] = y;
+                outl.px[i] = (float) x;
+                outl.py[i] = (float) y;
             }
 
             for (int i = 0; i < outl.num_curves; i++) {
@@ -1012,24 +1012,24 @@ namespace Schrift {
             }
 
             int num_px = image.width * image.height;
-            var area = new double[num_px];
-            var cover = new double[num_px];
+            var area = new float[num_px];
+            var cover = new float[num_px];
             for (int i = 0; i < outl.num_lines; i++) {
                 int b = outl.lbeg[i];
                 int e = outl.lend[i];
-                draw_line (area, cover, image.width, image.height, outl.px[b], outl.py[b], outl.px[e], outl.py[e]);
+                draw_line (area, cover, image.width, image.height, (double) outl.px[b], (double) outl.py[b], (double) outl.px[e], (double) outl.py[e]);
             }
 
             double accum = 0.0;
             for (int i = 0; i < num_px; i++) {
-                double v = d_abs (accum + area[i]);
+                double v = d_abs (accum + (double) area[i]);
                 if (v > 1.0)
                     v = 1.0;
                 int iv = (int) (v * 255.0 + 0.5);
                 if (iv > 255)
                     iv = 255;
                 image.pixels[i] = (uint8) iv;
-                accum += cover[i];
+                accum += (double) cover[i];
             }
             return 0;
         }

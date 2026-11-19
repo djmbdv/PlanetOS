@@ -258,7 +258,8 @@ namespace Wm {
 
         private void spawn_shell_cmd (string cmd) {
             vte_seq = vte_seq + 1;
-            out_file = @"_vte_$(vte_seq).txt";
+            Sys.mkdir ("/tmp");
+            out_file = @"/tmp/_vte_$(vte_seq).txt";
             out_read_pos = 0;
             partial_line = "";
             int out_fd = Sys.create (out_file);
@@ -576,7 +577,8 @@ namespace Wm {
         }
 
         private void run_cli_capture (string fp, string label_nm) {
-            int out_fd = Sys.create ("_pcm4_out.txt");
+            Sys.mkdir ("/tmp");
+            int out_fd = Sys.create ("/tmp/_pcm4_out.txt");
             if (out_fd < 0) {
                 if (status != null)
                     status.set_text (@"Cannot create output buffer for $label_nm");
@@ -589,7 +591,7 @@ namespace Wm {
             Sys.close (out_fd);
 
             string txt = @"[$label_nm exit=$rc]\n";
-            int rfd = Sys.open ("_pcm4_out.txt");
+            int rfd = Sys.open ("/tmp/_pcm4_out.txt");
             if (rfd >= 0) {
                 var obuf = new uint8[480];
                 int nr = Sys.read (rfd, obuf, 479);
@@ -601,7 +603,7 @@ namespace Wm {
                     txt = txt + __planc_host_bytes_to_str (slice, nr);
                 }
             }
-            Sys.unlink ("_pcm4_out.txt");
+            Sys.unlink ("/tmp/_pcm4_out.txt");
             if (preview != null)
                 preview.set_text (txt);
             if (nb != null)

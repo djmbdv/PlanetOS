@@ -258,11 +258,8 @@ namespace Gdk {
                 Sys.free_page (mouse_buf);
                 mouse_buf = 0;
             }
-            if (surface != null && surface.buf_addr != 0) {
-                int pages = (width * height * 4 + 4095) / 4096;
-                for (int p = 0; p < pages; p++) {
-                    Sys.free_page (surface.buf_addr + p * 4096);
-                }
+            if (surface != null) {
+                surface.destroy ();
             }
         }
     }

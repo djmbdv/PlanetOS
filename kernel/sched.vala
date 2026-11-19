@@ -5,21 +5,27 @@ namespace Planet.Kernel {
     private const int MAX_TASKS      = 16;
     private const int TCB_SIZE       = 128;
 
-    [AsmBody(@"
-        .byte 0x0f, 0xae, 0x07
-        ret
-    ")]
-    public extern void fxsave_to (int addr);
+    private const int XSAVE_STRIDE   = 1024;
 
     [AsmBody(@"
-        .byte 0x0f, 0xae, 0x0f
+        mov $7, %eax
+        xor %edx, %edx
+        .byte 0x0f, 0xae, 0x27
         ret
     ")]
-    public extern void fxrstor_from (int addr);
+    public extern void xsave_to (int addr);
+
+    [AsmBody(@"
+        mov $7, %eax
+        xor %edx, %edx
+        .byte 0x0f, 0xae, 0x2f
+        ret
+    ")]
+    public extern void xrstor_from (int addr);
 
     private static void init_fx_area (int tid) {
-        int fx = KernelLayout.FXSAVE_AREA + tid * 512;
-        for (int i = 0; i < 512; i += 8)
+        int fx = KernelLayout.FXSAVE_AREA + tid * XSAVE_STRIDE;
+        for (int i = 0; i < XSAVE_STRIDE; i += 8)
             mmio_write64 (fx + i, 0);
         mmio_write16 (fx + 0, 0x037F);  // x87 FCW default
         mmio_write32 (fx + 24, 0x1F80); // SSE MXCSR default
@@ -76,7 +82,7 @@ namespace Planet.Kernel {
         }
 
         if (next != cur) {
-            fxsave_to (KernelLayout.FXSAVE_AREA + cur * 512);
+            xsave_to (KernelLayout.FXSAVE_AREA + cur * XSAVE_STRIDE);
         }
 
         int next_tcb = KernelLayout.TCB_TABLE + next * TCB_SIZE;
@@ -90,7 +96,7 @@ namespace Planet.Kernel {
             vmm_write_cr3 (target_cr3);
         }
         if (next != cur) {
-            fxrstor_from (KernelLayout.FXSAVE_AREA + next * 512);
+            xrstor_from (KernelLayout.FXSAVE_AREA + next * XSAVE_STRIDE);
         }
         return mmio_read64 (next_tcb + 8);
     }
@@ -227,8 +233,14 @@ namespace Planet.Kernel {
             int ucr3 = current_cr3 ();
             int tid = -1;
             if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES) {
-                Vmm.map_user_range (ucr3, stack_base, 16 * 4096);
+                if (Vmm.map_user_range_checked (ucr3, stack_base, 16 * 4096) == 0) {
+                    for (int p = 0; p < 16; p++)
+                        Pmm.free_frame (stack_base + p * 4096);
+                    return -1;
+                }
                 tid = spawn_user_ready (entry, arg_sp, stack_base, 16, ucr3, stack_base, 6);
+                if (tid < 0)
+                    Vmm.unmap_user_range (ucr3, stack_base, 16 * 4096);
             } else {
                 tid = spawn_ready (entry, arg_sp, stack_base, stack_base, 6);
             }
@@ -361,6 +373,8 @@ namespace Planet.Kernel {
             if (spages <= 0)
                 spages = 16;
             if (sbase != 0) {
+                if (ucr3 != 0 && ucr3 == current_cr3 ())
+                    Vmm.unmap_user_range (ucr3, sbase, spages * 4096);
                 Vmm.map_4k (sbase);
                 for (int p = 0; p < spages; p++) {
                     Pmm.free_frame (sbase + p * 4096);

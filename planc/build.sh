@@ -13,7 +13,7 @@ mkdir -p "$(dirname "$OUT")"
 valac \
     --pkg=glib-2.0 \
     --target-glib=2.56 \
-    -X -Wall -X -Wextra \
+    -X -O2 -X -Wall -X -Wextra \
     "$HERE"/src/buffer.vala \
     "$HERE"/src/lexer.vala \
     "$HERE"/src/ast.vala \

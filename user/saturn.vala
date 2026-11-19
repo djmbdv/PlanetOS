@@ -22,13 +22,15 @@ namespace SaturnIDE {
      */
     public class CodeView : Widget {
         public GenericArray<string> lines;
-        public int cx = 0;
-        public int cy = 0;
+        public int32 cx = 0;
+        public int32 cy = 0;
         public bool dirty = false;
         public string filename = "untitled.vala";
-        public int line_h = 18;
-        public int gutter_w = 46;
-        public double font_size = 13.0;
+        public string cut_buf = "";
+        public bool has_cut = false;
+        public int16 line_h = 18;
+        public int16 gutter_w = 46;
+        public float font_size = 13.0f;
 
         public signal void cursor_moved (int line, int col, int total_lines);
         public signal void modified_changed (bool is_dirty);
@@ -46,45 +48,30 @@ namespace SaturnIDE {
             focused = true;
         }
 
+        private static string sanitize_line (string s) {
+            string clean = Str.replace (s, "\r", "");
+            return Str.replace (clean, "\t", "    ");
+        }
+
         public bool load_file (string path) {
             filename = path;
-            int fd = Sys.open (path);
-            if (fd < 0) {
-                lines = new GenericArray<string> ();
+            string raw = "";
+            bool ok = FileUtils.get_contents (path, out raw);
+            lines = new GenericArray<string> ();
+            if (!ok) {
                 lines.add ("");
                 cx = 0; cy = 0; dirty = false;
                 modified_changed (false);
                 cursor_moved (1, 1, 1);
                 return false;
             }
-            int sz = Sys.file_size (fd);
-            lines = new GenericArray<string> ();
-            if (sz > 0) {
-                var sb = new StringBuilder ();
-                var buf = new uint8[1024];
-                int total = 0;
-                while (total < sz) {
-                    int nr = Sys.read (fd, buf, 1024);
-                    if (nr <= 0) break;
-                    for (int i = 0; i < nr; i++) {
-                        uint8 b = buf[i];
-                        if (b == '\n') {
-                            lines.add (sb.str);
-                            sb = new StringBuilder ();
-                        } else if (b == '\t') {
-                            sb.append ("    ");
-                        } else if (b >= 32 && b < 127) {
-                            sb.append (ch_str (b));
-                        }
-                    }
-                    total += nr;
-                }
-                if (sb.len > 0 || lines.length == 0)
-                    lines.add (sb.str);
-            } else {
-                lines.add ("");
+            if (raw.length > 0) {
+                GenericArray<string> parts = Str.split (raw, "\n");
+                for (int i = 0; i < parts.length; i++)
+                    lines.add (sanitize_line (parts[i]));
             }
-            Sys.close (fd);
+            if (lines.length == 0)
+                lines.add ("");
             cx = 0;
             cy = 0;
             dirty = false;
@@ -95,30 +82,12 @@ namespace SaturnIDE {
 
         public int save_file (string path) {
             filename = path;
-            int fd = Sys.create (path);
-            if (fd < 0)
+            string payload = Str.joinv ("\n", lines);
+            if (!FileUtils.set_contents (path, payload))
                 return -1;
-            int bytes = 0;
-            var nl = new uint8[1];
-            nl[0] = (uint8) '\n';
-            for (int i = 0; i < lines.length; i++) {
-                string ln = lines[i];
-                if (ln.length > 0) {
-                    var b = new uint8[ln.length];
-                    for (int k = 0; k < ln.length; k++)
-                        b[k] = (uint8) ln[k];
-                    int w = Sys.write (fd, b, ln.length);
-                    if (w > 0) bytes += w;
-                }
-                if (i + 1 < lines.length) {
-                    Sys.write (fd, nl, 1);
-                    bytes += 1;
-                }
-            }
-            Sys.close (fd);
             dirty = false;
             modified_changed (false);
-            return bytes;
+            return payload.length;
         }
 
         public void goto_line (int line_idx) {
@@ -153,10 +122,17 @@ namespace SaturnIDE {
             string t = s.substring (i);
             return t.has_prefix ("using ") || t.has_prefix ("namespace ")
                 || t.has_prefix ("public ") || t.has_prefix ("private ")
-                || t.has_prefix ("class ") || t.has_prefix ("return ")
-                || t.has_prefix ("if ") || t.has_prefix ("while ")
+                || t.has_prefix ("class ") || t.has_prefix ("struct ")
+                || t.has_prefix ("enum ") || t.has_prefix ("errordomain ")
+                || t.has_prefix ("return ") || t.has_prefix ("if ")
+                || t.has_prefix ("else ") || t.has_prefix ("else{")
+                || t == "else" || t.has_prefix ("while ")
                 || t.has_prefix ("for ") || t.has_prefix ("var ")
-                || t.has_prefix ("int ") || t.has_prefix ("void ");
+                || t.has_prefix ("int ") || t.has_prefix ("bool ")
+                || t.has_prefix ("string ") || t.has_prefix ("double ")
+                || t.has_prefix ("void ") || t.has_prefix ("try ")
+                || t.has_prefix ("try{") || t.has_prefix ("catch ")
+                || t.has_prefix ("catch(") || t.has_prefix ("throw ");
         }
 
         public override void draw (Context cr) {
@@ -240,6 +216,40 @@ namespace SaturnIDE {
             cursor_moved (cy + 1, cx + 1, lines.length);
         }
 
+        private void insert_line_at (int idx, string text) {
+            if (idx < 0) idx = 0;
+            if (idx > lines.length) idx = lines.length;
+            lines.add ("");
+            for (int i = lines.length - 1; i > idx; i--)
+                lines[i] = lines[i - 1];
+            lines[idx] = text;
+        }
+
+        public bool find_next (string query) {
+            if (query.length == 0 || lines.length == 0)
+                return false;
+            int start = cx + 1;
+            if (start < lines[cy].length) {
+                int hit = lines[cy].substring (start).index_of (query);
+                if (hit >= 0) {
+                    cx = start + hit;
+                    cursor_moved (cy + 1, cx + 1, lines.length);
+                    return true;
+                }
+            }
+            for (int off = 1; off <= lines.length; off++) {
+                int r = (cy + off) % lines.length;
+                int hit = lines[r].index_of (query);
+                if (hit >= 0) {
+                    cy = r;
+                    cx = hit;
+                    cursor_moved (cy + 1, cx + 1, lines.length);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public override bool on_key_press (int key) {
             if (!focused || !visible || !sensitive)
                 return false;
@@ -247,6 +257,35 @@ namespace SaturnIDE {
             bool ctrl = (mods & Sys.MOD_CTRL) != 0;
             if (key == 19 || (ctrl && (key == 's' || key == 'S'))) {
                 save_requested ();
+                return true;
+            }
+            if (key == 11 || (ctrl && (key == 'k' || key == 'K'))) {
+                cut_buf = lines[cy];
+                has_cut = true;
+                if (lines.length > 1) {
+                    lines.remove_index (cy);
+                    if (cy >= lines.length) cy = lines.length - 1;
+                } else {
+                    lines[0] = "";
+                }
+                if (cx > lines[cy].length) cx = lines[cy].length;
+                mark_dirty ();
+                return true;
+            }
+            if (key == 21 || (ctrl && (key == 'u' || key == 'U'))) {
+                if (has_cut) {
+                    insert_line_at (cy + 1, cut_buf);
+                    cy++;
+                    cx = 0;
+                    mark_dirty ();
+                }
+                return true;
+            }
+            if (key == 4 || (ctrl && (key == 'd' || key == 'D'))) {
+                insert_line_at (cy + 1, lines[cy]);
+                cy++;
+                if (cx > lines[cy].length) cx = lines[cy].length;
+                mark_dirty ();
                 return true;
             }
             if (key == 0x81) {
@@ -282,10 +321,7 @@ namespace SaturnIDE {
                 var sp = new StringBuilder ();
                 for (int i = 0; i < indent; i++) sp.append (" ");
                 lines[cy] = s.substring (0, cx);
-                lines.add ("");
-                for (int i = lines.length - 1; i > cy + 1; i--)
-                    lines[i] = lines[i - 1];
-                lines[cy + 1] = sp.str + s.substring (cx);
+                insert_line_at (cy + 1, sp.str + s.substring (cx));
                 cy++;
                 cx = indent;
                 mark_dirty ();
@@ -315,7 +351,7 @@ namespace SaturnIDE {
                 mark_dirty ();
                 return true;
             }
-            if (key >= 32 && key < 127) {
+            if (!ctrl && key >= 32 && key < 127) {
                 string ch = ch_str ((uint8) key);
                 if (ch.length > 0) {
                     string s = lines[cy];
@@ -386,6 +422,20 @@ namespace SaturnIDE {
         st.files_lv.set_items (items, icons);
     }
 
+    private static void run_find (SaturnState st, Entry find_entry) {
+        string q = find_entry.get_text ();
+        if (q.length == 0) {
+            st.msg_lbl.set_text ("Enter text to find.");
+            return;
+        }
+        if (st.editor.find_next (q)) {
+            st.editor.focused = true;
+            st.msg_lbl.set_text (@"Found '$q' at Ln $(st.editor.cy + 1), Col $(st.editor.cx + 1)");
+        } else {
+            st.msg_lbl.set_text (@"Not found: '$q'");
+        }
+    }
+
     int main (string[] args) {
         bool once = false;
         string open_path = "";
@@ -409,10 +459,15 @@ namespace SaturnIDE {
         var btn_save = new Button ("Save");
         var btn_build = new Button ("Compile");
         var path_entry = new Entry ((open_path.length > 0) ? open_path : "hello.txt");
+        var find_entry = new Entry ("");
+        find_entry.set_placeholder_text ("Find...");
+        var btn_find = new Button ("Find");
         toolbar.pack_start (btn_new);
         toolbar.pack_start (btn_save);
         toolbar.pack_start (btn_build);
         toolbar.pack_start (path_entry, true, true, 0);
+        toolbar.pack_start (find_entry);
+        toolbar.pack_start (btn_find);
 
         var hpaned = new Paned (Orientation.HORIZONTAL);
         hpaned.set_position (230);
@@ -507,6 +562,14 @@ namespace SaturnIDE {
             }
         });
 
+        btn_find.clicked.connect ((sender) => {
+            run_find (st, find_entry);
+        });
+
+        find_entry.activate.connect ((sender) => {
+            run_find (st, find_entry);
+        });
+
         path_entry.activate.connect ((sender) => {
             string target = path_entry.get_text ();
             if (target.length > 0 && editor.load_file (target)) {
@@ -540,6 +603,8 @@ namespace SaturnIDE {
         root.pack_start (status_lbl, false, false, 2);
 
         win.set_child (root);
+        if (!once)
+            print (@"saturn: opened $(editor.filename) (Esc=quit, Ctrl+S=save)\n");
         win.run (once);
         print (@"saturn: file=$(editor.filename) lines=$(editor.lines.length) ok\n");
         return 0;

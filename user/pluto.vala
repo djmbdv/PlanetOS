@@ -32,45 +32,29 @@ namespace PlutoEditor {
             return ascii.substring ((int) c - 32, 1);
         }
 
+        private static string sanitize_line (string ln) {
+            string s = Str.replace (ln, "\r", "");
+            return Str.replace (s, "\t", "    ");
+        }
+
         public bool open_file (string path) {
             filename = path;
-            int fd = Sys.open (path);
-            if (fd < 0) {
+            string raw = "";
+            if (!FileUtils.get_contents (path, out raw)) {
                 lines = new GenericArray<string> ();
                 lines.add ("");
                 status = @"[ New File: $path ]";
                 dirty = false;
                 return false;
             }
-            int sz = Sys.file_size (fd);
             lines = new GenericArray<string> ();
-            if (sz > 0) {
-                var sb = new StringBuilder ();
-                var buf = new uint8[1024];
-                int total = 0;
-                while (total < sz) {
-                    int nr = Sys.read (fd, buf, 1024);
-                    if (nr <= 0)
-                        break;
-                    for (int i = 0; i < nr; i++) {
-                        uint8 b = buf[i];
-                        if (b == '\n') {
-                            lines.add (sb.str);
-                            sb = new StringBuilder ();
-                        } else if (b != '\r' && b >= 32 && b < 127) {
-                            sb.append (ch_str (b));
-                        } else if (b == '\t') {
-                            sb.append ("    ");
-                        }
-                    }
-                    total += nr;
-                }
-                if (sb.len > 0 || lines.length == 0)
-                    lines.add (sb.str);
-            } else {
-                lines.add ("");
+            if (raw.length > 0) {
+                var parts = Str.split (raw, "\n");
+                for (int i = 0; i < parts.length; i++)
+                    lines.add (sanitize_line (parts[i]));
             }
-            Sys.close (fd);
+            if (lines.length == 0)
+                lines.add ("");
             cx = 0;
             cy = 0;
             row_off = 0;
@@ -81,31 +65,13 @@ namespace PlutoEditor {
         }
 
         public bool save_file () {
-            int fd = Sys.create (filename);
-            if (fd < 0) {
+            string data = Str.joinv ("\n", lines);
+            if (!FileUtils.set_contents (filename, data)) {
                 status = @"[ Error writing $filename ]";
                 return false;
             }
-            int bytes = 0;
-            var nl = new uint8[1];
-            nl[0] = (uint8) '\n';
-            for (int i = 0; i < lines.length; i++) {
-                string ln = lines[i];
-                if (ln.length > 0) {
-                    var b = new uint8[ln.length];
-                    for (int k = 0; k < ln.length; k++)
-                        b[k] = (uint8) ln[k];
-                    int w = Sys.write (fd, b, ln.length);
-                    if (w > 0) bytes += w;
-                }
-                if (i + 1 < lines.length) {
-                    Sys.write (fd, nl, 1);
-                    bytes += 1;
-                }
-            }
-            Sys.close (fd);
             dirty = false;
-            status = @"[ Wrote $bytes bytes to $filename ]";
+            status = @"[ Wrote $(data.length) bytes to $filename ]";
             return true;
         }
 
@@ -140,13 +106,31 @@ namespace PlutoEditor {
 
         public void insert_newline () {
             string s = lines[cy];
+            int indent = 0;
+            while (indent < cx && indent < s.length && s[indent] == ' ')
+                indent++;
             string left = s.substring (0, cx);
             string right = s.substring (cx);
+            var sp = new StringBuilder ();
+            for (int i = 0; i < indent; i++)
+                sp.append (" ");
             lines[cy] = left;
-            insert_at (lines, cy + 1, right);
+            insert_at (lines, cy + 1, sp.str + right);
             cy++;
-            cx = 0;
+            cx = indent;
             dirty = true;
+        }
+
+        public void delete_forward () {
+            string s = lines[cy];
+            if (cx < s.length) {
+                lines[cy] = s.substring (0, cx) + s.substring (cx + 1);
+                dirty = true;
+            } else if (cy + 1 < lines.length) {
+                lines[cy] = s + lines[cy + 1];
+                lines.remove_index (cy + 1);
+                dirty = true;
+            }
         }
 
         public void backspace () {
@@ -178,6 +162,20 @@ namespace PlutoEditor {
             cx = 0;
             dirty = true;
             status = "[ Cut line ]";
+        }
+
+        public void copy_line () {
+            cut_buf = lines[cy];
+            status = "[ Copied line ]";
+        }
+
+        public void goto_line (int target_1based) {
+            int r = target_1based - 1;
+            if (r < 0) r = 0;
+            if (r >= lines.length) r = lines.length - 1;
+            cy = r;
+            cx = 0;
+            status = @"[ Line $(cy + 1)/$(lines.length) ]";
         }
 
         public void uncut_line () {
@@ -275,8 +273,8 @@ namespace PlutoEditor {
                 st_sb.append (" ");
             st_sb.append (st_right);
             out_sb.append (@"\x1b[23;1H\x1b[7m$(pad_right (st_sb.str, SCREEN_COLS))\x1b[0m");
-            out_sb.append ("\x1b[24;1H^O Write Out   ^W Where Is    ^K Cut Line    ^U Uncut Line\x1b[K");
-            out_sb.append ("\x1b[25;1H^X Exit        ^G Help        Arrows Move   Home/End Line\x1b[K");
+            out_sb.append ("\x1b[24;1H^O Write Out   ^W Where Is    ^K Cut Line    ^U Uncut   ^Y Copy\x1b[K");
+            out_sb.append ("\x1b[25;1H^X Exit        ^L Goto Line   ^D Del Char    ^G Help    Esc Quit\x1b[K");
 
             int scr_r = (cy - row_off) + 2;
             int scr_c = (cx - col_off) + 1;
@@ -329,8 +327,25 @@ namespace PlutoEditor {
                     render ();
                     continue;
                 }
+                if (k == 25 || (ctrl && (k == 'y' || k == 'Y'))) { // Ctrl+Y
+                    copy_line ();
+                    render ();
+                    continue;
+                }
+                if (k == 12 || (ctrl && (k == 'l' || k == 'L'))) { // Ctrl+L
+                    string ln_str = prompt_input ("Goto Line");
+                    if (ln_str.length > 0)
+                        goto_line (int.parse (ln_str));
+                    render ();
+                    continue;
+                }
+                if (k == 4 || (ctrl && (k == 'd' || k == 'D'))) { // Ctrl+D
+                    delete_forward ();
+                    render ();
+                    continue;
+                }
                 if (k == 7 || (ctrl && (k == 'g' || k == 'G'))) { // Ctrl+G
-                    status = "^O Save  ^X Exit  ^K Cut  ^U Uncut  ^W Find  Esc Quit";
+                    status = "^O Save  ^X Exit  ^K Cut  ^Y Copy  ^U Paste  ^W Find  ^L Goto  ^D Del";
                     render ();
                     continue;
                 }

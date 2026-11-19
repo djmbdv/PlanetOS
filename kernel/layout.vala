@@ -28,7 +28,7 @@ namespace Planet.Kernel {
     public class KernelLayout : Object {
         // Window start (boot page tables) and end (past the FXSAVE area).
         public const int WINDOW_BASE = 0x100000;
-        public const int WINDOW_END = 0x127000;
+        public const int WINDOW_END = 0x129000;
 
         // The boot stack lives in [STACK_LIMIT, STACK_TOP) and grows down from
         // STACK_TOP, so nothing else may be placed above WINDOW_END.
@@ -102,8 +102,8 @@ namespace Planet.Kernel {
         public const int SCHED_VARS_SIZE = 0x10;
         public const int TCB_TABLE = 0x124000;     // 16 tasks x 128 bytes
         public const int TCB_TABLE_SIZE = 0x800;
-        public const int FXSAVE_AREA = 0x125000;   // 16 tasks x 512 bytes
-        public const int FXSAVE_AREA_SIZE = 0x2000;
+        public const int FXSAVE_AREA = 0x125000;   // 16 tasks x 1024 bytes (XSAVE x87+SSE+AVX)
+        public const int FXSAVE_AREA_SIZE = 0x4000;
 
         // --- legacy bootstrap stack used by ElfLoader.load_and_run --------
         public const int LEGACY_STACK = 0x1FE000;
