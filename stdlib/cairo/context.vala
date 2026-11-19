@@ -5,22 +5,24 @@ namespace Cairo {
 
     [AsmBody(@"
         # __c_fill32(addr in rdi, val in rsi, count in rdx)
-        # Rellena 'count' pixeles de 32 bits (ARGB) usando SSE2 (16B/iter) + cola de 4B
+        # Fills 'count' 32-bit ARGB pixels using AVX2 (32B/iter) + 4B tail
         mov %rdx, %rcx
         test %rcx, %rcx
         jz _cf_done
         mov %esi, %eax
-        cmp $4, %rcx
+        cmp $8, %rcx
         jb _cf_loop
-        .byte 0x66, 0x0f, 0x6e, 0xc6
-        .byte 0x66, 0x0f, 0x70, 0xc0, 0x00
-    _cf_sse:
-        cmp $4, %rcx
-        jb _cf_loop
-        .byte 0xf3, 0x0f, 0x7f, 0x07
-        add $16, %rdi
-        sub $4, %rcx
-        jmp _cf_sse
+        .byte 0xc5, 0xf9, 0x6e, 0xc6
+        .byte 0xc4, 0xe2, 0x7d, 0x58, 0xc0
+    _cf_avx:
+        cmp $8, %rcx
+        jb _cf_tail_vzu
+        .byte 0xc5, 0xfe, 0x7f, 0x07
+        add $32, %rdi
+        sub $8, %rcx
+        jmp _cf_avx
+    _cf_tail_vzu:
+        .byte 0xc5, 0xf8, 0x77
     _cf_loop:
         test %rcx, %rcx
         jz _cf_done
@@ -35,10 +37,24 @@ namespace Cairo {
 
     [AsmBody(@"
         # __c_blit32(dst in rdi, src in rsi, count in rdx)
+        # Copies 'count' 32-bit ARGB pixels using AVX2 (32B/iter) + 4B tail
         mov %rdx, %rcx
         test %rcx, %rcx
         jz _cb_done
+    _cb_avx:
+        cmp $8, %rcx
+        jb _cb_tail_vzu
+        .byte 0xc5, 0xfe, 0x6f, 0x06
+        .byte 0xc5, 0xfe, 0x7f, 0x07
+        add $32, %rsi
+        add $32, %rdi
+        sub $8, %rcx
+        jmp _cb_avx
+    _cb_tail_vzu:
+        .byte 0xc5, 0xf8, 0x77
     _cb_loop:
+        test %rcx, %rcx
+        jz _cb_done
         mov (%rsi), %eax
         mov %eax, (%rdi)
         add $4, %rsi

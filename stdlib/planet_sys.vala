@@ -49,6 +49,49 @@ namespace Planet {
     private extern int __call_ptr2 (int fn_addr, int a0, int a1);
 
     [AsmBody(@"
+        # __call_ptr3(fn in rdi, a0 in rsi, a1 in rdx, a2 in rcx) -> rax
+        mov %rdi, %rax
+        mov %rsi, %rdi
+        mov %rdx, %rsi
+        mov %rcx, %rdx
+        .byte 0xff, 0xd0
+        ret
+    ")]
+    private extern int __call_ptr3 (int fn_addr, int a0, int a1, int a2);
+
+    [AsmBody(@"
+        # __call_ptr_d1(fn in rdi, x in xmm0) -> xmm0
+        .byte 0xff, 0xd7
+        ret
+    ")]
+    private extern double __call_ptr_d1 (int fn_addr, double x);
+
+    [AsmBody(@"
+        # __call_ptr_d2(fn in rdi, a in xmm0, b in xmm1) -> xmm0
+        .byte 0xff, 0xd7
+        ret
+    ")]
+    private extern double __call_ptr_d2 (int fn_addr, double a, double b);
+
+    [AsmBody(@"
+        # __call_ptr_i2d(fn in rdi, a0 in rsi, a1 in rdx) -> xmm0
+        mov %rdi, %rax
+        mov %rsi, %rdi
+        mov %rdx, %rsi
+        .byte 0xff, 0xd0
+        ret
+    ")]
+    private extern double __call_ptr_i2d (int fn_addr, int a0, int a1);
+
+    [AsmBody(@"
+        # data pointer of a double[] (header is 16 bytes)
+        add $16, %rdi
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __darr_data (double[] a);
+
+    [AsmBody(@"
         # __sys_poke8(addr in rdi, val in rsi)
         mov %sil, (%rdi)
         ret
@@ -58,6 +101,10 @@ namespace Planet {
     public class Sys : Object {
         public const int MAX_PATH = 512;
         public const int MAX_IO = 65536;
+        public const int MAX_FDS = 16;
+        public const int USER_MIN_ADDR = 0x1000;
+        public const int USER_MAX_ADDR = 0x40000000;
+        public const int MAX_KLOG_RECORDS = 1024;
 
         // --- raw forms -----------------------------------------------------
 
@@ -102,14 +149,17 @@ namespace Planet {
             int n = __sys4 (35, __str_data (key), key.length, __arr_data (buf), 512);
             if (n <= 0)
                 return "";
-            string s = "";
-            string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+            int len = 0;
             for (int i = 0; i < n; i++) {
                 uint8 c = buf[i];
-                if (c >= 32 && c <= 126)
-                    s = s + ascii.substring ((int) c - 32, 1);
+                if (c >= 32 && c <= 126) {
+                    buf[len] = c;
+                    len = len + 1;
+                }
             }
-            return s;
+            if (len == 0)
+                return "";
+            return __planc_host_bytes_to_str (buf, len);
         }
 
         public static int setenv (string key, string val) {
@@ -157,6 +207,8 @@ namespace Planet {
         }
 
         public static int free_page (int addr) {
+            if (addr < 0x100000 || (addr & 0xFFF) != 0)
+                return -1;
             return __sys4 (4, addr, 0, 0, 0);
         }
 
@@ -244,13 +296,13 @@ namespace Planet {
         // --- processes -----------------------------------------------------
 
         public static int exec (string name, string cmdline) {
-            if (!path_ok (name))
+            if (!path_ok (name) || cmdline.length > MAX_IO)
                 return -1;
             return __sys4 (13, __str_data (name), name.length, __str_data (cmdline), 0);
         }
 
         public static int spawn (string name, string cmdline) {
-            if (!path_ok (name))
+            if (!path_ok (name) || cmdline.length > MAX_IO)
                 return -1;
             return __sys4 (16, __str_data (name), name.length, __str_data (cmdline), 0);
         }
@@ -268,15 +320,49 @@ namespace Planet {
         }
 
         public static int map_user_at (int vaddr, int size) {
+            if (vaddr < 0x1000000 || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
+                return -1;
             return __sys4 (50, vaddr, size, 0, 0);
         }
 
         public static void poke8 (int addr, int val) {
+            if (addr < USER_MIN_ADDR)
+                return;
             __sys_poke8 (addr, val);
         }
 
         public static int call_ptr2 (int fn_addr, int a0, int a1) {
+            if (fn_addr < USER_MIN_ADDR)
+                return -1;
             return __call_ptr2 (fn_addr, a0, a1);
+        }
+
+        public static int call_ptr3 (int fn_addr, int a0, int a1, int a2) {
+            if (fn_addr < USER_MIN_ADDR)
+                return -1;
+            return __call_ptr3 (fn_addr, a0, a1, a2);
+        }
+
+        public static double call_ptr_d1 (int fn_addr, double x) {
+            if (fn_addr < USER_MIN_ADDR)
+                return 0.0;
+            return __call_ptr_d1 (fn_addr, x);
+        }
+
+        public static double call_ptr_d2 (int fn_addr, double a, double b) {
+            if (fn_addr < USER_MIN_ADDR)
+                return 0.0;
+            return __call_ptr_d2 (fn_addr, a, b);
+        }
+
+        public static double call_ptr_i2d (int fn_addr, int a0, int a1) {
+            if (fn_addr < USER_MIN_ADDR)
+                return 0.0;
+            return __call_ptr_i2d (fn_addr, a0, a1);
+        }
+
+        public static int double_arr_addr (double[] a) {
+            return __darr_data (a);
         }
 
         public static int list_tasks (uint8[] buf, int max_bytes) {
@@ -286,6 +372,10 @@ namespace Planet {
         }
 
         public static int set_stdio (int in_fd, int out_fd) {
+            if (in_fd != -1 && (in_fd < 0 || in_fd >= MAX_FDS))
+                return -1;
+            if (out_fd != -1 && (out_fd < 0 || out_fd >= MAX_FDS))
+                return -1;
             return __sys4 (19, in_fd, out_fd, 0, 0);
         }
 
@@ -320,14 +410,20 @@ namespace Planet {
         }
 
         public static int gpu_blob_create (int ctx_id, int res_id, int size) {
+            if (size <= 0)
+                return 0;
             return __sys4 (43, ctx_id, res_id, size, 0);
         }
 
         public static int gpu_resource_destroy (int ctx_id, int res_id, int pa, int size) {
+            if (pa != 0 && pa < 0x100000)
+                return -1;
             return __sys4 (46, ctx_id, res_id, pa, size);
         }
 
         public static int gpu_3d_create (int ctx_id, int res_id, int width, int height) {
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096)
+                return 0;
             return __sys4 (47, ctx_id, res_id, width, height);
         }
 
@@ -335,13 +431,15 @@ namespace Planet {
 
         // Copies up to `max_records` 64-byte records into `buf`, oldest first.
         public static int klog_read (uint8[] buf, int max_records) {
-            if (max_records <= 0 || buf.length < max_records * 64)
+            if (max_records <= 0 || max_records > MAX_KLOG_RECORDS || buf.length < max_records * 64)
                 return -1;
             return __sys4 (44, __arr_data (buf), max_records, 0, 0);
         }
 
         // Same, for callers that already hold a raw page address.
         public static int klog_read_at (int addr, int max_records) {
+            if (addr < USER_MIN_ADDR || max_records <= 0 || max_records > MAX_KLOG_RECORDS)
+                return -1;
             return __sys4 (44, addr, max_records, 0, 0);
         }
 

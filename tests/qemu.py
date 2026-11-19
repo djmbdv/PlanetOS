@@ -146,6 +146,7 @@ def run_guest(qemu, out_dir, commands, delay, boot_timeout, command_timeout):
 
     argv = [
         qemu,
+        "-cpu", "max",
         "-kernel", qemu_path(kernel),
         "-drive", "file=%s,format=raw,if=ide" % qemu_path(disk),
         "-vga", "std",

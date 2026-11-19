@@ -133,13 +133,17 @@ namespace Gsk {
             n++;
         }
 
+        [AsmBody(@"
+            # sqrtsd %xmm0, %xmm0
+            .byte 0xf2, 0x0f, 0x51, 0xc0
+            ret
+        ")]
+        private static extern double hw_sqrt (double v);
+
         private static double my_sqrt (double v) {
             if (v <= 0)
                 return 0;
-            double g = (v > 1) ? v : 1;
-            for (int i = 0; i < 16; i++)
-                g = 0.5 * (g + v / g);
-            return g;
+            return hw_sqrt (v);
         }
 
         private void skip_sep () {

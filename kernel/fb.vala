@@ -316,12 +316,7 @@ namespace Planet.Kernel {
         }
 
         public static void copy_fast (int dst, int src, int count) {
-            if (fb_has_avx2 < 0)
-                fb_has_avx2 = Hal.has_avx2 () ? 1 : 0;
-            if (fb_has_avx2 != 0)
-                fb_copy_dwords_avx2 (dst, src, count);
-            else
-                fb_copy_dwords (dst, src, count);
+            fb_copy_dwords_avx2 (dst, src, count);
         }
 
         private static void copy_pixels (int dst, int src, int count) {
