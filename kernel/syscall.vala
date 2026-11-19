@@ -490,8 +490,24 @@ namespace Planet.Kernel {
         return -1;
     }
 
+    private static string fault_name (int vec) {
+        if (vec == 0) return "Divide Error";
+        if (vec == 6) return "Invalid Opcode";
+        if (vec == 8) return "Double Fault";
+        if (vec == 13) return "General Protection Fault";
+        if (vec == 14) return "Page Fault";
+        return "CPU Exception";
+    }
+
     public int fault_dispatch (int vec, int err, int rip, int cr2) {
-        print (@"fault:vec=$vec err=$err rip=$rip cr2=$cr2\n");
+        int cur_cr3 = Sched.current_cr3 ();
+        if (cur_cr3 != 0)
+            Fb.release_for_cr3 (cur_cr3);
+        Sched.set_stdio (0, 1);
+        string msg = @"\n[fault] $(fault_name (vec)) (vec=$vec err=$err rip=$rip cr2=$cr2)\n";
+        print (msg);
+        for (int i = 0; i < msg.length; i++)
+            Vga.write_byte ((int) msg[i]);
         if (Sched.current_tid () > 0) {
             cpu_sti ();
             Sched.exit_current (128 + vec);

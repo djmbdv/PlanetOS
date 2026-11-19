@@ -399,6 +399,8 @@ namespace Planet.Kernel {
             if (fb_phys_addr != 0) {
                 if (fb_backend == 2) {
                     VirtioGpu.close_scanout ();
+                    if (VirtioGpu.init_scanout (1280, 720) != 0)
+                        VirtioGpu.set_console_active (true);
                 } else {
                     bga_write (4, 0);
                     bga_write (8, 0);
