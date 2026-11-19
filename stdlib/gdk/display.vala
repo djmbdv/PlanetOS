@@ -32,7 +32,8 @@ namespace Gdk {
             if (comp_path.length > 0) {
                 int cw = parse_pos_int (Sys.getenv ("PLANET_WIN_W"), w);
                 int ch = parse_pos_int (Sys.getenv ("PLANET_WIN_H"), h);
-                var cwin = new Window.compositor_surface (cw, ch, comp_path);
+                string ev_path = Sys.getenv ("PLANET_WIN_EV");
+                var cwin = new Window.compositor_surface (cw, ch, comp_path, ev_path);
                 if (!cwin.is_valid ()) {
                     cwin.close ();
                     return null;

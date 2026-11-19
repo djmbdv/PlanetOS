@@ -95,7 +95,7 @@ namespace Gtk {
             if (child != null)
                 child.draw (cr);
 
-            if (cur_mx >= 0 && cur_my >= 0) {
+            if (gdk_win.comp_file.length == 0 && cur_mx >= 0 && cur_my >= 0) {
                 cr.set_source_rgb (1.0, 1.0, 1.0);
                 cr.rectangle ((double) cur_mx, (double) cur_my, 8.0, 12.0);
                 cr.fill ();
@@ -120,21 +120,32 @@ namespace Gtk {
             }
             while (gtk_running && gdk_win != null) {
                 bool dirty = false;
+                bool had_motion = false;
+                int mot_x = 0;
+                int mot_y = 0;
                 while (true) {
                     var ev = gdk_win.poll_event ();
                     if (ev.type == EventType.NONE)
                         break;
+                    if (ev.type == EventType.MOTION_NOTIFY) {
+                        mot_x = ev.x;
+                        mot_y = ev.y;
+                        had_motion = true;
+                        continue;
+                    }
+                    if (had_motion) {
+                        cur_mx = mot_x;
+                        cur_my = mot_y;
+                        if (child != null && child.on_pointer_motion (mot_x, mot_y))
+                            dirty = true;
+                        had_motion = false;
+                    }
                     if (ev.type == EventType.KEY_PRESS) {
                         if (ev.keyval == 27) {
                             main_quit ();
                             break;
                         }
                         if (child != null && child.on_key_press (ev.keyval))
-                            dirty = true;
-                    } else if (ev.type == EventType.MOTION_NOTIFY) {
-                        cur_mx = ev.x;
-                        cur_my = ev.y;
-                        if (child != null && child.on_pointer_motion (ev.x, ev.y))
                             dirty = true;
                     } else if (ev.type == EventType.BUTTON_PRESS) {
                         cur_mx = ev.x;
@@ -164,6 +175,12 @@ namespace Gtk {
                                 dirty = true;
                         }
                     }
+                }
+                if (had_motion && gtk_running) {
+                    cur_mx = mot_x;
+                    cur_my = mot_y;
+                    if (child != null && child.on_pointer_motion (mot_x, mot_y))
+                        dirty = true;
                 }
                 if (!gtk_running)
                     break;

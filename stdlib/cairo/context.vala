@@ -633,14 +633,45 @@ namespace Cairo {
 
         public void stroke () {
             if (path_kind == 1) {
-                for (int t = 0; t < line_w; t++) {
-                    for (int x = px; x < px + pw; x++) {
-                        put_px (x, py + t);
-                        put_px (x, py + ph - 1 - t);
+                if (src_a == 255 && surf != null && surf.buf_addr != 0) {
+                    int col = (255 << 24) | ((int) src_r << 16) | ((int) src_g << 8) | (int) src_b;
+                    int x0 = clip_on ? clip_x0 : 0;
+                    int y0 = clip_on ? clip_y0 : 0;
+                    int x1 = clip_on ? clip_x1 : surf.width;
+                    int y1 = clip_on ? clip_y1 : surf.height;
+                    int hx0 = (px > x0) ? px : x0;
+                    int hx1 = (px + pw < x1) ? (px + pw) : x1;
+                    int hspan = hx1 - hx0;
+                    for (int t = 0; t < line_w; t++) {
+                        int yt = py + t;
+                        int yb = py + ph - 1 - t;
+                        if (hspan > 0) {
+                            if (yt >= y0 && yt < y1)
+                                __c_fill32 (surf.buf_addr + (yt * surf.width + hx0) * 4, col, hspan);
+                            if (yb >= y0 && yb < y1 && yb != yt)
+                                __c_fill32 (surf.buf_addr + (yb * surf.width + hx0) * 4, col, hspan);
+                        }
+                        int xl = px + t;
+                        int xr = px + pw - 1 - t;
+                        int vy0 = (py > y0) ? py : y0;
+                        int vy1 = (py + ph < y1) ? (py + ph) : y1;
+                        for (int y = vy0; y < vy1; y++) {
+                            if (xl >= x0 && xl < x1)
+                                __c_poke32 (surf.buf_addr + (y * surf.width + xl) * 4, col);
+                            if (xr >= x0 && xr < x1 && xr != xl)
+                                __c_poke32 (surf.buf_addr + (y * surf.width + xr) * 4, col);
+                        }
                     }
-                    for (int y = py; y < py + ph; y++) {
-                        put_px (px + t, y);
-                        put_px (px + pw - 1 - t, y);
+                } else {
+                    for (int t = 0; t < line_w; t++) {
+                        for (int x = px; x < px + pw; x++) {
+                            put_px (x, py + t);
+                            put_px (x, py + ph - 1 - t);
+                        }
+                        for (int y = py; y < py + ph; y++) {
+                            put_px (px + t, y);
+                            put_px (px + pw - 1 - t, y);
+                        }
                     }
                 }
             } else if (path_kind == 2) {
@@ -703,52 +734,89 @@ namespace Cairo {
         public void fill_gradient_v (double x, double y, double w, double h,
                                      double r0, double g0, double b0,
                                      double r1, double g1, double b1) {
+            if (surf == null || surf.buf_addr == 0)
+                return;
             int ix = (int) x;
             int iy = (int) y;
             int iw = (int) w;
             int ih = (int) h;
             if (iw <= 0 || ih <= 0)
                 return;
-            int saved_r = src_r;
-            int saved_g = src_g;
-            int saved_b = src_b;
-            int saved_a = src_a;
-            src_a = 255;
-            for (int row = 0; row < ih; row++) {
-                double t = (ih > 1) ? ((double) row / (double) (ih - 1)) : 0.0;
-                src_r = clamp255 (r0 + (r1 - r0) * t);
-                src_g = clamp255 (g0 + (g1 - g0) * t);
-                src_b = clamp255 (b0 + (b1 - b0) * t);
-                for (int col = 0; col < iw; col++) {
-                    put_px (ix + col, iy + row);
-                }
+            int cx0 = clip_on ? clip_x0 : 0;
+            int cy0 = clip_on ? clip_y0 : 0;
+            int cx1 = clip_on ? clip_x1 : surf.width;
+            int cy1 = clip_on ? clip_y1 : surf.height;
+            int x0 = (ix > cx0) ? ix : cx0;
+            int x1 = (ix + iw < cx1) ? (ix + iw) : cx1;
+            int y0 = (iy > cy0) ? iy : cy0;
+            int y1 = (iy + ih < cy1) ? (iy + ih) : cy1;
+            int span = x1 - x0;
+            if (span <= 0 || y1 <= y0)
+                return;
+            float inv = (ih > 1) ? (1.0f / (float) (ih - 1)) : 0.0f;
+            float fr0 = (float) r0;
+            float fg0 = (float) g0;
+            float fb0 = (float) b0;
+            float dr = (float) (r1 - r0);
+            float dg = (float) (g1 - g0);
+            float db = (float) (b1 - b0);
+            for (int py0 = y0; py0 < y1; py0++) {
+                float t = (float) (py0 - iy) * inv;
+                int cr = (int) clamp255 ((double) (fr0 + dr * t));
+                int cg = (int) clamp255 ((double) (fg0 + dg * t));
+                int cb = (int) clamp255 ((double) (fb0 + db * t));
+                int col = (255 << 24) | (cr << 16) | (cg << 8) | cb;
+                __c_fill32 (surf.buf_addr + (py0 * surf.width + x0) * 4, col, span);
             }
-            src_r = saved_r;
-            src_g = saved_g;
-            src_b = saved_b;
-            src_a = saved_a;
         }
 
         public void blit_alpha_mask (uint8[] mask, int mw, int mh, int dx, int dy) {
-            if (mw <= 0 || mh <= 0 || src_a == 0)
+            if (mw <= 0 || mh <= 0 || src_a == 0 || surf == null || surf.buf_addr == 0)
                 return;
-            int saved_a = src_a;
-            for (int y = 0; y < mh; y++) {
-                int py0 = dy + y;
-                if (py0 < 0 || py0 >= surf.height)
-                    continue;
-                if (clip_on && (py0 < clip_y0 || py0 >= clip_y1))
-                    continue;
-                for (int x = 0; x < mw; x++) {
-                    int a = (int) mask[y * mw + x];
+            int cx0 = clip_on ? clip_x0 : 0;
+            int cy0 = clip_on ? clip_y0 : 0;
+            int cx1 = clip_on ? clip_x1 : surf.width;
+            int cy1 = clip_on ? clip_y1 : surf.height;
+            int x0 = (dx > cx0) ? dx : cx0;
+            int y0 = (dy > cy0) ? dy : cy0;
+            int x1 = (dx + mw < cx1) ? (dx + mw) : cx1;
+            int y1 = (dy + mh < cy1) ? (dy + mh) : cy1;
+            if (x1 <= x0 || y1 <= y0)
+                return;
+            int sr = (int) src_r;
+            int sg = (int) src_g;
+            int sb = (int) src_b;
+            int sa = (int) src_a;
+            int opaque_col = (255 << 24) | (sr << 16) | (sg << 8) | sb;
+            int stride = surf.width;
+            int base_addr = surf.buf_addr;
+            for (int py0 = y0; py0 < y1; py0++) {
+                int moff = (py0 - dy) * mw - dx;
+                int row_addr = base_addr + py0 * stride * 4;
+                for (int px0 = x0; px0 < x1; px0++) {
+                    int a = (int) mask[moff + px0];
                     if (a == 0)
                         continue;
-                    src_a = (saved_a * a) / 255;
-                    if (src_a > 0)
-                        put_px (dx + x, py0);
+                    if (sa < 255)
+                        a = ((sa * a + 128) * 257) >> 16;
+                    if (a == 0)
+                        continue;
+                    int addr = row_addr + px0 * 4;
+                    if (a >= 255) {
+                        __c_poke32 (addr, opaque_col);
+                        continue;
+                    }
+                    int dst = __c_peek32 (addr);
+                    int dr = (dst >> 16) & 0xFF;
+                    int dg = (dst >> 8) & 0xFF;
+                    int db = dst & 0xFF;
+                    int ia = 255 - a;
+                    int rr = ((sr * a + dr * ia + 128) * 257) >> 16;
+                    int rg = ((sg * a + dg * ia + 128) * 257) >> 16;
+                    int rb = ((sb * a + db * ia + 128) * 257) >> 16;
+                    __c_poke32 (addr, (255 << 24) | (rr << 16) | (rg << 8) | rb);
                 }
             }
-            src_a = saved_a;
         }
 
         // Compact 5x7 bitmap glyph rows (encoded as 7 rows of 5 bits) for ASCII 32..126

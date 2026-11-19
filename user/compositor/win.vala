@@ -33,7 +33,10 @@ namespace Wm {
         public ImageSurface? ext_surf = null;
         public int ext_seq = 0;
         public string ext_file = "";
+        public string ext_ev_file = "";
+        public int32 ext_ev_seq = 0;
         public int ext_tid = -1;
+        private GenericArray<int32>? ext_ev_q = null;
 
         public Win (int id, string title, int x, int y, int w, int h, Kind kind) {
             this.id = id;
@@ -221,6 +224,48 @@ namespace Wm {
 
         public int content_y () { return y + BORDER + TITLE_H; }
         public int content_h () { return h - TITLE_H - 2 * BORDER; }
+
+        private static void put_le32 (uint8[] b, int off, int32 val) {
+            int v = (int) val;
+            b[off + 0] = (uint8) (v & 0xFF);
+            b[off + 1] = (uint8) ((v >> 8) & 0xFF);
+            b[off + 2] = (uint8) ((v >> 16) & 0xFF);
+            b[off + 3] = (uint8) ((v >> 24) & 0xFF);
+        }
+
+        public void push_ext_event (int type, int p1, int p2, int p3) {
+            if (ext_ev_file.length == 0)
+                return;
+            if (ext_ev_q == null)
+                ext_ev_q = new GenericArray<int32> ();
+            ext_ev_seq++;
+            ext_ev_q.add (ext_ev_seq);
+            ext_ev_q.add ((int32) type);
+            ext_ev_q.add ((int32) p1);
+            ext_ev_q.add ((int32) p2);
+            ext_ev_q.add ((int32) p3);
+            while (ext_ev_q.length > 80) { // max 16 events * 5 ints
+                for (int i = 0; i < 5; i++)
+                    ext_ev_q.remove_index (0);
+            }
+            int cnt = ext_ev_q.length / 5;
+            var buf = new uint8[4 + cnt * 20];
+            put_le32 (buf, 0, (int32) cnt);
+            for (int i = 0; i < ext_ev_q.length; i++)
+                put_le32 (buf, 4 + i * 4, ext_ev_q[i]);
+            string tmp = ext_ev_file + ".tmp";
+            int fd = Sys.create (tmp);
+            if (fd < 0)
+                return;
+            int wr = Sys.write (fd, buf, buf.length);
+            Sys.close (fd);
+            if (wr == buf.length) {
+                Sys.unlink (ext_ev_file);
+                Sys.rename (tmp, ext_ev_file);
+            } else {
+                Sys.unlink (tmp);
+            }
+        }
     }
 
 }

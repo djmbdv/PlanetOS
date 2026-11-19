@@ -267,6 +267,10 @@ namespace Wm {
                         Sys.unlink (w.ext_file);
                         w.ext_file = "";
                     }
+                    if (w.ext_ev_file.length > 0) {
+                        Sys.unlink (w.ext_ev_file);
+                        w.ext_ev_file = "";
+                    }
                 }
             }
             if (attached)
@@ -329,7 +333,7 @@ namespace Wm {
                     animate_pattern ((double) (now % 800) / 100.0);
                 }
             }
-            if ((frames & 3) == 0)
+            if ((frames & 1) == 0)
                 poll_ext_surfaces ();
             animate_damage (mx, my);
             bool was_full = dmg_full;
@@ -656,6 +660,10 @@ namespace Wm {
                     Sys.unlink (w.ext_file);
                     w.ext_file = "";
                 }
+                if (w.ext_ev_file.length > 0) {
+                    Sys.unlink (w.ext_ev_file);
+                    w.ext_ev_file = "";
+                }
             }
             w.alive = false;
             if (focused_id == id) {
@@ -803,12 +811,14 @@ namespace Wm {
             if (win != null) {
                 Sys.mkdir ("/tmp");
                 win.ext_file = @"/tmp/_comp_w$id.argb";
+                win.ext_ev_file = @"/tmp/_comp_e$id.evt";
                 win.ext_seq = 0;
                 int cw = w - BORDER * 2;
                 int ch = h - BORDER * 2 - TITLE_H;
                 if (cw < 64) cw = 64;
                 if (ch < 64) ch = 64;
                 Sys.setenv ("PLANET_WIN_FILE", win.ext_file);
+                Sys.setenv ("PLANET_WIN_EV", win.ext_ev_file);
                 Sys.setenv ("PLANET_WIN_W", @"$cw");
                 Sys.setenv ("PLANET_WIN_H", @"$ch");
                 win.ext_tid = Sys.spawn (exec_path, "");
@@ -925,6 +935,9 @@ namespace Wm {
                 w.term.active = true;
                 damage_window (id);
             }
+            if (w.kind == Kind.EXT) {
+                w.push_ext_event (2, px - (w.x + BORDER), py - w.content_y (), 1);
+            }
             return ACT_FOCUS;
         }
 
@@ -969,6 +982,11 @@ namespace Wm {
             if (fw != null && (fw.kind == Kind.GTK || fw.kind == Kind.FILES) && fw.gtk_root != null) {
                 if (fw.gtk_root.on_pointer_motion (px, py))
                     damage_window (fw.id);
+            } else if (fw != null && fw.kind == Kind.EXT && (frames & 1) == 0) {
+                if (px >= fw.x + BORDER && px < fw.x + fw.w - BORDER
+                    && py >= fw.content_y () && py < fw.y + fw.h - BORDER) {
+                    fw.push_ext_event (4, px - (fw.x + BORDER), py - fw.content_y (), 0);
+                }
             }
         }
 
@@ -982,6 +1000,8 @@ namespace Wm {
             } else if (w.kind == Kind.TERMINAL && w.term != null) {
                 if (w.term.on_scroll (dy))
                     damage_window (w.id);
+            } else if (w.kind == Kind.EXT) {
+                w.push_ext_event (5, px - (w.x + BORDER), py - w.content_y (), ((dx & 0xFFFF) << 16) | (dy & 0xFFFF));
             }
         }
 
@@ -994,6 +1014,8 @@ namespace Wm {
             if (fw != null && (fw.kind == Kind.GTK || fw.kind == Kind.FILES) && fw.gtk_root != null) {
                 if (fw.gtk_root.on_pointer_release (last_ptr_x, last_ptr_y, 1))
                     damage_window (fw.id);
+            } else if (fw != null && fw.kind == Kind.EXT) {
+                fw.push_ext_event (3, last_ptr_x - (fw.x + BORDER), last_ptr_y - fw.content_y (), 1);
             }
         }
 
@@ -1083,6 +1105,10 @@ namespace Wm {
                     damage_window (fw.id);
                     return;
                 }
+            }
+            if (fw != null && fw.kind == Kind.EXT) {
+                fw.push_ext_event (1, k, m, 0);
+                return;
             }
             if (k == 'q' || k == 'Q') {
                 quit = true;
