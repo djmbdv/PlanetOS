@@ -93,7 +93,7 @@ namespace Planc {
         }
     }
 
-    public class Emitter : Object {
+    public sealed class Emitter : Object {
 
         public Buffer code { get; private set; }
         public Buffer data { get; private set; }
@@ -107,6 +107,7 @@ namespace Planc {
 
         private GenericArray<string> string_literals;
         private GenericArray<int> string_offsets;
+        private StrIndexMap string_index = new StrIndexMap ();
 
         public Emitter () {
             code = new Buffer (1024);
@@ -271,10 +272,9 @@ namespace Planc {
         //   +16 uint8  UTF-8 bytes..., 0x00
         // Returns its 8-byte aligned offset.
         public int add_string (string s) {
-            for (int i = 0; i < string_literals.length; i++) {
-                if (string_literals[i] == s)
-                    return string_offsets[i];
-            }
+            int cached = string_index.lookup (s);
+            if (cached >= 0)
+                return cached - 1;
             while (data.length % 8 != 0)
                 data.u8 (0);
             var offset = data.length;
@@ -283,8 +283,8 @@ namespace Planc {
             data.u64le ((uint64) s.length);
             data.ascii (s);
             data.u8 (0);
-            string_literals.add (s);
-            string_offsets.add (offset);
+            // Offsets can be 0, so the index stores offset + 1.
+            string_index.put (s, offset + 1);
             return offset;
         }
 
@@ -1102,6 +1102,61 @@ namespace Planc {
             code.u8 (0xCD); code.u8 (0x80);
         }
 
+        // `lock (obj)` uses a spinlock table in .bss striped by the object
+        // address: two threads locking the same object always contend on the
+        // same word. The lock is not recursive.
+        public const int LOCK_STRIPES = 32;
+
+        public int lock_table_bytes () {
+            return LOCK_STRIPES * 8;
+        }
+
+        // __planc_lock_slot (rdi = object) -> rax = address of its lock word.
+        public void emit_rt_lock_slot (int lock_bss_base) {
+            // mov rax, rdi                 48 89 F8
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xF8);
+            // shr rax, 4                   48 C1 E8 04
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE8); code.u8 (0x04);
+            // and eax, LOCK_STRIPES - 1    83 E0 1F
+            code.u8 (0x83); code.u8 (0xE0); code.u8 ((uint8) (LOCK_STRIPES - 1));
+            // shl rax, 3                   48 C1 E0 03
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE0); code.u8 (0x03);
+            lea_rcx_space (lock_bss_base, PatchSpace.BSS);
+            // add rax, rcx                 48 01 C8
+            code.u8 (0x48); code.u8 (0x01); code.u8 (0xC8);
+            ret ();
+        }
+
+        // __planc_lock_acquire (rdi = object): spin until the word is ours.
+        public void emit_rt_lock_acquire (int lock_bss_base) {
+            var l_spin = new_label ();
+            var l_got = new_label ();
+            call_rel32 ("__planc_lock_slot");
+            // mov rcx, rax                 48 89 C1
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC1);
+            bind (l_spin);
+            // mov eax, 1                   B8 01 00 00 00
+            mov_eax (1);
+            // xchg [rcx], rax              48 87 01  (implicitly locked)
+            code.u8 (0x48); code.u8 (0x87); code.u8 (0x01);
+            test_rax_rax ();
+            branch (BranchKind.JE, l_got);
+            // pause                        F3 90
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_spin);
+            bind (l_got);
+            ret ();
+        }
+
+        // __planc_lock_release (rdi = object): publish the word as free.
+        public void emit_rt_lock_release (int lock_bss_base) {
+            call_rel32 ("__planc_lock_slot");
+            // mov qword ptr [rax], 0       48 C7 00 00 00 00 00
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x00);
+            code.u8 (0x00); code.u8 (0x00); code.u8 (0x00); code.u8 (0x00);
+            ret ();
+        }
+
         public void emit_rt_write_str (bool freestanding = false, bool target_planetos = false) {
             if (target_planetos) {
                 code.u8 (0x48); code.u8 (0x8B); code.u8 (0x77); code.u8 (0x08); // mov rsi, [rdi + 8]
@@ -1647,6 +1702,11 @@ namespace Planc {
             // test rdi, rdi                   48 85 FF
             code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
             branch (BranchKind.JE, l_done);
+            // Compact instances are not reference counted: tag 3 means the
+            // program owns the block and frees it explicitly.
+            // cmp byte ptr [rdi + 4], 3       80 7F 04 03
+            code.u8 (0x80); code.u8 (0x7F); code.u8 (0x04); code.u8 (0x03);
+            branch (BranchKind.JE, l_done);
             // mov edx, [rdi]                  8B 17
             code.u8 (0x8B); code.u8 (0x17);
             // test edx, edx                   85 D2
@@ -1665,6 +1725,33 @@ namespace Planc {
             ret ();
         }
 
+        // void __planc_compact_free(void* rdi)
+        // Turns a compact block into a plain one and lets the normal free path
+        // recycle it. Tag 0 skips the vtable finalizer, which compact objects
+        // do not have.
+        public void emit_rt_compact_free (Label mem_panic_lbl) {
+            // The block is poisoned on free, so a second `free ()` panics
+            // instead of handing the same block to the allocator twice.
+            // cmp dword ptr [rdi], 0xDEADDEAD  81 3F AD DE AD DE
+            code.u8 (0x81); code.u8 (0x3F); code.u32le (0xDEADDEADu);
+            branch (BranchKind.JE, mem_panic_lbl);
+            // mov dword ptr [rdi], 1          C7 07 01 00 00 00
+            code.u8 (0xC7); code.u8 (0x07); code.u32le (1);
+            // mov byte ptr [rdi + 4], 0        C6 47 04 00
+            code.u8 (0xC6); code.u8 (0x47); code.u8 (0x04); code.u8 (0x00);
+            // jmp __planc_unref                E9 rel32
+            jmp_rel32 ("__planc_unref");
+        }
+
+        public void jmp_rel32 (string target) {
+            code.u8 (0xE9);
+            var p = new CallPatch ();
+            p.displacement = code.length;
+            p.callee = target;
+            code.u32le (0);
+            calls.add (p);
+        }
+
         // void __planc_unref(void* rdi)
         public void emit_rt_unref (int bss_base, Label mem_panic_lbl) {
             var l_ret = new_label ();
@@ -1675,6 +1762,10 @@ namespace Planc {
 
             // test rdi, rdi                   48 85 FF
             code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_ret);
+            // Compact instances (tag 3) are freed explicitly, never here.
+            // cmp byte ptr [rdi + 4], 3       80 7F 04 03
+            code.u8 (0x80); code.u8 (0x7F); code.u8 (0x04); code.u8 (0x03);
             branch (BranchKind.JE, l_ret);
             // mov eax, [rdi]                  8B 07
             code.u8 (0x8B); code.u8 (0x07);

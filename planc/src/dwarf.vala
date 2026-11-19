@@ -29,7 +29,7 @@ namespace Planc {
         }
     }
 
-    public class Dwarf : Object {
+    public sealed class Dwarf : Object {
 
         private static void uleb128 (Buffer b, uint64 val) {
             uint64 v = val;

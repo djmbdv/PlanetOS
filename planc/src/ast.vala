@@ -140,14 +140,24 @@ namespace Planc {
     public class CallExpr : Expr {
         public string callee { get; set; }
         public GenericArray<Expr> args { get; private set; }
+        public GenericArray<string> type_arg_names { get; private set; }
         public int temp_slot { get; set; default = -1; }
 
         public CallExpr () {
             args = new GenericArray<Expr> ();
+            type_arg_names = new GenericArray<string> ();
         }
     }
 
     public class NullLiteral : Expr {
+    }
+
+    // `sizeof (T)` or `sizeof (expr)`.
+    public class SizeofExpr : Expr {
+        public ValaType target_type { get; set; default = ValaType.VOID; }
+        public string type_name { get; set; default = ""; }
+        public Expr? operand { get; set; default = null; }
+        public bool is_type_form { get; set; default = true; }
     }
 
     public class ClassNewExpr : Expr {
@@ -317,8 +327,12 @@ namespace Planc {
     public class ContinueStatement : Statement {
     }
 
-    public class ForeachStatement : Statement {
-        public ValaType elem_type { get; set; default = ValaType.INT; }
+    public class LockStatement : Statement {
+        public Expr target { get; set; }
+        public Statement body { get; set; }
+    }
+
+    public class ForeachStatement : Statement {        public ValaType elem_type { get; set; default = ValaType.INT; }
         public string elem_type_name { get; set; default = ""; }
         public bool infer_type { get; set; default = false; }
         public string var_name { get; set; }
@@ -451,6 +465,9 @@ namespace Planc {
     public class Function : Object {
         public string name { get; set; }
         public string file { get; set; default = ""; }
+        public bool is_compact_free { get; set; default = false; }
+        public GenericArray<string> type_params { get; private set; }
+        public bool is_generic_template { get; set; default = false; }
         public string method_name { get; set; default = ""; }
         public ValaType return_type { get; set; default = ValaType.VOID; }
         public string return_type_name { get; set; default = ""; }
@@ -493,6 +510,7 @@ namespace Planc {
             body = new GenericArray<Statement> ();
             base_args = new GenericArray<Expr> ();
             throws_domains = new GenericArray<string> ();
+            type_params = new GenericArray<string> ();
         }
     }
 
@@ -505,6 +523,11 @@ namespace Planc {
         public Function? default_handler { get; set; default = null; }
         public string handler_delegate_name { get; set; default = ""; }
         public int slot_index { get; set; default = -1; }
+        // Set when the signal is declared on an interface: `iface_slot` is the
+        // position of its slot accessor in the interface method table.
+        public string iface_name { get; set; default = ""; }
+        public int iface_id { get; set; default = -1; }
+        public int iface_slot { get; set; default = -1; }
         public int line { get; set; }
         public int column { get; set; }
 
@@ -517,6 +540,7 @@ namespace Planc {
         public ValaType field_type { get; set; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
+        public bool is_static { get; set; default = false; }
         public string name { get; set; }
         public Expr? init { get; set; }
         public int line { get; set; }
@@ -528,6 +552,8 @@ namespace Planc {
         public string file { get; set; default = ""; }
         public string base_name { get; set; default = ""; }
         public bool is_abstract { get; set; default = false; }
+        public bool is_sealed { get; set; default = false; }
+        public bool is_compact { get; set; default = false; }
         public bool is_defined { get; set; default = false; }
         public bool is_union { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
@@ -660,14 +686,27 @@ namespace Planc {
         public string name { get; set; }
         public int iface_id { get; set; }
         public bool is_defined { get; set; default = false; }
+        public bool is_generic_template { get; set; default = false; }
+        public GenericArray<string> type_params { get; private set; }
         public GenericArray<string> prereq_names { get; private set; }
         public GenericArray<Function> methods { get; private set; }
+        public GenericArray<SignalDecl> signals { get; private set; }
         public int line { get; set; }
         public int column { get; set; }
 
         public InterfaceDecl () {
+            type_params = new GenericArray<string> ();
             prereq_names = new GenericArray<string> ();
             methods = new GenericArray<Function> ();
+            signals = new GenericArray<SignalDecl> ();
+        }
+
+        public unowned SignalDecl? find_own_signal (string sname) {
+            foreach (unowned var s in signals) {
+                if (s.name == sname)
+                    return s;
+            }
+            return null;
         }
 
         public unowned Function? find_own_method (string mname) {
@@ -699,6 +738,7 @@ namespace Planc {
         public string template_name { get; set; }
         public string mangled_name { get; set; }
         public bool is_struct { get; set; default = false; }
+        public bool is_interface { get; set; default = false; }
         public bool has_type_param { get; set; default = false; }
         public GenericArray<ValaType> arg_types { get; private set; }
         public GenericArray<string> arg_type_names { get; private set; }
@@ -709,7 +749,7 @@ namespace Planc {
         }
     }
 
-    public class StrIndexMap : Object {
+    public sealed class StrIndexMap : Object {
         private string[] keys;
         private int[] vals;
         private int count = 0;
@@ -786,7 +826,7 @@ namespace Planc {
         }
     }
 
-    public class Program : Object {
+    public sealed class Program : Object {
         private StrIndexMap fn_idx = new StrIndexMap ();
         private int fn_idx_len = 0;
         private StrIndexMap enum_idx = new StrIndexMap ();
@@ -821,6 +861,10 @@ namespace Planc {
             interfaces = new GenericArray<InterfaceDecl> ();
             delegates = new GenericArray<DelegateDecl> ();
             instantiations = new GenericArray<GenericInstantiation> ();
+            // Every class derives from Object unless it says otherwise, so the
+            // root exists before parsing: `Object o = x;` must type-check.
+            var root = new ClassDecl () { name = "Object", is_defined = true };
+            classes.add (root);
         }
 
         public unowned ErrorDomainDecl? find_error_domain (string name) {
@@ -959,7 +1003,8 @@ namespace Planc {
 
         public string request_instantiation (string template_name, bool is_struct,
                                              GenericArray<ValaType> arg_types,
-                                             GenericArray<string> arg_type_names) {
+                                             GenericArray<string> arg_type_names,
+                                             bool is_interface = false) {
             bool has_tp = false;
             for (int i = 0; i < arg_types.length; i++) {
                 if (arg_types[i] == ValaType.TYPE_PARAM) {
@@ -989,6 +1034,7 @@ namespace Planc {
                     template_name = template_name,
                     mangled_name = mangled,
                     is_struct = is_struct,
+                    is_interface = is_interface,
                     has_type_param = false
                 };
                 for (int i = 0; i < arg_types.length; i++) {
@@ -1859,8 +1905,25 @@ namespace Planc {
             classes.add (cd);
         }
 
-        public void monomorphize_all () {
-            for (int ii = 0; ii < instantiations.length; ii++) {
+        // A generic function is monomorphized per concrete argument list, just
+        // like a generic class: the template is cloned with `T` replaced.
+        public Function? instantiate_function (Function tmpl,
+                                                       GenericArray<ValaType> targs,
+                                                       GenericArray<string> targ_names,
+                                                       string mangled_name) {
+            foreach (var f in functions) {
+                if (f.name == mangled_name)
+                    return f;
+            }
+            var nf = clone_function (tmpl, "", tmpl.type_params, targs, targ_names);
+            nf.name = mangled_name;
+            nf.method_name = mangled_name;
+            nf.is_generic_template = false;
+            functions.add (nf);
+            return nf;
+        }
+
+        public void monomorphize_all () {            for (int ii = 0; ii < instantiations.length; ii++) {
                 var inst = instantiations[ii];
                 if (inst.has_type_param)
                     continue;
@@ -1872,6 +1935,26 @@ namespace Planc {
                 if (inst.template_name == "Channel") {
                     if (inst.arg_types.length == 1)
                         synthesize_channel (inst);
+                    continue;
+                }
+                if (inst.is_interface) {
+                    unowned var tmpl_it = find_interface (inst.template_name);
+                    if (tmpl_it == null || tmpl_it.type_params.length != inst.arg_types.length)
+                        continue;
+                    if (find_interface (inst.mangled_name) != null)
+                        continue;
+                    var nit = new InterfaceDecl () {
+                        name = inst.mangled_name,
+                        iface_id = interfaces.length + 1,
+                        is_defined = true,
+                        line = tmpl_it.line,
+                        column = tmpl_it.column
+                    };
+                    foreach (var pn in tmpl_it.prereq_names)
+                        nit.prereq_names.add (pn);
+                    foreach (var m in tmpl_it.methods)
+                        nit.methods.add (clone_function (m, inst.mangled_name, tmpl_it.type_params, inst.arg_types, inst.arg_type_names));
+                    interfaces.add (nit);
                     continue;
                 }
                 if (inst.is_struct) {
@@ -1986,7 +2069,7 @@ namespace Planc {
 
     // Pure-integer IEEE-754 decimal-to-binary32/binary64 converter so float
     // literal bit patterns are deterministic across stage 0 and self-hosted stages.
-    public class Ieee754 : Object {
+    public sealed class Ieee754 : Object {
         private const int64 LIMB_BASE = 268435456; // 2^28
         private const int LIMB_BITS = 28;
 

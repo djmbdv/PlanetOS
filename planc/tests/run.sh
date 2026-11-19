@@ -181,7 +181,7 @@ if [ -f "$HERE/valid/string_index.vala" ]; then
 fi
 
 echo "== check_leaks =="
-for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib float_double asm_body async_goroutines signals channels_and_mutex; do
+for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib float_double asm_body async_goroutines signals channels_and_mutex object_root compact_manual compact_nested; do
     src="$HERE/valid/$base_name.vala"
     bin="$WORK/leaks_$base_name"
     case_name="check_leaks_$base_name"
@@ -315,7 +315,39 @@ else
     fi
 fi
 
+echo "== compact double free =="
+
+cat >"$WORK/compact_double_free.vala" <<'EOF'
+[Compact]
+class Buf {
+    public int n;
+    public Buf (int n) { this.n = n; }
+}
+int main () {
+    var b = new Buf (3);
+    b.free ();
+    b.free ();
+    return 0;
+}
+EOF
+if ! "$PLANC" "$WORK/compact_double_free.vala" -o "$WORK/compact_double_free" 2>"$WORK/compact_double_free.err"; then
+    ko "compact_double_free_panic" "compile failed: $(cat "$WORK/compact_double_free.err")"
+elif ! check_elf "compact_double_free_panic" "$WORK/compact_double_free"; then
+    :
+else
+    "$WORK/compact_double_free" >"$WORK/compact_double_free.stdout" 2>"$WORK/compact_double_free.runerr"
+    code=$?
+    if [ "$code" != "134" ]; then
+        ko "compact_double_free_panic" "exit $code, expected 134"
+    elif ! grep -q '^planc: panic: memory error (double free or corrupted block)$' "$WORK/compact_double_free.runerr"; then
+        ko "compact_double_free_panic" "missing panic diagnostic: $(cat "$WORK/compact_double_free.runerr")"
+    else
+        ok "compact_double_free_panic"
+    fi
+fi
+
 echo "== multifile =="
+
 cat >"$WORK/multi_a.vala" <<'EOF'
 using Models;
 

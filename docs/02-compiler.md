@@ -36,9 +36,9 @@ Both consume the same SSA IR. A shader is written in the Vala dialect, compiled 
 
 | Category | Constructs |
 |---|---|
-| Types | `class`, `[Compact] class`, `interface`, `struct`, `[SimpleType] struct`, `enum`, `[Flags] enum`, `delegate`, `errordomain`, `namespace`, generics with type parameters |
-| Members | fields, constants, properties (`get`, `set`, `construct`, `default`), methods, signals, `static construct`, constructors with `this()` and `base()` |
-| Control | `if`, `while`, `do`, `for`, `foreach`, `switch`, `break`/`continue` with a label, `return`, `throw`, `try`/`catch`/`finally`, `lock`, `using` |
+| Types | `class`, `[Compact] class`, `interface`, `struct`, `[SimpleType] struct`, `enum`, `[Flags] enum`, `delegate`, `errordomain`, `namespace`, generics with type parameters (classes, structs and **functions**). Every class without a declared base derives from `Object`, the implicit root ([slice-52](planc/slice-52-object-and-compact.md)) |
+| Members | fields (**including `static` fields, one global per class**), constants, properties (`get`, `set`, `construct`, `default`), **indexers** (`T this[I i]`, a `planc` extension), methods, signals, constructors with `this()` and `base()` |
+| Control | `if`, `while`, `do`, `for`, `foreach`, `switch` (**with `case a, b:` lists**), `break`/`continue` with a label, `return`, `throw`, `try`/`catch`/`finally`, `using` |
 | Expressions | `@"…"` templates, `is`, `as`, `??`, `in`, `out`, `ref`, lambdas `(a) => expr`, method references, `new`, array literals, indexers, property access, `sizeof`, `typeof` |
 | Preprocessing | `#if` with the dialect version macros |
 | Modifiers | `public`, `private`, `internal`, `protected`, `static`, `abstract`, `virtual`, `override`, `sealed`, `owned`, `unowned`, `weak`, `async` |
@@ -51,7 +51,7 @@ Semantic restrictions measured in the language, which the compiler must enforce:
 | Restriction | Detail |
 |---|---|
 | `switch` | only over integer, enum or string. **There are no type patterns** ([E-01](experiments/E01-dialect.md)) |
-| `lock` | the target must be a **member of the current class**, not an arbitrary expression |
+| `lock` | the target must be a **reference type**; `planc` accepts any reference expression, not only a member of the current class (see [slice-50](planc/slice-50-dialect-gaps.md)) |
 | `main` | cannot declare `throws` |
 | arrays | there are no fixed-size arrays (`int[3]` is a syntax error); every array is dynamic |
 | generics | no constraint syntax; `where T : …` does not exist in 0.56 |
@@ -66,6 +66,7 @@ Semantic restrictions measured in the language, which the compiler must enforce:
 | `extern` declared against a C header | There is no C to link against; `extern` is admitted only for `planetrt` symbols described in a project-owned `.vapi` |
 | User variadic functions | VL-11. **Note:** `valac` does accept them and lowers them to C varargs; the restriction is ours, derived from not having a C ABI |
 | `[CCode(cname)]` on types with C layout | The layout is our own |
+| `is` / `as` / cast to a `[Compact]` class, `[Compact]` with a base or an interface | A compact instance has no vtable and no reference count, so it has no runtime type ([slice-52](planc/slice-52-object-and-compact.md)) |
 
 Rejection of foreign attributes is **deferred to the point of use, not to load time** ([E-06](experiments/E06-vapis.md)): `cheader_filename` appears 752 times in the standard vapi files, and rejecting the whole file would make any third-party `.vapi` unusable. The metadata is loaded, the parts that have meaning are applied, and a warning is issued when a symbol that depends on C is used.
 
@@ -179,7 +180,7 @@ The compiler computes offsets, sizes and alignment. Rules:
 - Natural alignment of the field; the struct is aligned to its most-aligned field.
 - No field reordering (the programmer controls the layout).
 - Hidden field first: vtable pointer in classes; header in `string` and arrays.
-- `[Compact]` has no vtable: it saves 8 bytes per instance and eliminates virtual dispatch.
+- `[Compact]` has no vtable and no reference count: fields start at `+8` instead of `+16`, so an instance is 16 bytes smaller and cannot be the target of `is`, `as` or a cast. Its lifetime is manual (`free ()`), see [slice-52](planc/slice-52-object-and-compact.md).
 - `[SimpleType] struct` is passed by value in registers, never by pointer.
 
 ## 5. Memory model
@@ -194,6 +195,7 @@ Vala uses reference counting. `planc` makes it explicit:
 | returning `T` | transfer to the caller |
 | `weak T` | registration in the weak table; nulled on free |
 | `unowned T` | no refcount; the programmer guarantees the lifetime |
+| `[Compact] T` | no refcount at all: the block is released by an explicit `free ()`, which also releases its reference-typed fields ([slice-52](planc/slice-52-object-and-compact.md)) |
 
 **Cycles are not collected** (non-requirement, see [00 §7](00-requirements.md#7-non-requirements)). It is a property of the language, not a defect of the compiler, and it is documented in the standard library.
 

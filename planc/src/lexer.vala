@@ -74,10 +74,11 @@ namespace Planc {
     public errordomain LexError {
         UNEXPECTED_CHARACTER,
         UNTERMINATED_STRING,
-        UNKNOWN_ESCAPE
+        UNKNOWN_ESCAPE,
+        DIRECTIVE
     }
 
-    public class Lexer : Object {
+    public sealed class Lexer : Object {
 
         private string source;
         private int src_len = 0;
@@ -329,6 +330,17 @@ namespace Planc {
                 return two_char (TokenKind.QUESTION_QUESTION, l, c);
             }
 
+            if (ch == '"' && peek (1) == '"' && peek (2) == '"') {
+                advance ();
+                advance ();
+                advance ();
+                return Token () {
+                    kind = TokenKind.STRING,
+                    text = scan_verbatim_body (l, c),
+                    line = l, column = c
+                };
+            }
+
             if (ch == '"') {
                 advance ();
                 return Token () {
@@ -410,6 +422,26 @@ namespace Planc {
             return Token () {
                 kind = kind, text = source[pos - 1:pos], line = l, column = c
             };
+        }
+
+        // `"""..."""`: the text between the delimiters is copied verbatim —
+        // no escape sequences and no indentation stripping (measured against
+        // valac 0.56).
+        private string scan_verbatim_body (int l, int c) throws LexError {
+            var sb = new StrBuilder ();
+            while (true) {
+                if (pos >= src_len)
+                    throw new LexError.UNTERMINATED_STRING (
+                        @"unterminated verbatim string at $l:$c");
+                if (current () == '"' && peek (1) == '"' && peek (2) == '"') {
+                    advance ();
+                    advance ();
+                    advance ();
+                    return sb.str;
+                }
+                sb.append_c ((char) current ());
+                advance ();
+            }
         }
 
         private string scan_string_body (int l, int c, bool is_template = false) throws LexError {
@@ -517,8 +549,7 @@ namespace Planc {
                             sb.append_c ((char) (uint8) v);
                             continue;
                         }
-                        case 'u':
-                        case 'U': {
+                        case 'u', 'U': {
                             int digits = (e == 'u') ? 4 : 8;
                             advance ();
                             uint32 cp = 0;

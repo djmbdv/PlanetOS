@@ -9,7 +9,7 @@ namespace Planc {
         FAILED
     }
 
-    public class StrBuilder : Object {
+    public sealed class StrBuilder : Object {
 
         private uint8[] buf;
         private int used = 0;
@@ -63,7 +63,7 @@ namespace Planc {
         }
     }
 
-    public class Buffer : Object {
+    public sealed class Buffer : Object {
 
         private uint8[] storage;
         private int used = 0;

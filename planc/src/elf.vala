@@ -28,7 +28,7 @@ namespace Planc {
         }
     }
 
-    public class Elf : Object {
+    public sealed class Elf : Object {
 
         public const uint64 BASE_ADDRESS = 0x400000;
         public const int HEADER_SIZE = 64;

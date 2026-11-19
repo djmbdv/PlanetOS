@@ -45,7 +45,7 @@ namespace Planc {
         MISSING_MAIN
     }
 
-    public class Parser : Object {
+    public sealed class Parser : Object {
 
         private Lexer lexer;
         private Token current;
@@ -68,8 +68,19 @@ namespace Planc {
             return text == "float" || text == "double";
         }
 
-        private static bool is_reserved (string text) {
-            return is_int_type_name (text) || is_fp_type_name (text) || text == "bool" || text == "string"
+        private bool is_sizeof_type_name (string text) {
+            if (is_int_type_name (text) || is_fp_type_name (text))
+                return true;
+            if (text == "bool" || text == "string" || text == "void")
+                return true;
+            return program.find_class (text) != null
+                || program.find_struct (text) != null
+                || program.find_enum (text) != null
+                || program.find_interface (text) != null
+                || program.find_error_domain (text) != null;
+        }
+
+        private static bool is_reserved (string text) {            return is_int_type_name (text) || is_fp_type_name (text) || text == "bool" || text == "string"
                 || text == "var" || text == "void" || text == "new"
                 || text == "null" || text == "this" || text == "base"
                 || text == "is" || text == "as"
@@ -87,6 +98,7 @@ namespace Planc {
                 || text == "break" || text == "continue"
                 || text == "enum" || text == "struct" || text == "union" || text == "class"
                 || text == "interface" || text == "delegate"
+                || text == "sealed" || text == "sizeof" || text == "lock"
                 || text == "async" || text == "yield";
         }
 
@@ -110,7 +122,8 @@ namespace Planc {
 
         private void parse_generic_type_args (ref ValaType t, ref string tname)
                 throws ParseError, LexError {
-            if ((t != ValaType.CLASS && t != ValaType.STRUCT) || current.kind != TokenKind.LT)
+            if ((t != ValaType.CLASS && t != ValaType.STRUCT && t != ValaType.INTERFACE)
+                || current.kind != TokenKind.LT)
                 return;
             if (t == ValaType.CLASS && tname != "GenericArray" && tname != "Channel") {
                 unowned var cd = program.find_class (tname);
@@ -119,6 +132,10 @@ namespace Planc {
             } else if (t == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (tname);
                 if (sd == null || !sd.is_generic_template)
+                    return;
+            } else if (t == ValaType.INTERFACE) {
+                unowned var it = program.find_interface (tname);
+                if (it == null || !it.is_generic_template)
                     return;
             }
 
@@ -156,6 +173,10 @@ namespace Planc {
                 unowned var cd = program.find_class (tname);
                 if (cd != null && (cd.is_defined || cd.type_params.length > 0))
                     expected_arity = cd.type_params.length;
+            } else if (t == ValaType.INTERFACE) {
+                unowned var it = program.find_interface (tname);
+                if (it != null && (it.is_defined || it.type_params.length > 0))
+                    expected_arity = it.type_params.length;
             } else {
                 unowned var sd = program.find_struct (tname);
                 if (sd != null && (sd.is_defined || sd.type_params.length > 0))
@@ -166,12 +187,13 @@ namespace Planc {
                     @"generic type '$tname' expects $expected_arity type argument(s), got $(atypes.length) at $tl:$tc");
             }
 
-            tname = program.request_instantiation (tname, t == ValaType.STRUCT, atypes, anames);
+            tname = program.request_instantiation (tname, t == ValaType.STRUCT, atypes, anames,
+                                                   t == ValaType.INTERFACE);
         }
 
         private void parse_type_suffix (ref ValaType t, ref string tname)
                 throws ParseError, LexError {
-            if (pending_gt == 0 && (t == ValaType.CLASS || t == ValaType.STRUCT)
+            if (pending_gt == 0 && (t == ValaType.CLASS || t == ValaType.STRUCT || t == ValaType.INTERFACE)
                 && current.kind == TokenKind.LT) {
                 parse_generic_type_args (ref t, ref tname);
             }
@@ -567,11 +589,13 @@ namespace Planc {
             program.consts.add (cd);
         }
 
-        private void parse_attributes (out string? asm_body, out int asm_line, out int asm_col)
+        private void parse_attributes (out string? asm_body, out int asm_line, out int asm_col,
+                                       out bool compact_attr)
                 throws ParseError, LexError {
             asm_body = null;
             asm_line = 0;
             asm_col = 0;
+            compact_attr = false;
             while (current.kind == TokenKind.LBRACKET) {
                 advance (); // '['
                 if (current.kind != TokenKind.IDENTIFIER)
@@ -581,6 +605,8 @@ namespace Planc {
                 var al = current.line;
                 var ac = current.column;
                 advance ();
+                if (attr_name == "Compact")
+                    compact_attr = true;
                 if (attr_name == "AsmBody") {
                     expect (TokenKind.LPAREN, "'('");
                     if (current.kind != TokenKind.STRING && current.kind != TokenKind.TEMPLATE_STRING)
@@ -610,7 +636,8 @@ namespace Planc {
             string? asm_body = null;
             int asm_line = 0;
             int asm_col = 0;
-            parse_attributes (out asm_body, out asm_line, out asm_col);
+            bool compact_attr = false;
+            parse_attributes (out asm_body, out asm_line, out asm_col, out compact_attr);
 
             if (current.kind != TokenKind.IDENTIFIER)
                 throw new ParseError.UNEXPECTED_TOKEN (
@@ -680,13 +707,16 @@ namespace Planc {
             }
 
             bool is_abstract = false;
+            bool is_sealed = false;
             bool is_static = false;
             bool is_extern = false;
             bool is_async = false;
             while (current.kind == TokenKind.IDENTIFIER
                    && (current.text == "abstract" || current.text == "static"
-                       || current.text == "extern" || current.text == "async")) {
+                       || current.text == "extern" || current.text == "async"
+                       || current.text == "sealed")) {
                 if (current.text == "abstract") is_abstract = true;
+                else if (current.text == "sealed") is_sealed = true;
                 else if (current.text == "static") is_static = true;
                 else if (current.text == "extern") is_extern = true;
                 else is_async = true;
@@ -700,8 +730,12 @@ namespace Planc {
             if (current.text == "class") {
                 if (is_static || is_async)
                     throw new ParseError.UNEXPECTED_TOKEN (@"top-level class cannot be 'static' or 'async' at $(current.line):$(current.column)");
-                parse_class (is_abstract);
+                parse_class (is_abstract, is_sealed, compact_attr);
                 return;
+            }
+            if (is_sealed) {
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"'sealed' is only valid on classes at $(current.line):$(current.column)");
             }
             if (is_abstract) {
                 throw new ParseError.UNEXPECTED_TOKEN (
@@ -721,6 +755,32 @@ namespace Planc {
             }
 
             skip_ownership_modifiers ();
+
+            // `T name<T> (...)` uses `T` in the return type, so the type
+            // parameters must be known before the return type is parsed.
+            var saved_type_params = current_type_params;
+            {
+                var look = lexer.clone_state ();
+                var t2 = look.next ();
+                if (t2.kind == TokenKind.IDENTIFIER) {
+                    var t3 = look.next ();
+                    if (t3.kind == TokenKind.LT) {
+                        var gens = new GenericArray<string> ();
+                        foreach (var tpx in saved_type_params)
+                            gens.add (tpx);
+                        while (true) {
+                            var tk = look.next ();
+                            if (tk.kind == TokenKind.IDENTIFIER)
+                                gens.add (tk.text);
+                            else if (tk.kind == TokenKind.GT || tk.kind == TokenKind.SHR)
+                                break;
+                            else if (tk.kind == TokenKind.EOF)
+                                break;
+                        }
+                        current_type_params = gens;
+                    }
+                }
+            }
 
             ValaType decl_type = ValaType.VOID;
             string type_name = "";
@@ -743,11 +803,13 @@ namespace Planc {
             var name = current.text;
             advance ();
 
-            if (current.kind == TokenKind.LPAREN) {
+            if (current.kind == TokenKind.LPAREN
+                || (current.kind == TokenKind.LT && current_type_params.length > saved_type_params.length)) {
                 if (is_async && (is_extern || asm_body != null || name == "main"))
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"'async' is not valid on extern, [AsmBody], or 'main' function '$name' at $(type_line):$(type_column)");
                 var f = parse_function_rest (decl_type, type_name, name, type_line, type_column, asm_body, asm_line, asm_col, is_extern);
+                current_type_params = saved_type_params;
                 f.is_static = is_static;
                 f.is_async = is_async;
                 if (has_top_name (name))
@@ -762,6 +824,7 @@ namespace Planc {
             if (asm_body != null)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"[AsmBody] is only valid on functions at $asm_line:$asm_col");
+            current_type_params = saved_type_params;
 
             if (decl_type == ValaType.VOID)
                 throw new ParseError.UNEXPECTED_TOKEN (
@@ -959,6 +1022,30 @@ namespace Planc {
             existing.line = l;
             existing.column = c;
 
+            var iface_saved_tp = current_type_params;
+            if (current.kind == TokenKind.LT) {
+                advance ();
+                var itp = new GenericArray<string> ();
+                foreach (var tp in iface_saved_tp)
+                    itp.add (tp);
+                while (true) {
+                    if (current.kind != TokenKind.IDENTIFIER || is_reserved (current.text))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected type parameter name in interface '$name' at $(current.line):$(current.column)");
+                    existing.type_params.add (current.text);
+                    itp.add (current.text);
+                    advance ();
+                    if (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        continue;
+                    }
+                    break;
+                }
+                consume_gt ();
+                existing.is_generic_template = true;
+                current_type_params = itp;
+            }
+
             if (current.kind == TokenKind.COLON) {
                 advance ();
                 while (true) {
@@ -984,11 +1071,86 @@ namespace Planc {
                     advance ();
                 bool is_abs = false;
                 bool is_virt = false;
+                bool is_static_if = false;
+                bool is_signal_if = false;
                 while (current.kind == TokenKind.IDENTIFIER
-                       && (current.text == "abstract" || current.text == "virtual")) {
+                       && (current.text == "abstract" || current.text == "virtual"
+                           || current.text == "static" || current.text == "signal")) {
                     if (current.text == "abstract") is_abs = true;
+                    else if (current.text == "static") is_static_if = true;
+                    else if (current.text == "signal") is_signal_if = true;
                     else is_virt = true;
                     advance ();
+                }
+
+                // `signal void name (params);` lowers to a SignalDecl plus the
+                // abstract accessor that tells each implementor its slot.
+                if (is_signal_if) {
+                    if (is_abs || is_static_if)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"interface signal is neither abstract nor static at $(current.line):$(current.column)");
+                    ValaType sret = ValaType.VOID;
+                    string sret_name = "";
+                    if (current.kind != TokenKind.IDENTIFIER || !parse_type (current.text, out sret, out sret_name))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected signal return type in interface '$name' at $(current.line):$(current.column)");
+                    var sl = current.line;
+                    var sc = current.column;
+                    advance ();
+                    parse_type_suffix (ref sret, ref sret_name);
+                    if (current.kind != TokenKind.IDENTIFIER || is_reserved (current.text))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected signal name in interface '$name' at $(current.line):$(current.column)");
+                    var sname = current.text;
+                    advance ();
+                    if (existing.find_own_signal (sname) != null || existing.find_own_method (sname) != null)
+                        throw new ParseError.DUPLICATE_FUNCTION (
+                            @"duplicate signal '$sname' in interface '$name' at $sl:$sc");
+                    var plist = parse_param_list ();
+                    expect (TokenKind.SEMICOLON, "';'");
+                    var del_name = @"__sig_del_$(name)_$(sname)";
+                    var sd = new SignalDecl () {
+                        name = sname,
+                        return_type = sret,
+                        return_type_name = sret_name,
+                        is_virtual = is_virt,
+                        handler_delegate_name = del_name,
+                        iface_name = name,
+                        line = sl,
+                        column = sc
+                    };
+                    foreach (var p in plist)
+                        sd.params.add (p);
+                    var dd = new DelegateDecl () {
+                        name = del_name,
+                        return_type = sret,
+                        return_type_name = sret_name,
+                        line = sl,
+                        column = sc
+                    };
+                    dd.params.add (new Param () {
+                        param_type = ValaType.INTERFACE,
+                        type_name = name,
+                        name = "sender",
+                        line = sl,
+                        column = sc
+                    });
+                    foreach (var p in plist)
+                        dd.params.add (p);
+                    program.delegates.add (dd);
+                    existing.signals.add (sd);
+                    var acc = new Function () {
+                        name = "__sigslot_" + sname,
+                        method_name = "__sigslot_" + sname,
+                        return_type = ValaType.INT,
+                        has_body = false,
+                        is_abstract = true,
+                        owner_class = name,
+                        line = sl,
+                        column = sc
+                    };
+                    existing.methods.add (acc);
+                    continue;
                 }
                 parse_ownership_weak ();
                 var ml = current.line;
@@ -1017,6 +1179,7 @@ namespace Planc {
                         return_type_name = rt_name,
                         is_abstract = is_abs,
                         is_virtual = is_virt,
+                        is_static = is_static_if,
                         owner_class = name,
                         line = mem_l,
                         column = mem_c
@@ -1026,6 +1189,9 @@ namespace Planc {
                     parse_throws_clause (mfn.throws_domains);
                     if (current.kind == TokenKind.SEMICOLON) {
                         advance ();
+                        if (is_static_if)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"static interface method '$mname' requires a body at $mem_l:$mem_c");
                         mfn.has_body = false;
                         mfn.is_abstract = true;
                     } else if (current.kind == TokenKind.LBRACE) {
@@ -1034,7 +1200,8 @@ namespace Planc {
                                 @"abstract interface method '$mname' cannot have a body at $mem_l:$mem_c");
                         parse_block_into (mfn.body);
                         mfn.has_body = true;
-                        mfn.is_virtual = true;
+                        if (!is_static_if)
+                            mfn.is_virtual = true;
                     } else {
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"expected ';' or '{' after interface method '$mname' at $(current.line):$(current.column)");
@@ -1062,6 +1229,7 @@ namespace Planc {
                 }
             }
             expect (TokenKind.RBRACE, "'}'");
+            current_type_params = iface_saved_tp;
         }
 
         private void parse_delegate () throws ParseError, LexError {
@@ -1687,7 +1855,7 @@ namespace Planc {
             expect (TokenKind.RBRACE, "'}'");
         }
 
-        private void parse_class (bool is_abstract) throws ParseError, LexError {
+        private void parse_class (bool is_abstract, bool is_sealed = false, bool is_compact = false) throws ParseError, LexError {
             var l = current.line;
             var c = current.column;
             advance (); // 'class'
@@ -1731,16 +1899,20 @@ namespace Planc {
                     if (current.kind != TokenKind.IDENTIFIER || is_reserved (current.text))
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"expected base class or interface name after ':' at $(current.line):$(current.column)");
-                    var btok = current.text;
+                    var bt = current.text;
                     advance ();
-                    if (program.find_interface (btok) != null) {
-                        parsed_ifaces.add (btok);
-                    } else if (btok == "Object" && program.find_class ("Object") == null) {
+                    unowned var itf_b = program.find_interface (bt);
+                    if (itf_b != null) {
+                        ValaType it = ValaType.INTERFACE;
+                        string itn = itf_b.name;
+                        parse_generic_type_args (ref it, ref itn);
+                        parsed_ifaces.add (itn);
+                    } else if (bt == "Object" && program.find_class ("Object") == null) {
                         // Implicit GLib.Object base in Vala sources.
                     } else {
-                        ValaType bt = ValaType.CLASS;
-                        string bn = btok;
-                        parse_generic_type_args (ref bt, ref bn);
+                        ValaType bt2 = ValaType.CLASS;
+                        string bn = bt;
+                        parse_generic_type_args (ref bt2, ref bn);
                         if (base_name != "")
                             throw new ParseError.UNEXPECTED_TOKEN (
                                 @"class '$name' cannot inherit multiple base classes at $(current.line):$(current.column)");
@@ -1780,21 +1952,36 @@ namespace Planc {
             }
             foreach (var iname in parsed_ifaces)
                 cd_existing.iface_names.add (iname);
+            if (is_compact) {
+                if (base_name != "")
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"[Compact] class '$(cd_existing.name)' cannot have a base class at $l:$c");
+                if (parsed_ifaces.length > 0)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"[Compact] class '$(cd_existing.name)' cannot implement interfaces: it has no vtable at $l:$c");
+                cd_existing.is_compact = true;
+            } else if (base_name == "") {
+                base_name = "Object";
+            }
             cd_existing.base_name = base_name;
             cd_existing.is_abstract = is_abstract;
+            cd_existing.is_sealed = is_sealed;
             cd_existing.is_defined = true;
             cd_existing.line = l;
             cd_existing.column = c;
             var cd = cd_existing;
 
             expect (TokenKind.LBRACE, "'{'");
+            var member_base_tp = current_type_params;
             while (current.kind != TokenKind.RBRACE) {
                 if (current.kind == TokenKind.EOF)
                     throw new ParseError.UNEXPECTED_TOKEN (@"unterminated class '$name'");
+                current_type_params = member_base_tp;
                 string? m_asm = null;
                 int m_asm_l = 0;
                 int m_asm_c = 0;
-                parse_attributes (out m_asm, out m_asm_l, out m_asm_c);
+                bool m_compact = false;
+                parse_attributes (out m_asm, out m_asm_l, out m_asm_c, out m_compact);
                 while (current.kind == TokenKind.IDENTIFIER && is_visibility_modifier (current.text))
                     advance ();
 
@@ -1963,6 +2150,7 @@ namespace Planc {
                 var mc = current.column;
                 ValaType ft = ValaType.VOID;
                 string ft_name = "";
+                var member_tps = new GenericArray<string> ();
 
                 if (!is_virtual && !is_override && !is_abstract_m && !is_static_m && !is_async_m && current.text == cd.name) {
                     advance ();
@@ -2035,11 +2223,97 @@ namespace Planc {
                     ft_name = cd.name;
                     parse_type_suffix (ref ft, ref ft_name);
                 } else {
+                    // `T name<T> (...)` needs its type parameters before the
+                    // return type is parsed.
+                    {
+                        var look = lexer.clone_state ();
+                        var t2 = look.next ();
+                        if (t2.kind == TokenKind.IDENTIFIER) {
+                            var t3 = look.next ();
+                            if (t3.kind == TokenKind.LT) {
+                                var gens = new GenericArray<string> ();
+                                foreach (var tpx in member_base_tp)
+                                    gens.add (tpx);
+                                while (true) {
+                                    var tk = look.next ();
+                                    if (tk.kind == TokenKind.IDENTIFIER)
+                                        gens.add (tk.text);
+                                    else if (tk.kind == TokenKind.GT || tk.kind == TokenKind.SHR)
+                                        break;
+                                    else if (tk.kind == TokenKind.EOF)
+                                        break;
+                                }
+                                current_type_params = gens;
+                            }
+                        }
+                    }
                     if (!parse_type (current.text, out ft, out ft_name))
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"unknown member type '$(current.text)' in class '$(cd.name)' at $ml:$mc");
                     advance ();
                     parse_type_suffix (ref ft, ref ft_name);
+                }
+
+                // Indexer: `public T this [I i] { get { } set { } }` lowers to
+                // the methods `get_item (i)` and `set_item (i, value)`.
+                if (current.kind == TokenKind.IDENTIFIER && current.text == "this") {
+                    advance ();
+                    expect (TokenKind.LBRACKET, "'['");
+                    if (current.kind != TokenKind.IDENTIFIER)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected index type in indexer at $(current.line):$(current.column)");
+                    ValaType idx_t = ValaType.VOID;
+                    string idx_tn = "";
+                    if (!parse_type (current.text, out idx_t, out idx_tn))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"unknown index type '$(current.text)' in indexer at $(current.line):$(current.column)");
+                    var idx_l = current.line;
+                    var idx_c = current.column;
+                    advance ();
+                    parse_type_suffix (ref idx_t, ref idx_tn);
+                    if (current.kind != TokenKind.IDENTIFIER || is_reserved (current.text))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected index parameter name in indexer at $(current.line):$(current.column)");
+                    var idx_name = current.text;
+                    advance ();
+                    expect (TokenKind.RBRACKET, "']'");
+                    if (current.kind != TokenKind.LBRACE)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected '{' in indexer at $(current.line):$(current.column)");
+                    bool ix_plain = false;
+                    Expr? ix_def = null;
+                    var ix_syn = new GenericArray<Function> ();
+                    bool ix_add_back = false;
+                    parse_property_block (cd.name, true, is_virtual, is_override, is_abstract_m,
+                                          ft, ft_name, "item", ml, mc,
+                                          out ix_plain, out ix_def, ix_syn, out ix_add_back);
+                    if (ix_plain || ix_add_back) {
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"indexer in class '$(cd.name)' requires explicit 'get' and 'set' bodies at $ml:$mc");
+                    }
+                    foreach (var sm in ix_syn) {
+                        var ip = new Param () {
+                            param_type = idx_t,
+                            type_name = idx_tn,
+                            name = idx_name,
+                            line = idx_l,
+                            column = idx_c
+                        };
+                        if (sm.name.has_prefix ("set_")) {
+                            var old = new GenericArray<Param> ();
+                            foreach (var pp in sm.params)
+                                old.add (pp);
+                            while (sm.params.length > 0)
+                                sm.params.remove_index (sm.params.length - 1);
+                            sm.params.add (ip);
+                            foreach (var pp in old)
+                                sm.params.add (pp);
+                        } else {
+                            sm.params.add (ip);
+                        }
+                        cd.methods.add (sm);
+                    }
+                    continue;
                 }
 
                 if (current.kind != TokenKind.IDENTIFIER)
@@ -2052,6 +2326,22 @@ namespace Planc {
                 var mem_l = current.line;
                 var mem_c = current.column;
                 advance ();
+
+                if (current.kind == TokenKind.LT && current_type_params.length > member_base_tp.length) {
+                    advance ();
+                    while (true) {
+                        if (current.kind != TokenKind.IDENTIFIER)
+                            break;
+                        member_tps.add (current.text);
+                        advance ();
+                        if (current.kind == TokenKind.COMMA) {
+                            advance ();
+                            continue;
+                        }
+                        break;
+                    }
+                    consume_gt ();
+                }
 
                 if (current.kind == TokenKind.LPAREN) {
                     if (is_abstract_m && !cd.is_abstract)
@@ -2077,6 +2367,11 @@ namespace Planc {
                         line = mem_l,
                         column = mem_c
                     };
+                    if (member_tps.length > 0) {
+                        mfn.is_generic_template = true;
+                        foreach (var mtp in member_tps)
+                            mfn.type_params.add (mtp);
+                    }
                     foreach (var p in plist)
                         mfn.params.add (p);
                     parse_throws_clause (mfn.throws_domains);
@@ -2143,7 +2438,7 @@ namespace Planc {
                             cd.methods.add (sm);
                     }
                 } else {
-                    if (is_virtual || is_override || is_abstract_m || is_static_m || is_async_m)
+                    if (is_virtual || is_override || is_abstract_m || is_async_m)
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"field '$mname' cannot have method modifiers at $mem_l:$mem_c");
                     if (ft == ValaType.VOID)
@@ -2162,6 +2457,7 @@ namespace Planc {
                         field_type = ft,
                         type_name = ft_name,
                         is_weak = mem_is_weak,
+                        is_static = is_static_m,
                         name = mname,
                         init = finit,
                         line = mem_l,
@@ -2195,6 +2491,30 @@ namespace Planc {
             f.line = l;
             f.column = c;
 
+            var saved_tparams = current_type_params;
+            if (current.kind == TokenKind.LT) {
+                advance ();
+                var fn_tparams = new GenericArray<string> ();
+                foreach (var tp in saved_tparams)
+                    fn_tparams.add (tp);
+                while (true) {
+                    if (current.kind != TokenKind.IDENTIFIER || is_reserved (current.text))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected type parameter name in function '$name' at $(current.line):$(current.column)");
+                    f.type_params.add (current.text);
+                    fn_tparams.add (current.text);
+                    advance ();
+                    if (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        continue;
+                    }
+                    break;
+                }
+                consume_gt ();
+                f.is_generic_template = true;
+                current_type_params = fn_tparams;
+            }
+
             var plist = parse_param_list ();
             foreach (var p in plist)
                 f.params.add (p);
@@ -2217,6 +2537,7 @@ namespace Planc {
             } else {
                 parse_block_into (f.body);
             }
+            current_type_params = saved_tparams;
             return f;
         }
 
@@ -2425,7 +2746,14 @@ namespace Planc {
                             var sc = new SwitchCase () { line = current.line, column = current.column };
                             while (current.kind == TokenKind.IDENTIFIER && current.text == "case") {
                                 advance ();
-                                sc.values.add (parse_expr ());
+                                while (true) {
+                                    sc.values.add (parse_expr ());
+                                    if (current.kind == TokenKind.COMMA) {
+                                        advance ();
+                                        continue;
+                                    }
+                                    break;
+                                }
                                 expect (TokenKind.COLON, "':'");
                             }
                             while (current.kind != TokenKind.RBRACE
@@ -2456,6 +2784,20 @@ namespace Planc {
                     }
                     expect (TokenKind.RBRACE, "'}'");
                     return sw;
+                }
+                if (name == "lock") {
+                    advance ();
+                    expect (TokenKind.LPAREN, "'('");
+                    var lk_target = parse_expr ();
+                    expect (TokenKind.RPAREN, "')'");
+                    var lk_body = parse_statement ();
+                    var lk = new LockStatement () {
+                        target = lk_target,
+                        body = lk_body
+                    };
+                    lk.line = l;
+                    lk.column = c;
+                    return lk;
                 }
                 if (name == "throw") {
                     advance ();
@@ -2623,7 +2965,7 @@ namespace Planc {
                                      || ((dt == ValaType.CLASS || dt == ValaType.INTERFACE
                                           || dt == ValaType.ERROR || dt == ValaType.TYPE_PARAM)
                                          && current.kind == TokenKind.QUESTION)
-                                     || ((dt == ValaType.CLASS || dt == ValaType.STRUCT)
+                                     || ((dt == ValaType.CLASS || dt == ValaType.STRUCT || dt == ValaType.INTERFACE)
                                          && current.kind == TokenKind.LT)
                                      || (dt != ValaType.STRUCT && current.kind == TokenKind.LBRACKET));
 
@@ -3440,6 +3782,31 @@ namespace Planc {
                         return vr;
                     }
                 }
+                if (current.text == "sizeof") {
+                    advance (); // 'sizeof'
+                    expect (TokenKind.LPAREN, "'('");
+                    var se = new SizeofExpr ();
+                    se.line = l;
+                    se.column = c;
+                    if (current.kind == TokenKind.IDENTIFIER && is_sizeof_type_name (current.text)) {
+                        ValaType tt = ValaType.VOID;
+                        string tn = "";
+                        if (!parse_type (current.text, out tt, out tn))
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"expected a type in sizeof at $(current.line):$(current.column)");
+                        advance ();
+                        parse_type_suffix (ref tt, ref tn);
+                        parse_generic_type_args (ref tt, ref tn);
+                        se.target_type = tt;
+                        se.type_name = tn;
+                        se.is_type_form = true;
+                    } else {
+                        se.operand = parse_expr ();
+                        se.is_type_form = false;
+                    }
+                    expect (TokenKind.RPAREN, "')'");
+                    return se;
+                }
                 if (is_reserved (current.text))
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"'$(current.text)' is a keyword, not a value at $l:$c");
@@ -3474,6 +3841,36 @@ namespace Planc {
                     if (program.find_struct (name) != null || program.find_instantiation_by_mangled (name) != null)
                         return parse_struct_literal_rest (name, l, c);
                     return parse_call_rest (name, l, c);
+                }
+                unowned var gfn = program.find (name);
+                if (current.kind == TokenKind.LT && gfn != null && gfn.is_generic_template) {
+                    advance ();
+                    var type_args = new GenericArray<string> ();
+                    while (true) {
+                        if (current.kind != TokenKind.IDENTIFIER
+                            || (is_reserved (current.text) && !is_sizeof_type_name (current.text)))
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"expected type argument for '$name' at $(current.line):$(current.column)");
+                        var ta = current.text;
+                        advance ();
+                        if (current.kind == TokenKind.QUESTION) {
+                            ta = ta + "?";
+                            advance ();
+                        }
+                        while (current.kind == TokenKind.LBRACKET) {
+                            advance ();
+                            expect (TokenKind.RBRACKET, "']'");
+                            ta = ta + "[]";
+                        }
+                        type_args.add (ta);
+                        if (current.kind == TokenKind.COMMA) {
+                            advance ();
+                            continue;
+                        }
+                        break;
+                    }
+                    consume_gt ();
+                    return parse_call_rest (name, l, c, type_args);
                 }
                 var e = new VarRef () { name = name };
                 e.line = l;
@@ -3728,10 +4125,15 @@ namespace Planc {
         }
 
         // Parses `name(...)` with the identifier already consumed.
-        private Expr parse_call_rest (string name, int l, int c)
+        private Expr parse_call_rest (string name, int l, int c,
+                                      GenericArray<string>? type_args = null)
                 throws ParseError, LexError {
             advance (); // '('
             var call = new CallExpr () { callee = name };
+            if (type_args != null) {
+                foreach (var ta in type_args)
+                    call.type_arg_names.add (ta);
+            }
             parse_arg_list (call.args);
             expect (TokenKind.RPAREN, "')'");
             call.line = l;

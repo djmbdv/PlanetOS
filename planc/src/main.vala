@@ -11,10 +11,11 @@
 
 namespace Planc {
 
-    private const string USAGE = "usage: planc <source.vala>... -o <output> [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks]";
+    private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks]";
 
     public static int main (string[] args) {
         var source_paths = new GenericArray<string> ();
+        var defines = new GenericArray<string> ();
         var output_path = "";
         var dump = false;
         var bounds_check = true;
@@ -40,6 +41,16 @@ namespace Planc {
                     return 2;
                 }
                 output_path = args[++i];
+            } else if (a == "-D") {
+                if (i + 1 >= args.length) {
+                    Host.eprintln (USAGE);
+                    return 2;
+                }
+                defines.add (args[++i]);
+            } else if (a.has_prefix ("-D") && a.length > 2) {
+                defines.add (a.substring (2));
+            } else if (a.has_prefix ("--define=")) {
+                defines.add (a.substring (9));
             } else if (a == "--dump-text") {
                 dump = true;
             } else if (a == "--no-bounds-check") {
@@ -129,6 +140,12 @@ namespace Planc {
                 src = Host.read_file (source_paths[i]);
             } catch (FileError e) {
                 Host.eprintln (@"planc: cannot read $(source_paths[i]): $(e.message)");
+                return 1;
+            }
+            try {
+                src = Preprocessor.run (src, defines);
+            } catch (LexError e) {
+                Host.eprintln (@"planc: $(source_paths[i]): lexical error: $(e.message)");
                 return 1;
             }
             sources.add (src);
@@ -293,13 +310,17 @@ namespace Planc {
         }
 
         // Relocation pass 2: call rel32 to a .text symbol.
+        var sym_index = new StrIndexMap ();
+        for (int si = 0; si < codegen.symbols.length; si++) {
+            if (sym_index.lookup (codegen.symbols[si].name) < 0)
+                sym_index.put (codegen.symbols[si].name, si + 1);
+        }
         foreach (var patch in codegen.emitter.calls) {
             var delta = (int64) int32.MIN - 1;
-            foreach (var s in codegen.symbols) {
-                if (s.name == patch.callee) {
-                    delta = (int64) s.offset - (int64) (patch.displacement + 4);
-                    break;
-                }
+            var sym_i = sym_index.lookup (patch.callee);
+            if (sym_i > 0) {
+                var s = codegen.symbols[sym_i - 1];
+                delta = (int64) s.offset - (int64) (patch.displacement + 4);
             }
             if (delta < int32.MIN || delta > int32.MAX) {
                 Host.eprintln (@"planc: call target out of range for $(patch.callee) at 0x$(Host.hex_u32 ((uint32) patch.displacement))");

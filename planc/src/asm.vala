@@ -37,7 +37,7 @@ namespace Planc {
         public int col;
     }
 
-    public class AsmAssembler : Object {
+    public sealed class AsmAssembler : Object {
         private Emitter emitter;
         private Program program;
         private Function fn;

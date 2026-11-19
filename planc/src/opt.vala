@@ -5,7 +5,7 @@
 
 namespace Planc {
 
-    public class Optimizer : Object {
+    public sealed class Optimizer : Object {
         private int level = 0;
         private Program? cur_prog = null;
         private string cur_owner = "";

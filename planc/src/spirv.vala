@@ -2,7 +2,7 @@
 
 namespace Planc {
 
-    public class SpirvBackend : Object {
+    public sealed class SpirvBackend : Object {
 
         // SPIR-V 1.0 opcodes
         private const uint16 OP_CAPABILITY          = 17;
