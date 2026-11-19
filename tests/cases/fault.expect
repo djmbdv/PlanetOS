@@ -1,4 +1,3 @@
-fault:vec=14
-cr2=0
-exec: exit=142
-shell:alive=1
+~\[fault\] Page Fault \[user/read/unmapped\] \(tid=[0-9]+ vec=14 err=[0-9]+ rip=0x[0-9a-f]+ cr2=0x0\)
+=exec: exit=142
+=shell:alive=1

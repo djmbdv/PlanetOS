@@ -21,6 +21,26 @@ namespace Gtk {
         public bool pressed = false;
         public bool focused = false;
 
+        private string measured_text = "";
+        private double measured_size_px = -1.0;
+        private int measured_w = 0;
+        private int measured_h = 0;
+
+        // Every frame re-measures the same strings; keep the last result so a
+        // repaint does not walk the glyph cache for text that did not change.
+        public void measure_text_cached (string text, double size_px, out int tw, out int th) {
+            if (size_px == measured_size_px && text == measured_text) {
+                tw = measured_w;
+                th = measured_h;
+                return;
+            }
+            TextHelper.measure_text (text, size_px, out measured_w, out measured_h);
+            measured_text = text;
+            measured_size_px = size_px;
+            tw = measured_w;
+            th = measured_h;
+        }
+
         public void set_size_request (int w, int h) {
             req_w = (w < 0) ? 0 : w;
             req_h = (h < 0) ? 0 : h;

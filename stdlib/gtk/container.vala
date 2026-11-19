@@ -8,6 +8,7 @@ namespace Gtk {
         public int spacing = 8;
         public GenericArray<Widget> children;
         private GenericArray<bool> expands;
+        private GenericArray<bool> fills;
         private GenericArray<int> paddings;
 
         public Box (Orientation orient = Orientation.VERTICAL, int sp = 8) {
@@ -15,12 +16,14 @@ namespace Gtk {
             spacing = (sp < 0) ? 0 : sp;
             children = new GenericArray<Widget> ();
             expands = new GenericArray<bool> ();
+            fills = new GenericArray<bool> ();
             paddings = new GenericArray<int> ();
         }
 
         public void pack_start (Widget child, bool expand = false, bool fill = true, int padding = 0) {
             children.add (child);
             expands.add (expand);
+            fills.add (fill);
             paddings.add ((padding < 0) ? 0 : padding);
         }
 
@@ -33,6 +36,7 @@ namespace Gtk {
                 if (children[i] == child) {
                     children.remove_index (i);
                     expands.remove_index (i);
+                    fills.remove_index (i);
                     paddings.remove_index (i);
                     return true;
                 }
@@ -105,11 +109,13 @@ namespace Gtk {
                 int bonus = expands[i] ? extra : 0;
                 if (orientation == Orientation.VERTICAL) {
                     int alloc_h = ch + bonus;
-                    c.allocate (cx, cy + pad, width, alloc_h);
+                    int alloc_w = fills[i] ? width : ((cw < width) ? cw : width);
+                    c.allocate (cx, cy + pad, alloc_w, alloc_h);
                     cy += alloc_h + pad * 2 + spacing;
                 } else {
                     int alloc_w = cw + bonus;
-                    c.allocate (cx + pad, cy, alloc_w, height);
+                    int alloc_h = fills[i] ? height : ((ch < height) ? ch : height);
+                    c.allocate (cx + pad, cy, alloc_w, alloc_h);
                     cx += alloc_w + pad * 2 + spacing;
                 }
             }

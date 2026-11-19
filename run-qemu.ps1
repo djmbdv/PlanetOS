@@ -217,6 +217,7 @@ if (-not $NoBuild) {
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + $GioSrcs + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala')) + $GtkSrcs + @((Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + @((Join-Path $UserDir 'pluto.vala'), '-o', (Out-Path 'pluto.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + $GioSrcs + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala')) + $GtkSrcs + @((Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf')))
+    Invoke-Planc @('--target=planetos', '-O2', (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf'))
     Invoke-Planc (@('--target=planetos', '-O2', '--image-base=0xA00000', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf')))
     Invoke-Planc (@('--target=planetos', '-O2', '--image-base=0xB00000', (Join-Path $StdDir 'planet_sys.vala')) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'vte_sh.elf')))
 
@@ -306,7 +307,8 @@ if (-not $NoBuild) {
         (Out-Path 'plan_demo.plan') `
         (Out-Path 'vte_sh.elf') `
         (Out-Path 'pluto.elf') `
-        (Out-Path 'saturn.elf')
+        (Out-Path 'saturn.elf') `
+        (Out-Path 'jsmn_demo.elf')
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'
     }

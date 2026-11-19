@@ -1,6 +1,5 @@
-=rm: cannot remove '/hello.txt'
 =mv: cannot move '/missing' to '/x'
 =cat: not found
-=mkdir: cannot create '/hello.txt'
-=xfs:hello from PlanetOS disk!
+planet> ls /
+hello.txt
 =sysguard:ok=1

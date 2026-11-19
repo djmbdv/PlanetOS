@@ -230,6 +230,30 @@ private int self_test_run (Compositor comp) {
     gtkc.flush (gcr, 799, 599);
     check (gtkc.alive (gw), "gtk-win-alive-after-input");
 
+    // FILES (pcm4) window: the root allocation survives a content refresh, and a
+    // repaint reuses it instead of laying the tree out again.
+    var filec = new Compositor ();
+    int fid = filec.add ("files", 60, 80, 560, 320, Kind.FILES);
+    filec.flush (gcr, 0, 0);
+    var fwin = filec.top_win ();
+    int fax = -2;
+    int fay = -2;
+    int faw = -2;
+    int fah = -2;
+    if (fwin != null) {
+        fax = fwin.gtk_alloc_x;
+        fay = fwin.gtk_alloc_y;
+        faw = fwin.gtk_alloc_w;
+        fah = fwin.gtk_alloc_h;
+    }
+    check (fwin != null && faw > 0 && fah > 0, "files-alloc-set");
+    if (fwin != null && fwin.pcm4_state != null)
+        fwin.pcm4_state.refresh ("/");
+    filec.flush (gcr, 0, 0);
+    check (fwin != null && fwin.gtk_alloc_x == fax && fwin.gtk_alloc_y == fay
+           && fwin.gtk_alloc_w == faw && fwin.gtk_alloc_h == fah, "files-repaint-keeps-alloc");
+    check (filec.alive (fid), "files-win-alive");
+
     // VTE terminal typing
     var termc = new Compositor ();
     int tw = termc.add ("term", 40, 50, 400, 240, Kind.TERMINAL);
@@ -240,6 +264,37 @@ private int self_test_run (Compositor comp) {
     termc.key_press ('p');
     termc.key_press ('\n');
     check (termc.alive (tw), "vte-term-alive");
+
+    // GTK layout: pack_start's fill flag decides the cross size, and repainting a
+    // scrolled subtree must not move it.
+    var lbox = new Box (Orientation.VERTICAL, 8);
+    var ltight = new Button ("ok");
+    var lstretch = new Button ("ok");
+    lbox.pack_start (ltight, false, false);
+    lbox.pack_start (lstretch, false, true);
+    lbox.allocate (0, 0, 300, 200);
+    int lw = 0;
+    int lh = 0;
+    ltight.measure (out lw, out lh);
+    check (ltight.width == lw, "box-fill-false-natural-width");
+    check (lstretch.width == 300, "box-fill-true-stretches");
+
+    var lscroll = new ScrolledWindow ();
+    var lrows = new Box (Orientation.VERTICAL, 4);
+    for (int i = 0; i < 20; i++)
+        lrows.pack_start (new Label (@"row $i"));
+    lscroll.set_child (lrows);
+    lscroll.allocate (10, 20, 180, 100);
+    int ly = lrows.y;
+    int lh2 = lrows.height;
+    var lcr = new Context (surf);
+    lscroll.draw (lcr);
+    lscroll.draw (lcr);
+    check (lrows.y == ly && lrows.height == lh2, "scroll-repaint-keeps-layout");
+    lscroll.scroll_by (0, 40);
+    check (lrows.y == ly - 40, "scroll-moves-content");
+    lscroll.draw (lcr);
+    check (lrows.y == ly - 40, "scroll-draw-keeps-offset");
 
     print (@"compositor: cursor_svg=$(comp.cursor_from_svg () ? 1 : 0) hotspot=$(comp.cursor_hotspot_x ())x$(comp.cursor_hotspot_y ())\n");
     print (@"compositor:summary checks=$st_checks failures=$st_fails\n");

@@ -21,7 +21,7 @@ namespace Gtk {
         public override void measure (out int min_w, out int min_h) {
             int tw = 0;
             int th = 0;
-            TextHelper.measure_text (label, font_size, out tw, out th);
+            measure_text_cached (label, font_size, out tw, out th);
             min_w = (req_w > tw) ? req_w : (tw + 8);
             min_h = (req_h > th) ? req_h : (th + 8);
         }
@@ -31,7 +31,7 @@ namespace Gtk {
                 return;
             int tw = 0;
             int th = 0;
-            TextHelper.measure_text (label, font_size, out tw, out th);
+            measure_text_cached (label, font_size, out tw, out th);
             int ty = y + (height - th) / 2;
             if (ty < y) ty = y;
             cr.set_source_rgb (r, g, b);
@@ -55,7 +55,7 @@ namespace Gtk {
         public override void measure (out int min_w, out int min_h) {
             int tw = 0;
             int th = 0;
-            TextHelper.measure_text (label, font_size, out tw, out th);
+            measure_text_cached (label, font_size, out tw, out th);
             int bw = tw + 24;
             int bh = th + 16;
             min_w = (req_w > bw) ? req_w : bw;
@@ -83,7 +83,7 @@ namespace Gtk {
 
             int tw = 0;
             int th = 0;
-            TextHelper.measure_text (label, font_size, out tw, out th);
+            measure_text_cached (label, font_size, out tw, out th);
             int tx = x + (width - tw) / 2;
             int ty = y + (height - th) / 2;
             if (sensitive)
@@ -255,7 +255,7 @@ namespace Gtk {
         public override void measure (out int min_w, out int min_h) {
             int tw = 0;
             int th = 0;
-            TextHelper.measure_text (label, font_size, out tw, out th);
+            measure_text_cached (label, font_size, out tw, out th);
             int w = 28 + tw;
             int h = (th > 20) ? (th + 6) : 26;
             min_w = (req_w > w) ? req_w : w;
@@ -293,7 +293,7 @@ namespace Gtk {
             }
             int tw = 0;
             int th = 0;
-            TextHelper.measure_text (label, font_size, out tw, out th);
+            measure_text_cached (label, font_size, out tw, out th);
             int ty = y + (height - th) / 2;
             cr.set_source_rgb (0.20, 0.20, 0.20);
             TextHelper.draw_text (cr, label, bx + 26, ty, font_size);

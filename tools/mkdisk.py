@@ -15,7 +15,7 @@ image layout.
 import struct
 import sys
 
-ARG_COUNT = 32  # image + 31 files
+ARG_COUNT = 33  # image + 32 files
 
 
 def blk(b):
@@ -58,6 +58,7 @@ def main():
     vsh_b = open(sys.argv[29], "rb").read()
     plu_b = open(sys.argv[30], "rb").read()
     sat_b = open(sys.argv[31], "rb").read()
+    jm_b = open(sys.argv[32], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -90,7 +91,8 @@ def main():
     b_vsh = b_pd + blk(pd_b)
     b_plu = b_vsh + blk(vsh_b)
     b_sat = b_plu + blk(plu_b)
-    INO_BLK = max(1000, b_sat + blk(sat_b) + 4)
+    b_jm = b_sat + blk(sat_b)
+    INO_BLK = max(1000, b_jm + blk(jm_b) + 4)
     total_blocks = INO_BLK + 264 # 8 inode blocks (128 inodes) + 256 free data blocks (1 MiB)
     img = bytearray(total_blocks * 4096)
 
@@ -143,6 +145,7 @@ def main():
         (b"vte_sh.elf", vsh_b, b_vsh, 0x81ED),
         (b"pluto.elf", plu_b, b_plu, 0x81ED),
         (b"saturn.elf", sat_b, b_sat, 0x81ED),
+        (b"jsmn_demo.elf", jm_b, b_jm, 0x81ED),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

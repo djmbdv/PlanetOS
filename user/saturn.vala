@@ -598,9 +598,9 @@ namespace SaturnIDE {
             }
         });
 
-        root.pack_start (toolbar, false, false, 2);
+        root.pack_start (toolbar, false, true, 2);
         root.pack_start (hpaned, true, true, 0);
-        root.pack_start (status_lbl, false, false, 2);
+        root.pack_start (status_lbl, false, true, 2);
 
         win.set_child (root);
         if (!once)

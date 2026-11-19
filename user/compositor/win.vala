@@ -28,6 +28,10 @@ namespace Wm {
         public int rw;
         public int rh;
         public Box? gtk_root = null;
+        public int gtk_alloc_x = -1;
+        public int gtk_alloc_y = -1;
+        public int gtk_alloc_w = -1;
+        public int gtk_alloc_h = -1;
         public VteTerminal? term = null;
         public Pcm4CompState? pcm4_state = null;
         public ImageSurface? ext_surf = null;

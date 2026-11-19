@@ -9,6 +9,8 @@ namespace Gtk {
         public int scroll_y = 0;
         private int content_w = 0;
         private int content_h = 0;
+        private int natural_w = 0;
+        private int natural_h = 0;
         private bool sb_dragging = false;
         private bool sb_hovered = false;
         private int sb_drag_off = 0;
@@ -35,7 +37,7 @@ namespace Gtk {
             int max_y = (content_h > height) ? (content_h - height) : 0;
             scroll_x = (sx < 0) ? 0 : ((sx > max_x) ? max_x : sx);
             scroll_y = (sy < 0) ? 0 : ((sy > max_y) ? max_y : sy);
-            relayout_child ();
+            position_child ();
         }
 
         public void scroll_by (int dx, int dy) {
@@ -50,18 +52,35 @@ namespace Gtk {
             }
         }
 
+        private void position_child () {
+            if (child != null)
+                child.allocate (x - scroll_x, y - scroll_y, content_w, content_h);
+        }
+
+        // Sizes come from one measure pass; everything else is bookkeeping, so a
+        // repaint only re-measures and never repositions an unchanged subtree.
+        private void apply_metrics (int cw, int ch) {
+            natural_w = cw;
+            natural_h = ch;
+            content_w = (cw > width) ? cw : width;
+            content_h = (ch > height) ? ch : height;
+            int view_w = (content_h > height && width > SB_W + 4) ? (width - SB_W) : width;
+            if (cw <= view_w)
+                content_w = view_w;
+            int max_x = (content_w > width) ? (content_w - width) : 0;
+            int max_y = (content_h > height) ? (content_h - height) : 0;
+            if (scroll_x > max_x) scroll_x = max_x;
+            if (scroll_y > max_y) scroll_y = max_y;
+            position_child ();
+        }
+
         private void relayout_child () {
             if (child == null)
                 return;
             int cw = 0;
             int ch = 0;
             child.measure (out cw, out ch);
-            content_w = (cw > width) ? cw : width;
-            content_h = (ch > height) ? ch : height;
-            int view_w = (content_h > height && width > SB_W + 4) ? (width - SB_W) : width;
-            if (cw <= view_w)
-                content_w = view_w;
-            child.allocate (x - scroll_x, y - scroll_y, content_w, content_h);
+            apply_metrics (cw, ch);
         }
 
         private void sync_content () {
@@ -70,14 +89,9 @@ namespace Gtk {
             int cw = 0;
             int ch = 0;
             child.measure (out cw, out ch);
-            int target_h = (ch > height) ? ch : height;
-            if (target_h != content_h || cw != content_w) {
-                relayout_child ();
-                int max_x = (content_w > width) ? (content_w - width) : 0;
-                int max_y = (content_h > height) ? (content_h - height) : 0;
-                if (scroll_x > max_x) scroll_x = max_x;
-                if (scroll_y > max_y) scroll_y = max_y;
-            }
+            if (cw == natural_w && ch == natural_h)
+                return;
+            apply_metrics (cw, ch);
         }
 
         private void vbar_metrics (out int bar_y, out int bar_h, out int track, out int max_y) {
@@ -106,7 +120,6 @@ namespace Gtk {
             width = (aw < 0) ? 0 : aw;
             height = (ah < 0) ? 0 : ah;
             relayout_child ();
-            scroll_to (scroll_x, scroll_y);
         }
 
         public override void draw (Context cr) {

@@ -1622,7 +1622,20 @@ namespace Wm {
                 cr.set_source_rgb (0.96, 0.96, 0.96);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
-                w.gtk_root.allocate (cx + 12, cy + 12, cw - 24, ch - 24);
+                int gx = cx + 12;
+                int gy = cy + 12;
+                int gw = (cw > 24) ? (cw - 24) : 0;
+                int gh = (ch > 24) ? (ch - 24) : 0;
+                // Only lay the tree out when its rectangle moved or resized; the
+                // scrolled containers re-check their own content on draw.
+                if (gx != w.gtk_alloc_x || gy != w.gtk_alloc_y
+                        || gw != w.gtk_alloc_w || gh != w.gtk_alloc_h) {
+                    w.gtk_root.allocate (gx, gy, gw, gh);
+                    w.gtk_alloc_x = gx;
+                    w.gtk_alloc_y = gy;
+                    w.gtk_alloc_w = gw;
+                    w.gtk_alloc_h = gh;
+                }
                 w.gtk_root.draw (cr);
             } else if (w.kind == Kind.EXT) {
                 cr.set_source_rgb (0.96, 0.96, 0.96);
