@@ -192,10 +192,15 @@ namespace Gtk {
                 return;
             int px = (int) size_px;
             if (px < 1) px = 1;
+            int c_top = cr.clip_top ();
+            int c_bot = cr.clip_bottom ();
+            int c_right = cr.clip_right ();
+            if (y >= c_bot || y + px + 8 <= c_top || x >= c_right)
+                return;
             if (slot != null && slot.font != null) {
                 int cx = x;
                 int pos = 0;
-                while (pos < text.length) {
+                while (pos < text.length && cx < c_right) {
                     int cp = next_utf8 (text, ref pos);
                     var ge = get_glyph_from (slot, cp, px);
                     if (ge != null) {

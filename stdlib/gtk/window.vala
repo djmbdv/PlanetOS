@@ -61,6 +61,8 @@ namespace Gtk {
                 gdk_win = Display.open_window (width, height);
                 if (gdk_win == null)
                     gdk_win = new Window (width, height);
+                width = gdk_win.width;
+                height = gdk_win.height;
                 cr = gdk_win.create_cairo_context ();
             }
             if (child != null) {
@@ -72,7 +74,7 @@ namespace Gtk {
         }
 
         public void redraw () {
-            if (cr == null || gdk_win == null)
+            if (cr == null || gdk_win == null || !gdk_win.is_valid ())
                 return;
             // elementary OS Granite light window surface (#F5F5F5)
             cr.set_source_rgb (0.96, 0.96, 0.96);
@@ -127,25 +129,35 @@ namespace Gtk {
                     } else if (ev.type == EventType.MOTION_NOTIFY) {
                         cur_mx = ev.x;
                         cur_my = ev.y;
-                        if (child != null)
-                            child.on_pointer_motion (ev.x, ev.y);
-                        dirty = true;
+                        if (child != null && child.on_pointer_motion (ev.x, ev.y))
+                            dirty = true;
                     } else if (ev.type == EventType.BUTTON_PRESS) {
                         cur_mx = ev.x;
                         cur_my = ev.y;
                         if (child != null) {
-                            child.on_pointer_motion (ev.x, ev.y);
-                            child.on_pointer_press (ev.x, ev.y, ev.button);
+                            if (child.on_pointer_motion (ev.x, ev.y))
+                                dirty = true;
+                            if (child.on_pointer_press (ev.x, ev.y, ev.button))
+                                dirty = true;
                         }
-                        dirty = true;
+                    } else if (ev.type == EventType.SCROLL) {
+                        cur_mx = ev.x;
+                        cur_my = ev.y;
+                        if (child != null) {
+                            if (child.on_scroll (ev.x, ev.y, ev.scroll_dx, ev.scroll_dy))
+                                dirty = true;
+                            else if (child.on_pointer_press (ev.x, ev.y, ev.button))
+                                dirty = true;
+                        }
                     } else if (ev.type == EventType.BUTTON_RELEASE) {
                         cur_mx = ev.x;
                         cur_my = ev.y;
                         if (child != null) {
-                            child.on_pointer_motion (ev.x, ev.y);
-                            child.on_pointer_release (ev.x, ev.y, ev.button);
+                            if (child.on_pointer_motion (ev.x, ev.y))
+                                dirty = true;
+                            if (child.on_pointer_release (ev.x, ev.y, ev.button))
+                                dirty = true;
                         }
-                        dirty = true;
                     }
                 }
                 if (!gtk_running)

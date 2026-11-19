@@ -186,6 +186,13 @@ namespace Cairo {
         // Fills a closed polygon with 4x4 supersampling. Cairo's fill covers
         // arbitrary paths; the compat layer only had rect/circle, which is not
         // enough for an SVG path such as the cursor.
+        [AsmBody(@"
+            # __c_fma(a in xmm0, b in xmm1, c in xmm2) -> vfmadd213sd (a * b + c)
+            .byte 0xc4, 0xe2, 0xf1, 0xa9, 0xc2
+            ret
+        ")]
+        private static extern double __c_fma (double a, double b, double c);
+
         public void fill_polygon_range (double[] xs, double[] ys, int start, int n) {
             if (n < 3 || start < 0 || start + n > xs.length || start + n > ys.length)
                 return;
@@ -217,31 +224,113 @@ namespace Cairo {
             }
             if (x1 <= x0 || y1 <= y0)
                 return;
+
+            // Precompute non-horizontal edges that overlap [y0, y1).
+            var ey_min = new double[n];
+            var ey_max = new double[n];
+            var ex0 = new double[n];
+            var ey0 = new double[n];
+            var eslope = new double[n];
+            int ec = 0;
+            double dy0 = (double) y0;
+            double dy1 = (double) y1;
+            int j = start + n - 1;
+            for (int i = start; i < start + n; i++) {
+                double yi = ys[i];
+                double yj = ys[j];
+                if (yi != yj) {
+                    double emin = (yi < yj) ? yi : yj;
+                    double emax = (yi > yj) ? yi : yj;
+                    if (emax > dy0 && emin < dy1) {
+                        ey_min[ec] = emin;
+                        ey_max[ec] = emax;
+                        ex0[ec] = xs[i];
+                        ey0[ec] = yi;
+                        eslope[ec] = (xs[j] - xs[i]) / (yj - yi);
+                        ec++;
+                    }
+                }
+                j = i;
+            }
+            if (ec == 0)
+                return;
+
+            int rw = x1 - x0;
+            var row_hits = new int[rw];
+            var row_edges = new int[ec];
+            var xcs = new double[ec];
+
             for (int y = y0; y < y1; y++) {
-                for (int x = x0; x < x1; x++) {
-                    int hits = 0;
-                    for (int sy = 0; sy < 4; sy++) {
-                        double py = y + (sy + 0.5) / 4.0;
-                        for (int sx = 0; sx < 4; sx++) {
-                            double px = x + (sx + 0.5) / 4.0;
-                            bool inside = false;
-                            int j = start + n - 1;
-                            for (int i = start; i < start + n; i++) {
-                                double yi = ys[i];
-                                double yj = ys[j];
-                                if ((yi > py) != (yj > py)) {
-                                    double xc = (xs[j] - xs[i]) * (py - yi) / (yj - yi) + xs[i];
-                                    if (px < xc)
-                                        inside = !inside;
-                                }
-                                j = i;
-                            }
-                            if (inside)
-                                hits++;
+                double row_top = (double) y;
+                double row_bot = row_top + 1.0;
+                int rc = 0;
+                for (int e = 0; e < ec; e++) {
+                    if (ey_min[e] < row_bot && ey_max[e] > row_top) {
+                        row_edges[rc] = e;
+                        rc++;
+                    }
+                }
+                if (rc == 0)
+                    continue;
+
+                for (int k = 0; k < rw; k++)
+                    row_hits[k] = 0;
+
+                for (int sy = 0; sy < 4; sy++) {
+                    double py = row_top + ((double) sy + 0.5) * 0.25;
+                    int nx = 0;
+                    for (int ri = 0; ri < rc; ri++) {
+                        int e = row_edges[ri];
+                        if (ey_min[e] <= py && py < ey_max[e]) {
+                            xcs[nx] = __c_fma (py - ey0[e], eslope[e], ex0[e]);
+                            nx++;
                         }
                     }
+                    if (nx < 2)
+                        continue;
+
+                    // Insertion sort intersections (small per-scanline count).
+                    for (int a = 1; a < nx; a++) {
+                        double key = xcs[a];
+                        int b = a - 1;
+                        while (b >= 0 && xcs[b] > key) {
+                            xcs[b + 1] = xcs[b];
+                            b--;
+                        }
+                        xcs[b + 1] = key;
+                    }
+
+                    for (int k = 0; k + 1 < nx; k += 2) {
+                        double xa = xcs[k];
+                        double xb = xcs[k + 1];
+                        if (xb <= (double) x0 || xa >= (double) x1)
+                            continue;
+                        int p0 = (int) xa;
+                        if (xa < 0.0) p0 = p0 - 1;
+                        if (p0 < x0) p0 = x0;
+                        int p1 = (int) xb + 1;
+                        if (p1 > x1) p1 = x1;
+
+                        for (int x = p0; x < p1; x++) {
+                            double fx = (double) x;
+                            if (fx + 0.125 >= xa && fx + 0.875 < xb) {
+                                row_hits[x - x0] += 4;
+                            } else {
+                                int h = 0;
+                                if (fx + 0.125 >= xa && fx + 0.125 < xb) h++;
+                                if (fx + 0.375 >= xa && fx + 0.375 < xb) h++;
+                                if (fx + 0.625 >= xa && fx + 0.625 < xb) h++;
+                                if (fx + 0.875 >= xa && fx + 0.875 < xb) h++;
+                                row_hits[x - x0] += h;
+                            }
+                        }
+                    }
+                }
+
+                for (int i = 0; i < rw; i++) {
+                    int hits = row_hits[i];
                     if (hits > 0)
-                        blend_px (x, y, (src_a * hits + 8) / 16);
+                        blend_px (x0 + i, y, (src_a * hits + 8) / 16);
                 }
             }
         }

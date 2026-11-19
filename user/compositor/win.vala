@@ -108,6 +108,7 @@ namespace Wm {
                 var nb = new Notebook ();
                 var sc_f = new ScrolledWindow ();
                 var lv = new ListView ();
+                lv.focused = true;
                 sc_f.set_child (lv);
                 nb.append_page (sc_f, "Files");
                 var sc_p = new ScrolledWindow ();

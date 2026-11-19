@@ -388,4 +388,194 @@ namespace Gtk {
             cr.fill ();
         }
     }
+
+    /**
+     * Pill-shaped on/off toggle switch.
+     */
+    public class Switch : Widget {
+        public bool active = false;
+
+        public signal void toggled ();
+
+        public Switch (bool initial = false) {
+            active = initial;
+        }
+
+        public void set_active (bool v) {
+            if (active != v) {
+                active = v;
+                toggled ();
+            }
+        }
+
+        public bool get_active () {
+            return active;
+        }
+
+        public override void measure (out int min_w, out int min_h) {
+            min_w = (req_w > 46) ? req_w : 46;
+            min_h = (req_h > 24) ? req_h : 24;
+        }
+
+        public override void draw (Context cr) {
+            if (!visible || width <= 0 || height <= 0)
+                return;
+            int sw = 44;
+            int sh = 22;
+            int sx = x + (width - sw) / 2;
+            int sy = y + (height - sh) / 2;
+            if (active)
+                cr.set_source_rgb (0.21, 0.54, 0.90);
+            else if (hovered)
+                cr.set_source_rgb (0.70, 0.72, 0.76);
+            else
+                cr.set_source_rgb (0.78, 0.80, 0.83);
+            cr.rounded_rectangle ((double) sx, (double) sy, (double) sw, (double) sh, (double) (sh / 2));
+            cr.fill ();
+            int kx = active ? (sx + sw - sh + 2) : (sx + 2);
+            cr.set_source_rgb (1.0, 1.0, 1.0);
+            cr.rounded_rectangle ((double) kx, (double) (sy + 2), (double) (sh - 4), (double) (sh - 4), (double) ((sh - 4) / 2));
+            cr.fill ();
+        }
+
+        public override bool on_pointer_press (int mx, int my, int button) {
+            if (!visible || !sensitive || button != 1 || !contains (mx, my))
+                return false;
+            focused = true;
+            set_active (!active);
+            return true;
+        }
+
+        public override bool on_key_press (int key) {
+            if (!focused || !visible || !sensitive)
+                return false;
+            if (key == ' ' || key == '\n' || key == '\r') {
+                set_active (!active);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Horizontal range slider supporting drag, track click, wheel, and arrow keys.
+     */
+    public class Scale : Widget {
+        public double min_val = 0.0;
+        public double max_val = 100.0;
+        public double value = 0.0;
+        public double step = 5.0;
+        private bool dragging = false;
+
+        public signal void value_changed (double val);
+
+        public Scale (double mn = 0.0, double mx = 100.0, double st = 5.0) {
+            min_val = mn;
+            max_val = (mx > mn) ? mx : (mn + 1.0);
+            step = (st > 0.0) ? st : 1.0;
+            value = min_val;
+        }
+
+        public void set_value (double v) {
+            double nv = (v < min_val) ? min_val : ((v > max_val) ? max_val : v);
+            if (nv != value) {
+                value = nv;
+                value_changed (value);
+            }
+        }
+
+        public double get_value () {
+            return value;
+        }
+
+        private void set_from_x (int mx) {
+            int pad = 8;
+            int track_w = width - pad * 2;
+            if (track_w <= 0)
+                return;
+            double frac = (double) (mx - (x + pad)) / (double) track_w;
+            if (frac < 0.0) frac = 0.0;
+            if (frac > 1.0) frac = 1.0;
+            set_value (min_val + frac * (max_val - min_val));
+        }
+
+        public override void measure (out int min_w, out int min_h) {
+            min_w = (req_w > 120) ? req_w : 120;
+            min_h = (req_h > 24) ? req_h : 24;
+        }
+
+        public override void draw (Context cr) {
+            if (!visible || width <= 0 || height <= 0)
+                return;
+            int pad = 8;
+            int track_w = width - pad * 2;
+            if (track_w <= 0)
+                return;
+            int ty = y + height / 2 - 2;
+            double span = max_val - min_val;
+            double frac = (span > 0.0) ? ((value - min_val) / span) : 0.0;
+            if (frac < 0.0) frac = 0.0;
+            if (frac > 1.0) frac = 1.0;
+            int fill_w = (int) (frac * (double) track_w);
+
+            cr.set_source_rgb (0.82, 0.84, 0.87);
+            cr.rounded_rectangle ((double) (x + pad), (double) ty, (double) track_w, 4.0, 2.0);
+            cr.fill ();
+            if (fill_w > 0) {
+                cr.set_source_rgb (0.21, 0.54, 0.90);
+                cr.rounded_rectangle ((double) (x + pad), (double) ty, (double) fill_w, 4.0, 2.0);
+                cr.fill ();
+            }
+            int kx = x + pad + fill_w - 6;
+            int ky = y + height / 2 - 6;
+            cr.set_source_rgb (dragging ? 0.16 : 0.21, dragging ? 0.45 : 0.54, dragging ? 0.80 : 0.90);
+            cr.rounded_rectangle ((double) kx, (double) ky, 12.0, 12.0, 6.0);
+            cr.fill ();
+        }
+
+        public override bool on_pointer_motion (int mx, int my) {
+            if (dragging) {
+                set_from_x (mx);
+                return true;
+            }
+            return base.on_pointer_motion (mx, my);
+        }
+
+        public override bool on_pointer_press (int mx, int my, int button) {
+            if (!visible || !sensitive || button != 1 || !contains (mx, my))
+                return false;
+            focused = true;
+            dragging = true;
+            set_from_x (mx);
+            return true;
+        }
+
+        public override bool on_pointer_release (int mx, int my, int button) {
+            if (dragging) {
+                dragging = false;
+                return true;
+            }
+            return false;
+        }
+
+        public override bool on_key_press (int key) {
+            if (!focused || !visible || !sensitive)
+                return false;
+            if (key == 0x83) { set_value (value - step); return true; }
+            if (key == 0x84) { set_value (value + step); return true; }
+            if (key == 0x85) { set_value (min_val); return true; }
+            if (key == 0x86) { set_value (max_val); return true; }
+            return false;
+        }
+
+        public override bool on_scroll (int mx, int my, int dx, int dy) {
+            if (!visible || !sensitive || !contains (mx, my))
+                return false;
+            if (dy != 0) {
+                set_value (value - (double) dy * step);
+                return true;
+            }
+            return false;
+        }
+    }
 }

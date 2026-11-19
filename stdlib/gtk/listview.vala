@@ -296,9 +296,13 @@ namespace Gtk {
         }
 
         public override void draw (Context cr) {
-            if (!visible || width <= 0 || height <= 0)
+            if (!visible || width <= 0 || height <= 0 || row_height <= 0 || labels.length == 0)
                 return;
-            for (int i = 0; i < labels.length; i++) {
+            int i0 = (cr.clip_top () - y) / row_height;
+            int i1 = (cr.clip_bottom () - y) / row_height;
+            if (i0 < 0) i0 = 0;
+            if (i1 >= labels.length) i1 = labels.length - 1;
+            for (int i = i0; i <= i1; i++) {
                 int ry = y + i * row_height;
                 if (i == selected_index) {
                     cr.set_source_rgb (0.21, 0.54, 0.90);
@@ -356,12 +360,20 @@ namespace Gtk {
         public override bool on_key_press (int key) {
             if (!focused || !visible || !sensitive || labels.length == 0)
                 return false;
-            if (key == 0xFF52) {
+            if (key == 0x81 || key == 0xFF52) {
                 set_selected ((selected_index > 0) ? (selected_index - 1) : 0);
                 return true;
             }
-            if (key == 0xFF54) {
+            if (key == 0x82 || key == 0xFF54) {
                 set_selected ((selected_index + 1 < labels.length) ? (selected_index + 1) : (labels.length - 1));
+                return true;
+            }
+            if (key == 0x85) {
+                set_selected (0);
+                return true;
+            }
+            if (key == 0x86) {
+                set_selected (labels.length - 1);
                 return true;
             }
             if ((key == '\n' || key == '\r') && selected_index >= 0) {

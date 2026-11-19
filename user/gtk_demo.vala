@@ -32,6 +32,23 @@ int main (string[] args) {
     var pbar = new ProgressBar ();
     pbar.set_text ("0%");
 
+    var ctrl_frame = new Frame ("Interactive Controls");
+    var ctrl_row = new Box (Orientation.HORIZONTAL, 12);
+    var sw = new Switch (true);
+    var slider = new Scale (0.0, 100.0, 5.0);
+    slider.set_value (25.0);
+    slider.value_changed.connect ((sender, val) => {
+        int pct = (int) val;
+        pbar.set_fraction (val / 100.0);
+        pbar.set_text (@"$pct%");
+    });
+    sw.toggled.connect ((sender) => {
+        chk.set_active (sw.get_active ());
+    });
+    ctrl_row.pack_start (sw);
+    ctrl_row.pack_start (slider);
+    ctrl_frame.set_child (ctrl_row);
+
     var state = new GtkDemoState ();
     var status_lbl = new Label (@"Clicks: $(state.clicks)");
 
@@ -59,6 +76,7 @@ int main (string[] args) {
     vbox.pack_start (title_lbl);
     vbox.pack_start (entry);
     vbox.pack_start (chk);
+    vbox.pack_start (ctrl_frame);
     vbox.pack_start (pbar);
     vbox.pack_start (new Separator ());
     vbox.pack_start (hbox);

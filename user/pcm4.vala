@@ -235,6 +235,7 @@ int main (string[] args) {
     var nb = new Notebook ();
     var sc_files = new ScrolledWindow ();
     var lv = new ListView ();
+    lv.focused = true;
     sc_files.set_child (lv);
     nb.append_page (sc_files, "Files");
 

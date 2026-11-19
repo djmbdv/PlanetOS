@@ -23,7 +23,7 @@ public extern double dlib_ceil (double x);
 
 [AsmBody(@"
     # dlib_fma(a in xmm0, b in xmm1, c in xmm2) -> FMA3 vfmadd213sd (a * b + c)
-    .byte 0xc4, 0xe2, 0xe9, 0xa9, 0xc2
+    .byte 0xc4, 0xe2, 0xf1, 0xa9, 0xc2
     ret
 ")]
 public extern double dlib_fma (double a, double b, double c);

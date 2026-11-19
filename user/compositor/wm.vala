@@ -252,6 +252,23 @@ namespace Wm {
         }
 
         public void shutdown () {
+            for (int i = 0; i < wins.length; i++) {
+                var w = wins[i];
+                if (!w.alive)
+                    continue;
+                if (w.kind == Kind.TERMINAL && w.term != null)
+                    w.term.cancel_proc ();
+                if (w.kind == Kind.EXT) {
+                    if (w.ext_tid > 0) {
+                        Sys.kill (w.ext_tid);
+                        w.ext_tid = -1;
+                    }
+                    if (w.ext_file.length > 0) {
+                        Sys.unlink (w.ext_file);
+                        w.ext_file = "";
+                    }
+                }
+            }
             if (attached)
                 screen.close ();
         }
@@ -287,6 +304,12 @@ namespace Wm {
                     mot_x = ev.x;
                     mot_y = ev.y;
                     had_motion = true;
+                } else if (ev.type == EventType.SCROLL) {
+                    if (had_motion) {
+                        pointer_motion (mot_x, mot_y);
+                        had_motion = false;
+                    }
+                    pointer_scroll (ev.x, ev.y, ev.scroll_dx, ev.scroll_dy);
                 }
             }
             if (had_motion)
@@ -622,14 +645,8 @@ namespace Wm {
             var w = find (id);
             if (w == null)
                 return;
-            if (w.kind == Kind.TERMINAL && w.term != null && w.term.child_tid > 0) {
-                Sys.kill (w.term.child_tid);
-                w.term.child_tid = -1;
-                if (w.term.out_file.length > 0) {
-                    Sys.unlink (w.term.out_file);
-                    w.term.out_file = "";
-                }
-            }
+            if (w.kind == Kind.TERMINAL && w.term != null)
+                w.term.cancel_proc ();
             if (w.kind == Kind.EXT) {
                 if (w.ext_tid > 0) {
                     Sys.kill (w.ext_tid);
@@ -828,7 +845,7 @@ namespace Wm {
                     int sw = le32 (hdr, 4);
                     int sh = le32 (hdr, 8);
                     int seq = le32 (hdr, 12);
-                    if (seq != w.ext_seq && sw >= 64 && sw <= SCREEN_W && sh >= 64 && sh <= SCREEN_H) {
+                    if (seq != 0 && seq != w.ext_seq && sw >= 64 && sw <= SCREEN_W && sh >= 64 && sh <= SCREEN_H) {
                         if (w.ext_surf == null || w.ext_surf.width != sw || w.ext_surf.height != sh)
                             w.ext_surf = new ImageSurface (Format.ARGB32, sw, sh);
                         int total = sw * sh * 4;
@@ -842,8 +859,10 @@ namespace Wm {
                                 break;
                             off = off + r;
                         }
-                        w.ext_seq = seq;
-                        damage_window (w.id);
+                        if (off == total) {
+                            w.ext_seq = seq;
+                            damage_window (w.id);
+                        }
                     }
                 }
                 Sys.close (fd);
@@ -952,6 +971,19 @@ namespace Wm {
             }
         }
 
+        public void pointer_scroll (int px, int py, int dx, int dy) {
+            var w = top_at (px, py);
+            if (w == null)
+                return;
+            if ((w.kind == Kind.GTK || w.kind == Kind.FILES) && w.gtk_root != null) {
+                if (w.gtk_root.on_scroll (px, py, dx, dy))
+                    damage_window (w.id);
+            } else if (w.kind == Kind.TERMINAL && w.term != null) {
+                if (w.term.on_scroll (dy))
+                    damage_window (w.id);
+            }
+        }
+
         public void pointer_release () {
             dragging = false;
             drag_id = 0;
@@ -1043,7 +1075,9 @@ namespace Wm {
                         string ex = fw.term.want_gui_exec;
                         string tt = fw.term.want_gui_title;
                         fw.term.want_gui_exec = "";
-                        launch_gui_app (ex, tt, 560, 380);
+                        int gw = (ex == "saturn.elf") ? 720 : 560;
+                        int gh = (ex == "saturn.elf") ? 460 : 380;
+                        launch_gui_app (ex, tt, gw, gh);
                     }
                     damage_window (fw.id);
                     return;

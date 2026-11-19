@@ -15,6 +15,9 @@ using Cairo;
 namespace Gsk {
 
     public class Path : Object {
+        private const int MAX_POINTS = 65536;
+        private const int MAX_CONTOURS = 4096;
+
         private const int CH_M = 77;
         private const int CH_L = 76;
         private const int CH_H = 72;
@@ -48,6 +51,10 @@ namespace Gsk {
 
         public double first_x { get; private set; }
         public double first_y { get; private set; }
+        public double min_x { get; private set; }
+        public double min_y { get; private set; }
+        public double max_x { get; private set; }
+        public double max_y { get; private set; }
 
         public static Path? parse (string d) {
             if (d.length == 0)
@@ -72,14 +79,19 @@ namespace Gsk {
         }
 
         public void fill (Context cr) {
+            if (contours <= 0 || n <= 0)
+                return;
             for (int ci = 0; ci < contours; ci++) {
                 int s = starts[ci];
                 int e = (ci + 1 < contours) ? starts[ci + 1] : n;
-                cr.fill_polygon_range (xs, ys, s, e - s);
+                if (e > s)
+                    cr.fill_polygon_range (xs, ys, s, e - s);
             }
         }
 
         public void fill_translated (Context cr, double dx, double dy) {
+            if (contours <= 0 || n <= 0)
+                return;
             if (dx == 0 && dy == 0) {
                 fill (cr);
                 return;
@@ -99,8 +111,12 @@ namespace Gsk {
             if (n + extra <= xs.length)
                 return;
             int cap = xs.length;
-            while (cap < n + extra)
+            while (cap < n + extra && cap < MAX_POINTS)
                 cap = cap * 2;
+            if (cap > MAX_POINTS)
+                cap = MAX_POINTS;
+            if (cap <= xs.length)
+                return;
             var nx = new double[cap];
             var ny = new double[cap];
             for (int i = 0; i < n; i++) {
@@ -112,8 +128,12 @@ namespace Gsk {
         }
 
         private void begin_contour (double x, double y) {
+            if (contours >= MAX_CONTOURS || n >= MAX_POINTS)
+                return;
             if (contours >= starts.length) {
                 int ncap = starts.length * 2;
+                if (ncap > MAX_CONTOURS)
+                    ncap = MAX_CONTOURS;
                 var ns = new int[ncap];
                 for (int i = 0; i < contours; i++)
                     ns[i] = starts[i];
@@ -125,9 +145,22 @@ namespace Gsk {
         }
 
         private void add_point (double x, double y) {
+            if (n >= MAX_POINTS)
+                return;
             ensure (1);
             if (n >= xs.length)
                 return;
+            if (n == 0) {
+                min_x = x;
+                max_x = x;
+                min_y = y;
+                max_y = y;
+            } else {
+                if (x < min_x) min_x = x;
+                if (x > max_x) max_x = x;
+                if (y < min_y) min_y = y;
+                if (y > max_y) max_y = y;
+            }
             xs[n] = x;
             ys[n] = y;
             n++;
@@ -139,6 +172,43 @@ namespace Gsk {
             ret
         ")]
         private static extern double hw_sqrt (double v);
+
+        [AsmBody(@"
+            # hw_fma(a in xmm0, b in xmm1, c in xmm2) -> vfmadd213sd (a * b + c)
+            .byte 0xc4, 0xe2, 0xf1, 0xa9, 0xc2
+            ret
+        ")]
+        private static extern double hw_fma (double a, double b, double c);
+
+        private bool bezier_init = false;
+        private double[] cubic_a = new double[12];
+        private double[] cubic_b = new double[12];
+        private double[] cubic_c = new double[12];
+        private double[] cubic_d = new double[12];
+        private double[] quad_a = new double[10];
+        private double[] quad_b = new double[10];
+        private double[] quad_c = new double[10];
+
+        private void init_bezier_tables () {
+            if (bezier_init)
+                return;
+            bezier_init = true;
+            for (int i = 0; i < 12; i++) {
+                double t = (double) (i + 1) / 12.0;
+                double u = 1.0 - t;
+                cubic_a[i] = u * u * u;
+                cubic_b[i] = 3.0 * u * u * t;
+                cubic_c[i] = 3.0 * u * t * t;
+                cubic_d[i] = t * t * t;
+            }
+            for (int i = 0; i < 10; i++) {
+                double t = (double) (i + 1) / 10.0;
+                double u = 1.0 - t;
+                quad_a[i] = u * u;
+                quad_b[i] = 2.0 * u * t;
+                quad_c[i] = t * t;
+            }
+        }
 
         private static double my_sqrt (double v) {
             if (v <= 0)
@@ -154,11 +224,6 @@ namespace Gsk {
                 else
                     break;
             }
-        }
-
-        private int peek () {
-            skip_sep ();
-            return (pos < len) ? (int) src[pos] : 0;
         }
 
         private double num () {
@@ -221,6 +286,7 @@ namespace Gsk {
                 skip_sep ();
                 if (pos >= len)
                     break;
+                int iter_start = pos;
                 int c = (int) src[pos];
                 if (is_cmd (c)) {
                     cmd = c;
@@ -240,6 +306,7 @@ namespace Gsk {
                 if (up == CH_M) {
                     double x = num ();
                     double y = num ();
+                    if (pos == iter_start) break;
                     if (rel) { x = cur_x + x; y = cur_y + y; }
                     cur_x = x;
                     cur_y = y;
@@ -253,6 +320,7 @@ namespace Gsk {
                 if (up == CH_L) {
                     double x = num ();
                     double y = num ();
+                    if (pos == iter_start) break;
                     if (rel) { x = cur_x + x; y = cur_y + y; }
                     add_point (x, y);
                     cur_x = x;
@@ -262,6 +330,7 @@ namespace Gsk {
                 }
                 if (up == CH_H) {
                     double x = num ();
+                    if (pos == iter_start) break;
                     if (rel) x = cur_x + x;
                     add_point (x, cur_y);
                     cur_x = x;
@@ -270,6 +339,7 @@ namespace Gsk {
                 }
                 if (up == CH_V) {
                     double y = num ();
+                    if (pos == iter_start) break;
                     if (rel) y = cur_y + y;
                     add_point (cur_x, y);
                     cur_y = y;
@@ -291,6 +361,7 @@ namespace Gsk {
                     }
                     double c2x = num (); double c2y = num ();
                     double ex = num (); double ey = num ();
+                    if (pos == iter_start) break;
                     if (rel) {
                         c2x = cur_x + c2x; c2y = cur_y + c2y;
                         ex = cur_x + ex; ey = cur_y + ey;
@@ -317,6 +388,7 @@ namespace Gsk {
                         qy = cur_y;
                     }
                     double ex = num (); double ey = num ();
+                    if (pos == iter_start) break;
                     if (rel) { ex = cur_x + ex; ey = cur_y + ey; }
                     quad_to (qx, qy, ex, ey);
                     last_qx = qx;
@@ -334,6 +406,7 @@ namespace Gsk {
                     double sweep = num ();
                     double ex = num ();
                     double ey = num ();
+                    if (pos == iter_start) break;
                     if (rel) { ex = cur_x + ex; ey = cur_y + ey; }
                     arc_to (rx, ry, large != 0, sweep != 0, ex, ey);
                     cur_x = ex;
@@ -346,40 +419,41 @@ namespace Gsk {
         }
 
         private void cubic_to (double c1x, double c1y, double c2x, double c2y, double ex, double ey) {
-            int steps = 12;
+            init_bezier_tables ();
             double x0 = cur_x;
             double y0 = cur_y;
-            for (int i = 1; i <= steps; i++) {
-                double t = (double) i / (double) steps;
-                double u = 1.0 - t;
-                double a = u * u * u;
-                double b = 3.0 * u * u * t;
-                double c = 3.0 * u * t * t;
-                double d = t * t * t;
-                add_point (a * x0 + b * c1x + c * c2x + d * ex,
-                           a * y0 + b * c1y + c * c2y + d * ey);
+            for (int i = 0; i < 12; i++) {
+                double px = cubic_d[i] * ex;
+                px = hw_fma (cubic_c[i], c2x, px);
+                px = hw_fma (cubic_b[i], c1x, px);
+                px = hw_fma (cubic_a[i], x0, px);
+                double py = cubic_d[i] * ey;
+                py = hw_fma (cubic_c[i], c2y, py);
+                py = hw_fma (cubic_b[i], c1y, py);
+                py = hw_fma (cubic_a[i], y0, py);
+                add_point (px, py);
             }
         }
 
         private void quad_to (double qx, double qy, double ex, double ey) {
-            int steps = 10;
+            init_bezier_tables ();
             double x0 = cur_x;
             double y0 = cur_y;
-            for (int i = 1; i <= steps; i++) {
-                double t = (double) i / (double) steps;
-                double u = 1.0 - t;
-                double a = u * u;
-                double b = 2.0 * u * t;
-                double c = t * t;
-                add_point (a * x0 + b * qx + c * ex,
-                           a * y0 + b * qy + c * ey);
+            for (int i = 0; i < 10; i++) {
+                double px = quad_c[i] * ex;
+                px = hw_fma (quad_b[i], qx, px);
+                px = hw_fma (quad_a[i], x0, px);
+                double py = quad_c[i] * ey;
+                py = hw_fma (quad_b[i], qy, py);
+                py = hw_fma (quad_a[i], y0, py);
+                add_point (px, py);
             }
         }
 
         private void arc_to (double rx, double ry, bool large, bool sweep, double ex, double ey) {
             double dx = ex - cur_x;
             double dy = ey - cur_y;
-            double chord2 = dx * dx + dy * dy;
+            double chord2 = hw_fma (dx, dx, dy * dy);
             if (chord2 < 0.000001) {
                 add_point (ex, ey);
                 return;

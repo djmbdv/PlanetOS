@@ -79,5 +79,9 @@ namespace Gtk {
         public virtual bool on_key_press (int key) {
             return false;
         }
+
+        public virtual bool on_scroll (int mx, int my, int dx, int dy) {
+            return false;
+        }
     }
 }

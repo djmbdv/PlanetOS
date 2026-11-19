@@ -303,7 +303,7 @@ namespace Planet.Kernel {
             return 0;
         }
         if (num == 24) { // SYS_MOUSE_READ(out_buf)
-            if (!user_ok (a0, 24))
+            if (!user_ok (a0, 56))
                 return -1;
             Mouse.poll_state (a0);
             return 0;

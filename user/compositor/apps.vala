@@ -60,6 +60,18 @@ namespace Wm {
 
     public enum Kind { TERMINAL, CLOCK, SHADER, NOTES, GTK, FILES, EXT }
 
+    public static string resolve_gui_binary (string nm) {
+        if (nm == "gtk_demo" || nm == "gtk_demo.elf") return "gtk_demo.elf";
+        if (nm == "pcm4" || nm == "pcm4.elf") return "pcm4.elf";
+        if (nm == "cairo_demo" || nm == "cairo_demo.elf") return "cairo_demo.elf";
+        if (nm == "spv_demo" || nm == "spv_demo.elf") return "spv_demo.elf";
+        if (nm == "vk_demo" || nm == "vk_demo.elf") return "vk_demo.elf";
+        if (nm == "pango_demo" || nm == "pango_demo.elf") return "pango_demo.elf";
+        if (nm == "compositor" || nm == "compositor.elf") return "compositor.elf";
+        if (nm == "saturn" || nm == "saturn.elf") return "saturn.elf";
+        return "";
+    }
+
     public class GtkCompState : Object {
         public int clicks = 0;
     }
@@ -77,6 +89,7 @@ namespace Wm {
         public string want_gui_title = "";
         public int scroll_off = 0;
         public int child_tid = -1;
+        public int child_out_fd = -1;
         public string out_file = "";
         public int out_read_pos = 0;
         private string partial_line = "";
@@ -90,6 +103,19 @@ namespace Wm {
 
         public bool busy () {
             return child_tid > 0;
+        }
+
+        public bool on_scroll (int dy) {
+            if (dy == 0 || lines.length <= 0)
+                return false;
+            int prev = scroll_off;
+            scroll_off = scroll_off - dy * 2;
+            if (scroll_off < 0)
+                scroll_off = 0;
+            int max_off = (lines.length > 4) ? (lines.length - 4) : 0;
+            if (scroll_off > max_off)
+                scroll_off = max_off;
+            return scroll_off != prev;
         }
 
         private void push_line (string s) {
@@ -184,6 +210,22 @@ namespace Wm {
             Sys.close (fd);
         }
 
+        public void cancel_proc () {
+            if (child_tid > 0) {
+                Sys.kill (child_tid);
+                child_tid = -1;
+            }
+            if (child_out_fd >= 0) {
+                Sys.close (child_out_fd);
+                child_out_fd = -1;
+            }
+            if (out_file.length > 0) {
+                Sys.unlink (out_file);
+                out_file = "";
+            }
+            out_read_pos = 0;
+        }
+
         public bool poll_proc () {
             if (child_tid <= 0)
                 return false;
@@ -192,6 +234,10 @@ namespace Wm {
             drain_out_file ();
             int rc = Sys.wait_nb (child_tid);
             if (rc != -2) {
+                if (child_out_fd >= 0) {
+                    Sys.close (child_out_fd);
+                    child_out_fd = -1;
+                }
                 drain_out_file ();
                 if (partial_line.length > 0) {
                     push_line (partial_line);
@@ -223,21 +269,18 @@ namespace Wm {
             }
             Sys.setenv ("PLANET_CWD", cwd);
             Sys.sys (19, 0, out_fd, 0);
-            child_tid = Sys.spawn ("shell.elf", @"shell.elf -c $cmd");
+            child_tid = Sys.spawn ("vte_sh.elf", @"vte_sh.elf -c $cmd");
             Sys.sys (19, 0, 1, 0);
-            Sys.close (out_fd);
             if (child_tid < 0) {
+                Sys.close (out_fd);
                 Sys.unlink (out_file);
                 out_file = "";
                 push_line (@"vte: failed to spawn shell for '$cmd'");
+            } else {
+                child_out_fd = out_fd;
             }
         }
 
-        private static bool is_gui_binary (string nm) {
-            return nm == "gtk_demo.elf" || nm == "pcm4.elf" || nm == "cairo_demo.elf"
-                || nm == "spv_demo.elf" || nm == "vk_demo.elf" || nm == "pango_demo.elf"
-                || nm == "compositor.elf";
-        }
 
         private void run_cmd (string raw) {
             string cmd = trim_str (raw);
@@ -292,25 +335,29 @@ namespace Wm {
             }
             if (cmd.has_prefix ("exec ")) {
                 string rest = trim_str (cmd.substring (5, cmd.length - 5));
-                if (is_gui_binary (rest)) {
-                    if (rest == "pcm4.elf")
+                string gui_bin = resolve_gui_binary (rest);
+                if (gui_bin.length > 0) {
+                    if (gui_bin == "pcm4.elf")
                         want_pcm4 = true;
                     else {
-                        want_gui_exec = rest;
-                        want_gui_title = rest;
+                        want_gui_exec = gui_bin;
+                        want_gui_title = gui_bin;
                     }
-                    push_line (@"launching $rest in compositor...");
+                    push_line (@"launching $gui_bin in compositor...");
                     return;
                 }
-            } else if (is_gui_binary (cmd)) {
-                if (cmd == "pcm4.elf")
-                    want_pcm4 = true;
-                else {
-                    want_gui_exec = cmd;
-                    want_gui_title = cmd;
+            } else {
+                string gui_bin = resolve_gui_binary (cmd);
+                if (gui_bin.length > 0) {
+                    if (gui_bin == "pcm4.elf")
+                        want_pcm4 = true;
+                    else {
+                        want_gui_exec = gui_bin;
+                        want_gui_title = gui_bin;
+                    }
+                    push_line (@"launching $gui_bin in compositor...");
+                    return;
                 }
-                push_line (@"launching $cmd in compositor...");
-                return;
             }
             spawn_shell_cmd (cmd);
         }
@@ -525,9 +572,7 @@ namespace Wm {
         }
 
         private static bool is_gui_app (string nm) {
-            return nm == "gtk_demo.elf" || nm == "pcm4.elf" || nm == "cairo_demo.elf"
-                || nm == "spv_demo.elf" || nm == "vk_demo.elf" || nm == "pango_demo.elf"
-                || nm == "compositor.elf";
+            return resolve_gui_binary (nm).length > 0;
         }
 
         private void run_cli_capture (string fp, string label_nm) {
@@ -606,8 +651,8 @@ namespace Wm {
                 if (is_gui_app (nm)) {
                     want_gui_exec = fp;
                     want_gui_title = nm;
-                    want_gui_w = 560;
-                    want_gui_h = 380;
+                    want_gui_w = (nm == "saturn.elf") ? 720 : 560;
+                    want_gui_h = (nm == "saturn.elf") ? 460 : 380;
                     if (status != null)
                         status.set_text (@"Opening window: $nm");
                 } else {

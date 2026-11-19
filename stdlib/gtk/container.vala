@@ -160,5 +160,115 @@ namespace Gtk {
             }
             return false;
         }
+
+        public override bool on_scroll (int mx, int my, int dx, int dy) {
+            if (!visible || !sensitive)
+                return false;
+            for (int i = 0; i < children.length; i++) {
+                if (children[i].on_scroll (mx, my, dx, dy))
+                    return true;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Single-child container with an optional titled border.
+     */
+    public class Frame : Widget {
+        public string? label = null;
+        public Widget? child = null;
+        public int pad = 8;
+
+        public Frame (string? title = null) {
+            label = title;
+        }
+
+        public void set_child (Widget? w) {
+            child = w;
+        }
+
+        public void set_label (string? title) {
+            label = title;
+        }
+
+        private int header_height () {
+            return (label != null && label.length > 0) ? 22 : 4;
+        }
+
+        public override void measure (out int min_w, out int min_h) {
+            int cw = 40;
+            int ch = 20;
+            if (child != null && child.visible)
+                child.measure (out cw, out ch);
+            int hh = header_height ();
+            min_w = cw + pad * 2 + 2;
+            min_h = ch + hh + pad * 2 + 2;
+            if (req_w > min_w) min_w = req_w;
+            if (req_h > min_h) min_h = req_h;
+        }
+
+        public override void allocate (int ax, int ay, int aw, int ah) {
+            x = ax;
+            y = ay;
+            width = (aw < 0) ? 0 : aw;
+            height = (ah < 0) ? 0 : ah;
+            if (child != null) {
+                int hh = header_height ();
+                int cw = width - pad * 2;
+                int ch = height - hh - pad;
+                if (cw < 0) cw = 0;
+                if (ch < 0) ch = 0;
+                child.allocate (x + pad, y + hh, cw, ch);
+            }
+        }
+
+        public override void draw (Context cr) {
+            if (!visible || width <= 0 || height <= 0)
+                return;
+            cr.set_source_rgb (0.98, 0.98, 0.99);
+            cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 6.0);
+            cr.fill ();
+            cr.set_source_rgb (0.80, 0.82, 0.86);
+            cr.set_line_width (1.0);
+            cr.rounded_rectangle ((double) x + 0.5, (double) y + 0.5, (double) (width - 1), (double) (height - 1), 6.0);
+            cr.stroke ();
+            if (label != null && label.length > 0) {
+                cr.set_source_rgb (0.25, 0.28, 0.34);
+                TextHelper.draw_text (cr, label, x + pad, y + 4, 13.0);
+            }
+            if (child != null)
+                child.draw (cr);
+        }
+
+        public override bool on_pointer_motion (int mx, int my) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_pointer_motion (mx, my);
+        }
+
+        public override bool on_pointer_press (int mx, int my, int button) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_pointer_press (mx, my, button);
+        }
+
+        public override bool on_pointer_release (int mx, int my, int button) {
+            if (child == null)
+                return false;
+            return child.on_pointer_release (mx, my, button);
+        }
+
+        public override bool on_key_press (int key) {
+            if (child == null)
+                return false;
+            return child.on_key_press (key);
+        }
+
+        public override bool on_scroll (int mx, int my, int dx, int dy) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_scroll (mx, my, dx, dy);
+        }
     }
 }

@@ -1,51 +1,8 @@
-// Minimal pure-Vala GSK (Gtk Scene Kit) compatibility layer for PlanetOS.
-// Provides GTK4-style RenderNodes (Color, RoundedRect, LinearGradient, Shadow,
-// Text, Clip, Opacity, Container) and CairoRenderer / VulkanRenderer (Venus+Spv).
+// Pure-Vala GSK RenderNode hierarchy for PlanetOS.
 
 using Cairo;
-using Venus;
 
 namespace Gsk {
-
-    public class Rect : Object {
-        public double x;
-        public double y;
-        public double w;
-        public double h;
-
-        public Rect (double rx, double ry, double rw, double rh) {
-            x = rx;
-            y = ry;
-            w = rw;
-            h = rh;
-        }
-    }
-
-    public class RoundedRect : Object {
-        public Rect bounds;
-        public double radius;
-
-        public RoundedRect (double x, double y, double w, double h, double r) {
-            bounds = new Rect (x, y, w, h);
-            radius = r;
-        }
-    }
-
-    public class ColorStop : Object {
-        public double offset;
-        public double r;
-        public double g;
-        public double b;
-        public double a;
-
-        public ColorStop (double off, double cr, double cg, double cb, double ca) {
-            offset = off;
-            r = cr;
-            g = cg;
-            b = cb;
-            a = ca;
-        }
-    }
 
     public abstract class RenderNode : Object {
         public abstract void draw_cairo (Context cr);
@@ -67,7 +24,7 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
-            if (bounds == null || bounds.w <= 0.0 || bounds.h <= 0.0 || a <= 0.0)
+            if (bounds == null || bounds.is_empty () || a <= 0.0)
                 return;
             cr.set_source_rgba (r, g, b, a);
             cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
@@ -96,7 +53,7 @@ namespace Gsk {
         }
 
         public void set_border (double w, double red, double green, double blue, double alpha = 1.0) {
-            border_w = w;
+            border_w = (w > 0.0) ? w : 0.0;
             br = red;
             bg = green;
             bb = blue;
@@ -104,10 +61,9 @@ namespace Gsk {
         }
 
         public override void draw_cairo (Context cr) {
-            if (rect == null || rect.bounds == null || rect.bounds.w <= 0.0 || rect.bounds.h <= 0.0)
+            if (rect == null || rect.bounds == null || rect.bounds.is_empty ())
                 return;
-            double max_r = ((rect.bounds.w < rect.bounds.h) ? rect.bounds.w : rect.bounds.h) * 0.5;
-            double rad = (rect.radius < 0.0) ? 0.0 : ((rect.radius > max_r) ? max_r : rect.radius);
+            double rad = rect.clamped_radius ();
             if (a > 0.0) {
                 cr.set_source_rgba (r, g, b, a);
                 cr.rounded_rectangle (rect.bounds.x, rect.bounds.y, rect.bounds.w, rect.bounds.h, rad);
@@ -133,15 +89,34 @@ namespace Gsk {
             stops = new GenericArray<ColorStop> ();
         }
 
+        /**
+         * Adds a color stop, keeping stops sorted by ascending offset.
+         */
         public void add_stop (double offset, double r, double g, double b, double a = 1.0) {
-            double off = (offset < 0.0) ? 0.0 : ((offset > 1.0) ? 1.0 : offset);
-            stops.add (new ColorStop (off, r, g, b, a));
+            var stop = new ColorStop (offset, r, g, b, a);
+            stops.add (stop);
+            // Insertion-sort the new stop into place so draw_cairo() can scan linearly.
+            int i = stops.length - 1;
+            while (i > 0 && stops[i - 1].offset > stop.offset) {
+                stops[i] = stops[i - 1];
+                i--;
+            }
+            stops[i] = stop;
         }
 
         public override void draw_cairo (Context cr) {
-            if (bounds == null || bounds.w <= 0.0 || bounds.h <= 0.0 || stops.length == 0)
+            if (bounds == null || bounds.is_empty () || stops.length == 0)
                 return;
             int n = stops.length;
+            if (n == 1) {
+                var s = stops[0];
+                if (s.a > 0.0) {
+                    cr.set_source_rgba (s.r, s.g, s.b, s.a);
+                    cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
+                    cr.fill ();
+                }
+                return;
+            }
             int steps = horizontal ? (int) bounds.w : (int) bounds.h;
             if (steps < 1)
                 steps = 1;
@@ -151,11 +126,17 @@ namespace Gsk {
                 double t = (steps == 1) ? 0.0 : (double) i / (double) (steps - 1);
                 var s0 = stops[0];
                 var s1 = stops[n - 1];
-                for (int k = 0; k < n - 1; k++) {
-                    if (t >= stops[k].offset && t <= stops[k + 1].offset) {
-                        s0 = stops[k];
-                        s1 = stops[k + 1];
-                        break;
+                if (t <= s0.offset) {
+                    s1 = s0;
+                } else if (t >= s1.offset) {
+                    s0 = s1;
+                } else {
+                    for (int k = 0; k < n - 1; k++) {
+                        if (t >= stops[k].offset && t <= stops[k + 1].offset) {
+                            s0 = stops[k];
+                            s1 = stops[k + 1];
+                            break;
+                        }
                     }
                 }
                 double span = s1.offset - s0.offset;
@@ -166,37 +147,48 @@ namespace Gsk {
                 double rg = s0.g + (s1.g - s0.g) * lt;
                 double rb = s0.b + (s1.b - s0.b) * lt;
                 double ra = s0.a + (s1.a - s0.a) * lt;
+                if (ra <= 0.0)
+                    continue;
                 cr.set_source_rgba (rr, rg, rb, ra);
                 if (horizontal) {
                     double sw = bounds.w / (double) steps;
-                    cr.rectangle (bounds.x + i * sw, bounds.y, sw + 1.0, bounds.h);
+                    double rx = bounds.x + i * sw;
+                    double rw = (i + 1 < steps) ? (sw + 1.0) : (bounds.x + bounds.w - rx);
+                    if (rw > 0.0) {
+                        cr.rectangle (rx, bounds.y, rw, bounds.h);
+                        cr.fill ();
+                    }
                 } else {
                     double sh = bounds.h / (double) steps;
-                    cr.rectangle (bounds.x, bounds.y + i * sh, bounds.w, sh + 1.0);
+                    double ry = bounds.y + i * sh;
+                    double rh = (i + 1 < steps) ? (sh + 1.0) : (bounds.y + bounds.h - ry);
+                    if (rh > 0.0) {
+                        cr.rectangle (bounds.x, ry, bounds.w, rh);
+                        cr.fill ();
+                    }
                 }
-                cr.fill ();
             }
         }
     }
 
     public class ShadowNode : RenderNode {
-        public RenderNode child;
-        public RoundedRect outline;
+        public RenderNode? child;
+        public RoundedRect? outline;
         public double dx;
         public double dy;
         public double spread;
 
-        public ShadowNode (RenderNode c, RoundedRect rect, double off_x = 0.0, double off_y = 4.0, double spr = 8.0) {
+        public ShadowNode (RenderNode? c, RoundedRect? rect, double off_x = 0.0, double off_y = 4.0, double spr = 8.0) {
             child = c;
             outline = rect;
             dx = off_x;
             dy = off_y;
-            spread = spr;
+            spread = (spr > 0.0) ? spr : 0.0;
         }
 
         public override void draw_cairo (Context cr) {
-            if (outline != null && outline.bounds != null && spread > 0.0
-                && outline.bounds.w > 0.0 && outline.bounds.h > 0.0) {
+            if (outline != null && outline.bounds != null && !outline.bounds.is_empty () && spread > 0.0) {
+                double base_rad = outline.clamped_radius ();
                 int rings = (spread > 4.0) ? 4 : 2;
                 for (int i = rings; i >= 1; i--) {
                     double pad = (spread * i) / (double) rings;
@@ -204,7 +196,7 @@ namespace Gsk {
                     cr.set_source_rgba (0.0, 0.0, 0.0, alpha);
                     cr.rounded_rectangle (outline.bounds.x + dx - pad, outline.bounds.y + dy - pad,
                                           outline.bounds.w + pad * 2.0, outline.bounds.h + pad * 2.0,
-                                          outline.radius + pad * 0.5);
+                                          base_rad + pad * 0.5);
                     cr.fill ();
                 }
             }
@@ -247,21 +239,20 @@ namespace Gsk {
 
     public class ClipNode : RenderNode {
         public Rect clip_rect;
-        public RenderNode child;
+        public RenderNode? child;
 
-        public ClipNode (Rect rect, RenderNode c) {
+        public ClipNode (Rect rect, RenderNode? c) {
             clip_rect = rect;
             child = c;
         }
 
         public override void draw_cairo (Context cr) {
-            if (clip_rect == null || clip_rect.w <= 0.0 || clip_rect.h <= 0.0)
+            if (clip_rect == null || clip_rect.is_empty () || child == null)
                 return;
             cr.save ();
             cr.rectangle (clip_rect.x, clip_rect.y, clip_rect.w, clip_rect.h);
             cr.clip ();
-            if (child != null)
-                child.draw_cairo (cr);
+            child.draw_cairo (cr);
             cr.restore ();
         }
     }
@@ -298,62 +289,21 @@ namespace Gsk {
             return children.length;
         }
 
+        public RenderNode? get_child (int idx) {
+            if (idx < 0 || idx >= children.length)
+                return null;
+            return children[idx];
+        }
+
+        public void clear () {
+            children.length = 0;
+        }
+
         public override void draw_cairo (Context cr) {
             for (int i = 0; i < children.length; i++) {
                 if (children[i] != null)
                     children[i].draw_cairo (cr);
             }
-        }
-    }
-
-    public abstract class Renderer : Object {
-        public abstract string backend_name ();
-        public abstract void render (RenderNode root, ImageSurface target);
-    }
-
-    public class CairoRenderer : Renderer {
-        public override string backend_name () {
-            return "cairo";
-        }
-
-        public override void render (RenderNode root, ImageSurface target) {
-            if (root == null || target == null)
-                return;
-            var cr = new Context (target);
-            root.draw_cairo (cr);
-        }
-    }
-
-    // GSK VulkanRenderer: encodes scene pass over Venus.Device when CAPSET_VENUS
-    // is present on VirtIO-GPU, falling back to CairoRenderer otherwise.
-    public class VulkanRenderer : Renderer {
-        public GpuDevice vk { get; private set; }
-        private CairoRenderer fallback;
-
-        public VulkanRenderer (int ctx_id = 1) {
-            vk = new GpuDevice (ctx_id);
-            fallback = new CairoRenderer ();
-        }
-
-        ~VulkanRenderer () {
-            if (vk != null)
-                vk.close ();
-        }
-
-        public override string backend_name () {
-            return vk.using_hw_venus ? "venus-vulkan" : "vulkan-fallback-cairo";
-        }
-
-        public override void render (RenderNode root, ImageSurface target) {
-            if (root == null || target == null)
-                return;
-            if (vk.using_hw_venus)
-                vk.draw_fullscreen (1);
-            fallback.render (root, target);
-        }
-
-        public void unrealize () {
-            vk.close ();
         }
     }
 }
