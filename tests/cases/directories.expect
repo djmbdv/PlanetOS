@@ -1,9 +1,9 @@
 # SYS_STAT / SYS_MKDIR / path-based SYS_READDIR / SYS_UNLINK / SYS_RENAME.
 ~planc.*\(self-hosted Vala\)
-=/docs
+=/test/dirs/docs
 =5 note.txt
 =hola
 =hola
 =hola
-=rm: cannot remove '/docs'
+=rm: cannot remove '/test/dirs/docs'
 =dir-gone

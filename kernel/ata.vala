@@ -31,13 +31,12 @@ namespace Planet.Kernel {
     ")]
     public extern void ata_write_words (int buf_addr, int count);
 
-    private int ata_present = 0;
-    private int ata_sectors = 0;
-    private int ata_lba48 = 0;
-    private int ata_last_err = 0;
-    private int ata_retries = 0;
-
-    public class Ata : Object {
+    public sealed class Ata : Object {
+        private static int ata_present = 0;
+        private static int ata_sectors = 0;
+        private static int ata_lba48 = 0;
+        private static int ata_last_err = 0;
+        private static int ata_retries = 0;
         private const int BASE = 0x1F0;
         private const int CTRL = 0x3F6;
         private const int MAX_RETRIES = 2;

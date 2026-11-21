@@ -40,12 +40,24 @@ int main (string[] args) {
         print (@"vk_demo: spv=frag.spv words=$(mod.words) mod_id=$mod_id pipe_id=$pipe_id\n");
     }
 
-    // Build GSK scene graph
+    // Build GSK scene graph. The background is painted by the same SPIR-V
+    // fragment shader the compositor bakes (Gsk.ShaderNode + Spv.Module);
+    // a gradient is kept as the fallback when the module is unavailable.
     var root = new ContainerNode ();
-    var bg = new LinearGradientNode (new Rect (0, 0, 800, 600), false);
-    bg.add_stop (0.0, 0.04, 0.06, 0.12, 1.0);
-    bg.add_stop (1.0, 0.10, 0.14, 0.26, 1.0);
-    root.append (bg);
+    var pattern = Module.load ("frag_pattern.spv");
+    if (pattern.valid) {
+        var shader_bg = new ShaderNode (new Rect (0, 0, 800, 600), pattern, 8);
+        shader_bg.set_params (1.0, 1.0, 0.0, 0.0);
+        shader_bg.bake ();
+        print (@"vk_demo: gsk_shader=frag_pattern.spv ok=1 blocks=$(shader_bg.baked_blocks ())\n");
+        root.append (shader_bg);
+    } else {
+        var bg = new LinearGradientNode (new Rect (0, 0, 800, 600), false);
+        bg.add_stop (0.0, 0.04, 0.06, 0.12, 1.0);
+        bg.add_stop (1.0, 0.10, 0.14, 0.26, 1.0);
+        print ("vk_demo: gsk_shader=frag_pattern.spv ok=0\n");
+        root.append (bg);
+    }
 
     var card_rr = new RoundedRect (120, 100, 560, 380, 14);
     var card = new RoundedRectNode (card_rr, 0.12, 0.16, 0.25, 0.95);

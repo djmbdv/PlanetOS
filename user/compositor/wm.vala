@@ -14,6 +14,8 @@ namespace Wm {
     public class Compositor : Object {
         private GenericArray<Win> wins;
         private Window screen;
+        private Context? frame_cr = null;
+        private uint8[] ext_hdr = new uint8[16];
         private bool attached = false;
         private int next_id = 1;
         private int ztop = 0;
@@ -59,6 +61,7 @@ namespace Wm {
         private int last_anim_tick = 0;
         private int anim_count = 0;
         private int occluded_skips = 0;
+        private int bg_skips = 0;
         private PangoContext pctx;
         private Layout title_lay;
         private Layout dock_lay;
@@ -75,11 +78,13 @@ namespace Wm {
         private int cursor_min_y = 0;
         private int cursor_bw = 16;
         private int cursor_bh = 22;
+        private Renderer gsk_renderer;
 
         public Compositor () {
             wins = new GenericArray<Win> ();
             shader = new Module ();
             pattern = new Module ();
+            gsk_renderer = new VulkanRenderer (1);
             dmg = new int[DMG_RECTS * 4];
             last = new int[DMG_RECTS * 4];
             pctx = new PangoContext ();
@@ -111,9 +116,9 @@ namespace Wm {
                 return null;
             }
             var sb = new StringBuilder ();
+            var chunk = new uint8[512];
             int got = 0;
             while (got < sz) {
-                var chunk = new uint8[512];
                 int want = sz - got;
                 if (want > 512)
                     want = 512;
@@ -240,6 +245,7 @@ namespace Wm {
 
         public void attach (Window w, bool use_hw_cursor = false) {
             screen = w;
+            frame_cr = null;
             attached = true;
             if (use_hw_cursor)
                 init_hw_cursor ();
@@ -272,7 +278,9 @@ namespace Wm {
                         w.ext_ev_file = "";
                     }
                 }
+                release_shared (w);
             }
+            frame_cr = null;
             if (attached)
                 screen.close ();
         }
@@ -333,8 +341,11 @@ namespace Wm {
                     animate_pattern ((double) (now % 800) / 100.0);
                 }
             }
-            if ((frames & 1) == 0)
-                poll_ext_surfaces ();
+            // Sampling the header costs a few loads in shared memory, so it runs
+            // every frame: the old file transport had to skip frames to amortise
+            // its open/read/close syscalls, which added up to two frames of input
+            // latency.
+            poll_ext ();
             animate_damage (mx, my);
             bool was_full = dmg_full;
             last_n = ndmg;
@@ -344,7 +355,10 @@ namespace Wm {
             if (last_full || last_n > 0)
                 dirty_frames = dirty_frames + 1;
             int t_flush0 = Sys.ticks ();
-            var cr = new Context (screen.surface);
+            // The surface is created once per Window, so the drawing context
+            // can be reused instead of allocated (and finalised) every frame.
+            Context cr = frame_cr ?? new Context (screen.surface);
+            frame_cr = cr;
             flush (cr, mx, my);
             flush_ticks = flush_ticks + (Sys.ticks () - t_flush0);
             int t_blit0 = Sys.ticks ();
@@ -652,10 +666,10 @@ namespace Wm {
             if (w.kind == Kind.TERMINAL && w.term != null)
                 w.term.cancel_proc ();
             if (w.kind == Kind.EXT) {
-                if (w.ext_tid > 0) {
+                // Keep ext_tid: the reaper releases the shared block only after
+                // the child actually stopped, because it still maps those frames.
+                if (w.ext_tid > 0)
                     Sys.kill (w.ext_tid);
-                    w.ext_tid = -1;
-                }
                 if (w.ext_file.length > 0) {
                     Sys.unlink (w.ext_file);
                     w.ext_file = "";
@@ -810,20 +824,151 @@ namespace Wm {
             var win = find (id);
             if (win != null) {
                 Sys.mkdir ("/tmp");
-                win.ext_file = @"/tmp/_comp_w$id.argb";
-                win.ext_ev_file = @"/tmp/_comp_e$id.evt";
                 win.ext_seq = 0;
                 int cw = w - BORDER * 2;
                 int ch = h - BORDER * 2 - TITLE_H;
                 if (cw < 64) cw = 64;
                 if (ch < 64) ch = 64;
-                Sys.setenv ("PLANET_WIN_FILE", win.ext_file);
-                Sys.setenv ("PLANET_WIN_EV", win.ext_ev_file);
                 Sys.setenv ("PLANET_WIN_W", @"$cw");
                 Sys.setenv ("PLANET_WIN_H", @"$ch");
+                if (attach_shared_surface (id, 0, cw, ch)) {
+                    // The client draws straight into the shared block and the
+                    // input ring lives in the same header, so neither the frame
+                    // nor an event needs a file.
+                    Sys.unsetenv ("PLANET_WIN_FILE");
+                    Sys.unsetenv ("PLANET_WIN_EV");
+                    Sys.setenv ("PLANET_WIN_SHM", @"$(win.ext_shm)");
+                } else {
+                    Sys.unsetenv ("PLANET_WIN_SHM");
+                    win.ext_file = @"/tmp/_comp_w$id.argb";
+                    win.ext_ev_file = @"/tmp/_comp_e$id.evt";
+                    Sys.setenv ("PLANET_WIN_FILE", win.ext_file);
+                    Sys.setenv ("PLANET_WIN_EV", win.ext_ev_file);
+                }
                 win.ext_tid = Sys.spawn (exec_path, "");
             }
             return id;
+        }
+
+        // Allocates (base == 0) or adopts (base != 0) the block a client draws
+        // into: one 4 KiB header page plus w*h*4 pixel bytes, identity mapped so
+        // the client can attach it with SYS_MAP_USER_AT. A caller-supplied base
+        // is what the self-test uses to feed a surface it owns.
+        public bool attach_shared_surface (int id, int shm_base, int w, int h) {
+            var win = find (id);
+            if (win == null || w < 64 || h < 64)
+                return false;
+            int bytes = SharedSurface.bytes_for (w, h);
+            int pages = SharedSurface.pages_for (w, h);
+            if (bytes <= 0 || pages <= 0 || pages > 1024)
+                return false;
+            int shm = shm_base;
+            if (shm == 0) {
+                shm = Sys.alloc_pages (pages);
+                if (shm <= 0)
+                    return false;
+            } else if (Sys.map_user_at (shm, bytes) != 0) {
+                return false;
+            }
+            Sys.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
+            Sys.poke32 (shm + SharedSurface.OFF_WIDTH, w);
+            Sys.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
+            Sys.poke32 (shm + SharedSurface.OFF_SEQ, 0);
+            Sys.poke32 (shm + SharedSurface.OFF_DX, 0);
+            Sys.poke32 (shm + SharedSurface.OFF_DY, 0);
+            Sys.poke32 (shm + SharedSurface.OFF_DW, w);
+            Sys.poke32 (shm + SharedSurface.OFF_DH, h);
+            Sys.poke32 (shm + SharedSurface.OFF_DCOUNT, 1);
+            Sys.poke32 (shm + SharedSurface.OFF_EV_SEQ, 0);
+            Sys.poke32 (shm + SharedSurface.OFF_EV_ACK, 0);
+            win.ext_shm = shm;
+            win.ext_shm_px = shm + SharedSurface.pixel_offset ();
+            win.ext_shm_pages = pages;
+            win.ext_shm_surf = new ImageSurface.wrap (win.ext_shm_px, w, h);
+            win.ext_seq = 0;
+            return true;
+        }
+
+        // Frees the frames of a window that no longer draws. The client must be
+        // gone first: it keeps the same physical pages mapped in its own CR3.
+        private void release_shared (Win w) {
+            for (int p = 0; p < w.ext_shm_pages; p++)
+                Sys.free_page (w.ext_shm + p * 4096);
+            w.ext_shm = 0;
+            w.ext_shm_px = 0;
+            w.ext_shm_pages = 0;
+            w.ext_shm_surf = null;
+        }
+
+        // Reclaims blocks whose window is closed once the child stopped running.
+        private void reap_shared_surfaces () {
+            for (int i = 0; i < wins.length; i++) {
+                var w = wins[i];
+                if (w.alive || w.ext_shm == 0)
+                    continue;
+                if (w.ext_tid > 0) {
+                    if (Sys.wait_nb (w.ext_tid) == -2)
+                        continue;
+                    w.ext_tid = -1;
+                }
+                release_shared (w);
+            }
+        }
+
+        // Damages only the rectangle the client published, so a keystroke
+        // repaints one editor line instead of the whole window frame.
+        private void damage_content (Win w, int dx, int dy, int dw, int dh) {
+            damage (w.x + BORDER + dx, w.content_y () + dy, dw, dh);
+        }
+
+        private void poll_shared_surface (Win w) {
+            int shm = w.ext_shm;
+            if (Sys.peek32 (shm + SharedSurface.OFF_MAGIC) != SharedSurface.MAGIC)
+                return;
+            int seq = Sys.peek32 (shm + SharedSurface.OFF_SEQ);
+            if (seq == 0 || seq == w.ext_seq)
+                return;
+            w.ext_seq = seq;
+            int n = Sys.peek32 (shm + SharedSurface.OFF_DCOUNT);
+            if (n <= 0 || n > SharedSurface.MAX_RECTS)
+                n = 1;
+            for (int i = 0; i < n; i++) {
+                int off = shm + SharedSurface.rect_off (i);
+                int dx = Sys.peek32 (off + 0);
+                int dy = Sys.peek32 (off + 4);
+                int dw = Sys.peek32 (off + 8);
+                int dh = Sys.peek32 (off + 12);
+                if (dx < 0) {
+                    dw = dw + dx;
+                    dx = 0;
+                }
+                if (dy < 0) {
+                    dh = dh + dy;
+                    dy = 0;
+                }
+                if (w.ext_shm_surf != null) {
+                    if (dx + dw > w.ext_shm_surf.width)
+                        dw = w.ext_shm_surf.width - dx;
+                    if (dy + dh > w.ext_shm_surf.height)
+                        dh = w.ext_shm_surf.height - dy;
+                }
+                if (dw <= 0 || dh <= 0)
+                    continue;
+                w.ext_rects = w.ext_rects + 1;
+                w.ext_damage_px = w.ext_damage_px + dw * dh;
+                w.ext_last_dx = dx;
+                w.ext_last_dy = dy;
+                w.ext_last_dw = dw;
+                w.ext_last_dh = dh;
+                damage_content (w, dx, dy, dw, dh);
+            }
+        }
+
+        // Polls every client surface once; the frame loop and the self-test share
+        // this entry point so both observe exactly the same protocol.
+        public void poll_ext () {
+            poll_ext_surfaces ();
+            reap_shared_surfaces ();
         }
 
         private static int le32 (uint8[] b, int off) {
@@ -840,22 +985,25 @@ namespace Wm {
                     if (w.term.poll_proc ())
                         damage_window (w.id);
                 }
-                if (w.kind != Kind.EXT || w.ext_file.length == 0)
+                if (w.kind != Kind.EXT || (w.ext_file.length == 0 && w.ext_shm == 0))
                     continue;
                 if (w.ext_tid > 0) {
                     int rc = Sys.wait_nb (w.ext_tid);
                     if (rc != -2)
                         w.ext_tid = -1;
                 }
+                if (w.ext_shm != 0) {
+                    poll_shared_surface (w);
+                    continue;
+                }
                 int fd = Sys.open (w.ext_file);
                 if (fd < 0)
                     continue;
-                var hdr = new uint8[16];
-                int hn = Sys.read (fd, hdr, 16);
-                if (hn == 16 && le32 (hdr, 0) == 0x5057494E) {
-                    int sw = le32 (hdr, 4);
-                    int sh = le32 (hdr, 8);
-                    int seq = le32 (hdr, 12);
+                int hn = Sys.read (fd, ext_hdr, 16);
+                if (hn == 16 && le32 (ext_hdr, 0) == 0x5057494E) {
+                    int sw = le32 (ext_hdr, 4);
+                    int sh = le32 (ext_hdr, 8);
+                    int seq = le32 (ext_hdr, 12);
                     if (seq != 0 && seq != w.ext_seq && sw >= 64 && sw <= SCREEN_W && sh >= 64 && sh <= SCREEN_H) {
                         if (w.ext_surf == null || w.ext_surf.width != sw || w.ext_surf.height != sh)
                             w.ext_surf = new ImageSurface (Format.ARGB32, sw, sh);
@@ -982,10 +1130,14 @@ namespace Wm {
             if (fw != null && (fw.kind == Kind.GTK || fw.kind == Kind.FILES) && fw.gtk_root != null) {
                 if (fw.gtk_root.on_pointer_motion (px, py))
                     damage_window (fw.id);
-            } else if (fw != null && fw.kind == Kind.EXT && (frames & 1) == 0) {
-                if (px >= fw.x + BORDER && px < fw.x + fw.w - BORDER
-                    && py >= fw.content_y () && py < fw.y + fw.h - BORDER) {
-                    fw.push_ext_event (4, px - (fw.x + BORDER), py - fw.content_y (), 0);
+            } else if (fw != null && fw.kind == Kind.EXT) {
+                // The shared ring takes every sample; the file transport still
+                // skips alternate frames to halve its syscalls.
+                if (fw.ext_shm != 0 || (frames & 1) == 0) {
+                    if (px >= fw.x + BORDER && px < fw.x + fw.w - BORDER
+                        && py >= fw.content_y () && py < fw.y + fw.h - BORDER) {
+                        fw.push_ext_event (4, px - (fw.x + BORDER), py - fw.content_y (), 0);
+                    }
                 }
             }
         }
@@ -1153,6 +1305,20 @@ namespace Wm {
 
         public int backend () { return backend_id; }
 
+        public string gsk_backend () {
+            return (gsk_renderer != null) ? gsk_renderer.backend_name () : "none";
+        }
+
+        public void render_gsk (RenderNode root, ImageSurface target) {
+            if (gsk_renderer != null)
+                gsk_renderer.render (root, target);
+        }
+
+        public void shutdown_gpu () {
+            if (gsk_renderer is VulkanRenderer)
+                ((VulkanRenderer) gsk_renderer).unrealize ();
+        }
+
         // Vulkan backend seam. PlanetOS has no Vulkan ICD yet (decision D-13),
         // so selecting it fails and the caller stays on cairo/framebuffer. The
         // pieces a driver needs already exist: the ARGB surface this class
@@ -1294,7 +1460,14 @@ namespace Wm {
                     break;
                 }
             }
+            // A damage rectangle that lies inside an opaque window never shows
+            // the desktop, so the gradient or the pattern blocks underneath are
+            // painted and then completely covered: skip that pass.
             if (!bg_occluded)
+                bg_occluded = clip_covered (cr);
+            if (bg_occluded)
+                bg_skips = bg_skips + 1;
+            else
                 draw_background (cr);
             draw_windows (cr);
             draw_dock (cr);
@@ -1302,6 +1475,25 @@ namespace Wm {
             if (!hw_cursor)
                 draw_cursor (cr, mx, my);
         }
+
+        private bool clip_covered (Context cr) {
+            int cx0 = cr.clip_left ();
+            int cy0 = cr.clip_top ();
+            int cx1 = cr.clip_right ();
+            int cy1 = cr.clip_bottom ();
+            if (cx1 <= cx0 || cy1 <= cy0)
+                return false;
+            for (int i = 0; i < wins.length; i++) {
+                var w = wins[i];
+                if (!w.alive)
+                    continue;
+                if (w.x <= cx0 && w.y <= cy0 && w.x + w.w >= cx1 && w.y + w.h >= cy1)
+                    return true;
+            }
+            return false;
+        }
+
+        public int background_skips () { return bg_skips; }
 
         private void draw_background (Context cr) {
             if (pattern_ok) {
@@ -1641,7 +1833,9 @@ namespace Wm {
                 cr.set_source_rgb (0.96, 0.96, 0.96);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
-                if (w.ext_surf != null) {
+                if (w.ext_shm_surf != null) {
+                    cr.blit_surface (w.ext_shm_surf, cx, cy, cw, ch);
+                } else if (w.ext_surf != null) {
                     cr.blit_surface (w.ext_surf, cx, cy, cw, ch);
                 } else {
                     cr.set_source_rgb (0.72, 0.78, 0.86);

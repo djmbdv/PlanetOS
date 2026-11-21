@@ -56,6 +56,8 @@ namespace Planc {
 
     public class IntLiteral : Expr {
         public int64 value { get; set; }
+        public bool is_unsigned { get; set; }
+        public bool is_long { get; set; }
     }
 
     public class FloatLiteral : Expr {
@@ -203,11 +205,13 @@ namespace Planc {
         public Expr condition { get; set; }
         public Expr then_expr { get; set; }
         public Expr else_expr { get; set; }
+        public int temp_slot { get; set; default = -1; }
     }
 
     public class CoalesceExpr : Expr {
         public Expr left { get; set; }
         public Expr right { get; set; }
+        public int temp_slot { get; set; default = -1; }
     }
 
     public class IncDecExpr : Expr {
@@ -312,6 +316,11 @@ namespace Planc {
     public class WhileStatement : Statement {
         public Expr condition { get; set; }
         public Statement body { get; set; }
+    }
+
+    public class DoWhileStatement : Statement {
+        public Statement body { get; set; }
+        public Expr condition { get; set; }
     }
 
     public class ForStatement : Statement {
@@ -885,8 +894,9 @@ namespace Planc {
         }
 
         public unowned DelegateDecl? find_delegate (string name) {
+            var key = name.has_suffix ("?") ? name.substring (0, name.length - 1) : name;
             foreach (unowned var d in delegates) {
-                if (d.name == name)
+                if (d.name == key)
                     return d;
             }
             return null;
@@ -944,7 +954,8 @@ namespace Planc {
                 struct_idx.put (structs[struct_idx_len].name, struct_idx_len);
                 struct_idx_len++;
             }
-            int i = struct_idx.lookup (name);
+            var key = name.has_suffix ("?") ? name.substring (0, name.length - 1) : name;
+            int i = struct_idx.lookup (key);
             return (i >= 0) ? structs[i] : null;
         }
 
@@ -1113,7 +1124,8 @@ namespace Planc {
                         string sname;
                         if (et == ValaType.CLASS || et == ValaType.ENUM
                             || et == ValaType.INTERFACE || et == ValaType.ERROR
-                            || et == ValaType.STRUCT) {
+                            || et == ValaType.STRUCT
+                            || (et == ValaType.INT && en != "")) {
                             sname = (en != "") ? en : et.label ();
                         } else if (et == ValaType.STRING && en.has_suffix ("?")) {
                             sname = "string?";
@@ -1174,7 +1186,7 @@ namespace Planc {
                                  GenericArray<string> targ_names) {
             if (e is IntLiteral) {
                 var o = (IntLiteral) e;
-                return new IntLiteral () { value = o.value, line = o.line, column = o.column };
+                return new IntLiteral () { value = o.value, is_unsigned = o.is_unsigned, is_long = o.is_long, line = o.line, column = o.column };
             }
             if (e is FloatLiteral) {
                 var o = (FloatLiteral) e;
@@ -1479,6 +1491,14 @@ namespace Planc {
                     line = o.line, column = o.column
                 };
             }
+            if (s is DoWhileStatement) {
+                var o = (DoWhileStatement) s;
+                return new DoWhileStatement () {
+                    body = clone_stmt (o.body, tparams, targs, targ_names),
+                    condition = clone_expr (o.condition, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
             if (s is ForStatement) {
                 var o = (ForStatement) s;
                 return new ForStatement () {
@@ -1639,7 +1659,8 @@ namespace Planc {
             if (et == ValaType.STRING && en.has_suffix ("?"))
                 arr_elem_name = "?";
             else if (et == ValaType.CLASS || et == ValaType.ENUM || et == ValaType.INTERFACE
-                     || (et == ValaType.ERROR && en != ""))
+                     || (et == ValaType.ERROR && en != "")
+                     || (et == ValaType.INT && en != ""))
                 arr_elem_name = en;
             else
                 arr_elem_name = et.label ();

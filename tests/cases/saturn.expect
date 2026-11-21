@@ -1,0 +1,6 @@
+# One 'a' damages a single line, Enter damages to the viewport bottom, and an
+# arrow key damages the two caret rows; arrow keys reach the focused editor
+# instead of scrolling the side panel; the window then publishes exactly the
+# rectangle it repainted into the shared block.
+~saturn:summary checks=12 failures=0
+!saturn: FAIL

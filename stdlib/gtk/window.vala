@@ -80,6 +80,62 @@ namespace Gtk {
         public void redraw () {
             if (cr == null || gdk_win == null || !gdk_win.is_valid ())
                 return;
+            paint ();
+            gdk_win.present ();
+            // A full repaint already covers anything a widget queued while it
+            // changed, so drop that damage instead of repainting it again.
+            if (child != null) {
+                child.gather_damage ();
+                child.clear_damage ();
+            }
+        }
+
+        // Repaints and publishes every pending rectangle (at most four, the
+        // protocol ceiling). Distant changes stay separate instead of collapsing
+        // into one bounding box that would repaint everything in between.
+        private void redraw_damage () {
+            if (child == null || cr == null || gdk_win == null || !gdk_win.is_valid ())
+                return;
+            child.gather_damage ();
+            int n = child.damage_rect_count ();
+            if (n <= 0)
+                return;
+            int[] xs = new int[n];
+            int[] ys = new int[n];
+            int[] ws = new int[n];
+            int[] hs = new int[n];
+            for (int i = 0; i < n; i++)
+                child.damage_rect_at (i, out xs[i], out ys[i], out ws[i], out hs[i]);
+            child.clear_damage ();
+            for (int i = 0; i < n; i++) {
+                cr.save ();
+                cr.rectangle ((double) xs[i], (double) ys[i], (double) ws[i], (double) hs[i]);
+                cr.clip ();
+                paint ();
+                cr.restore ();
+            }
+            gdk_win.present_rects (xs, ys, ws, hs, n);
+        }
+
+        /**
+         * Repaints one damaged rectangle. The painter is the same, clipped, and
+         * the compositor is told only that rectangle changed, so a keystroke
+         * costs one editor line instead of the whole window.
+         */
+        public void redraw_area (int dx, int dy, int dw, int dh) {
+            if (cr == null || gdk_win == null || !gdk_win.is_valid () || dw <= 0 || dh <= 0)
+                return;
+            cr.save ();
+            cr.rectangle ((double) dx, (double) dy, (double) dw, (double) dh);
+            cr.clip ();
+            paint ();
+            cr.restore ();
+            gdk_win.present_rect (dx, dy, dw, dh);
+        }
+
+        private void paint () {
+            if (cr == null || gdk_win == null)
+                return;
             // elementary OS Granite light window surface (#F5F5F5)
             cr.set_source_rgb (0.96, 0.96, 0.96);
             cr.paint ();
@@ -95,7 +151,7 @@ namespace Gtk {
             if (child != null)
                 child.draw (cr);
 
-            if (gdk_win.comp_file.length == 0 && cur_mx >= 0 && cur_my >= 0) {
+            if (!gdk_win.composited () && cur_mx >= 0 && cur_my >= 0) {
                 cr.set_source_rgb (1.0, 1.0, 1.0);
                 cr.rectangle ((double) cur_mx, (double) cur_my, 8.0, 12.0);
                 cr.fill ();
@@ -104,7 +160,6 @@ namespace Gtk {
                 cr.rectangle ((double) cur_mx, (double) cur_my, 8.0, 12.0);
                 cr.stroke ();
             }
-            gdk_win.present ();
         }
 
         public void run (bool once = false) {
@@ -145,7 +200,7 @@ namespace Gtk {
                             main_quit ();
                             break;
                         }
-                        if (child != null && child.on_key_press (ev.keyval))
+                        if (child != null && child.handle_key (ev.keyval))
                             dirty = true;
                     } else if (ev.type == EventType.BUTTON_PRESS) {
                         cur_mx = ev.x;
@@ -184,7 +239,14 @@ namespace Gtk {
                 }
                 if (!gtk_running)
                     break;
-                if (dirty)
+                int dn = 0;
+                if (child != null) {
+                    child.gather_damage ();
+                    dn = child.damage_rect_count ();
+                }
+                if (dn > 0)
+                    redraw_damage ();
+                else if (dirty)
                     redraw ();
                 else
                     Sys.yield_cpu ();

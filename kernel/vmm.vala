@@ -25,7 +25,7 @@ namespace Planet.Kernel {
     ")]
     public extern void vmm_write_cr3 (int cr3);
 
-    public class Vmm : Object {
+    public sealed class Vmm : Object {
         private const int MAX_SPLIT_ADDR = 0x40000000; // 1 GiB identity map
 
         private static bool ensure_pt_in_pd (int pd_base, int addr, bool user_dir, out int pt_base) {

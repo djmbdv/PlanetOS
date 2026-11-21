@@ -293,7 +293,7 @@ namespace Planet.Kernel {
     ")]
     public extern void pic_pit_init ();
 
-    public class Hal : Object {
+    public sealed class Hal : Object {
         public static void set_tss_rsp0 (int rsp0) {
             mmio_write64 (KernelLayout.TSS_RSP0, rsp0);
         }

@@ -238,5 +238,24 @@ namespace Gtk {
             FontSlot? s = (gtk_mono_slot != null) ? gtk_mono_slot : gtk_sans_slot;
             draw_slot (s, cr, text, x, y, size_px);
         }
+
+        // Advance width of one character in the mono font. The editor needs the
+        // caret column on every repaint; measuring the prefix would walk every
+        // glyph of the line again.
+        public static int mono_advance (double size_px) {
+            int px = (int) size_px;
+            if (px < 1) px = 1;
+            FontSlot? s = (gtk_mono_slot != null) ? gtk_mono_slot : gtk_sans_slot;
+            if (s != null && s.font != null) {
+                var ge = get_glyph_from (s, 'M', px);
+                if (ge != null)
+                    return (int) ge.adv;
+                return px / 2;
+            }
+            int sc = px / 8;
+            if (sc < 1) sc = 1;
+            if (sc > 4) sc = 4;
+            return 6 * sc;
+        }
     }
 }

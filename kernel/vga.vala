@@ -21,18 +21,17 @@ namespace Planet.Kernel {
     ")]
     public extern void vga_hw_cursor (int pos);
 
-    private int vga_row = 0;
-    private int vga_col = 0;
-    private int vga_ready = 0;
-    private int vga_attr = 0x07;
-    private int vga_esc = 0;
-    private int vga_esc_val = 0;
-    private int vga_esc_p0 = 0;
-    private bool vga_esc_has_p0 = false;
-    private int vga_utf8_cp = 0;
-    private int vga_utf8_rem = 0;
-
-    public class Vga : Object {
+    public sealed class Vga : Object {
+        private static int vga_row = 0;
+        private static int vga_col = 0;
+        private static int vga_ready = 0;
+        private static int vga_attr = 0x07;
+        private static int vga_esc = 0;
+        private static int vga_esc_val = 0;
+        private static int vga_esc_p0 = 0;
+        private static bool vga_esc_has_p0 = false;
+        private static int vga_utf8_cp = 0;
+        private static int vga_utf8_rem = 0;
         private const int VGA_BASE = 0xB8000;
         private const int COLS = 80;
         private const int ROWS = 25;
@@ -156,42 +155,51 @@ namespace Planet.Kernel {
             if (vga_esc == 2) {
                 if (b >= '0' && b <= '9') {
                     vga_esc_val = vga_esc_val * 10 + (b - '0');
-                } else if (b == ';') {
-                    vga_esc_p0 = vga_esc_val;
-                    vga_esc_has_p0 = true;
-                    vga_esc_val = 0;
-                } else if (b == 'm') {
-                    if (vga_esc_has_p0)
-                        apply_sgr (vga_esc_p0);
-                    apply_sgr (vga_esc_val);
-                    vga_esc = 0;
-                } else if (b == 'J') {
-                    if (vga_esc_val == 2) {
-                        clear ();
-                        if (VirtioGpu.is_console_active ())
-                            VirtioGpu.console_redraw_all (vga_row, vga_col);
-                    }
-                    vga_esc = 0;
-                } else if (b == 'H' || b == 'f') {
-                    int r = vga_esc_has_p0 ? ((vga_esc_p0 > 0) ? vga_esc_p0 - 1 : 0) : 0;
-                    int c = (vga_esc_val > 0) ? vga_esc_val - 1 : 0;
-                    if (r >= ROWS) r = ROWS - 1;
-                    if (c >= COLS) c = COLS - 1;
-                    vga_row = r;
-                    vga_col = c;
-                    update_cursor ();
-                    if (VirtioGpu.is_console_active ())
-                        VirtioGpu.console_flush_cell (-1, -1, vga_row, vga_col, true);
-                    vga_esc = 0;
-                } else if (b == 'K') {
-                    int blank = (vga_attr << 8) | ' ';
-                    for (int c = vga_col; c < COLS; c++)
-                        mmio_write16 (VGA_BASE + (vga_row * COLS + c) * 2, blank);
-                    if (VirtioGpu.is_console_active ())
-                        VirtioGpu.console_flush_cell (vga_row, vga_col, vga_row, COLS - 1, true);
-                    vga_esc = 0;
                 } else {
-                    vga_esc = 0;
+                    switch (b) {
+                        case ';':
+                            vga_esc_p0 = vga_esc_val;
+                            vga_esc_has_p0 = true;
+                            vga_esc_val = 0;
+                            break;
+                        case 'm':
+                            if (vga_esc_has_p0)
+                                apply_sgr (vga_esc_p0);
+                            apply_sgr (vga_esc_val);
+                            vga_esc = 0;
+                            break;
+                        case 'J':
+                            if (vga_esc_val == 2) {
+                                clear ();
+                                if (VirtioGpu.is_console_active ())
+                                    VirtioGpu.console_redraw_all (vga_row, vga_col);
+                            }
+                            vga_esc = 0;
+                            break;
+                        case 'H', 'f':
+                            int r = vga_esc_has_p0 ? ((vga_esc_p0 > 0) ? vga_esc_p0 - 1 : 0) : 0;
+                            int c = (vga_esc_val > 0) ? vga_esc_val - 1 : 0;
+                            if (r >= ROWS) r = ROWS - 1;
+                            if (c >= COLS) c = COLS - 1;
+                            vga_row = r;
+                            vga_col = c;
+                            update_cursor ();
+                            if (VirtioGpu.is_console_active ())
+                                VirtioGpu.console_flush_cell (-1, -1, vga_row, vga_col, true);
+                            vga_esc = 0;
+                            break;
+                        case 'K':
+                            int blank = (vga_attr << 8) | ' ';
+                            for (int c = vga_col; c < COLS; c++)
+                                mmio_write16 (VGA_BASE + (vga_row * COLS + c) * 2, blank);
+                            if (VirtioGpu.is_console_active ())
+                                VirtioGpu.console_flush_cell (vga_row, vga_col, vga_row, COLS - 1, true);
+                            vga_esc = 0;
+                            break;
+                        default:
+                            vga_esc = 0;
+                            break;
+                    }
                 }
                 return;
             }

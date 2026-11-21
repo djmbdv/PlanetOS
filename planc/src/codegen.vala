@@ -116,11 +116,13 @@ namespace Planc {
         private GenericArray<PatchSpace> global_spaces;
 
         private int struct_ret_bss_offset = -1;
+        private int null_delegate_bss_offset = -1;
 
         // Runtime intrinsics emitted on demand at the end of .text.
         private bool need_write_str = false;
         private bool need_str_eq = false;
         private bool need_write_int = false;
+        private bool need_write_uint = false;
         private bool need_bounds_panic = false;
         private bool need_alloc = false;
         private bool need_ref = false;
@@ -128,6 +130,7 @@ namespace Planc {
         private bool need_str_concat = false;
         private bool need_str_slice = false;
         private bool need_int_to_str = false;
+        private bool need_uint_to_str = false;
         private bool need_is_instance = false;
         private bool need_mem_panic = false;
         private bool need_null_panic = false;
@@ -268,6 +271,7 @@ namespace Planc {
             }
             if (max_ret_slots > 0)
                 struct_ret_bss_offset = emitter.add_bss_bytes (8 * max_ret_slots);
+            null_delegate_bss_offset = emitter.add_bss_bytes (16);
 
             synthesize_static_field_globals ();
             register_globals ();
@@ -382,6 +386,10 @@ namespace Planc {
             if (s is WhileStatement) {
                 var w = (WhileStatement) s;
                 return scan_expr_heap (w.condition) || scan_stmt_heap (w.body);
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                return scan_stmt_heap (dw.body) || scan_expr_heap (dw.condition);
             }
             if (s is ForStatement) {
                 var fs = (ForStatement) s;
@@ -1564,7 +1572,10 @@ namespace Planc {
                         global_spaces.add (PatchSpace.BSS);
                     }
                 } else {
-                    var offset = emitter.add_global (g.value, g.initialized);
+                    int64 gval = g.value;
+                    if (g.var_type == ValaType.INT && g.initialized)
+                        gval = narrow_const_int (g.var_type_name, gval);
+                    var offset = emitter.add_global (gval, g.initialized);
                     global_offsets.add (offset);
                     global_spaces.add (g.initialized ? PatchSpace.DATA : PatchSpace.BSS);
                 }
@@ -1572,7 +1583,7 @@ namespace Planc {
         }
 
         private void emit_runtime () {
-            if (need_str_concat || need_int_to_str || need_double_to_str || need_str_slice
+            if (need_str_concat || need_int_to_str || need_uint_to_str || need_double_to_str || need_str_slice
                 || need_bytes_to_str || need_read_file || need_write_file) {
                 need_alloc = true;
                 need_mem_panic = true;
@@ -1607,6 +1618,11 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_write_int (freestanding, target_planetos);
                 symbols.add (new Symbol ("__planc_write_int", start, emitter.here () - start));
+            }
+            if (need_write_uint) {
+                var start = emitter.here ();
+                emitter.emit_rt_write_uint (freestanding, target_planetos);
+                symbols.add (new Symbol ("__planc_write_uint", start, emitter.here () - start));
             }
             if (need_alloc || need_ref || need_unref) {
                 var start_alloc = emitter.here ();
@@ -1646,6 +1662,11 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_int_to_str ();
                 symbols.add (new Symbol ("__planc_int_to_str", start, emitter.here () - start));
+            }
+            if (need_uint_to_str) {
+                var start = emitter.here ();
+                emitter.emit_rt_uint_to_str ();
+                symbols.add (new Symbol ("__planc_uint_to_str", start, emitter.here () - start));
             }
             if (need_is_instance) {
                 var start = emitter.here ();
@@ -2183,6 +2204,14 @@ namespace Planc {
                 da_scope_exit (mark);
                 // The body may run zero times: its assignments do not count.
                 da_state_restore (pre);
+            } else if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                var pre = da_state_copy ();
+                var mark = da_names.length;
+                da_stmt (dw.body);
+                da_scope_exit (mark);
+                da_expr (dw.condition);
+                da_state_restore (pre);
             } else if (s is ForStatement) {
                 var fs = (ForStatement) s;
                 if (fs.init != null)
@@ -2414,7 +2443,9 @@ namespace Planc {
 
         private void update_non_null_on_assign (string key, ValaType rhs_t, string rhs_tname) {
             invalidate_non_null_prefix (key);
-            if (rhs_t != ValaType.NULL && is_ref_type (rhs_t) && !is_nullable_type (rhs_t, rhs_tname))
+            if (rhs_t != ValaType.NULL
+                && (is_ref_type (rhs_t) || is_delegate_type (program, rhs_t, rhs_tname))
+                && !is_nullable_type (rhs_t, rhs_tname))
                 add_non_null (key);
         }
 
@@ -2658,6 +2689,11 @@ namespace Planc {
                 return null;
             string tt_name = "";
             var tt = expr_type_full (target, out tt_name);
+            if (member == "") {
+                if (tt == ValaType.STRUCT)
+                    return program.find_delegate (tt_name);
+                return null;
+            }
             if (tt == ValaType.CLASS) {
                 unowned var cd = program.find_class (strip_null (tt_name));
                 unowned ClassField? cf = null;
@@ -2795,6 +2831,10 @@ namespace Planc {
                 var te = (TernaryExpr) e;
                 bind_delegate_target (te.then_expr, expected_t, expected_tname);
                 bind_delegate_target (te.else_expr, expected_t, expected_tname);
+            } else if (e is CoalesceExpr) {
+                var ce = (CoalesceExpr) e;
+                bind_delegate_target (ce.left, expected_t, expected_tname);
+                bind_delegate_target (ce.right, expected_t, expected_tname);
             }
         }
 
@@ -2860,6 +2900,13 @@ namespace Planc {
                 collect_stmt_free_vars (w.body, bound, free_vars);
                 while (bound.length > saved)
                     bound.remove_index (bound.length - 1);
+            } else if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                int saved = bound.length;
+                collect_stmt_free_vars (dw.body, bound, free_vars);
+                while (bound.length > saved)
+                    bound.remove_index (bound.length - 1);
+                collect_expr_free_vars (dw.condition, bound, free_vars);
             } else if (s is ForStatement) {
                 var fs = (ForStatement) s;
                 int saved = bound.length;
@@ -3185,6 +3232,8 @@ namespace Planc {
                 else if (se is MemberAccessExpr) ((MemberAccessExpr) se).temp_slot = slot;
                 else if (se is VarRef) ((VarRef) se).temp_slot = slot;
                 else if (se is LambdaExpr) ((LambdaExpr) se).temp_slot = slot;
+                else if (se is TernaryExpr) ((TernaryExpr) se).temp_slot = slot;
+                else if (se is CoalesceExpr) ((CoalesceExpr) se).temp_slot = slot;
             }
 
             ref_temp_start = var_end + struct_temp_slots;
@@ -3401,6 +3450,14 @@ namespace Planc {
                 prepare_stmt (w.body, ref struct_temps, ref ref_temps);
                 deactivate_from (saved);
                 restore_non_null (before_w);
+            } else if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                var before_dw = clone_non_null ();
+                var saved = locals.length;
+                prepare_stmt (dw.body, ref struct_temps, ref ref_temps);
+                deactivate_from (saved);
+                prepare_expr (dw.condition, ref struct_temps, ref ref_temps);
+                restore_non_null (before_dw);
             } else if (s is ForStatement) {
                 var fs = (ForStatement) s;
                 var saved = locals.length;
@@ -3558,6 +3615,19 @@ namespace Planc {
             } else if (e is TernaryExpr) {
                 var te = (TernaryExpr) e;
                 prepare_expr (te.condition, ref struct_temps, ref ref_temps);
+                if (te.then_expr is LambdaExpr && ((LambdaExpr) te.then_expr).delegate_type_name == ""
+                    && !(te.else_expr is NullLiteral) && !(te.else_expr is LambdaExpr)) {
+                    string etn = "";
+                    var et = expr_type_full (te.else_expr, out etn);
+                    if (is_delegate_type (program, et, etn))
+                        bind_delegate_target (te.then_expr, et, etn);
+                } else if (te.else_expr is LambdaExpr && ((LambdaExpr) te.else_expr).delegate_type_name == ""
+                           && !(te.then_expr is NullLiteral) && !(te.then_expr is LambdaExpr)) {
+                    string ttn = "";
+                    var tt = expr_type_full (te.then_expr, out ttn);
+                    if (is_delegate_type (program, tt, ttn))
+                        bind_delegate_target (te.else_expr, tt, ttn);
+                }
                 var snap = clone_non_null ();
                 var nn_then = new GenericArray<string> ();
                 var nn_else = new GenericArray<string> ();
@@ -3569,10 +3639,38 @@ namespace Planc {
                 add_all_non_null (nn_else);
                 prepare_expr (te.else_expr, ref struct_temps, ref ref_temps);
                 restore_non_null (snap);
+                string res_tn = "";
+                var res_t = expr_type_full (e, out res_tn);
+                if (is_delegate_type (program, res_t, res_tn)) {
+                    pending_struct_exprs.add (e);
+                    pending_struct_rel_slots.add (struct_temps);
+                    struct_temps += 2;
+                    if (program_uses_heap) {
+                        pending_ref_exprs.add (e);
+                        ref_temps++;
+                    }
+                }
             } else if (e is CoalesceExpr) {
                 var ce = (CoalesceExpr) e;
                 prepare_expr (ce.left, ref struct_temps, ref ref_temps);
+                if (ce.right is LambdaExpr && ((LambdaExpr) ce.right).delegate_type_name == "") {
+                    string ltn = "";
+                    var lt = expr_type_full (ce.left, out ltn);
+                    if (is_delegate_type (program, lt, ltn))
+                        bind_delegate_target (ce.right, lt, ltn);
+                }
                 prepare_expr (ce.right, ref struct_temps, ref ref_temps);
+                string res_tn = "";
+                var res_t = expr_type_full (e, out res_tn);
+                if (is_delegate_type (program, res_t, res_tn)) {
+                    pending_struct_exprs.add (e);
+                    pending_struct_rel_slots.add (struct_temps);
+                    struct_temps += 2;
+                    if (program_uses_heap) {
+                        pending_ref_exprs.add (e);
+                        ref_temps++;
+                    }
+                }
             } else if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
                 prepare_expr (b.left, ref struct_temps, ref ref_temps);
@@ -3745,9 +3843,15 @@ namespace Planc {
                         prepare_expr (mc.target, ref struct_temps, ref ref_temps);
                     foreach (var a in mc.args)
                         prepare_expr (a, ref struct_temps, ref ref_temps);
-                    if (bi_kind == "int_to_string")
-                        need_int_to_str = true;
-                    else if (bi_kind == "float_to_string" || bi_kind == "double_to_string")
+                    if (bi_kind == "int_to_string") {
+                        string rtn = "";
+                        if (mc.target != null)
+                            expr_type_full (mc.target, out rtn);
+                        if (is_unsigned_int_type (rtn))
+                            need_uint_to_str = true;
+                        else
+                            need_int_to_str = true;
+                    } else if (bi_kind == "float_to_string" || bi_kind == "double_to_string")
                         need_double_to_str = true;
                     else if (bi_kind == "str_has_prefix")
                         need_str_has_prefix = true;
@@ -4716,9 +4820,65 @@ namespace Planc {
         private static bool is_int_type_name_cg (string name) {
             return name == "int" || name == "int64" || name == "int32"
                 || name == "int16" || name == "int8"
-                || name == "uint64" || name == "uint32" || name == "uint16" || name == "unichar"
+                || name == "uint" || name == "uint64" || name == "uint32" || name == "uint16" || name == "unichar"
                 || name == "uint8" || name == "size_t" || name == "ssize_t"
+                || name == "short" || name == "ushort" || name == "long" || name == "ulong"
                 || name == "char" || name == "uchar";
+        }
+
+        private static bool is_unsigned_64 (string name) {
+            return name == "uint64" || name == "ulong" || name == "size_t";
+        }
+
+        private static bool is_unsigned_32 (string name) {
+            return name == "uint32" || name == "uint" || name == "unichar";
+        }
+
+        private static bool is_unsigned_int_type (string name) {
+            return is_unsigned_64 (name) || is_unsigned_32 (name)
+                || name == "uint16" || name == "ushort"
+                || name == "uint8" || name == "uchar";
+        }
+
+        private static bool is_signed_64_int_type (string name) {
+            return name == "" || name == "int" || name == "int64"
+                || name == "long" || name == "ssize_t";
+        }
+
+        private static string promote_int_type (string l, string r) {
+            if (is_unsigned_64 (l) || is_unsigned_64 (r))
+                return "uint64";
+            if (is_signed_64_int_type (l) || is_signed_64_int_type (r))
+                return "";
+            if (is_unsigned_32 (l) || is_unsigned_32 (r))
+                return "uint32";
+            return "";
+        }
+
+        private static int64 narrow_const_int (string tname, int64 v) {
+            if (tname == "uint8" || tname == "uchar") return v & 0xff;
+            if (tname == "uint16" || tname == "ushort") return v & 0xffff;
+            if (is_unsigned_32 (tname)) return (int64) ((uint64) v & (uint64) 0xffffffffu);
+            if (tname == "int8" || tname == "char") return (int64) ((int8) v);
+            if (tname == "int16" || tname == "short") return (int64) ((int16) v);
+            if (tname == "int32") return (int64) ((int32) v);
+            return v;
+        }
+
+        private void emit_int_narrow (string tname) {
+            if (tname == "uint8" || tname == "uchar") {
+                emitter.and_eax_imm32 (0xffu);
+            } else if (tname == "uint16" || tname == "ushort") {
+                emitter.and_eax_imm32 (0xffffu);
+            } else if (is_unsigned_32 (tname)) {
+                emitter.mov_eax_eax ();
+            } else if (tname == "int8" || tname == "char") {
+                emitter.sign_extend_rax (8);
+            } else if (tname == "int16" || tname == "short") {
+                emitter.sign_extend_rax (16);
+            } else if (tname == "int32") {
+                emitter.sign_extend_rax (32);
+            }
         }
 
         private static bool is_byte_array_type (string arr_tname, out bool is_signed) {
@@ -4730,11 +4890,11 @@ namespace Planc {
         private static void coerce_byte_array_literal (Expr? e, ValaType expected_t, string expected_tname) {
             if (e == null || !(e is ArrayLiteralExpr) || expected_t != ValaType.ARRAY)
                 return;
-            bool sb = false;
-            if (is_byte_array_type (expected_tname, out sb)) {
+            var raw = strip_null (expected_tname);
+            if (raw != "" && raw != "int" && is_int_type_name_cg (raw)) {
                 var arr = (ArrayLiteralExpr) e;
                 arr.elem_type = ValaType.INT;
-                arr.elem_type_name = strip_null (expected_tname);
+                arr.elem_type_name = raw;
             }
         }
 
@@ -4776,11 +4936,13 @@ namespace Planc {
             val = 0;
             if (member == "MIN") {
                 if (tname == "int8") { val = -128; return true; }
-                if (tname == "int16") { val = -32768; return true; }
+                if (tname == "int16" || tname == "short") { val = -32768; return true; }
                 if (tname == "int32" || tname == "int") { val = -2147483648; return true; }
-                if (tname == "int64" || tname == "ssize_t") { val = -9223372036854775807 - 1; return true; }
+                if (tname == "int64" || tname == "long" || tname == "ssize_t") { val = -9223372036854775807 - 1; return true; }
                 if (tname == "uint8" || tname == "uchar" || tname == "char"
-                    || tname == "uint16" || tname == "uint32" || tname == "unichar" || tname == "uint64" || tname == "size_t") {
+                    || tname == "uint16" || tname == "ushort"
+                    || tname == "uint32" || tname == "uint" || tname == "unichar"
+                    || tname == "uint64" || tname == "ulong" || tname == "size_t") {
                     val = 0; return true;
                 }
                 return false;
@@ -4788,11 +4950,12 @@ namespace Planc {
             if (member == "MAX") {
                 if (tname == "int8") { val = 127; return true; }
                 if (tname == "uint8" || tname == "uchar" || tname == "char") { val = 255; return true; }
-                if (tname == "int16") { val = 32767; return true; }
-                if (tname == "uint16") { val = 65535; return true; }
+                if (tname == "int16" || tname == "short") { val = 32767; return true; }
+                if (tname == "uint16" || tname == "ushort") { val = 65535; return true; }
                 if (tname == "int32" || tname == "int") { val = 2147483647; return true; }
-                if (tname == "uint32" || tname == "unichar") { val = 4294967295; return true; }
-                if (tname == "int64" || tname == "ssize_t") { val = 9223372036854775807; return true; }
+                if (tname == "uint32" || tname == "uint" || tname == "unichar") { val = 4294967295; return true; }
+                if (tname == "int64" || tname == "long" || tname == "ssize_t") { val = 9223372036854775807; return true; }
+                if (tname == "uint64" || tname == "ulong" || tname == "size_t") { val = (int64) (-1); return true; }
                 return false;
             }
             return false;
@@ -4958,7 +5121,7 @@ namespace Planc {
                 throws SemanticError {
             kind = "";
             ret_t = ValaType.VOID;
-            if (mc.target == null || mc.is_base_call || mc.method_name == "begin"
+            if (mc.target == null || mc.is_base_call || mc.method_name == "" || mc.method_name == "begin"
                 || mc.method_name == "connect" || mc.method_name == "disconnect")
                 return false;
             if (mc.target is VarRef) {
@@ -5071,11 +5234,17 @@ namespace Planc {
             return false;
         }
 
+        private static string canon_int_name (string s) {
+            return (s == "") ? "int" : s;
+        }
+
         private void parse_array_elem (string elem_name, out ValaType et, out string et_name) {
             var raw = strip_null (elem_name);
             et_name = "";
-            if (raw == "int" || raw == "uint8" || raw == "int8") et = ValaType.INT;
-            else if (raw == "float") et = ValaType.FLOAT;
+            if (is_int_type_name_cg (raw)) {
+                et = ValaType.INT;
+                et_name = raw;
+            } else if (raw == "float") et = ValaType.FLOAT;
             else if (raw == "double") et = ValaType.DOUBLE;
             else if (raw == "bool") et = ValaType.BOOL;
             else if (raw == "string") et = ValaType.STRING;
@@ -5144,6 +5313,10 @@ namespace Planc {
         private bool eq_compatible (ValaType lt, string lt_name, ValaType rt, string rt_name) {
             if (lt == ValaType.STRUCT || rt == ValaType.STRUCT
                 || lt == ValaType.ARRAY || rt == ValaType.ARRAY) {
+                if (is_delegate_type (program, lt, lt_name) && rt == ValaType.NULL)
+                    return true;
+                if (is_delegate_type (program, rt, rt_name) && lt == ValaType.NULL)
+                    return true;
                 if (lt == ValaType.ARRAY && rt == ValaType.NULL)
                     return true;
                 if (rt == ValaType.ARRAY && lt == ValaType.NULL)
@@ -5225,7 +5398,7 @@ namespace Planc {
                 return;
             }
             if (lt == ValaType.NULL) {
-                if (!is_ref_type (rt))
+                if (!is_ref_type (rt) && !is_delegate_type (program, rt, rt_name))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"incompatible branch types $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $line:$col");
                 out_t = rt;
@@ -5233,7 +5406,7 @@ namespace Planc {
                 return;
             }
             if (rt == ValaType.NULL) {
-                if (!is_ref_type (lt))
+                if (!is_ref_type (lt) && !is_delegate_type (program, lt, lt_name))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"incompatible branch types $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $line:$col");
                 out_t = lt;
@@ -5280,6 +5453,11 @@ namespace Planc {
                     out_name = any_null ? (iname + "?") : iname;
                     return;
                 }
+            }
+            if (lt == ValaType.INT && rt == ValaType.INT) {
+                out_t = ValaType.INT;
+                out_name = promote_int_type (lt_name, rt_name);
+                return;
             }
             if (type_compatible (lt, lt_name, rt, rt_name)) {
                 out_t = (lt == ValaType.BOOL && rt == ValaType.INT) ? ValaType.INT : lt;
@@ -5658,7 +5836,10 @@ namespace Planc {
                     if (!(args[i] is VarRef || args[i] is MemberAccessExpr || args[i] is IndexExpr))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"argument $(i + 1) of '$(desc)' requires a variable or field lvalue for '$(p.is_out ? "out" : "ref")' at $(args[i].line):$(args[i].column)");
-                    if (pt != at || strip_null (pt_name) != strip_null (at_name))
+                    bool name_match = (pt == ValaType.INT)
+                        ? (canon_int_name (pt_name) == canon_int_name (at_name))
+                        : (strip_null (pt_name) == strip_null (at_name));
+                    if (pt != at || !name_match)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"argument $(i + 1) of '$(desc)' expects $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
                     if (p.is_ref && is_nullable_type (pt, pt_name) != is_nullable_type (at, at_name))
@@ -5990,12 +6171,16 @@ namespace Planc {
             if (mc.target != null && !mc.is_base_call) {
                 unowned DelegateDecl? md = resolve_member_delegate (mc.target, mc.method_name);
                 if (md != null) {
+                    string dlabel = (mc.method_name != "") ? mc.method_name : md.name;
                     if (want_value && md.return_type == ValaType.VOID)
                         throw new SemanticError.VOID_IN_EXPRESSION (
-                            @"void delegate '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
-                    check_arg_param_list (mc.method_name, md.params, 0, mc.args, mc.line, mc.column);
+                            @"void delegate '$dlabel' cannot be used as a value at $(mc.line):$(mc.column)");
+                    check_arg_param_list (dlabel, md.params, 0, mc.args, mc.line, mc.column);
                     return null;
                 }
+                if (mc.method_name == "")
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"expression is not callable as a delegate at $(mc.line):$(mc.column)");
             }
             var m = resolve_method_call_fn (mc);
             if (m == null) {
@@ -6029,8 +6214,14 @@ namespace Planc {
 
         private ValaType expr_type_full (Expr e, out string tname) throws SemanticError {
             tname = "";
-            if (e is IntLiteral)
+            if (e is IntLiteral) {
+                var il = (IntLiteral) e;
+                if (il.is_unsigned)
+                    tname = (il.is_long || ((uint64) il.value) > (uint64) 0xFFFFFFFFu) ? "uint64" : "uint32";
+                else if (il.is_long)
+                    tname = "int64";
                 return ValaType.INT;
+            }
             if (e is FloatLiteral)
                 return ((FloatLiteral) e).is_float32 ? ValaType.FLOAT : ValaType.DOUBLE;
             if (e is BoolLiteral)
@@ -6067,8 +6258,7 @@ namespace Planc {
                         @"array size must be int, got $(type_label (lt, lt_name)) at $(an.length_expr.line):$(an.length_expr.column)");
                 if (an.elem_type == ValaType.STRING && an.elem_type_name == "?")
                     tname = "?";
-                else if (an.elem_type == ValaType.INT
-                         && (an.elem_type_name == "uint8" || an.elem_type_name == "int8"))
+                else if (an.elem_type == ValaType.INT && an.elem_type_name != "" && an.elem_type_name != "int")
                     tname = an.elem_type_name;
                 else if (an.elem_type == ValaType.ENUM || an.elem_type == ValaType.CLASS
                          || an.elem_type == ValaType.INTERFACE
@@ -6081,7 +6271,8 @@ namespace Planc {
             if (e is ArrayLiteralExpr) {
                 var arr = (ArrayLiteralExpr) e;
                 if (arr.elem_type == ValaType.INT
-                    && (arr.elem_type_name == "uint8" || arr.elem_type_name == "int8")) {
+                    && arr.elem_type_name != "" && arr.elem_type_name != "int"
+                    && is_int_type_name_cg (arr.elem_type_name)) {
                     for (int i = 0; i < arr.elements.length; i++) {
                         string cur_name = "";
                         var cur = expr_type_full (arr.elements[i], out cur_name);
@@ -6120,7 +6311,10 @@ namespace Planc {
                 }
                 arr.elem_type = et;
                 arr.elem_type_name = et_name;
-                tname = (et == ValaType.ENUM || et == ValaType.CLASS || et == ValaType.INTERFACE) ? et_name : et.label ();
+                if (et == ValaType.INT && et_name != "" && et_name != "int")
+                    tname = et_name;
+                else
+                    tname = (et == ValaType.ENUM || et == ValaType.CLASS || et == ValaType.INTERFACE) ? et_name : et.label ();
                 return ValaType.ARRAY;
             }
             if (e is ClassNewExpr) {
@@ -6193,11 +6387,25 @@ namespace Planc {
                     if (ot == ValaType.STRING)
                         tname = "";
                     else if (ot == ValaType.CLASS || ot == ValaType.INTERFACE
-                             || ot == ValaType.ARRAY || ot == ValaType.ERROR)
+                             || ot == ValaType.ARRAY || ot == ValaType.ERROR
+                             || is_delegate_type (program, ot, ot_name))
                         tname = strip_null (ot_name);
                     else
                         tname = ot_name;
                     return ot;
+                }
+                if (tc.op == "cast" && is_delegate_type (program, tc.target_type, tc.target_type_name)) {
+                    if (ot == ValaType.NULL) {
+                        if (!is_nullable_type (tc.target_type, tc.target_type_name))
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"cannot cast null to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
+                    } else if (!is_delegate_type (program, ot, ot_name)
+                               || strip_null (ot_name) != strip_null (tc.target_type_name)) {
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"cannot cast $(type_label (ot, ot_name)) to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
+                    }
+                    tname = tc.target_type_name;
+                    return ValaType.STRUCT;
                 }
                 if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
                     if (!is_int_like (ot) && ot != ValaType.ENUM && !is_fp_type (ot))
@@ -6253,10 +6461,11 @@ namespace Planc {
                     && mc.method_name != "connect" && mc.method_name != "disconnect") {
                     unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                     if (md != null) {
+                        string dlabel = (mc.method_name != "") ? mc.method_name : md.name;
                         if (md.return_type == ValaType.VOID)
                             throw new SemanticError.VOID_IN_EXPRESSION (
-                                @"void delegate '$(mc.method_name)' cannot be used as a value at $(mc.line):$(mc.column)");
-                        check_arg_param_list (mc.method_name, md.params, 0, mc.args, mc.line, mc.column);
+                                @"void delegate '$dlabel' cannot be used as a value at $(mc.line):$(mc.column)");
+                        check_arg_param_list (dlabel, md.params, 0, mc.args, mc.line, mc.column);
                         tname = md.return_type_name;
                         return md.return_type;
                     }
@@ -6313,8 +6522,10 @@ namespace Planc {
                     if (is_type_name (vr.name)) {
                         if (is_int_type_name_cg (vr.name)) {
                             int64 unused_val = 0;
-                            if (resolve_int_const_member (vr.name, m.member, out unused_val))
+                            if (resolve_int_const_member (vr.name, m.member, out unused_val)) {
+                                tname = vr.name;
                                 return ValaType.INT;
+                            }
                         }
                         if (is_fp_type_name_cg (vr.name)) {
                             uint64 unused_bits = 0;
@@ -6536,13 +6747,13 @@ namespace Planc {
                 var ce = (CoalesceExpr) e;
                 string lt_name = "";
                 var lt = expr_type_full (ce.left, out lt_name);
-                if (lt != ValaType.NULL && !is_ref_type (lt))
+                if (lt != ValaType.NULL && !is_ref_type (lt) && !is_delegate_type (program, lt, lt_name))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"operator '??' requires a reference type on left operand, got $(type_label (lt, lt_name)) at $(ce.line):$(ce.column)");
                 string rt_name = "";
                 var rt = expr_type_full (ce.right, out rt_name);
                 if (lt == ValaType.NULL) {
-                    if (rt != ValaType.NULL && !is_ref_type (rt))
+                    if (rt != ValaType.NULL && !is_ref_type (rt) && !is_delegate_type (program, rt, rt_name))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"operator '??' requires compatible reference types, got $(type_label (rt, rt_name)) at $(ce.line):$(ce.column)");
                     tname = rt_name;
@@ -6672,7 +6883,10 @@ namespace Planc {
                 if (!is_int_like (ot))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"unary '$(u.op)' requires int or bool, got $(type_label (ot, ot_name)) at $(u.line):$(u.column)");
-                return (u.op == "!") ? ValaType.BOOL : ValaType.INT;
+                if (u.op == "!")
+                    return ValaType.BOOL;
+                tname = (is_unsigned_64 (ot_name) || is_unsigned_32 (ot_name)) ? ot_name : "";
+                return ValaType.INT;
             }
             if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
@@ -6724,6 +6938,11 @@ namespace Planc {
                     || b.op == "&&" || b.op == "||") {
                     return ValaType.BOOL;
                 }
+                if (b.op == "<<" || b.op == ">>") {
+                    tname = is_unsigned_64 (lt_name) ? "uint64" : (is_unsigned_32 (lt_name) ? "uint32" : "");
+                    return ValaType.INT;
+                }
+                tname = promote_int_type (lt_name, rt_name);
                 return ValaType.INT;
             }
             if (e is CallExpr) {
@@ -6792,6 +7011,7 @@ namespace Planc {
                 if (it != ValaType.INT)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"operator '$(inc.op)' requires integer operand, got $(type_label (it, it_name)) at $(inc.line):$(inc.column)");
+                tname = it_name;
                 return ValaType.INT;
             }
             if (e is LambdaExpr) {
@@ -7089,6 +7309,10 @@ namespace Planc {
                 emitter.pop_rax ();
                 push_depth--;
                 if (is_ga) {
+                    bool ga_signed_b = false;
+                    if (ga_et == ValaType.INT && is_byte_array_type (ga_etn, out ga_signed_b))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"cannot pass packed byte array element by ref or out at $(e.line):$(e.column)");
                     if (bounds_check) {
                         need_bounds_panic = true;
                         emitter.push_rax ();
@@ -7162,8 +7386,13 @@ namespace Planc {
             } else if (pt == ValaType.INT || pt == ValaType.ENUM) {
                 gen_expr (part);
                 emitter.mov_rdi_rax ();
-                need_write_int = true;
-                call_aligned ("__planc_write_int");
+                if (pt == ValaType.INT && is_unsigned_int_type (pt_name)) {
+                    need_write_uint = true;
+                    call_aligned ("__planc_write_uint");
+                } else {
+                    need_write_int = true;
+                    call_aligned ("__planc_write_int");
+                }
                 cleanup_expr_temps (part);
             } else if (pt == ValaType.FLOAT || pt == ValaType.DOUBLE) {
                 gen_expr (part);
@@ -7252,6 +7481,7 @@ namespace Planc {
                 }
                 return;
             }
+            var vt_expr = expr_type (val);
             gen_expr (val);
             if (op == "=") {
                 // A compact value is owned by the program: never ref or unref
@@ -7279,7 +7509,12 @@ namespace Planc {
                     push_depth--;
                     unowned var sub = program.find_struct (ft_name);
                     var fslots = type_slots (ValaType.STRUCT, ft_name);
-                    if (program_uses_heap && sub != null && struct_has_string (sub)) {
+                    if (vt_expr == ValaType.NULL) {
+                        if (program_uses_heap && sub != null && struct_has_string (sub))
+                            unref_struct_at_rcx (sub, 0);
+                        if (sub != null)
+                            init_struct_at_rcx (sub, 0);
+                    } else if (program_uses_heap && sub != null && struct_has_string (sub)) {
                         // Ref source before unreffing destination so aliasing/self-assignment stays balanced.
                         emitter.push_reg (Reg.RCX);
                         push_depth++;
@@ -7301,6 +7536,8 @@ namespace Planc {
                         copy_struct_rax_to_rcx (fslots);
                     }
                 } else {
+                    if (ft == ValaType.INT)
+                        emit_int_narrow (ft_name);
                     emitter.pop_rcx ();
                     push_depth--;
                     emitter.store_rcx_disp_rax (0);
@@ -7310,41 +7547,58 @@ namespace Planc {
                 emitter.load_rsp (0);
                 emitter.mov_rdx_rax ();
                 emitter.load_rdx_disp (0);
-                emit_compound_alu (op);
+                emit_compound_alu (op, ft == ValaType.INT && is_unsigned_int_type (ft_name));
+                if (ft == ValaType.INT)
+                    emit_int_narrow (ft_name);
                 emitter.pop_rcx ();
                 push_depth--;
                 emitter.store_rcx_disp_rax (0);
             }
         }
 
-        private void emit_compound_alu (string op) {
+        private void emit_compound_alu (string op, bool is_unsigned = false) {
             switch (op) {
                 case "+":
                     emitter.add_rax_rcx ();
-                    if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    if (!is_unsigned && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
                     break;
                 case "-":
                     emitter.sub_rax_rcx ();
-                    if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    if (!is_unsigned && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
                     break;
                 case "*":
                     emitter.imul_rax_rcx ();
-                    if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    if (!is_unsigned && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
                     break;
                 case "/":
-                    emitter.cqo ();
-                    emitter.idiv_rcx ();
+                    if (is_unsigned) {
+                        emitter.xor_edx ();
+                        emitter.div_rcx ();
+                    } else {
+                        emitter.cqo ();
+                        emitter.idiv_rcx ();
+                    }
                     break;
                 case "%":
-                    emitter.cqo ();
-                    emitter.idiv_rcx ();
+                    if (is_unsigned) {
+                        emitter.xor_edx ();
+                        emitter.div_rcx ();
+                    } else {
+                        emitter.cqo ();
+                        emitter.idiv_rcx ();
+                    }
                     emitter.mov_rax_rdx ();
                     break;
                 case "&":  emitter.and_rax_rcx (); break;
                 case "|":  emitter.or_rax_rcx (); break;
                 case "^":  emitter.xor_rax_rcx (); break;
                 case "<<": emitter.shl_rax_cl (); break;
-                case ">>": emitter.sar_rax_cl (); break;
+                case ">>":
+                    if (is_unsigned)
+                        emitter.shr_rax_cl ();
+                    else
+                        emitter.sar_rax_cl ();
+                    break;
                 default:
                     Host.panic (@"unsupported compound assignment op: $op");
                     break;
@@ -7367,7 +7621,7 @@ namespace Planc {
                 emitter.load_rdx_byte_to_zx_rax ();
                 if (is_signed)
                     emitter.sign_extend_rax (8);
-                emit_compound_alu (op);
+                emit_compound_alu (op, !is_signed);
                 emitter.pop_rcx ();
                 push_depth--;
                 emitter.store_rcx_disp_byte_al (0);
@@ -7452,16 +7706,21 @@ namespace Planc {
                         if (is_fp_type (current.return_type)) {
                             emit_fp_coerce (rt, current.return_type);
                             emitter.movq_rax_xmm (0);
+                        } else if (current.return_type == ValaType.INT) {
+                            emit_int_narrow (current.return_type_name);
                         }
                         if (is_ref_type (current.return_type))
                             consume_ref_expr (r.value);
                         if (current.return_type == ValaType.STRUCT) {
                             var n = type_slots (ValaType.STRUCT, current.return_type_name);
                             emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
-                            copy_struct_rax_to_rcx (n);
-                            if (program_uses_heap) {
-                                unowned var sd = program.find_struct (current.return_type_name);
-                                if (sd != null && struct_has_string (sd))
+                            unowned var sd = program.find_struct (current.return_type_name);
+                            if (rt == ValaType.NULL) {
+                                if (sd != null)
+                                    init_struct_at_rcx (sd, 0);
+                            } else {
+                                copy_struct_rax_to_rcx (n);
+                                if (program_uses_heap && sd != null && struct_has_string (sd))
                                     ref_struct_at_rcx (sd, 0);
                             }
                             emitter.mov_rax_rcx ();
@@ -7494,16 +7753,21 @@ namespace Planc {
                         if (is_fp_type (current.return_type)) {
                             emit_fp_coerce (rt, current.return_type);
                             emitter.movq_rax_xmm (0);
+                        } else if (current.return_type == ValaType.INT) {
+                            emit_int_narrow (current.return_type_name);
                         }
                         if (is_ref_type (current.return_type))
                             consume_ref_expr (r.value);
                         if (current.return_type == ValaType.STRUCT) {
                             var n = type_slots (ValaType.STRUCT, current.return_type_name);
                             emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
-                            copy_struct_rax_to_rcx (n);
-                            if (program_uses_heap) {
-                                unowned var sd = program.find_struct (current.return_type_name);
-                                if (sd != null && struct_has_string (sd))
+                            unowned var sd = program.find_struct (current.return_type_name);
+                            if (rt == ValaType.NULL) {
+                                if (sd != null)
+                                    init_struct_at_rcx (sd, 0);
+                            } else {
+                                copy_struct_rax_to_rcx (n);
+                                if (program_uses_heap && sd != null && struct_has_string (sd))
                                     ref_struct_at_rcx (sd, 0);
                             }
                             emitter.mov_rax_rcx ();
@@ -7571,7 +7835,7 @@ namespace Planc {
                 if (vtype == ValaType.STRUCT) {
                     var base_disp = struct_base_disp (slot, nslots);
                     unowned var sd = program.find_struct (vtname);
-                    if (d.init != null) {
+                    if (d.init != null && init_t != ValaType.NULL) {
                         gen_expr (d.init);
                         emitter.lea_rcx_rbp_disp (base_disp);
                         copy_struct_rax_to_rcx (nslots);
@@ -7579,6 +7843,10 @@ namespace Planc {
                             ref_struct_at_rcx (sd, 0);
                         cleanup_expr_temps (d.init);
                     } else {
+                        if (d.init != null) {
+                            gen_expr (d.init);
+                            cleanup_expr_temps (d.init);
+                        }
                         emitter.lea_rcx_rbp_disp (base_disp);
                         if (sd != null)
                             init_struct_at_rcx (sd, 0);
@@ -7603,6 +7871,8 @@ namespace Planc {
                         if (is_fp_type (vtype)) {
                             emit_fp_coerce (init_t, vtype);
                             emitter.movq_rax_xmm (0);
+                        } else if (vtype == ValaType.INT) {
+                            emit_int_narrow (vtname);
                         }
                         emitter.store_local (slot);
                         cleanup_expr_temps (d.init);
@@ -7634,14 +7904,28 @@ namespace Planc {
                             var n = type_slots (ValaType.STRUCT, local_type_names[idx]);
                             emitter.lea_rcx_rbp_disp (struct_base_disp (local_slots[idx], n));
                             unowned var sd = program.find_struct (local_type_names[idx]);
-                            if (program_uses_heap && sd != null && struct_has_string (sd)) {
+                            if (vt == ValaType.NULL) {
+                                if (program_uses_heap && sd != null && struct_has_string (sd))
+                                    unref_struct_at_rcx (sd, 0);
+                                if (sd != null)
+                                    init_struct_at_rcx (sd, 0);
+                            } else if (program_uses_heap && sd != null && struct_has_string (sd)) {
+                                emitter.push_reg (Reg.RCX);
+                                push_depth++;
+                                emitter.push_rax ();
+                                push_depth++;
+                                emitter.mov_rcx_rax ();
+                                ref_struct_at_rcx (sd, 0);
+                                emitter.pop_rax ();
+                                push_depth--;
+                                emitter.pop_reg (Reg.RCX);
+                                push_depth--;
                                 emitter.push_rax ();
                                 push_depth++;
                                 unref_struct_at_rcx (sd, 0);
                                 emitter.pop_rax ();
                                 push_depth--;
                                 copy_struct_rax_to_rcx (n);
-                                ref_struct_at_rcx (sd, 0);
                             } else {
                                 copy_struct_rax_to_rcx (n);
                             }
@@ -7661,6 +7945,8 @@ namespace Planc {
                             if (is_fp_type (local_types[idx])) {
                                 emit_fp_coerce (vt, local_types[idx]);
                                 emitter.movq_rax_xmm (0);
+                            } else if (local_types[idx] == ValaType.INT) {
+                                emit_int_narrow (local_type_names[idx]);
                             }
                             emitter.store_local (local_slots[idx]);
                         }
@@ -7740,14 +8026,28 @@ namespace Planc {
                         var n = type_slots (ValaType.STRUCT, global_type_names[gi]);
                         emitter.lea_rcx_space (global_offsets[gi], global_spaces[gi]);
                         unowned var sd = program.find_struct (global_type_names[gi]);
-                        if (program_uses_heap && sd != null && struct_has_string (sd)) {
+                        if (vt == ValaType.NULL) {
+                            if (program_uses_heap && sd != null && struct_has_string (sd))
+                                unref_struct_at_rcx (sd, 0);
+                            if (sd != null)
+                                init_struct_at_rcx (sd, 0);
+                        } else if (program_uses_heap && sd != null && struct_has_string (sd)) {
+                            emitter.push_reg (Reg.RCX);
+                            push_depth++;
+                            emitter.push_rax ();
+                            push_depth++;
+                            emitter.mov_rcx_rax ();
+                            ref_struct_at_rcx (sd, 0);
+                            emitter.pop_rax ();
+                            push_depth--;
+                            emitter.pop_reg (Reg.RCX);
+                            push_depth--;
                             emitter.push_rax ();
                             push_depth++;
                             unref_struct_at_rcx (sd, 0);
                             emitter.pop_rax ();
                             push_depth--;
                             copy_struct_rax_to_rcx (n);
-                            ref_struct_at_rcx (sd, 0);
                         } else {
                             copy_struct_rax_to_rcx (n);
                         }
@@ -7765,6 +8065,8 @@ namespace Planc {
                         if (is_fp_type (global_types[gi])) {
                             emit_fp_coerce (vt, global_types[gi]);
                             emitter.movq_rax_xmm (0);
+                        } else if (global_types[gi] == ValaType.INT) {
+                            emit_int_narrow (global_type_names[gi]);
                         }
                         emitter.store_global (global_offsets[gi], global_spaces[gi]);
                     }
@@ -7983,7 +8285,9 @@ namespace Planc {
                 if (!is_ga)
                     parse_array_elem (tt_name, out et, out et_name);
                 bool is_signed_b = false;
-                bool is_byte_arr = !is_ga && (tt == ValaType.ARRAY) && is_byte_array_type (tt_name, out is_signed_b);
+                bool is_byte_arr = is_ga
+                    ? (et == ValaType.INT && is_byte_array_type (et_name, out is_signed_b))
+                    : ((tt == ValaType.ARRAY) && is_byte_array_type (tt_name, out is_signed_b));
                 string vt_name = "";
                 if (ia.op == "=")
                     coerce_byte_array_literal (ia.value, et, et_name);
@@ -8161,6 +8465,38 @@ namespace Planc {
                 emitter.branch (BranchKind.JMP, l_start);
                 emitter.bind (l_end);
                 pop_loop_labels ();
+            } else if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                var l_body = emitter.new_label ();
+                var l_cond = emitter.new_label ();
+                var l_end = emitter.new_label ();
+                var saved = locals.length;
+                break_labels.add (l_end);
+                continue_labels.add (l_cond);
+                break_scope_marks.add (saved);
+                continue_scope_marks.add (saved);
+                var before_dw = clone_non_null ();
+                emitter.bind (l_body);
+                gen_statement (dw.body);
+                unref_locals_from (saved);
+                deactivate_from (saved);
+                emitter.bind (l_cond);
+                string ct_name = "";
+                var ct = expr_type_full (dw.condition, out ct_name);
+                if (!is_int_like (ct))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"do-while condition must be bool or int, got $(type_label (ct, ct_name)) at $(dw.condition.line):$(dw.condition.column)");
+                gen_expr (dw.condition);
+                emitter.push_rax ();
+                push_depth++;
+                cleanup_expr_temps (dw.condition);
+                emitter.pop_rax ();
+                push_depth--;
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JNE, l_body);
+                emitter.bind (l_end);
+                restore_non_null (before_dw);
+                pop_loop_labels ();
             } else if (s is ForStatement) {
                 var fs = (ForStatement) s;
                 var saved = locals.length;
@@ -8261,13 +8597,20 @@ namespace Planc {
                 if (is_ga)
                     emitter.load_rax_disp (16);
                 bool fe_signed_b = false;
-                if (!is_ga && ct == ValaType.ARRAY && is_byte_array_type (ct_name, out fe_signed_b)) {
+                bool fe_byte = is_ga
+                    ? (et == ValaType.INT && is_byte_array_type (et_name, out fe_signed_b))
+                    : (ct == ValaType.ARRAY && is_byte_array_type (ct_name, out fe_signed_b));
+                if (fe_byte) {
                     emitter.load_byte_rax_rcx_16 ();
                     if (fe_signed_b)
                         emitter.sign_extend_rax (8);
                 } else {
                     emitter.load_qword_rax_rcx_16 ();
+                    if (et == ValaType.INT)
+                        emit_int_narrow (et_name);
                 }
+                if (vtype == ValaType.INT)
+                    emit_int_narrow (vtname);
                 if (program_uses_heap && is_ref_type (vtype)) {
                     emitter.mov_rdi_rax ();
                     call_aligned ("__planc_ref");
@@ -8659,14 +9002,14 @@ namespace Planc {
         // Expressions. Every path leaves its value (or struct/ref ptr) in rax.
         // ------------------------------------------------------------------
 
-        private void setcc (string op) {
+        private void setcc (string op, bool is_unsigned = false) {
             uint8 cc;
             if (op == "==") cc = 0x94;
             else if (op == "!=") cc = 0x95;
-            else if (op == "<") cc = 0x9C;
-            else if (op == "<=") cc = 0x9E;
-            else if (op == ">") cc = 0x9F;
-            else cc = 0x9D;
+            else if (op == "<") cc = is_unsigned ? 0x92 : 0x9C;
+            else if (op == "<=") cc = is_unsigned ? 0x96 : 0x9E;
+            else if (op == ">") cc = is_unsigned ? 0x97 : 0x9F;
+            else cc = is_unsigned ? 0x93 : 0x9D;
             emitter.setcc_al (cc);
             emitter.movzx_eax_al ();
         }
@@ -8782,7 +9125,37 @@ namespace Planc {
                     string ot_name = "";
                     var ot = expr_type_full (tc.operand, out ot_name);
                     gen_expr (tc.operand);
+                    if (is_delegate_type (program, ot, ot_name)) {
+                        if (is_nullable_type (ot, ot_name) && null_check) {
+                            need_null_panic = true;
+                            emitter.mov_rcx_rax ();
+                            emitter.load_rcx_disp_to_rax (0);
+                            emitter.test_rax_rax ();
+                            emitter.branch (BranchKind.JE, null_panic_label);
+                            emitter.mov_rax_rcx ();
+                        }
+                        return;
+                    }
                     emit_null_check_if_nullable (ot, ot_name);
+                    return;
+                }
+                if (tc.op == "cast" && is_delegate_type (program, tc.target_type, tc.target_type_name)) {
+                    string ot_name = "";
+                    var ot = expr_type_full (tc.operand, out ot_name);
+                    if (ot == ValaType.NULL) {
+                        emitter.lea_rax_space (null_delegate_bss_offset, PatchSpace.BSS);
+                        return;
+                    }
+                    gen_expr (tc.operand);
+                    if (!is_nullable_type (tc.target_type, tc.target_type_name)
+                        && is_nullable_type (ot, ot_name) && null_check) {
+                        need_null_panic = true;
+                        emitter.mov_rcx_rax ();
+                        emitter.load_rcx_disp_to_rax (0);
+                        emitter.test_rax_rax ();
+                        emitter.branch (BranchKind.JE, null_panic_label);
+                        emitter.mov_rax_rcx ();
+                    }
                     return;
                 }
                 if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
@@ -8792,26 +9165,7 @@ namespace Planc {
                         emitter.cvttss2si_rax_xmm0 ();
                     else if (ot == ValaType.DOUBLE)
                         emitter.cvttsd2si_rax_xmm0 ();
-                    var tn = tc.target_type_name;
-                    if (tn == "uint8" || tn == "uchar") {
-                        emitter.mov_rcx_rax ();
-                        emitter.mov_rax_imm (0xff);
-                        emitter.and_rax_rcx ();
-                    } else if (tn == "uint16") {
-                        emitter.mov_rcx_rax ();
-                        emitter.mov_rax_imm (0xffff);
-                        emitter.and_rax_rcx ();
-                    } else if (tn == "uint32" || tn == "unichar") {
-                        emitter.mov_rcx_rax ();
-                        emitter.mov_rax_imm (0xffffffff);
-                        emitter.and_rax_rcx ();
-                    } else if (tn == "int8" || tn == "char") {
-                        emitter.sign_extend_rax (8);
-                    } else if (tn == "int16") {
-                        emitter.sign_extend_rax (16);
-                    } else if (tn == "int32") {
-                        emitter.sign_extend_rax (32);
-                    }
+                    emit_int_narrow (tc.target_type_name);
                     return;
                 }
                 if (tc.op == "cast" && is_fp_type (tc.target_type)) {
@@ -8946,15 +9300,21 @@ namespace Planc {
                     emitter.store_local (t.ref_temp_slot);
                     add_live_ref_slot (t.ref_temp_slot);
                     foreach (var part in t.parts) {
-                        var pt = expr_type (part);
+                        string pt_name = "";
+                        var pt = expr_type_full (part, out pt_name);
                         bool part_fresh = false;
                         if (pt == ValaType.STRING) {
                             gen_expr (part);
                         } else if (pt == ValaType.INT || pt == ValaType.ENUM) {
                             gen_expr (part);
                             emitter.mov_rdi_rax ();
-                            need_int_to_str = true;
-                            call_aligned ("__planc_int_to_str");
+                            if (pt == ValaType.INT && is_unsigned_int_type (pt_name)) {
+                                need_uint_to_str = true;
+                                call_aligned ("__planc_uint_to_str");
+                            } else {
+                                need_int_to_str = true;
+                                call_aligned ("__planc_int_to_str");
+                            }
                             part_fresh = true;
                         } else if (pt == ValaType.FLOAT || pt == ValaType.DOUBLE) {
                             gen_expr (part);
@@ -9048,6 +9408,8 @@ namespace Planc {
                     gen_expr (arr.elements[i]);
                     if (elem_ref)
                         consume_ref_expr (arr.elements[i]);
+                    else if (!byte_arr && arr.elem_type == ValaType.INT)
+                        emit_int_narrow (arr.elem_type_name);
                     emitter.mov_rcx_rax ();
                     emitter.load_local (arr.ref_temp_slot);
                     emitter.push_rax ();
@@ -9322,9 +9684,18 @@ namespace Planc {
                         push_depth--;
                     }
                     emitter.load_rax_disp (16);
-                    emitter.load_qword_rax_rcx_16 ();
-                    if (is_fp_type (ga_et))
-                        emitter.movq_xmm_rax (0);
+                    bool ga_signed_b = false;
+                    if (ga_et == ValaType.INT && is_byte_array_type (ga_etn, out ga_signed_b)) {
+                        emitter.load_byte_rax_rcx_16 ();
+                        if (ga_signed_b)
+                            emitter.sign_extend_rax (8);
+                    } else {
+                        emitter.load_qword_rax_rcx_16 ();
+                        if (is_fp_type (ga_et))
+                            emitter.movq_xmm_rax (0);
+                        else if (ga_et == ValaType.INT)
+                            emit_int_narrow (ga_etn);
+                    }
                 } else {
                     if (bounds_check) {
                         need_bounds_panic = true;
@@ -9344,6 +9715,8 @@ namespace Planc {
                             parse_array_elem (tt_name, out arr_et, out arr_etn);
                             if (is_fp_type (arr_et))
                                 emitter.movq_xmm_rax (0);
+                            else if (arr_et == ValaType.INT)
+                                emit_int_narrow (arr_etn);
                         }
                     } else {
                         emitter.load_byte_rax_rcx_16 ();
@@ -9374,6 +9747,75 @@ namespace Planc {
                 var te = (TernaryExpr) e;
                 string res_tname = "";
                 var res_t = expr_type_full (te, out res_tname);
+                if (is_delegate_type (program, res_t, res_tname)) {
+                    unowned var sd = program.find_struct (res_tname);
+                    var base_disp = struct_base_disp (te.temp_slot, 2);
+                    var l_else = emitter.new_label ();
+                    var l_end = emitter.new_label ();
+                    gen_expr (te.condition);
+                    emitter.push_rax ();
+                    push_depth++;
+                    cleanup_expr_temps (te.condition);
+                    emitter.pop_rax ();
+                    push_depth--;
+                    emitter.test_rax_rax ();
+                    emitter.branch (BranchKind.JE, l_else);
+
+                    var snap = clone_non_null ();
+                    var nn_then = new GenericArray<string> ();
+                    var nn_else = new GenericArray<string> ();
+                    collect_non_null_when (te.condition, true, nn_then);
+                    collect_non_null_when (te.condition, false, nn_else);
+
+                    add_all_non_null (nn_then);
+                    var then_t = expr_type (te.then_expr);
+                    if (then_t == ValaType.NULL) {
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        if (sd != null)
+                            init_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && te.ref_temp_slot >= 0)
+                            emitter.zero_local (te.ref_temp_slot);
+                    } else {
+                        gen_expr (te.then_expr);
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        copy_struct_rax_to_rcx (2);
+                        if (program_uses_heap && sd != null && struct_has_string (sd))
+                            ref_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && te.ref_temp_slot >= 0) {
+                            emitter.load_rcx_disp_to_rax (8);
+                            emitter.store_local (te.ref_temp_slot);
+                        }
+                        cleanup_expr_temps (te.then_expr);
+                    }
+                    restore_non_null (snap);
+                    emitter.branch (BranchKind.JMP, l_end);
+
+                    emitter.bind (l_else);
+                    add_all_non_null (nn_else);
+                    var else_t = expr_type (te.else_expr);
+                    if (else_t == ValaType.NULL) {
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        if (sd != null)
+                            init_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && te.ref_temp_slot >= 0)
+                            emitter.zero_local (te.ref_temp_slot);
+                    } else {
+                        gen_expr (te.else_expr);
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        copy_struct_rax_to_rcx (2);
+                        if (program_uses_heap && sd != null && struct_has_string (sd))
+                            ref_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && te.ref_temp_slot >= 0) {
+                            emitter.load_rcx_disp_to_rax (8);
+                            emitter.store_local (te.ref_temp_slot);
+                        }
+                        cleanup_expr_temps (te.else_expr);
+                    }
+                    restore_non_null (snap);
+                    emitter.bind (l_end);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                    return;
+                }
                 bool ref_res = program_uses_heap && is_ref_type (res_t);
                 var l_else = emitter.new_label ();
                 var l_end = emitter.new_label ();
@@ -9448,6 +9890,60 @@ namespace Planc {
                 var ce = (CoalesceExpr) e;
                 string res_tname = "";
                 var res_t = expr_type_full (ce, out res_tname);
+                if (is_delegate_type (program, res_t, res_tname)) {
+                    unowned var sd = program.find_struct (res_tname);
+                    var base_disp = struct_base_disp (ce.temp_slot, 2);
+                    string lt_name = "";
+                    var lt = expr_type_full (ce.left, out lt_name);
+                    var l_use_left = emitter.new_label ();
+                    var l_end = emitter.new_label ();
+                    if (lt != ValaType.NULL) {
+                        gen_expr (ce.left);
+                        emitter.mov_rcx_rax ();
+                        emitter.load_rcx_disp_to_rax (0);
+                        emitter.test_rax_rax ();
+                        emitter.branch (BranchKind.JNE, l_use_left);
+                        cleanup_expr_temps (ce.left);
+                    }
+                    string rt_name = "";
+                    var rt = expr_type_full (ce.right, out rt_name);
+                    if (rt == ValaType.NULL) {
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        if (sd != null)
+                            init_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && ce.ref_temp_slot >= 0)
+                            emitter.zero_local (ce.ref_temp_slot);
+                    } else {
+                        gen_expr (ce.right);
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        copy_struct_rax_to_rcx (2);
+                        if (program_uses_heap && sd != null && struct_has_string (sd))
+                            ref_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && ce.ref_temp_slot >= 0) {
+                            emitter.load_rcx_disp_to_rax (8);
+                            emitter.store_local (ce.ref_temp_slot);
+                        }
+                        cleanup_expr_temps (ce.right);
+                    }
+                    emitter.branch (BranchKind.JMP, l_end);
+
+                    emitter.bind (l_use_left);
+                    if (lt != ValaType.NULL) {
+                        emitter.mov_rax_rcx ();
+                        emitter.lea_rcx_rbp_disp (base_disp);
+                        copy_struct_rax_to_rcx (2);
+                        if (program_uses_heap && sd != null && struct_has_string (sd))
+                            ref_struct_at_rcx (sd, 0);
+                        if (program_uses_heap && ce.ref_temp_slot >= 0) {
+                            emitter.load_rcx_disp_to_rax (8);
+                            emitter.store_local (ce.ref_temp_slot);
+                        }
+                        cleanup_expr_temps (ce.left);
+                    }
+                    emitter.bind (l_end);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                    return;
+                }
                 bool ref_res = program_uses_heap && is_ref_type (res_t);
                 var l_use_left = emitter.new_label ();
                 var l_end = emitter.new_label ();
@@ -9496,10 +9992,14 @@ namespace Planc {
                     var off_slots = struct_field_offset_slots (sd, lit.field_names[i], out fld);
                     gen_expr (lit.field_values[i]);
                     if (fld.field_type == ValaType.STRUCT) {
-                        var fslots = type_slots (ValaType.STRUCT, fld.type_name);
-                        emitter.lea_rcx_rbp_disp (base_disp + 8 * off_slots);
-                        copy_struct_rax_to_rcx (fslots);
+                        if (expr_type (lit.field_values[i]) != ValaType.NULL) {
+                            var fslots = type_slots (ValaType.STRUCT, fld.type_name);
+                            emitter.lea_rcx_rbp_disp (base_disp + 8 * off_slots);
+                            copy_struct_rax_to_rcx (fslots);
+                        }
                     } else {
+                        if (fld.field_type == ValaType.INT)
+                            emit_int_narrow (fld.type_name);
                         emitter.store_rbp_disp (base_disp + 8 * off_slots);
                     }
                 }
@@ -9714,7 +10214,8 @@ namespace Planc {
                 }
             } else if (e is UnaryExpr) {
                 var u = (UnaryExpr) e;
-                var ot = expr_type (u.operand);
+                string ot_name = "";
+                var ot = expr_type_full (u.operand, out ot_name);
                 gen_expr (u.operand);
                 if (u.op == "-" && is_fp_type (ot)) {
                     emitter.mov_rax_imm ((ot == ValaType.FLOAT) ? (int64) 0x80000000 : (int64) 0x8000000000000000);
@@ -9722,8 +10223,12 @@ namespace Planc {
                     emitter.pxor_xmm0_xmm1 ();
                 } else if (u.op == "-") {
                     emitter.neg_rax ();
+                    if (is_unsigned_32 (ot_name))
+                        emit_int_narrow (ot_name);
                 } else if (u.op == "~") {
                     emitter.not_rax ();
+                    if (is_unsigned_32 (ot_name))
+                        emit_int_narrow (ot_name);
                 } else {
                     emitter.test_rax_rax ();
                     emitter.setcc_al (0x94);
@@ -9739,8 +10244,10 @@ namespace Planc {
                     gen_or (b);
                     return;
                 }
-                var lt = expr_type (b.left);
-                var rt = expr_type (b.right);
+                string lt_name = "";
+                string rt_name = "";
+                var lt = expr_type_full (b.left, out lt_name);
+                var rt = expr_type_full (b.right, out rt_name);
                 if (is_fp_type (lt) || is_fp_type (rt)) {
                     var ct = (lt == ValaType.DOUBLE || rt == ValaType.DOUBLE) ? ValaType.DOUBLE : ValaType.FLOAT;
                     bool is_f32 = (ct == ValaType.FLOAT);
@@ -9801,9 +10308,18 @@ namespace Planc {
                         emitter.store_local (e.ref_temp_slot);
                     return;
                 }
+                if ((b.op == "==" || b.op == "!=")
+                    && ((is_delegate_type (program, lt, lt_name) && rt == ValaType.NULL)
+                        || (is_delegate_type (program, rt, rt_name) && lt == ValaType.NULL))) {
+                    gen_expr ((rt == ValaType.NULL) ? b.left : b.right);
+                    emitter.load_rax_disp (0);
+                    emitter.test_rax_rax ();
+                    setcc (b.op);
+                    return;
+                }
                 var is_str_cmp = (b.op == "==" || b.op == "!=")
-                              && expr_type (b.left) == ValaType.STRING
-                              && expr_type (b.right) == ValaType.STRING;
+                              && lt == ValaType.STRING
+                              && rt == ValaType.STRING;
                 gen_expr (b.left);
                 emitter.push_rax ();
                 push_depth++;
@@ -9820,36 +10336,72 @@ namespace Planc {
                         emitter.xor_rax_one ();
                     return;
                 }
+                string res_tn = promote_int_type (lt_name, rt_name);
+                bool is_u = is_unsigned_int_type (res_tn);
+                bool is_u32 = is_unsigned_32 (res_tn);
                 switch (b.op) {
                     case "+":
                         emitter.add_rax_rcx ();
-                        if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        if (is_u32) emit_int_narrow ("uint32");
                         break;
                     case "-":
                         emitter.sub_rax_rcx ();
-                        if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        if (is_u32) emit_int_narrow ("uint32");
                         break;
                     case "*":
                         emitter.imul_rax_rcx ();
-                        if (check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                        if (is_u32) emit_int_narrow ("uint32");
                         break;
                     case "/":
-                        emitter.cqo ();
-                        emitter.idiv_rcx ();
+                        if (is_u) {
+                            emitter.xor_edx ();
+                            emitter.div_rcx ();
+                        } else {
+                            emitter.cqo ();
+                            emitter.idiv_rcx ();
+                        }
+                        if (is_u32) emit_int_narrow ("uint32");
                         break;
                     case "%":
-                        emitter.cqo ();
-                        emitter.idiv_rcx ();
+                        if (is_u) {
+                            emitter.xor_edx ();
+                            emitter.div_rcx ();
+                        } else {
+                            emitter.cqo ();
+                            emitter.idiv_rcx ();
+                        }
                         emitter.mov_rax_rdx ();
+                        if (is_u32) emit_int_narrow ("uint32");
                         break;
-                    case "&":  emitter.and_rax_rcx (); break;
-                    case "|":  emitter.or_rax_rcx (); break;
-                    case "^":  emitter.xor_rax_rcx (); break;
-                    case "<<": emitter.shl_rax_cl (); break;
-                    case ">>": emitter.sar_rax_cl (); break;
+                    case "&":
+                        emitter.and_rax_rcx ();
+                        if (is_u32) emit_int_narrow ("uint32");
+                        break;
+                    case "|":
+                        emitter.or_rax_rcx ();
+                        if (is_u32) emit_int_narrow ("uint32");
+                        break;
+                    case "^":
+                        emitter.xor_rax_rcx ();
+                        if (is_u32) emit_int_narrow ("uint32");
+                        break;
+                    case "<<":
+                        emitter.shl_rax_cl ();
+                        if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                        break;
+                    case ">>":
+                        if (is_unsigned_int_type (lt_name))
+                            emitter.shr_rax_cl ();
+                        else
+                            emitter.sar_rax_cl ();
+                        if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                        break;
                     default:
                         emitter.cmp_rax_rcx ();
-                        setcc (b.op);
+                        setcc (b.op, is_u);
                         break;
                 }
             } else if (e is YieldExpr) {
@@ -9956,6 +10508,8 @@ namespace Planc {
                     push_depth++;
                 }
                 emitter.add_rax_imm (delta);
+                if (lt == ValaType.INT)
+                    emit_int_narrow (lt_name);
                 emitter.store_rcx_disp_rax (0);
                 if (!inc.is_prefix) {
                     emitter.pop_rax ();
@@ -10035,10 +10589,17 @@ namespace Planc {
                 if (mc.target == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'to_string()' requires a receiver at $(mc.line):$(mc.column)");
+                string rtn = "";
+                expr_type_full (mc.target, out rtn);
                 gen_expr (mc.target);
                 emitter.mov_rdi_rax ();
-                need_int_to_str = true;
-                call_aligned ("__planc_int_to_str");
+                if (is_unsigned_int_type (rtn)) {
+                    need_uint_to_str = true;
+                    call_aligned ("__planc_uint_to_str");
+                } else {
+                    need_int_to_str = true;
+                    call_aligned ("__planc_int_to_str");
+                }
                 if (program_uses_heap && mc.ref_temp_slot >= 0)
                     emitter.store_local (mc.ref_temp_slot);
                 return;
@@ -10614,12 +11175,14 @@ namespace Planc {
                 && mc.method_name != "connect" && mc.method_name != "disconnect") {
                 unowned var md = resolve_member_delegate (mc.target, mc.method_name);
                 if (md != null) {
-                    var del_expr = new MemberAccessExpr () {
-                        target = mc.target,
-                        member = mc.method_name,
-                        line = mc.line,
-                        column = mc.column
-                    };
+                    Expr del_expr = (mc.method_name == "")
+                        ? mc.target
+                        : (Expr) new MemberAccessExpr () {
+                            target = mc.target,
+                            member = mc.method_name,
+                            line = mc.line,
+                            column = mc.column
+                        };
                     emit_delegate_call (del_expr, md, mc.args, mc.temp_slot, mc.ref_temp_slot);
                     return;
                 }
@@ -10655,8 +11218,12 @@ namespace Planc {
                 gen_expr (arg);
                 emit_fp_coerce (at, p.param_type);
                 emitter.movq_rax_xmm (0);
+            } else if (p.param_type == ValaType.STRUCT && expr_type (arg) == ValaType.NULL) {
+                emitter.lea_rax_space (null_delegate_bss_offset, PatchSpace.BSS);
             } else {
                 gen_expr (arg);
+                if (p.param_type == ValaType.INT)
+                    emit_int_narrow (p.type_name);
             }
         }
 
@@ -10977,9 +11544,12 @@ namespace Planc {
         private void emit_delegate_call (Expr del_expr, DelegateDecl dd, GenericArray<Expr> args,
                                          int struct_temp_slot, int ref_temp_slot)
                 throws SemanticError {
+            string dt_name = "";
+            var dt = expr_type_full (del_expr, out dt_name);
             gen_expr (del_expr);
             emitter.mov_rcx_rax ();
             emitter.load_rcx_disp_to_rax (0); // #code
+            emit_null_check_if_nullable (dt, dt_name);
             emitter.push_rax ();
             push_depth++;
             emitter.load_rcx_disp_to_rax (8); // #env

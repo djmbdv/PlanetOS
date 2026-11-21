@@ -13,6 +13,19 @@ using Gio;
 namespace GioDemo {
     private int checks = 0;
     private int failures = 0;
+    // Directory that owns this run's scratch files: the parent of the target.
+    // Keeping everything next to the target lets the regression cases run in
+    // their own `test/<case>/` tree instead of mutating the shared XFS root.
+    private string base_dir = ".";
+    private string target_name = "hello.txt";
+
+    private string at (string name) {
+        if (base_dir.length == 0 || base_dir == ".")
+            return name;
+        if (base_dir == "/")
+            return "/" + name;
+        return base_dir + "/" + name;
+    }
 
     private void check (string what, bool ok) {
         checks = checks + 1;
@@ -209,7 +222,7 @@ namespace GioDemo {
             var child = f.get_child ("nested");
             check ("child-path", child.get_path () == path + "/nested");
 
-            var af = File.new_for_path ("gio_append.tmp");
+            var af = File.new_for_path (at ("gio_append.tmp"));
             var astr = af.append_to (FileCreateFlags.NONE, null);
             var ad = new DataOutputStream (astr);
             ad.put_string ("fresh\n");
@@ -219,13 +232,13 @@ namespace GioDemo {
             check ("append-delete", af.delete ());
             check ("append-gone", !af.query_exists ());
 
-            var moved = File.new_for_path ("gio_move.tmp");
+            var moved = File.new_for_path (at ("gio_move.tmp"));
             if (moved.query_exists ())
                 moved.delete ();
             check ("move", f.move (moved, FileCopyFlags.NONE, null));
             check ("move-gone", !f.query_exists () && moved.query_exists ());
 
-            var target = File.new_for_path ("gio_target.tmp");
+            var target = File.new_for_path (at ("gio_target.tmp"));
             if (!target.query_exists ()) {
                 var t = target.create (FileCreateFlags.NONE, null);
                 t.close ();
@@ -248,7 +261,7 @@ namespace GioDemo {
 
     private void demo_directories () {
         try {
-            var dir = File.new_for_path ("gio_dir");
+            var dir = File.new_for_path (at ("gio_dir"));
             if (dir.query_exists ())
                 dir.delete ();
             check ("mkdir", dir.make_directory (null));
@@ -275,20 +288,20 @@ namespace GioDemo {
             check ("dir-list", count == 1);
 
             string text = "";
-            if (FileUtils.get_contents ("gio_dir/note.txt", out text)) {
+            if (FileUtils.get_contents (at ("gio_dir/note.txt"), out text)) {
                 check ("dir-child-read", text == "inside\n");
             } else {
                 check ("dir-child-read", false);
             }
 
-            var moved = File.new_for_path ("gio_dir/moved.txt");
+            var moved = File.new_for_path (at ("gio_dir/moved.txt"));
             check ("dir-move", file.move (moved, FileCopyFlags.NONE, null));
             check ("dir-move-gone", !file.query_exists () && moved.query_exists ());
             check ("dir-rm-file", moved.delete ());
             check ("dir-rm", dir.delete ());
             check ("dir-gone", !dir.query_exists ());
 
-            var blocked = File.new_for_path ("gio_dir2");
+            var blocked = File.new_for_path (at ("gio_dir2"));
             if (blocked.query_exists ())
                 blocked.delete ();
             blocked.make_directory (null);
@@ -311,7 +324,7 @@ namespace GioDemo {
 
     private void demo_enumerate () {
         try {
-            var root = File.new_for_path ("/");
+            var root = File.new_for_path ((base_dir == ".") ? "/" : base_dir);
             var en = root.enumerate_children ();
             int count = 0;
             bool found = false;
@@ -320,7 +333,7 @@ namespace GioDemo {
                 if (info == null)
                     break;
                 count = count + 1;
-                if (info.get_name () == "hello.txt")
+                if (info.get_name () == target_name)
                     found = true;
             }
             en.close ();
@@ -399,6 +412,9 @@ namespace GioDemo {
 
         print (@"gio:demo target=$target\n");
         var f = File.new_for_path (target);
+        target_name = f.get_basename ();
+        var parent = f.get_parent ();
+        base_dir = (parent != null) ? parent.get_path () : ".";
         print (@"gio:path $(f.get_path()) base=$(f.get_basename())\n");
         bool exists = f.query_exists ();
         check ("exists", exists);
@@ -410,8 +426,8 @@ namespace GioDemo {
             demo_cancellable (f);
         }
         demo_memory ();
-        demo_write ("gio_demo.tmp");
-        demo_contents ("gio_demo2.tmp");
+        demo_write (at ("gio_demo.tmp"));
+        demo_contents (at ("gio_demo2.tmp"));
         demo_directories ();
         demo_enumerate ();
         demo_application (args);

@@ -1,4 +1,8 @@
-# Directory tree, working directory and path-relative file commands.
+# Directory tree, working directory and path-relative file commands, inside a
+# test/ subtree so the case never touches the shared XFS root.
+mkdir test
+mkdir test/dirs
+cd test/dirs
 mkdir docs
 cd docs
 pwd

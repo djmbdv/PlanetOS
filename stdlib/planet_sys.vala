@@ -98,6 +98,20 @@ namespace Planet {
     ")]
     private extern void __sys_poke8 (int addr, int val);
 
+    [AsmBody(@"
+        # __sys_peek32(addr in rdi) -> eax
+        mov (%rdi), %eax
+        ret
+    ")]
+    private extern int __sys_peek32 (int addr);
+
+    [AsmBody(@"
+        # __sys_poke32(addr in rdi, val in esi)
+        mov %esi, (%rdi)
+        ret
+    ")]
+    private extern void __sys_poke32 (int addr, int val);
+
     public class Sys : Object {
         public const int MAX_PATH = 512;
         public const int MAX_IO = 65536;
@@ -320,7 +334,10 @@ namespace Planet {
         }
 
         public static int map_user_at (int vaddr, int size) {
-            if (vaddr < 0x1000000 || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
+            // The kernel owns the real floor (the first frame the Pmm can hand
+            // out) because this call is also how a client attaches a surface the
+            // compositor allocated, which often lands below 16 MiB.
+            if (vaddr < USER_MIN_ADDR || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
                 return -1;
             return __sys4 (50, vaddr, size, 0, 0);
         }
@@ -329,6 +346,20 @@ namespace Planet {
             if (addr < USER_MIN_ADDR)
                 return;
             __sys_poke8 (addr, val);
+        }
+
+        // 32-bit word accessors, used by the shared window-surface protocol: the
+        // header is a handful of words both processes read and write in place.
+        public static int peek32 (int addr) {
+            if (addr < USER_MIN_ADDR || addr > USER_MAX_ADDR - 4)
+                return 0;
+            return __sys_peek32 (addr);
+        }
+
+        public static void poke32 (int addr, int val) {
+            if (addr < USER_MIN_ADDR || addr > USER_MAX_ADDR - 4)
+                return;
+            __sys_poke32 (addr, val);
         }
 
         public static int call_ptr2 (int fn_addr, int a0, int a1) {
@@ -425,6 +456,12 @@ namespace Planet {
             if (width <= 0 || height <= 0 || width > 4096 || height > 4096)
                 return 0;
             return __sys4 (47, ctx_id, res_id, width, height);
+        }
+
+        public static int gpu_3d_readback (int ctx_id, int res_id, int width, int height) {
+            if (width <= 0 || height <= 0 || width > 4096 || height > 4096)
+                return -1;
+            return __sys4 (51, ctx_id, res_id, width, height);
         }
 
         // --- kernel log ----------------------------------------------------

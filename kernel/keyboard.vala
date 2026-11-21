@@ -43,13 +43,12 @@ namespace Planet.Kernel {
     ")]
     public extern void ps2_drain ();
 
-    private int kb_shift = 0;
-    private int kb_ext = 0;
-    private int kb_ctrl = 0;
-    private int kb_alt = 0;
-    private int kb_super = 0;
-
-    public class Keyboard : Object {
+    public sealed class Keyboard : Object {
+        private static int kb_shift = 0;
+        private static int kb_ext = 0;
+        private static int kb_ctrl = 0;
+        private static int kb_alt = 0;
+        private static int kb_super = 0;
         public static void init () {
             ps2_drain ();
             kb_shift = 0;
@@ -89,32 +88,37 @@ namespace Planet.Kernel {
             if (sc == 0xE0) { kb_ext = 1; return 0; }
             if (kb_ext != 0) {
                 kb_ext = 0;
-                if (sc == 0x5B) { kb_super = 1; return 0; }
-                if (sc == 0xDB) { kb_super = 0; return 0; }
-                if (sc == 0x38) { kb_alt = 1; return 0; }
-                if (sc == 0xB8) { kb_alt = 0; return 0; }
-                if ((sc & 0x80) != 0)
-                    return 0;
-                // Extended keys are reported as KEY_UP/DOWN/LEFT/RIGHT (0x81..0x84)
-                if (sc == 0x48) return 0x81;
-                if (sc == 0x50) return 0x82;
-                if (sc == 0x4B) return 0x83;
-                if (sc == 0x4D) return 0x84;
-                if (sc == 0x47) return 0x85;
-                if (sc == 0x4F) return 0x86;
-                return 0;
+                switch (sc) {
+                    case 0x5B: kb_super = 1; return 0;
+                    case 0xDB: kb_super = 0; return 0;
+                    case 0x38: kb_alt = 1; return 0;
+                    case 0xB8: kb_alt = 0; return 0;
+                    // Extended keys are reported as KEY_UP/DOWN/LEFT/RIGHT (0x81..0x84)
+                    case 0x48: return 0x81;
+                    case 0x50: return 0x82;
+                    case 0x4B: return 0x83;
+                    case 0x4D: return 0x84;
+                    case 0x47: return 0x85;
+                    case 0x4F: return 0x86;
+                    case 0x49: return 0x87;
+                    case 0x51: return 0x88;
+                    default: return 0;
+                }
             }
-            if (sc == 0x2A || sc == 0x36) { kb_shift = 1; return 0; }
-            if (sc == 0xAA || sc == 0xB6) { kb_shift = 0; return 0; }
-            if (sc == 0x1D) { kb_ctrl = 1; return 0; }
-            if (sc == 0x9D) { kb_ctrl = 0; return 0; }
-            if (sc == 0x38) { kb_alt = 1; return 0; }
-            if (sc == 0xB8) { kb_alt = 0; return 0; }
+            switch (sc) {
+                case 0x2A, 0x36: kb_shift = 1; return 0;
+                case 0xAA, 0xB6: kb_shift = 0; return 0;
+                case 0x1D: kb_ctrl = 1; return 0;
+                case 0x9D: kb_ctrl = 0; return 0;
+                case 0x38: kb_alt = 1; return 0;
+                case 0xB8: kb_alt = 0; return 0;
+                case 0x1C: return '\n';
+                case 0x39: return ' ';
+                case 0x0E: return 8;
+                case 0x0F: return '\t';
+                default: break;
+            }
             if ((sc & 0x80) != 0) return 0;
-            if (sc == 0x1C) return '\n';
-            if (sc == 0x39) return ' ';
-            if (sc == 0x0E) return 8;
-            if (sc == 0x0F) return '\t';
             if (sc >= 0x02 && sc <= 0x0B) {
                 if (kb_shift != 0) {
                     if (sc == 0x02) return '!';

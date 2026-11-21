@@ -69,6 +69,9 @@ namespace Planc {
         public string text;
         public int line;
         public int column;
+        public bool is_escaped;
+        public bool is_unsigned;
+        public bool is_long;
     }
 
     public errordomain LexError {
@@ -189,15 +192,23 @@ namespace Planc {
                 }
                 if (digits == 0)
                     throw new LexError.UNEXPECTED_CHARACTER (@"invalid hexadecimal literal at $l:$c");
+                bool is_u = false;
+                bool is_l = false;
                 while (pos < src_len
                        && (current () == 'u' || current () == 'U'
                            || current () == 'l' || current () == 'L')) {
+                    if (current () == 'u' || current () == 'U')
+                        is_u = true;
+                    else
+                        is_l = true;
                     advance ();
                 }
                 return Token () {
                     kind = TokenKind.INTEGER,
                     text = ((int64) val).to_string (),
-                    line = l, column = c
+                    line = l, column = c,
+                    is_unsigned = is_u,
+                    is_long = is_l
                 };
             }
             if (current () == '0' && (peek (1) == 'b' || peek (1) == 'B')) {
@@ -215,15 +226,23 @@ namespace Planc {
                 }
                 if (digits == 0)
                     throw new LexError.UNEXPECTED_CHARACTER (@"invalid binary literal at $l:$c");
+                bool is_u = false;
+                bool is_l = false;
                 while (pos < src_len
                        && (current () == 'u' || current () == 'U'
                            || current () == 'l' || current () == 'L')) {
+                    if (current () == 'u' || current () == 'U')
+                        is_u = true;
+                    else
+                        is_l = true;
                     advance ();
                 }
                 return Token () {
                     kind = TokenKind.INTEGER,
                     text = ((int64) val).to_string (),
-                    line = l, column = c
+                    line = l, column = c,
+                    is_unsigned = is_u,
+                    is_long = is_l
                 };
             }
 
@@ -284,15 +303,23 @@ namespace Planc {
                     line = l, column = c
                 };
             }
+            bool is_u = false;
+            bool is_l = false;
             while (pos < src_len
                    && (current () == 'u' || current () == 'U'
                        || current () == 'l' || current () == 'L')) {
+                if (current () == 'u' || current () == 'U')
+                    is_u = true;
+                else
+                    is_l = true;
                 advance ();
             }
             return Token () {
                 kind = TokenKind.INTEGER,
                 text = ((int64) val).to_string (),
-                line = l, column = c
+                line = l, column = c,
+                is_unsigned = is_u,
+                is_long = is_l
             };
         }
 
@@ -350,14 +377,28 @@ namespace Planc {
                 };
             }
 
-            if (ch == '@' && peek (1) == '"') {
-                advance ();
-                advance ();
-                return Token () {
-                    kind = TokenKind.TEMPLATE_STRING,
-                    text = scan_string_body (l, c, true),
-                    line = l, column = c
-                };
+            if (ch == '@') {
+                if (peek (1) == '"') {
+                    advance ();
+                    advance ();
+                    return Token () {
+                        kind = TokenKind.TEMPLATE_STRING,
+                        text = scan_string_body (l, c, true),
+                        line = l, column = c
+                    };
+                }
+                if (is_letter (peek (1))) {
+                    advance (); // consume '@'
+                    var start = pos;
+                    while (pos < src_len && (is_letter (current ()) || is_digit (current ())))
+                        advance ();
+                    return Token () {
+                        kind = TokenKind.IDENTIFIER,
+                        text = source[start:pos],
+                        line = l, column = c,
+                        is_escaped = true
+                    };
+                }
             }
 
             // Multi-character operators first: <<= >>= == => != <= >= << >> && || ++ -- += -= *= /= %= &= |= ^=

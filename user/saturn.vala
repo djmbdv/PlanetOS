@@ -32,6 +32,18 @@ namespace SaturnIDE {
         public int16 gutter_w = 46;
         public float font_size = 13.0f;
 
+        // Line range touched since the last repaint, plus the caret/bookkeeping
+        // the window needs to turn an edit into one damage rectangle instead of
+        // a full-window repaint.
+        private int dmg_line0 = -1;
+        private int dmg_line1 = -1;
+        private int dmg_caret = -1;
+        private int dmg_count = -1;
+        // Bumped on every content change; the measure cache watches it.
+        private int content_seq = 0;
+        private int cache_seq = -1;
+        private int cache_max_len = 40;
+
         public signal void cursor_moved (int line, int col, int total_lines);
         public signal void modified_changed (bool is_dirty);
         public signal void save_requested ();
@@ -45,7 +57,8 @@ namespace SaturnIDE {
             lines.add ("    print (\"Hello from Saturn!\\n\");");
             lines.add ("    return 0;");
             lines.add ("}");
-            focused = true;
+            grab_focus ();
+            dmg_count = lines.length;
         }
 
         private static string sanitize_line (string s) {
@@ -61,8 +74,13 @@ namespace SaturnIDE {
             if (!ok) {
                 lines.add ("");
                 cx = 0; cy = 0; dirty = false;
+                dmg_line0 = -1;
+                dmg_line1 = -1;
+                dmg_caret = 0;
+                dmg_count = lines.length;
                 modified_changed (false);
                 cursor_moved (1, 1, 1);
+                damage_all ();
                 return false;
             }
             if (raw.length > 0) {
@@ -75,8 +93,13 @@ namespace SaturnIDE {
             cx = 0;
             cy = 0;
             dirty = false;
+            dmg_line0 = -1;
+            dmg_line1 = -1;
+            dmg_caret = 0;
+            dmg_count = lines.length;
             modified_changed (false);
             cursor_moved (1, 1, lines.length);
+            damage_all ();
             return true;
         }
 
@@ -95,16 +118,22 @@ namespace SaturnIDE {
             if (line_idx >= lines.length) line_idx = lines.length - 1;
             cy = line_idx;
             if (cx > lines[cy].length) cx = lines[cy].length;
-            cursor_moved (cy + 1, cx + 1, lines.length);
+            notify_cursor ();
         }
 
         public override void measure (out int min_w, out int min_h) {
-            int max_len = 40;
-            for (int i = 0; i < lines.length; i++) {
-                if (lines[i].length > max_len)
-                    max_len = lines[i].length;
+            // The scroll view re-measures on every repaint, so the width scan is
+            // cached and only redone when the buffer actually changed.
+            if (cache_seq != content_seq) {
+                int max_len = 40;
+                for (int i = 0; i < lines.length; i++) {
+                    if (lines[i].length > max_len)
+                        max_len = lines[i].length;
+                }
+                cache_max_len = max_len;
+                cache_seq = content_seq;
             }
-            min_w = gutter_w + (max_len + 4) * 8;
+            min_w = gutter_w + (cache_max_len + 4) * 8;
             min_h = (lines.length + 2) * line_h;
             if (min_w < 360) min_w = 360;
             if (min_h < 200) min_h = 200;
@@ -116,23 +145,35 @@ namespace SaturnIDE {
             return (i + 1 < s.length && s[i] == '/' && s[i + 1] == '/');
         }
 
+        // Prefix compare at an offset: no substring, so classifying a line for
+        // colouring allocates nothing.
+        private static bool at_prefix (string s, int start, string p) {
+            if (start < 0 || start + p.length > s.length)
+                return false;
+            for (int k = 0; k < p.length; k++) {
+                if (s[start + k] != p[k])
+                    return false;
+            }
+            return true;
+        }
+
         private static bool has_keyword_prefix (string s) {
             int i = 0;
             while (i < s.length && s[i] == ' ') i++;
-            string t = s.substring (i);
-            return t.has_prefix ("using ") || t.has_prefix ("namespace ")
-                || t.has_prefix ("public ") || t.has_prefix ("private ")
-                || t.has_prefix ("class ") || t.has_prefix ("struct ")
-                || t.has_prefix ("enum ") || t.has_prefix ("errordomain ")
-                || t.has_prefix ("return ") || t.has_prefix ("if ")
-                || t.has_prefix ("else ") || t.has_prefix ("else{")
-                || t == "else" || t.has_prefix ("while ")
-                || t.has_prefix ("for ") || t.has_prefix ("var ")
-                || t.has_prefix ("int ") || t.has_prefix ("bool ")
-                || t.has_prefix ("string ") || t.has_prefix ("double ")
-                || t.has_prefix ("void ") || t.has_prefix ("try ")
-                || t.has_prefix ("try{") || t.has_prefix ("catch ")
-                || t.has_prefix ("catch(") || t.has_prefix ("throw ");
+            return at_prefix (s, i, "using ") || at_prefix (s, i, "namespace ")
+                || at_prefix (s, i, "public ") || at_prefix (s, i, "private ")
+                || at_prefix (s, i, "class ") || at_prefix (s, i, "struct ")
+                || at_prefix (s, i, "enum ") || at_prefix (s, i, "errordomain ")
+                || at_prefix (s, i, "return ") || at_prefix (s, i, "if ")
+                || at_prefix (s, i, "else ") || at_prefix (s, i, "else{")
+                || (i + 4 == s.length && at_prefix (s, i, "else"))
+                || at_prefix (s, i, "while ")
+                || at_prefix (s, i, "for ") || at_prefix (s, i, "var ")
+                || at_prefix (s, i, "int ") || at_prefix (s, i, "bool ")
+                || at_prefix (s, i, "string ") || at_prefix (s, i, "double ")
+                || at_prefix (s, i, "void ") || at_prefix (s, i, "try ")
+                || at_prefix (s, i, "try{") || at_prefix (s, i, "catch ")
+                || at_prefix (s, i, "catch(") || at_prefix (s, i, "throw ");
         }
 
         public override void draw (Context cr) {
@@ -177,10 +218,10 @@ namespace SaturnIDE {
                     TextHelper.draw_mono (cr, ln, x + gutter_w + 8, ly + 2, font_size);
                 }
                 if (i == cy && focused) {
-                    int cw = 0;
-                    int ch = 0;
-                    if (cx > 0)
-                        TextHelper.measure_mono (lines[i].substring (0, cx), font_size, out cw, out ch);
+                    // Mono advance instead of measuring the prefix: the caret is
+                    // painted on every repaint and a prefix measure walks the
+                    // whole glyph run again.
+                    int cw = (cx > 0) ? TextHelper.mono_advance (font_size) * cx : 0;
                     cr.set_source_rgb (0.12, 0.38, 0.82);
                     cr.rectangle ((double) (x + gutter_w + 8 + cw), (double) (ly + 2), 2.0, (double) (line_h - 4));
                     cr.fill ();
@@ -191,7 +232,7 @@ namespace SaturnIDE {
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive || button != 1 || !contains (mx, my))
                 return false;
-            focused = true;
+            grab_focus ();
             int row = (my - y) / line_h;
             if (row < 0) row = 0;
             if (row >= lines.length) row = lines.length - 1;
@@ -204,7 +245,7 @@ namespace SaturnIDE {
                 if (best_cx > len) best_cx = len;
             }
             cx = best_cx;
-            cursor_moved (cy + 1, cx + 1, lines.length);
+            notify_cursor ();
             return true;
         }
 
@@ -213,7 +254,70 @@ namespace SaturnIDE {
                 dirty = true;
                 modified_changed (true);
             }
+            content_seq = content_seq + 1;
+            notify_cursor ();
+        }
+
+        private void damage_line (int ln) {
+            if (ln < 0 || ln >= lines.length)
+                return;
+            if (dmg_line0 < 0 || ln < dmg_line0) dmg_line0 = ln;
+            if (dmg_line1 < 0 || ln > dmg_line1) dmg_line1 = ln;
+        }
+
+        // Inserting or deleting a line renumbers everything below the caret, so
+        // the damage has to reach the bottom of the viewport and not just the
+        // edited row (which may well be the last line in the buffer).
+        private void damage_from_line (int ln) {
+            if (ln < 0) ln = 0;
+            if (ln >= lines.length) ln = lines.length - 1;
+            if (dmg_line0 < 0 || ln < dmg_line0) dmg_line0 = ln;
+            int rows = (height + line_h - 1) / line_h;
+            int last = ln + rows;
+            if (dmg_line1 < 0 || last > dmg_line1) dmg_line1 = last;
+        }
+
+        private void notify_cursor () {
+            if (dmg_caret >= 0 && dmg_caret != cy)
+                damage_line (dmg_caret);
+            if (dmg_count >= 0 && dmg_count != lines.length)
+                damage_from_line (cy);
+            dmg_caret = cy;
+            dmg_count = lines.length;
+            damage_line (cy);
             cursor_moved (cy + 1, cx + 1, lines.length);
+        }
+
+        // Whole-editor repaint: used when the buffer is replaced rather than edited.
+        public void damage_all () {
+            content_seq = content_seq + 1;
+            damage_self ();
+        }
+
+        // The line range is this widget's damage; hand it to the shared
+        // accumulator so the window can publish it with the rest of the tree.
+        // The editor has no hover state, so entering it must not repaint the
+        // whole viewport (the base widget damages itself on a hover change).
+        public override bool on_pointer_motion (int mx, int my) {
+            return false;
+        }
+
+        public override void gather_damage () {
+            if (dmg_line0 >= 0) {
+                int y0 = y + dmg_line0 * line_h;
+                int y1 = y + (dmg_line1 + 1) * line_h;
+                if (y0 < y) y0 = y;
+                if (y1 > y + height) y1 = y + height;
+                if (y1 > y0)
+                    damage_box (x, y0, width, y1 - y0);
+                dmg_line0 = -1;
+                dmg_line1 = -1;
+            }
+        }
+
+        public override bool take_damage (out int dx, out int dy, out int dw, out int dh) {
+            gather_damage ();
+            return base.take_damage (out dx, out dy, out dw, out dh);
         }
 
         private void insert_line_at (int idx, string text) {
@@ -233,7 +337,7 @@ namespace SaturnIDE {
                 int hit = lines[cy].substring (start).index_of (query);
                 if (hit >= 0) {
                     cx = start + hit;
-                    cursor_moved (cy + 1, cx + 1, lines.length);
+                    notify_cursor ();
                     return true;
                 }
             }
@@ -243,11 +347,15 @@ namespace SaturnIDE {
                 if (hit >= 0) {
                     cy = r;
                     cx = hit;
-                    cursor_moved (cy + 1, cx + 1, lines.length);
+                    notify_cursor ();
                     return true;
                 }
             }
             return false;
+        }
+
+        private int page_lines () {
+            return 20;
         }
 
         public override bool on_key_press (int key) {
@@ -291,29 +399,43 @@ namespace SaturnIDE {
             if (key == 0x81) {
                 if (cy > 0) cy--;
                 if (cx > lines[cy].length) cx = lines[cy].length;
-                cursor_moved (cy + 1, cx + 1, lines.length);
+                notify_cursor ();
                 return true;
             }
             if (key == 0x82) {
                 if (cy + 1 < lines.length) cy++;
                 if (cx > lines[cy].length) cx = lines[cy].length;
-                cursor_moved (cy + 1, cx + 1, lines.length);
+                notify_cursor ();
                 return true;
             }
             if (key == 0x83) {
                 if (cx > 0) cx--;
                 else if (cy > 0) { cy--; cx = lines[cy].length; }
-                cursor_moved (cy + 1, cx + 1, lines.length);
+                notify_cursor ();
                 return true;
             }
             if (key == 0x84) {
                 if (cx < lines[cy].length) cx++;
                 else if (cy + 1 < lines.length) { cy++; cx = 0; }
-                cursor_moved (cy + 1, cx + 1, lines.length);
+                notify_cursor ();
                 return true;
             }
-            if (key == 0x85) { cx = 0; cursor_moved (cy + 1, cx + 1, lines.length); return true; }
-            if (key == 0x86) { cx = lines[cy].length; cursor_moved (cy + 1, cx + 1, lines.length); return true; }
+            if (key == 0x85) { cx = 0; notify_cursor (); return true; }
+            if (key == 0x86) { cx = lines[cy].length; notify_cursor (); return true; }
+            if (key == 0x87 || key == 0xFF55) {
+                cy -= page_lines ();
+                if (cy < 0) cy = 0;
+                if (cx > lines[cy].length) cx = lines[cy].length;
+                notify_cursor ();
+                return true;
+            }
+            if (key == 0x88 || key == 0xFF56) {
+                cy += page_lines ();
+                if (cy >= lines.length) cy = lines.length - 1;
+                if (cx > lines[cy].length) cx = lines[cy].length;
+                notify_cursor ();
+                return true;
+            }
             if (key == '\n' || key == '\r') {
                 string s = lines[cy];
                 int indent = 0;
@@ -422,14 +544,189 @@ namespace SaturnIDE {
         st.files_lv.set_items (items, icons);
     }
 
-    private static void run_find (SaturnState st, Entry find_entry) {
-        string q = find_entry.get_text ();
+    /**
+     * Headless checks for the interactive path: an edit must damage one line,
+     * an inserted line must damage down to the viewport bottom, and a window
+     * attached to a shared block must publish exactly the rectangle it painted.
+     */
+    private static int saturn_self_test () {
+        int checks = 0;
+        int fails = 0;
+        int dx = 0;
+        int dy = 0;
+        int dw = 0;
+        int dh = 0;
+
+        var surf = new ImageSurface (Format.ARGB32, 420, 320);
+        var cr = new Context (surf);
+        // Verify blit_alpha_mask SIMD + tail pixel-exact blending.
+        cr.set_source_rgb (0.0, 0.0, 0.0);
+        cr.rectangle (0, 0, 16, 4);
+        cr.fill ();
+        cr.set_source_rgba (1.0, 0.5, 0.25, 1.0);
+        uint8[] mask = { 0, 128, 255, 64, 192, 0 };
+        cr.blit_alpha_mask (mask, 6, 1, 2, 1);
+        checks++;
+        int row1 = surf.buf_addr + 1 * surf.width * 4;
+        int p0 = Sys.peek32 (row1 + 2 * 4) & 0xFFFFFF;
+        int p1 = Sys.peek32 (row1 + 3 * 4) & 0xFFFFFF;
+        int p2 = Sys.peek32 (row1 + 4 * 4) & 0xFFFFFF;
+        int p3 = Sys.peek32 (row1 + 5 * 4) & 0xFFFFFF;
+        int p4 = Sys.peek32 (row1 + 6 * 4) & 0xFFFFFF;
+        int p5 = Sys.peek32 (row1 + 7 * 4) & 0xFFFFFF;
+        if (p0 != 0x000000 || p2 != 0xFF7F3F || p5 != 0x000000
+                || p1 == 0 || p1 == 0xFF7F3F || p3 == 0 || p4 == 0)
+            fails++;
+        // Check green channel of p1 (a=128 over 0, sg=128 -> ~64, must not be ~255).
+        int p1_g = (p1 >> 8) & 0xFF;
+        checks++;
+        if (p1_g < 60 || p1_g > 68)
+            fails++;
+
+        var ed = new CodeView ();
+        ed.allocate (0, 0, 420, 320);
+        ed.draw (cr);
+
+        ed.on_key_press ('a');
+        checks++;
+        if (!ed.take_damage (out dx, out dy, out dw, out dh) || dh != ed.line_h || dy != 0)
+            fails++;
+
+        ed.on_key_press ('\n');
+        checks++;
+        if (!ed.take_damage (out dx, out dy, out dw, out dh) || dh <= ed.line_h)
+            fails++;
+
+        ed.on_key_press (0x81);
+        checks++;
+        if (!ed.take_damage (out dx, out dy, out dw, out dh) || dh != 2 * ed.line_h)
+            fails++;
+
+        // Keys must reach the focused editor, not the first scrollable sibling
+        // that reacts to arrows: the side panel used to scroll instead of the
+        // caret moving between lines.
+        var items = new GenericArray<string> ();
+        for (int i = 0; i < 30; i++)
+            items.add (@"row $i");
+        var side_lv = new ListView ();
+        side_lv.set_items (items);
+        var side_sc = new ScrolledWindow ();
+        side_sc.set_child (side_lv);
+        var ed_sc = new ScrolledWindow ();
+        var ed2 = new CodeView ();
+        ed_sc.set_child (ed2);
+        var hbox = new Box (Orientation.HORIZONTAL, 0);
+        hbox.pack_start (side_sc, true, true);
+        hbox.pack_start (ed_sc, true, true);
+        hbox.allocate (0, 0, 500, 300);
+        int side_before = side_sc.scroll_y;
+        int line_before = ed2.cy;
+        checks++;
+        if (!hbox.handle_key (0x82))
+            fails++;
+        checks++;
+        if (ed2.cy != line_before + 1 || side_sc.scroll_y != side_before)
+            fails++;
+        checks++;
+        if (!hbox.handle_key (0x81) || ed2.cy != line_before)
+            fails++;
+
+        // Focus is exclusive: the list takes the arrows while it owns focus and
+        // the editor takes them back when it is focused again.
+        side_lv.grab_focus ();
+        int ed_line = ed2.cy;
+        hbox.handle_key (0x82);
+        checks++;
+        if (side_lv.get_selected () < 0 || ed2.cy != ed_line)
+            fails++;
+        ed2.grab_focus ();
+        int lv_sel = side_lv.get_selected ();
+        int ed_before2 = ed2.cy;
+        hbox.handle_key (0x82);
+        checks++;
+        if (ed2.cy != ed_before2 + 1 || side_lv.get_selected () != lv_sel)
+            fails++;
+        checks++;
+        if (!ed2.has_focus () || side_lv.has_focus ())
+            fails++;
+
+        // PageUp / PageDown move the focused editor's caret by a page without
+        // falling through to the side panel's ScrolledWindow.
+        for (int i = 0; i < 40; i++)
+            ed2.lines.add (@"line $i");
+        hbox.allocate (0, 0, 500, 300);
+        int side_pg = side_sc.scroll_y;
+        int cy0 = ed2.cy;
+        checks++;
+        if (!hbox.handle_key (0x88) || ed2.cy <= cy0 || side_sc.scroll_y != side_pg)
+            fails++;
+        int cy1 = ed2.cy;
+        checks++;
+        if (!hbox.handle_key (0x87) || ed2.cy >= cy1 || side_sc.scroll_y != side_pg)
+            fails++;
+        checks++;
+        if (!hbox.handle_key (0xFF56) || ed2.cy <= cy0)
+            fails++;
+        checks++;
+        if (!hbox.handle_key (0xFF55) || ed2.cy != cy0)
+            fails++;
+
+        // Client publish path: a block laid out exactly as the compositor does.
+        int w = 200;
+        int h = 150;
+        int pages = SharedSurface.pages_for (w, h);
+        int shm = Sys.alloc_pages (pages);
+        if (shm > 0) {
+            Sys.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
+            Sys.poke32 (shm + SharedSurface.OFF_WIDTH, w);
+            Sys.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
+            Sys.poke32 (shm + SharedSurface.OFF_SEQ, 0);
+            Sys.setenv ("PLANET_WIN_SHM", @"$shm");
+            Sys.setenv ("PLANET_WIN_W", @"$w");
+            Sys.setenv ("PLANET_WIN_H", @"$h");
+
+            var win = new GtkWindow (w, h);
+            win.set_child (ed);
+            win.show_all ();
+            checks++;
+            if (Sys.peek32 (shm + SharedSurface.OFF_SEQ) != 1
+                    || Sys.peek32 (shm + SharedSurface.OFF_DW) != w
+                    || Sys.peek32 (shm + SharedSurface.OFF_DH) != h)
+                fails++;
+
+            win.redraw_area (5, 7, 11, 13);
+            checks++;
+            if (Sys.peek32 (shm + SharedSurface.OFF_SEQ) != 2
+                    || Sys.peek32 (shm + SharedSurface.OFF_DX) != 5
+                    || Sys.peek32 (shm + SharedSurface.OFF_DY) != 7
+                    || Sys.peek32 (shm + SharedSurface.OFF_DW) != 11
+                    || Sys.peek32 (shm + SharedSurface.OFF_DH) != 13)
+                fails++;
+
+            checks++;
+            int px = Sys.peek32 (shm + SharedSurface.pixel_offset () + (2 * w + 2) * 4);
+            if (((px >> 24) & 0xFF) != 255)
+                fails++;
+
+            Sys.unsetenv ("PLANET_WIN_SHM");
+            for (int p = 0; p < pages; p++)
+                Sys.free_page (shm + p * 4096);
+        } else {
+            checks++;
+            fails++;
+        }
+
+        print (@"saturn:summary checks=$checks failures=$fails\n");
+        return (fails == 0) ? 0 : 1;
+    }
+
+    private static void run_find (SaturnState st, Entry find_entry) {        string q = find_entry.get_text ();
         if (q.length == 0) {
             st.msg_lbl.set_text ("Enter text to find.");
             return;
         }
         if (st.editor.find_next (q)) {
-            st.editor.focused = true;
+            st.editor.grab_focus ();
             st.msg_lbl.set_text (@"Found '$q' at Ln $(st.editor.cy + 1), Col $(st.editor.cx + 1)");
         } else {
             st.msg_lbl.set_text (@"Not found: '$q'");
@@ -438,9 +735,12 @@ namespace SaturnIDE {
 
     int main (string[] args) {
         bool once = false;
+        bool self_test = false;
         string open_path = "";
         for (int i = 1; i < args.length; i++) {
-            if (args[i] == "--once" || args[i] == "--self-test")
+            if (args[i] == "--self-test")
+                self_test = true;
+            else if (args[i] == "--once")
                 once = true;
             else
                 open_path = args[i];
@@ -449,6 +749,8 @@ namespace SaturnIDE {
         init (args);
         load_ttf ("LiberationSans-Regular.ttf");
         TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
+        if (self_test)
+            return saturn_self_test ();
 
         var win = new GtkWindow (1280, 720);
         win.set_title ("Saturn IDE (Geany-style)");
@@ -541,6 +843,7 @@ namespace SaturnIDE {
             editor.filename = "untitled.vala";
             path_entry.set_text ("untitled.vala");
             sc_editor.scroll_to (0, 0);
+            editor.damage_all ();
             refresh_symbols (st);
             msg_lbl.set_text ("Created new empty buffer.");
         });
@@ -594,7 +897,7 @@ namespace SaturnIDE {
         symbols_lv.activate.connect ((sender, idx) => {
             if (idx >= 0 && idx < st.sym_lines.length) {
                 editor.goto_line (st.sym_lines[idx]);
-                editor.focused = true;
+                editor.grab_focus ();
             }
         });
 

@@ -126,6 +126,10 @@ private int self_test_run (Compositor comp) {
     check (comp.accent_ir () >= 0 && comp.accent_ir () <= 255, "accent-in-range");
     check (!comp.select_backend (BACKEND_VULKAN), "vulkan-needs-icd");
     check (comp.select_backend (BACKEND_CAIRO) && comp.backend () == BACKEND_CAIRO, "cairo-backend");
+    var gsk_surf = new ImageSurface (Format.ARGB32, 16, 16);
+    comp.render_gsk (new ColorNode (new Rect (0, 0, 16, 16), 0.125, 0.25, 0.5, 1.0), gsk_surf);
+    check (comp.gsk_backend ().length > 0 && gsk_surf.is_valid (), "gsk-renderer");
+    gsk_surf.destroy ();
 
     // per-pixel SPIR-V background (gl_FragCoord) baked into PAT_STEP blocks
     check (comp.has_pattern (), "pattern-valid");
@@ -254,6 +258,85 @@ private int self_test_run (Compositor comp) {
            && fwin.gtk_alloc_w == faw && fwin.gtk_alloc_h == fah, "files-repaint-keeps-alloc");
     check (filec.alive (fid), "files-win-alive");
 
+    // Shared surface: the client draws into the block the compositor allocated
+    // and publishes one damage rectangle, which is the only region repainted.
+    var shc = new Compositor ();
+    int swid = shc.add ("shm", 100, 100, 320, 200, Kind.EXT);
+    var shw = shc.find (swid);
+    check (shc.attach_shared_surface (swid, 0, 318, 172), "shm-attach");
+    int shsb = 0;
+    if (shw != null)
+        shsb = shw.ext_shm;
+    check (shsb != 0, "shm-block-allocated");
+    if (shsb != 0) {
+        check (Sys.peek32 (shsb + SharedSurface.OFF_MAGIC) == SharedSurface.MAGIC,
+               "shm-header-magic");
+        shc.flush (cr, 100, 100);
+        Sys.poke32 (shsb + SharedSurface.OFF_DX, 7);
+        Sys.poke32 (shsb + SharedSurface.OFF_DY, 5);
+        Sys.poke32 (shsb + SharedSurface.OFF_DW, 12);
+        Sys.poke32 (shsb + SharedSurface.OFF_DH, 6);
+        Sys.poke32 (shsb + SharedSurface.OFF_SEQ, 1);
+        shc.poll_ext ();
+        check (shc.damage_count () == 1, "shm-damage-one-rect");
+        check (shc.damage_pixels () == 72, "shm-damage-area");
+        shc.poll_ext ();
+        check (shc.damage_count () == 1 && shc.damage_pixels () == 72, "shm-seq-dedup");
+
+        // Client side: the same block wrapped as a drawable surface.
+        var shcw = Display.attach_shared (318, 172, shsb, "");
+        check (shcw != null, "shm-client-attach");
+        if (shcw != null) {
+            var shcr = shcw.create_cairo_context ();
+            shcr.set_source_rgb (0.0, 1.0, 0.0);
+            shcr.rectangle (0.0, 0.0, 3.0, 2.0);
+            shcr.fill ();
+            shcw.present_rect (0, 0, 3, 2);
+            check (Sys.peek32 (shsb + SharedSurface.OFF_SEQ) == 2, "shm-client-seq");
+            check (Sys.peek32 (shsb + SharedSurface.OFF_DW) == 3, "shm-client-damage-w");
+            check (shcr.pixel_at (1, 1) == ((255 << 24) | (255 << 8)), "shm-client-pixels");
+
+            // Two distant rectangles stay separate: both are damaged and the gap
+            // between them is not.
+            shc.flush (cr, 100, 100);
+            int[] rxs = new int[2];
+            int[] rys = new int[2];
+            int[] rws = new int[2];
+            int[] rhs = new int[2];
+            rxs[0] = 4;
+            rys[0] = 6;
+            rws[0] = 10;
+            rhs[0] = 8;
+            rxs[1] = 200;
+            rys[1] = 140;
+            rws[1] = 30;
+            rhs[1] = 20;
+            shcw.present_rects (rxs, rys, rws, rhs, 2);
+            check (Sys.peek32 (shsb + SharedSurface.OFF_DCOUNT) == 2, "shm-rect-count");
+            shc.poll_ext ();
+            check (shc.damage_count () == 2, "shm-damage-two-rects");
+            check (shc.damage_pixels () == 680, "shm-damage-two-areas");
+
+            // Input ring: a click, a release and a key reach the client through
+            // shared memory, and the client acknowledges them.
+            shc.pointer_press (150, 150);
+            shc.pointer_release ();
+            shc.key_press ('k');
+            check (Sys.peek32 (shsb + SharedSurface.OFF_EV_SEQ) == 3, "shm-input-seq");
+            var e1 = shcw.poll_event ();
+            check (e1.type == EventType.BUTTON_PRESS, "shm-input-press");
+            var e2 = shcw.poll_event ();
+            check (e2.type == EventType.BUTTON_RELEASE, "shm-input-release");
+            var e3 = shcw.poll_event ();
+            check (e3.type == EventType.KEY_PRESS && e3.keyval == 'k', "shm-input-key");
+            check (Sys.peek32 (shsb + SharedSurface.OFF_EV_ACK) == 3, "shm-input-acked");
+            shcw.close ();
+        }
+    }
+    shc.close_win (swid);
+    shc.poll_ext ();
+    check (shw == null || shw.ext_shm == 0, "shm-block-released");
+
     // VTE terminal typing
     var termc = new Compositor ();
     int tw = termc.add ("term", 40, 50, 400, 240, Kind.TERMINAL);
@@ -303,7 +386,7 @@ private int self_test_run (Compositor comp) {
 
 // --- interactive -------------------------------------------------------
 
-private int interactive (Compositor comp) {
+private int interactive (Compositor comp, string ext_path = "", int max_frames = 0, string keys = "") {
     var win = Display.open_window (SCREEN_W, SCREEN_H);
     if (win == null) {
         print ("compositor: no framebuffer available\n");
@@ -311,15 +394,40 @@ private int interactive (Compositor comp) {
     }
     comp.attach (win, false);
     print (@"compositor: cursor=$(comp.hardware_cursor () ? "hw" : "sw") screen=$(SCREEN_W)x$(SCREEN_H)\n");
+    int ext_id = 0;
+    if (ext_path.length > 0) {
+        ext_id = comp.launch_gui_app (ext_path, "ext", 720, 460);
+        print (@"compositor: ext=$(ext_path) launched=1\n");
+    }
     var loop = new MainLoop ();
     timeout_add (16, () => {
         if (!comp.frame ()) {
             loop.quit ();
             return false;
         }
+        // Typed keys exist so a test can drive the client's input path: they go
+        // through the same key_press_mod a real keyboard event takes. Frame 20 is
+        // reached exactly once, which is all the one-shot injection needs.
+        if (keys.length > 0 && comp.frame_count () == 20) {
+            for (int i = 0; i < keys.length; i++)
+                comp.key_press ((int) keys[i]);
+        }
+        // Bounded runs exist so a test can drive a real client through the
+        // launch/attach/publish path and then look at the counters.
+        if (max_frames > 0 && comp.frame_count () >= max_frames) {
+            loop.quit ();
+            return false;
+        }
         return true;
     });
     loop.run ();
+    if (ext_id != 0) {
+        var ew = comp.find (ext_id);
+        if (ew != null)
+            print (@"compositor: ext rects=$(ew.ext_rects) damaged_px=$(ew.ext_damage_px) bg=$(comp.background_skips ()) last=$(ew.ext_last_dw)x$(ew.ext_last_dh)@$(ew.ext_last_dx),$(ew.ext_last_dy)\n");
+        else
+            print ("compositor: ext rects=0 damaged_px=0 bg=0 last=0x0@0,0\n");
+    }
     comp.shutdown ();
     print (@"compositor: frames=$(comp.frame_count ()) moves=$(comp.motion_count ()) windows=$(comp.count ()) dirty=$(comp.dirty_frame_count ()) flush_ms=$(comp.avg_flush_ms ()) blit_ms=$(comp.avg_blit_ms ())\n");
     return 0;
@@ -333,6 +441,9 @@ int main (string[] args) {
     bool want_animate = false;
     string shader_path = "frag.spv";
     string pattern_path = "frag_pattern.spv";
+    string ext_path = "";
+    int max_frames = 0;
+    string keys = "";
     for (int i = 1; i < args.length; i++) {
         if (args[i] == "--self-test") {
             self_test = true;
@@ -344,6 +455,30 @@ int main (string[] args) {
             want_animate = true;
         } else if (args[i] == "--vulkan") {
             want_vulkan = true;
+        } else if (args[i] == "--ext") {
+            if (i + 1 < args.length) {
+                i = i + 1;
+                ext_path = args[i];
+            }
+        } else if (args[i] == "--keys") {
+            if (i + 1 < args.length) {
+                i = i + 1;
+                keys = args[i];
+            }
+        } else if (args[i] == "--frames") {
+            if (i + 1 < args.length) {
+                i = i + 1;
+                int v = 0;
+                for (int d = 0; d < args[i].length; d++) {
+                    uint8 c = (uint8) args[i][d];
+                    if (c < '0' || c > '9') {
+                        v = 0;
+                        break;
+                    }
+                    v = v * 10 + (int) (c - '0');
+                }
+                max_frames = v;
+            }
         } else if (args[i] == "--pattern") {
             if (i + 1 < args.length) {
                 i = i + 1;
@@ -377,10 +512,18 @@ int main (string[] args) {
             comp.set_animation (true, 400);
         print (@"compositor: animate=$(want_animate ? 1 : 0) period_ms=400\n");
     }
-    if (self_test)
-        return self_test_run (comp);
+    if (self_test) {
+        int rc = self_test_run (comp);
+        comp.shutdown_gpu ();
+        return rc;
+    }
 
-    comp.seed ();
+    // An external client gets the screen to itself: the launch/publish path is
+    // what a bounded run needs to exercise, not the demo windows.
+    if (ext_path.length == 0)
+        comp.seed ();
     print ("compositor: keys: tab cycle  drag=move  m max  c close  n new  1-9 focus  q quit\n");
-    return interactive (comp);
+    int rc = interactive (comp, ext_path, max_frames, keys);
+    comp.shutdown_gpu ();
+    return rc;
 }

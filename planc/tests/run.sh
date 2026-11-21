@@ -181,7 +181,7 @@ if [ -f "$HERE/valid/string_index.vala" ]; then
 fi
 
 echo "== check_leaks =="
-for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib float_double asm_body async_goroutines signals channels_and_mutex object_root compact_manual compact_nested; do
+for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib float_double asm_body async_goroutines signals channels_and_mutex object_root compact_manual compact_nested do_while nullable_delegate; do
     src="$HERE/valid/$base_name.vala"
     bin="$WORK/leaks_$base_name"
     case_name="check_leaks_$base_name"
@@ -281,6 +281,97 @@ elif ! "$WORK/strict_null_ok"; then
     ko "strict_null_narrowed" "non-zero exit"
 else
     ok "strict_null_narrowed"
+fi
+
+cat >"$WORK/null_del_call.vala" <<'EOF'
+delegate int Fn (int x);
+int main () {
+    Fn? f = null;
+    return f (5);
+}
+EOF
+if ! "$PLANC" "$WORK/null_del_call.vala" -o "$WORK/null_del_call" 2>"$WORK/ndc.err"; then
+    ko "nullable_delegate_panic" "compile failed: $(cat "$WORK/ndc.err")"
+elif ! check_elf "nullable_delegate_panic" "$WORK/null_del_call"; then
+    :
+else
+    "$WORK/null_del_call" >"$WORK/ndc.stdout" 2>"$WORK/ndc.runerr"
+    code=$?
+    if [ "$code" != "134" ]; then
+        ko "nullable_delegate_panic" "exit $code, expected 134"
+    elif ! grep -q '^planc: panic: null pointer dereference$' "$WORK/ndc.runerr"; then
+        ko "nullable_delegate_panic" "missing panic diagnostic: $(cat "$WORK/ndc.runerr")"
+    else
+        ok "nullable_delegate_panic"
+    fi
+fi
+
+if "$PLANC" --strict-null "$WORK/null_del_call.vala" -o "$WORK/null_del_sn" 2>"$WORK/ndsn.err"; then
+    ko "nullable_delegate_strict_null_reject" "expected compile error for unguarded Fn?"
+elif ! grep -q "cannot dereference nullable" "$WORK/ndsn.err"; then
+    ko "nullable_delegate_strict_null_reject" "unexpected error: $(cat "$WORK/ndsn.err")"
+else
+    ok "nullable_delegate_strict_null_reject"
+fi
+
+cat >"$WORK/null_del_sn_ok.vala" <<'EOF'
+delegate int Fn (int x);
+int main () {
+    Fn? f = (x) => x + 1;
+    int r1 = ((!) f) (4);
+    Fn? g = null;
+    int r2 = (g != null) ? g (1) : 10;
+    return (r1 == 5 && r2 == 10) ? 0 : 1;
+}
+EOF
+if ! "$PLANC" --strict-null "$WORK/null_del_sn_ok.vala" -o "$WORK/null_del_sn_ok" 2>"$WORK/ndsn_ok.err"; then
+    ko "nullable_delegate_strict_null_ok" "compile failed: $(cat "$WORK/ndsn_ok.err")"
+elif ! "$WORK/null_del_sn_ok"; then
+    ko "nullable_delegate_strict_null_ok" "non-zero exit"
+else
+    ok "nullable_delegate_strict_null_ok"
+fi
+
+cat >"$WORK/planc_extra_features.vala" <<'EOF'
+delegate int Fn (int x, int y);
+struct @struct {
+    public int @do;
+    public ulong u;
+}
+int main () {
+    int @int = 40;
+    bool @true = false;
+    int @null = 2;
+    var st = @struct () { @do = 7, u = ulong.MAX };
+    Fn? d1 = @true ? ((a, b) => a + b) : null;
+    Fn? d2 = (!@true) ? ((a, b) => a * b) : null;
+    var d3 = d1 ?? ((a, b) => a - b);
+    ulong ul = 18446744073709551610UL;
+    ul /= 3UL;
+    long lg = long.MIN;
+    uint64 neg64ul = -1UL;
+    var ga = new GenericArray<uint8> ();
+    for (int i = 0; i < 12; i++)
+        ga.add ((uint8) (i * 37 + 250));
+    ga[1] += 20;
+    int ga_sum = 0;
+    foreach (uint8 b in ga)
+        ga_sum += b;
+    int64 sum = @int + @null + st.@do + ((!) d2) (3, 4) + ((!) d3) (9, 2);
+    print (@"ext=$sum,$(st.u.to_string ()),$(ul.to_string ()),$(lg.to_string ()),$(neg64ul.to_string ()),$(ga.length),$(ga[1]),$ga_sum\n");
+    return (sum == 68 && ga.length == 12) ? 0 : 1;
+}
+EOF
+if ! "$PLANC" "$WORK/planc_extra_features.vala" -o "$WORK/planc_extra_features" 2>"$WORK/pef.err"; then
+    ko "planc_extra_features" "compile failed: $(cat "$WORK/pef.err")"
+elif ! check_elf "planc_extra_features" "$WORK/planc_extra_features"; then
+    :
+elif ! "$WORK/planc_extra_features" >"$WORK/pef.stdout" 2>&1; then
+    ko "planc_extra_features" "non-zero exit"
+elif ! grep -q '^ext=68,18446744073709551615,6148914691236517203,-9223372036854775808,18446744073709551615,12,51,1622$' "$WORK/pef.stdout"; then
+    ko "planc_extra_features" "unexpected stdout: $(cat "$WORK/pef.stdout")"
+else
+    ok "planc_extra_features"
 fi
 
 cat >"$WORK/bad_cast.vala" <<'EOF'
@@ -443,7 +534,7 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
         ko "freestanding_qemu" "frag_planet.vala compile failed: $(cat "$WORK/sp.err")"
     elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala" "$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
         ko "freestanding_qemu" "user spv_demo compile failed: $(cat "$WORK/sd.err")"
-    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
+    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
     python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" "$cd_bin" "$sp_bin" "$sd_bin" << 'PYEOF'
@@ -594,7 +685,7 @@ PYEOF
     p_elf="$WORK/planc.elf"
     p_disk="$WORK/planet_planc_disk.img"
     p_ser="$WORK/qemu_planc_serial.log"
-    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
+    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/preproc.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
         ko "planetos_planc_qemu" "planc.elf compile failed: $(cat "$WORK/p_elf.err")"
     else
     python3 - "$p_disk" "$s_bin" "$p_elf" "$HERE/valid/utf8.vala" "$HERE/valid/class_basic.vala" << 'PYEOF'
@@ -720,6 +811,18 @@ elif ! cmp -s "$WORK/opt_o2.stdout" "$HERE/valid/opt_o2.out"; then
 else
     ok "opt_o2_flag"
 fi
+
+for lv in 1 2; do
+    if ! "$PLANC" "-O$lv" "$HERE/valid/unsigned_ints.vala" -o "$WORK/uint_o$lv" 2>"$WORK/uint_o$lv.err"; then
+        ko "unsigned_ints_o$lv" "compile failed: $(cat "$WORK/uint_o$lv.err")"
+    elif ! "$WORK/uint_o$lv" >"$WORK/uint_o$lv.stdout" 2>&1; then
+        ko "unsigned_ints_o$lv" "non-zero exit"
+    elif ! cmp -s "$WORK/uint_o$lv.stdout" "$HERE/valid/unsigned_ints.out"; then
+        ko "unsigned_ints_o$lv" "stdout differs"
+    else
+        ok "unsigned_ints_o$lv"
+    fi
+done
 
 echo
 echo "SUMMARY: $((PASS + FAIL)) cases, $PASS pass, $FAIL fail"

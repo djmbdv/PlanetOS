@@ -1,6 +1,7 @@
 // Pure-Vala GSK RenderNode hierarchy for PlanetOS.
 
 using Cairo;
+using Spv;
 
 namespace Gsk {
 
@@ -168,6 +169,133 @@ namespace Gsk {
                     }
                 }
             }
+        }
+    }
+
+    // Uses a module compiled by `planc --target=spirv` as the paint source.
+    // The module is evaluated with the same CPU reference implementation the
+    // compositor uses (Spv.Module), so GSK gets shader effects without a
+    // Vulkan driver: the node bakes the fragment stage into `step`x`step`
+    // blocks and draws those blocks with Cairo.
+    public class ShaderNode : RenderNode {
+        public Rect bounds;
+        public Module? shader;
+        public int step = 8;
+        private int[] cells = new int[1];
+        private int cols = 0;
+        private int rows = 0;
+        private bool baked = false;
+        private double utime = 0.0;
+        private double pa = 1.0;
+        private double pb = 1.0;
+        private double pc = 0.0;
+        private double pd = 0.0;
+
+        public ShaderNode (Rect rect, Module? m, int block = 8) {
+            bounds = rect;
+            shader = m;
+            step = (block > 0) ? block : 8;
+        }
+
+        public bool valid () {
+            return shader != null && shader.valid;
+        }
+
+        public bool per_pixel () {
+            if (shader == null || !shader.valid)
+                return false;
+            return shader.has_input ();
+        }
+
+        public void set_time (double t) {
+            utime = t;
+            baked = false;
+        }
+
+        public void set_params (double p0, double p1, double p2, double p3) {
+            pa = p0;
+            pb = p1;
+            pc = p2;
+            pd = p3;
+            baked = false;
+        }
+
+        public int baked_blocks () {
+            return cols * rows;
+        }
+
+        public void bake () {
+            if (bounds == null || bounds.is_empty ())
+                return;
+            if (shader == null || !shader.valid)
+                return;
+            int st = (step > 0) ? step : 8;
+            cols = ((int) bounds.w + st - 1) / st;
+            rows = ((int) bounds.h + st - 1) / st;
+            if (cols <= 0 || rows <= 0)
+                return;
+            cells = new int[cols * rows];
+            shader.set_uniforms (utime, bounds.w, bounds.h);
+            shader.set_params (pa, pb, pc, pd);
+            shader.set_origin (bounds.x, bounds.y);
+            for (int by = 0; by < rows; by++) {
+                for (int bx = 0; bx < cols; bx++) {
+                    int px = (int) bounds.x + bx * st + st / 2;
+                    int py = (int) bounds.y + by * st + st / 2;
+                    shader.pixel (px, py);
+                    cells[by * cols + bx] = (shader.ia () << 24) | (shader.ir () << 16)
+                        | (shader.ig () << 8) | shader.ib ();
+                }
+            }
+            baked = true;
+        }
+
+        public override void draw_cairo (Context cr) {
+            if (bounds == null || bounds.is_empty ())
+                return;
+            cr.save ();
+            cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
+            cr.clip ();
+            if (shader == null || !shader.valid) {
+                // Missing/invalid module: paint the panel background flat
+                // instead of leaving whatever was underneath.
+                cr.set_source_rgba (0.05, 0.07, 0.12, 1.0);
+                cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
+                cr.fill ();
+                cr.restore ();
+                return;
+            }
+            if (!shader.has_input ()) {
+                shader.set_uniforms (utime, bounds.w, bounds.h);
+                shader.set_params (pa, pb, pc, pd);
+                shader.pixel (0, 0);
+                cr.set_source_rgba ((double) shader.ir () / 255.0,
+                                    (double) shader.ig () / 255.0,
+                                    (double) shader.ib () / 255.0, 1.0);
+                cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
+                cr.fill ();
+                cr.restore ();
+                return;
+            }
+            if (!baked)
+                bake ();
+            int st = (step > 0) ? step : 8;
+            for (int by = 0; by < rows; by++) {
+                for (int bx = 0; bx < cols; bx++) {
+                    int c = cells[by * cols + bx];
+                    int a = (c >> 24) & 0xFF;
+                    if (a == 0)
+                        continue;
+                    int r = (c >> 16) & 0xFF;
+                    int g = (c >> 8) & 0xFF;
+                    int b = c & 0xFF;
+                    cr.set_source_rgba ((double) r / 255.0, (double) g / 255.0,
+                                        (double) b / 255.0, (double) a / 255.0);
+                    cr.rectangle (bounds.x + bx * st, bounds.y + by * st, st, st);
+                    cr.fill ();
+                }
+            }
+            cr.restore ();
         }
     }
 

@@ -2,7 +2,7 @@
 
 namespace Planet.Kernel {
 
-    public class Ramfs : Object {
+    public sealed class Ramfs : Object {
         private const int MAX_FILES = 32;
         private const int SLOT_SIZE = 256;
         private const int MAX_NAME = 64;

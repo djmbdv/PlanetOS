@@ -943,6 +943,11 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0xF7); code.u8 (0xF9);
         }
 
+        // div rcx                            48 F7 F1   (unsigned quotient rax, remainder rdx)
+        public void div_rcx () {
+            code.u8 (0x48); code.u8 (0xF7); code.u8 (0xF1);
+        }
+
         // neg rax                            48 F7 D8
         public void neg_rax () {
             code.u8 (0x48); code.u8 (0xF7); code.u8 (0xD8);
@@ -976,6 +981,21 @@ namespace Planc {
         // sar rax, cl                        48 D3 F8
         public void sar_rax_cl () {
             code.u8 (0x48); code.u8 (0xD3); code.u8 (0xF8);
+        }
+
+        // shr rax, cl                        48 D3 E8   (logical unsigned right shift)
+        public void shr_rax_cl () {
+            code.u8 (0x48); code.u8 (0xD3); code.u8 (0xE8);
+        }
+
+        // mov eax, eax                       89 C0      (zero-extend low 32 bits into rax)
+        public void mov_eax_eax () {
+            code.u8 (0x89); code.u8 (0xC0);
+        }
+
+        // and eax, imm32                     25 + imm32 (zero-extends low bits into rax)
+        public void and_eax_imm32 (uint32 v) {
+            code.u8 (0x25); code.u32le (v);
         }
 
         // cmp rax, rcx                       48 39 C8
@@ -1262,9 +1282,9 @@ namespace Planc {
             syscall ();
         }
 
-        // Shared decimal formatter: converts int64 in `rdi` into [rbp - 32 .. rbp],
+        // Shared decimal formatter: converts int64/uint64 in `rdi` into [rbp - 32 .. rbp],
         // leaving start pointer in `rcx` and length in `rbp - rcx`.
-        private void emit_format_int_to_stack () {
+        private void emit_format_int_to_stack (bool is_unsigned = false) {
             var l_pos = new_label ();
             var l_loop = new_label ();
             var l_done = new_label ();
@@ -1272,14 +1292,16 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xE9);
             // mov rax, rdi                    48 89 F8
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xF8);
-            // xor r8d, r8d                    45 31 C0
-            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0);
-            test_rax_rax ();
-            branch (BranchKind.JGE, l_pos);
-            neg_rax ();
-            // mov r8d, 1                      41 B8 01 00 00 00
-            code.u8 (0x41); code.u8 (0xB8); code.u32le (1);
-            bind (l_pos);
+            if (!is_unsigned) {
+                // xor r8d, r8d                45 31 C0
+                code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0);
+                test_rax_rax ();
+                branch (BranchKind.JGE, l_pos);
+                neg_rax ();
+                // mov r8d, 1                  41 B8 01 00 00 00
+                code.u8 (0x41); code.u8 (0xB8); code.u32le (1);
+                bind (l_pos);
+            }
             // mov r9d, 10                     41 B9 0A 00 00 00
             code.u8 (0x41); code.u8 (0xB9); code.u32le (10);
             bind (l_loop);
@@ -1295,22 +1317,23 @@ namespace Planc {
             code.u8 (0x88); code.u8 (0x11);
             test_rax_rax ();
             branch (BranchKind.JNE, l_loop);
-            // test r8d, r8d                   45 85 C0
-            code.u8 (0x45); code.u8 (0x85); code.u8 (0xC0);
-            branch (BranchKind.JE, l_done);
-            // dec rcx                         48 FF C9
-            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9);
-            // mov byte ptr [rcx], '-'         C6 01 2D
-            code.u8 (0xC6); code.u8 (0x01); code.u8 (0x2D);
-            bind (l_done);
+            if (!is_unsigned) {
+                // test r8d, r8d               45 85 C0
+                code.u8 (0x45); code.u8 (0x85); code.u8 (0xC0);
+                branch (BranchKind.JE, l_done);
+                // dec rcx                     48 FF C9
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9);
+                // mov byte ptr [rcx], '-'     C6 01 2D
+                code.u8 (0xC6); code.u8 (0x01); code.u8 (0x2D);
+                bind (l_done);
+            }
         }
 
-        // void __planc_write_int(int64 rdi) -> formats signed decimal to stdout.
-        public void emit_rt_write_int (bool freestanding = false, bool target_planetos = false) {
+        private void emit_rt_write_int_impl (bool is_unsigned, bool freestanding, bool target_planetos) {
             push_rbp ();
             mov_rsp_to_rbp ();
             sub_rsp (32);
-            emit_format_int_to_stack ();
+            emit_format_int_to_stack (is_unsigned);
             if (target_planetos) {
                 code.u8 (0x48); code.u8 (0x89); code.u8 (0xCF);
                 code.u8 (0x48); code.u8 (0x89); code.u8 (0xEE);
@@ -1342,6 +1365,16 @@ namespace Planc {
             syscall ();
             leave ();
             ret ();
+        }
+
+        // void __planc_write_int(int64 rdi) -> formats signed decimal to stdout.
+        public void emit_rt_write_int (bool freestanding = false, bool target_planetos = false) {
+            emit_rt_write_int_impl (false, freestanding, target_planetos);
+        }
+
+        // void __planc_write_uint(uint64 rdi) -> formats unsigned decimal to stdout.
+        public void emit_rt_write_uint (bool freestanding = false, bool target_planetos = false) {
+            emit_rt_write_int_impl (true, freestanding, target_planetos);
         }
 
         // ------------------------------------------------------------------
@@ -1943,14 +1976,13 @@ namespace Planc {
             ret ();
         }
 
-        // string* __planc_int_to_str(int64 rdi)
-        public void emit_rt_int_to_str () {
+        private void emit_rt_int_to_str_impl (bool is_unsigned) {
             push_rbp ();
             mov_rsp_to_rbp ();
             sub_rsp (32);
             push_reg (Reg.RBX);
             code.u8 (0x41); code.u8 (0x54); // push r12
-            emit_format_int_to_stack ();
+            emit_format_int_to_stack (is_unsigned);
             // mov r12, rcx; mov rbx, rbp; sub rbx, rcx
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xCC);
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xEB);
@@ -1974,6 +2006,16 @@ namespace Planc {
             pop_reg (Reg.RBX);
             leave ();
             ret ();
+        }
+
+        // string* __planc_int_to_str(int64 rdi)
+        public void emit_rt_int_to_str () {
+            emit_rt_int_to_str_impl (false);
+        }
+
+        // string* __planc_uint_to_str(uint64 rdi)
+        public void emit_rt_uint_to_str () {
+            emit_rt_int_to_str_impl (true);
         }
 
         public void emit_check_leaks (int bss_base, Label leak_panic_lbl) {

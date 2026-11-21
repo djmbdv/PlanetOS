@@ -7,9 +7,30 @@ using Planet;
 
 namespace Venus {
 
+    [AsmBody(@"
+        mov (%rdi), %eax
+        ret
+    ")]
+    private extern int __v_peek32 (int addr);
+
+    [AsmBody(@"
+        mov %esi, (%rdi)
+        ret
+    ")]
+    private extern void __v_poke32 (int addr, int val);
+
     public const int CAPSET_VIRGL  = 1;
     public const int CAPSET_VIRGL2 = 2;
     public const int CAPSET_VENUS  = 4;
+
+    // VirGL2 command opcodes (virgl_protocol.h)
+    public const int VIRGL_CCMD_CREATE_OBJECT         = 1;
+    public const int VIRGL_CCMD_DESTROY_OBJECT        = 3;
+    public const int VIRGL_CCMD_SET_FRAMEBUFFER_STATE = 5;
+    public const int VIRGL_CCMD_CLEAR                 = 7;
+    public const int VIRGL_OBJECT_SURFACE             = 8;
+    public const int VIRGL_FORMAT_B8G8R8A8_UNORM      = 1;
+    public const int PIPE_CLEAR_COLOR0                = 4;
 
     // Venus protocol command opcodes (Mesa venus-protocol)
     public const int VK_CMD_CREATE_INSTANCE            = 1;
@@ -157,6 +178,71 @@ namespace Venus {
             write_u64 (cmd_buf_id);
         }
 
+        public static int f32_bits (double v) {
+            if (v == 0.0)
+                return 0;
+            int sign = 0;
+            if (v < 0.0) {
+                sign = 1;
+                v = -v;
+            }
+            int exp = 127;
+            while (v >= 2.0 && exp < 254) {
+                v = v * 0.5;
+                exp++;
+            }
+            while (v < 1.0 && exp > 1) {
+                v = v * 2.0;
+                exp--;
+            }
+            if (v < 1.0)
+                return 0;
+            int mant = (int) ((v - 1.0) * 8388608.0 + 0.5);
+            if (mant >= 8388608) {
+                mant = 0;
+                exp++;
+            }
+            return (sign << 31) | ((exp & 0xFF) << 23) | (mant & 0x7FFFFF);
+        }
+
+        public void virgl_hdr (int cmd, int obj, int len) {
+            write_u32 ((cmd & 0xFF) | ((obj & 0xFF) << 8) | ((len & 0xFFFF) << 16));
+            cmd_count++;
+        }
+
+        public void encode_virgl_create_surface (int handle, int res_id, int format = VIRGL_FORMAT_B8G8R8A8_UNORM) {
+            virgl_hdr (VIRGL_CCMD_CREATE_OBJECT, VIRGL_OBJECT_SURFACE, 5);
+            write_u32 (handle);
+            write_u32 (res_id);
+            write_u32 (format);
+            write_u32 (0); // level / first_element
+            write_u32 (0); // first_layer | (last_layer << 16)
+        }
+
+        public void encode_virgl_set_framebuffer (int cbuf_handle) {
+            virgl_hdr (VIRGL_CCMD_SET_FRAMEBUFFER_STATE, 0, 3);
+            write_u32 (1); // nr_cbufs
+            write_u32 (0); // zsbuf_handle
+            write_u32 (cbuf_handle);
+        }
+
+        public void encode_virgl_clear (double r, double g, double b, double a) {
+            virgl_hdr (VIRGL_CCMD_CLEAR, 0, 8);
+            write_u32 (PIPE_CLEAR_COLOR0);
+            write_u32 (f32_bits (r));
+            write_u32 (f32_bits (g));
+            write_u32 (f32_bits (b));
+            write_u32 (f32_bits (a));
+            write_u32 (0); // depth lo
+            write_u32 (0); // depth hi
+            write_u32 (0); // stencil
+        }
+
+        public void encode_virgl_destroy_object (int handle, int obj = VIRGL_OBJECT_SURFACE) {
+            virgl_hdr (VIRGL_CCMD_DESTROY_OBJECT, obj, 1);
+            write_u32 (handle);
+        }
+
         public bool submit (int ctx_id) {
             if (pos <= 0)
                 return false;
@@ -175,6 +261,7 @@ namespace Venus {
         public bool context { get; private set; }
         public bool submit { get; private set; }
         public bool res3d { get; private set; }
+        public bool virgl_draw { get; private set; }
         public bool blob { get; private set; }
         public bool venus_ctx { get; private set; }
         public bool cleanup { get; private set; }
@@ -201,6 +288,16 @@ namespace Venus {
             int res3d_pa = Sys.gpu_3d_create (ctx_id, res3d_id, 16, 16);
             if (res3d_pa != 0) {
                 res3d = true;
+                var venc = new CommandEncoder (256);
+                venc.encode_virgl_create_surface (1, res3d_id);
+                venc.encode_virgl_set_framebuffer (1);
+                venc.encode_virgl_clear (0.125, 0.25, 0.5, 1.0);
+                venc.encode_virgl_destroy_object (1);
+                if (venc.submit (ctx_id) && Sys.gpu_3d_readback (ctx_id, res3d_id, 16, 16) == 0) {
+                    int px = __v_peek32 (res3d_pa);
+                    if ((px & 0xFFFFFF) != 0)
+                        virgl_draw = true;
+                }
                 if (Sys.gpu_resource_destroy (ctx_id, res3d_id, res3d_pa, res3d_bytes) != 0)
                     cleanup = false;
             }
@@ -234,7 +331,7 @@ namespace Venus {
                 return "skipped (no virtio-gpu)";
             if (!virgl)
                 return "skipped (no virgl)";
-            return @"ctx=$(context ? 1 : 0) submit=$(submit ? 1 : 0) res3d=$(res3d ? 1 : 0) blob=$(blob ? 1 : 0) venus=$(venus_ctx ? 1 : 0) cleanup=$(cleanup ? 1 : 0)";
+            return @"ctx=$(context ? 1 : 0) submit=$(submit ? 1 : 0) res3d=$(res3d ? 1 : 0) draw=$(virgl_draw ? 1 : 0) blob=$(blob ? 1 : 0) venus=$(venus_ctx ? 1 : 0) cleanup=$(cleanup ? 1 : 0)";
         }
 
         // A device without VirGL has nothing to probe, so skipping is success.
@@ -263,7 +360,7 @@ namespace Venus {
         }
 
         public bool submit (CommandEncoder enc) {
-            if (!active || !hw_venus)
+            if (!active)
                 return false;
             return enc.submit (ctx_id);
         }
@@ -282,6 +379,7 @@ namespace Venus {
         public CommandEncoder enc { get; private set; }
         public BlobRing ring { get; private set; }
         public bool using_hw_venus { get; private set; }
+        public bool using_hw_virgl { get; private set; }
         private int next_handle = 100;
 
         public GpuDevice (int ctx_id = 1) {
@@ -291,8 +389,11 @@ namespace Venus {
             enc = new CommandEncoder (8192);
             ring = new BlobRing (0, 100 + ctx_id, 16384);
             using_hw_venus = ctx.hw_venus && ctx.active;
-            enc.encode_create_instance (1);
-            enc.encode_create_device (1, 1);
+            using_hw_virgl = ctx.active && !using_hw_venus;
+            if (using_hw_venus) {
+                enc.encode_create_instance (1);
+                enc.encode_create_device (1, 1);
+            }
         }
 
         public int create_shader_module (uint8[] spv_bytes, int spv_len) {
@@ -310,6 +411,35 @@ namespace Venus {
         public bool draw_fullscreen (int pipeline_id) {
             enc.encode_draw (1, pipeline_id, 3, 1);
             return true;
+        }
+
+        // Executes a real VirGL2 clear pass on a 3D render target, reads the
+        // rendered BGRA pixels back from the host GPU, and optionally copies
+        // them to dst_buf_addr.
+        public bool virgl_clear_target (int width, int height, double r, double g, double b, double a, int dst_buf_addr = 0) {
+            if (!using_hw_virgl || width <= 0 || height <= 0)
+                return false;
+            int bytes = width * height * 4;
+            if (bytes > 256 * 4096)
+                return false;
+            int res_id = next_handle++;
+            int surf_id = next_handle++;
+            int pa = Sys.gpu_3d_create (ctx.ctx_id, res_id, width, height);
+            if (pa == 0)
+                return false;
+            enc.reset ();
+            enc.encode_virgl_create_surface (surf_id, res_id);
+            enc.encode_virgl_set_framebuffer (surf_id);
+            enc.encode_virgl_clear (r, g, b, a);
+            enc.encode_virgl_destroy_object (surf_id);
+            bool ok = ctx.submit (enc) && Sys.gpu_3d_readback (ctx.ctx_id, res_id, width, height) == 0;
+            if (ok && dst_buf_addr != 0) {
+                int nwords = width * height;
+                for (int i = 0; i < nwords; i++)
+                    __v_poke32 (dst_buf_addr + i * 4, __v_peek32 (pa + i * 4));
+            }
+            Sys.gpu_resource_destroy (ctx.ctx_id, res_id, pa, bytes);
+            return ok;
         }
 
         public void close () {

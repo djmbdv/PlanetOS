@@ -20,59 +20,58 @@ namespace Planet.Kernel {
     ")]
     public extern void pci_cfg_write32 (int addr, int val);
 
-    private int vgpu_found = 0;
-    private int vgpu_common_base = 0;
-    private int vgpu_notify_base = 0;
-    private int vgpu_notify_mult = 0;
-    private int vgpu_dev_base = 0;
-    private int vgpu_features_lo = 0;
+    public sealed class VirtioGpu : Object {
+        private static int vgpu_found = 0;
+        private static int vgpu_common_base = 0;
+        private static int vgpu_notify_base = 0;
+        private static int vgpu_notify_mult = 0;
+        private static int vgpu_dev_base = 0;
+        private static int vgpu_features_lo = 0;
 
-    // Queue 0 (controlq)
-    private int vgpu_vq_page = 0;
-    private int vgpu_cmd_page = 0;
-    private int vgpu_qsize = 16;
-    private int vgpu_q_notify_off = 0;
-    private int vgpu_avail_idx = 0;
-    private int vgpu_last_used = 0;
+        // Queue 0 (controlq)
+        private static int vgpu_vq_page = 0;
+        private static int vgpu_cmd_page = 0;
+        private static int vgpu_qsize = 16;
+        private static int vgpu_q_notify_off = 0;
+        private static int vgpu_avail_idx = 0;
+        private static int vgpu_last_used = 0;
 
-    // Queue 1 (cursorq)
-    private int vgpu_cq_page = 0;
-    private int vgpu_ccmd_page = 0;
-    private int vgpu_cqsize = 16;
-    private int vgpu_cq_notify_off = 0;
-    private int vgpu_cavail_idx = 0;
-    private int vgpu_clast_used = 0;
-    private int vgpu_cursor_pa = 0;
-    private int vgpu_cursor_ready = 0;
+        // Queue 1 (cursorq)
+        private static int vgpu_cq_page = 0;
+        private static int vgpu_ccmd_page = 0;
+        private static int vgpu_cqsize = 16;
+        private static int vgpu_cq_notify_off = 0;
+        private static int vgpu_cavail_idx = 0;
+        private static int vgpu_clast_used = 0;
+        private static int vgpu_cursor_pa = 0;
+        private static int vgpu_cursor_ready = 0;
 
-    // Display & 2D scanout state
-    private int vgpu_disp_w = 0;
-    private int vgpu_disp_h = 0;
-    private int vgpu_has_venus = 0;
-    private int vgpu_scanout_w = 0;
-    private int vgpu_scanout_h = 0;
-    private int vgpu_scanout_active = 0;
-    private int vgpu_fb_pa = 0;
-    private int vgpu_fb_pages = 0;
-    private int vgpu_con_active = 0;
-    private int vgpu_con_cur_r = -1;
-    private int vgpu_con_cur_c = -1;
-    private int vgpu_con_dirty_r0 = 25;
-    private int vgpu_con_dirty_r1 = -1;
-    private int vgpu_fence_seq = 1;
+        // Display & 2D scanout state
+        private static int vgpu_disp_w = 0;
+        private static int vgpu_disp_h = 0;
+        private static int vgpu_has_venus = 0;
+        private static int vgpu_scanout_w = 0;
+        private static int vgpu_scanout_h = 0;
+        private static int vgpu_scanout_active = 0;
+        private static int vgpu_fb_pa = 0;
+        private static int vgpu_fb_pages = 0;
+        private static int vgpu_con_active = 0;
+        private static int vgpu_con_cur_r = 0;
+        private static int vgpu_con_cur_c = 0;
+        private static int vgpu_con_dirty_r0 = 25;
+        private static int vgpu_con_dirty_r1 = 0;
+        private static int vgpu_fence_seq = 1;
 
-    // Phase 3 resource table: one frame of 64 x 32-byte entries that records
-    // which contexts and blobs a process owns, so a destroy request can only
-    // release what this kernel handed out.
-    //   +0 used  +4 kind  +8 id  +12 owner  +16 ctx_id  +20 pa  +24 size  +28 pages
-    private int vgpu_res_table = 0;
-    private const int GPU_RES_ENTRIES = 64;
-    private const int GPU_RES_STRIDE = 32;
-    private const int GPU_RES_CTX = 1;
-    private const int GPU_RES_BLOB = 2;
-    private const int GPU_RES_3D = 3;
-
-    public class VirtioGpu : Object {
+        // Phase 3 resource table: one frame of 64 x 32-byte entries that records
+        // which contexts and blobs a process owns, so a destroy request can only
+        // release what this kernel handed out.
+        //   +0 used  +4 kind  +8 id  +12 owner  +16 ctx_id  +20 pa  +24 size  +28 pages
+        private static int vgpu_res_table = 0;
+        private const int GPU_RES_ENTRIES = 64;
+        private const int GPU_RES_STRIDE = 32;
+        private const int GPU_RES_CTX = 1;
+        private const int GPU_RES_BLOB = 2;
+        private const int GPU_RES_3D = 3;
         private const int VENDOR_VIRTIO = 0x1AF4;
         private const int DEV_GPU       = 0x1050;
 
@@ -104,6 +103,7 @@ namespace Planet.Kernel {
         private const int CMD_CTX_ATTACH_RESOURCE     = 0x0202;
         private const int CMD_CTX_DETACH_RESOURCE     = 0x0203;
         private const int CMD_RESOURCE_CREATE_3D      = 0x0204;
+        private const int CMD_TRANSFER_FROM_HOST_3D   = 0x0206;
         private const int CMD_SUBMIT_3D               = 0x0207;
         private const int CMD_UPDATE_CURSOR           = 0x0300;
         private const int CMD_MOVE_CURSOR             = 0x0301;
@@ -1146,6 +1146,43 @@ namespace Planet.Kernel {
             return true;
         }
 
+        // Reads back a 3D resource's rendered pixels from host GPU memory into
+        // the guest pages attached via create_3d_mapped.
+        public static bool transfer_from_host_3d (int ctx_id, int res_id, int width, int height) {
+            if (vgpu_found == 0 || (vgpu_features_lo & F_VIRGL) == 0
+                || ctx_id <= 0 || res_id <= 0 || width <= 0 || height <= 0)
+                return false;
+            int idx = res_find (GPU_RES_3D, res_id);
+            if (idx < 0)
+                return false;
+            int slot = res_slot (idx);
+            if (mmio_read32 (slot + 12) != Sched.current_tid ()
+                || mmio_read32 (slot + 16) != ctx_id)
+                return false;
+            int bytes = width * height * 4;
+            if (bytes <= 0 || bytes > mmio_read32 (slot + 24))
+                return false;
+
+            // virtio_gpu_transfer_host_3d (72 bytes):
+            // hdr (24B) + box (24B) + offset (8B) + resource_id + level + stride + layer_stride
+            clear_cmd (72);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_TRANSFER_FROM_HOST_3D);
+            mmio_write32 (vgpu_cmd_page + 4, FLAG_FENCE);
+            mmio_write64 (vgpu_cmd_page + 8, vgpu_fence_seq);
+            vgpu_fence_seq++;
+            mmio_write32 (vgpu_cmd_page + 16, ctx_id);
+            mmio_write32 (vgpu_cmd_page + 36, width);
+            mmio_write32 (vgpu_cmd_page + 40, height);
+            mmio_write32 (vgpu_cmd_page + 44, 1);
+            mmio_write32 (vgpu_cmd_page + 56, res_id);
+            mmio_write32 (vgpu_cmd_page + 64, width * 4);
+            if (!send_cmd (72, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"transfer_from_host_3d failed: $(resp_name (resp_type ()))");
+                return false;
+            }
+            return true;
+        }
+
         public static bool is_present () { return vgpu_found != 0; }
         public static bool has_virgl () { return (vgpu_features_lo & F_VIRGL) != 0; }
         public static bool has_blob () { return (vgpu_features_lo & F_RESOURCE_BLOB) != 0; }
@@ -1411,6 +1448,8 @@ namespace Planet.Kernel {
                     mmio_write32 (vgpu_fb_pa + row_off + x * 4, border ? 0xFF1E293B : 0xFF0F131A);
                 }
             }
+            vgpu_con_dirty_r0 = 25;
+            vgpu_con_dirty_r1 = -1;
             vgpu_con_active = 1;
             flush_scanout_rect (0, 0, 1280, 720);
             console_redraw_all (cur_r, cur_c);

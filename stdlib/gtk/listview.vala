@@ -66,6 +66,22 @@ namespace Gtk {
             if (child != null)
                 child.draw (cr);
         }
+
+        public override void gather_damage () {
+            if (child == null)
+                return;
+            child.gather_damage ();
+            int n = child.damage_rect_count ();
+            for (int j = 0; j < n; j++) {
+                int x = 0;
+                int y = 0;
+                int w = 0;
+                int h = 0;
+                if (child.damage_rect_at (j, out x, out y, out w, out h))
+                    damage_box (x, y, w, h);
+            }
+            child.clear_damage ();
+        }
     }
 
     public class ListBox : Widget {
@@ -152,6 +168,31 @@ namespace Gtk {
                 }
             }
             row_selected (row);
+            damage_self ();
+        }
+
+        public override void gather_damage () {
+            for (int i = 0; i < rows.length; i++) {
+                rows[i].gather_damage ();
+                int n = rows[i].damage_rect_count ();
+                for (int j = 0; j < n; j++) {
+                    int x = 0;
+                    int y = 0;
+                    int w = 0;
+                    int h = 0;
+                    if (rows[i].damage_rect_at (j, out x, out y, out w, out h))
+                        damage_box (x, y, w, h);
+                }
+                rows[i].clear_damage ();
+            }
+        }
+
+        public override bool handle_key (int key) {
+            for (int i = 0; i < rows.length; i++) {
+                if (rows[i].handle_key (key))
+                    return true;
+            }
+            return on_key_press (key);
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -210,7 +251,7 @@ namespace Gtk {
                 return false;
             for (int i = 0; i < rows.length; i++) {
                 if (rows[i].visible && rows[i].contains (mx, my)) {
-                    focused = true;
+                    grab_focus ();
                     bool already = (selected_index == i);
                     select_row (rows[i]);
                     if (already)
@@ -270,6 +311,7 @@ namespace Gtk {
             if (selected_index >= labels.length)
                 selected_index = -1;
             hovered_index = -1;
+            damage_self ();
         }
 
         public int get_count () {
@@ -285,6 +327,7 @@ namespace Gtk {
                 return;
             if (selected_index != idx) {
                 selected_index = idx;
+                damage_self ();
                 selection_changed (idx);
             }
         }
@@ -337,6 +380,7 @@ namespace Gtk {
             }
             if (nh != hovered_index) {
                 hovered_index = nh;
+                damage_self ();
                 return true;
             }
             return false;
@@ -347,7 +391,7 @@ namespace Gtk {
                 return false;
             int idx = (my - y) / row_height;
             if (idx >= 0 && idx < labels.length) {
-                focused = true;
+                grab_focus ();
                 bool already = (selected_index == idx);
                 set_selected (idx);
                 if (already)

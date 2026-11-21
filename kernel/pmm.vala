@@ -42,11 +42,10 @@ namespace Planet.Kernel {
     ")]
     public extern void poison_page_4k (int phys_addr);
 
-    private int pmm_total_frames = 0;
-    private int pmm_free_count = 0;
-    private int pmm_double_free_count = 0;
-
-    public class Pmm : Object {
+    public sealed class Pmm : Object {
+        private static int pmm_total_frames = 0;
+        private static int pmm_free_count = 0;
+        private static int pmm_double_free_count = 0;
         private const int PAGE_SIZE = 4096;
         private const int MAX_BYTES = 0x4000000;   // 64 MiB cap (16384 frames = 2048 B bitmap)
 

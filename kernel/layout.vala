@@ -21,11 +21,10 @@
 
 namespace Planet.Kernel {
 
-    // Address just past the last region checked by verify (), kept as a global
-    // so the walk needs no table: the language has no arrays to hold one.
-    private int layout_cursor = 0;
-
-    public class KernelLayout : Object {
+    public sealed class KernelLayout : Object {
+        // Address just past the last region checked by verify (), kept as a static
+        // field so the walk needs no table: the language has no arrays to hold one.
+        private static int layout_cursor = 0;
         // Window start (boot page tables) and end (past the FXSAVE area).
         public const int WINDOW_BASE = 0x100000;
         public const int WINDOW_END = 0x129000;

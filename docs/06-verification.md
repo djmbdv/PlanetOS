@@ -111,11 +111,13 @@ serial output against `<case>.expect`.
 | `directories` | `mkdir`/`cd`/`pwd`, `ls -l`, path-relative `write`/`cat`/`mv`/`rm`, empty-directory deletion |
 | `gio` | the Gio layer runs twice in one boot at 51/51 |
 | `exec` | bare, case-insensitive and `exec` command resolution |
-| `errors` | XFS stays read-only, a failed `mkdir` does not shadow a disk file, and the syscall guard rejects bad pointers (`sysguard:ok=1`) |
+| `errors` | the unlink/mkdir/cat error paths run inside `test/errors` (a RAMFS tree that disappears at the next boot), so the shared XFS root is untouched and later cases still see `hello.txt`; the syscall guard rejects bad pointers (`sysguard:ok=1`) |
 | `compiler` | `planc.elf` compiles and runs programs inside the guest |
 | `objects` | `gobject_demo` and `gmodule_demo` report 19/19 and 14/14 |
 | `mainloop` | `mainloop_demo` reports 17/17 (idle before timeouts, source removal, `Application.run`) |
-| `graphics` | `cairo_demo`/`spv_demo` draw an 800×600 framebuffer (the 469-page surface proves the raised allocation limit), the shared SPIR-V module reports `words=169 insns=44 rgb=(56,188,247)`, the compositor self-test passes 73/73 in three modes (static, --vulkan, --animate: damage merge, occlusion, modifiers, per-pixel pattern, push constants) and the Vulkan refusal is reported |
+| `graphics` | `cairo_demo`/`spv_demo` draw an 800×600 framebuffer (the 469-page surface proves the raised allocation limit), the shared SPIR-V module reports `words=169 insns=44 rgb=(56,188,247)`, `vk_demo --once` paints a GSK `ShaderNode` from `frag_pattern.spv`, the compositor self-test passes 108/108 in three modes (static, --vulkan, --animate: damage merge, occlusion, modifiers, per-pixel pattern, push constants, shared surface header, two-rectangle publish and the shared input ring) and the Vulkan refusal is reported |
+| `saturn` | `saturn --self-test` proves the interactive contract: one keystroke damages one editor line, Enter damages down to the viewport bottom, an arrow key damages the two caret rows, arrow keys reach the focused editor instead of scrolling the side panel, focus is exclusive between the list and the editor, and the window publishes exactly the rectangles it repainted into a shared surface |
+| `compositor-ext` | `compositor --ext saturn.elf --keys abcd --frames 400` boots a real client through the production path: the compositor allocates the block and spawns `saturn.elf`, the client attaches it, receives the typed keys through the input ring, and publishes three rectangles (initial frame, edited line, status label) totalling less than two full frames — with no `_comp_*` file in `/tmp` and the desktop pass skipped for rectangles covered by the window (`bg>0`) |
 | `pango` | `pango_demo` reports 44/44: metrics, wrapping, ellipsize, alignment, colour attribute runs, `clip()` and text drawing |
 
 Assertions: `text` (substring, in order), `=text` (whole line), `!text`

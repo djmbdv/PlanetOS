@@ -127,19 +127,117 @@ namespace Planet.Kernel {
     ")]
     public extern void vga_outb (int port, int val);
 
-    private int fb_phys_addr = 0;
-    private int fb_owner_cr3 = 0;
-    private int fb_width = 0;
-    private int fb_height = 0;
-    private int fb_page = 0;
-    private int fb_backend = 0; // 1 = BGA, 2 = VirtIO-GPU
-    private int fb_has_avx2 = -1;
-    private int vga_saved = 0;
-    private int vga_misc = 0;
-    private int vga_state_buf = 0;
+    public interface DisplayBackend : Object {
+        public abstract int init_mode (int w, int h);
+        public abstract void blit_full (int src_buf, int w, int h);
+        public abstract void blit_rect (int src_buf, int rx, int ry, int rw, int rh);
+        public abstract void close_mode ();
+    }
 
-    public class Fb : Object {
-        private static int find_vga_bar0 () {
+    public sealed class VirtioGpuDisplay : Object, DisplayBackend {
+        public int init_mode (int w, int h) {
+            VirtioGpu.set_console_active (false);
+            return VirtioGpu.init_scanout (w, h);
+        }
+
+        public void blit_full (int src_buf, int w, int h) {
+            VirtioGpu.present_full (src_buf, w, h);
+        }
+
+        public void blit_rect (int src_buf, int rx, int ry, int rw, int rh) {
+            VirtioGpu.present_rect (src_buf, rx, ry, rw, rh);
+        }
+
+        public void close_mode () {
+            VirtioGpu.close_scanout ();
+            if (VirtioGpu.init_scanout (1280, 720) != 0)
+                VirtioGpu.set_console_active (true);
+        }
+    }
+
+    public sealed class BgaDisplay : Object, DisplayBackend {
+        private int phys_addr = 0;
+        private int width = 0;
+        private int height = 0;
+        private int page = 0;
+
+        public int init_mode (int w, int h) {
+            int ver = bga_read (0);
+            if (ver < 0xB0C0 || ver > 0xB0C6)
+                return 0;
+            int bar0 = Fb.find_vga_bar0 ();
+            if (bar0 == 0)
+                return 0;
+            Fb.save_vga_text_state ();
+            Fb.map_lfb (bar0);
+            bga_write (4, 0);       // VBE_DISPI_INDEX_ENABLE = 0
+            bga_write (1, w);       // XRES
+            bga_write (2, h);       // YRES
+            bga_write (3, 32);      // BPP = 32 ARGB
+            bga_write (6, w);       // VIRT_WIDTH = w
+            bga_write (7, h * 2);   // VIRT_HEIGHT = 2*h (hardware double-buffering)
+            bga_write (8, 0);       // X_OFFSET = 0
+            bga_write (9, 0);       // Y_OFFSET = 0
+            bga_write (4, 0x41);    // ENABLED | LFB_ENABLED
+            this.phys_addr = bar0;
+            this.width = w;
+            this.height = h;
+            this.page = 0;
+            return bar0;
+        }
+
+        public void blit_full (int src_buf, int w, int h) {
+            int back = 1 - this.page;
+            int dst_base = this.phys_addr + back * this.width * this.height * 4;
+            int cw = (w < this.width) ? w : this.width;
+            int ch = (h < this.height) ? h : this.height;
+            if (cw == this.width) {
+                Fb.copy_fast (dst_base, src_buf, cw * ch);
+            } else {
+                for (int y = 0; y < ch; y++) {
+                    Fb.copy_fast (dst_base + y * this.width * 4, src_buf + y * w * 4, cw);
+                }
+            }
+            this.page = back;
+            bga_write (9, back * this.height); // Page flip via Y_OFFSET
+        }
+
+        public void blit_rect (int src_buf, int rx, int ry, int rw, int rh) {
+            if (rx < 0) rx = 0;
+            if (ry < 0) ry = 0;
+            if (rx + rw > this.width) rw = this.width - rx;
+            if (ry + rh > this.height) rh = this.height - ry;
+            if (rw <= 0 || rh <= 0)
+                return;
+            int dst_base = this.phys_addr + this.page * this.width * this.height * 4;
+            for (int row = 0; row < rh; row++) {
+                int off = ((ry + row) * this.width + rx) * 4;
+                Fb.copy_fast (dst_base + off, src_buf + off, rw);
+            }
+        }
+
+        public void close_mode () {
+            bga_write (4, 0);
+            bga_write (8, 0);
+            bga_write (9, 0);
+            Fb.restore_vga_text_state ();
+            this.phys_addr = 0;
+            this.width = 0;
+            this.height = 0;
+            this.page = 0;
+        }
+    }
+
+    public sealed class Fb : Object {
+        private static int fb_phys_addr = 0;
+        private static int fb_owner_cr3 = 0;
+        private static int fb_width = 0;
+        private static int fb_height = 0;
+        private static int vga_saved = 0;
+        private static int vga_misc = 0;
+        private static int vga_state_buf = 0;
+        private static DisplayBackend? active_backend;
+        internal static int find_vga_bar0 () {
             for (int dev = 0; dev < 32; dev++) {
                 int id = pci_cfg_read32 (0x80000000 | (dev << 11));
                 if ((id & 0xFFFF) == 0xFFFF)
@@ -155,7 +253,7 @@ namespace Planet.Kernel {
             return 0;
         }
 
-        private static void map_lfb (int phys) {
+        internal static void map_lfb (int phys) {
             int pdpt_idx = (phys >> 30) & 0x1FF;
             if (pdpt_idx == 0)
                 return;
@@ -184,7 +282,7 @@ namespace Planet.Kernel {
             return (w >> ((addr & 3) * 8)) & 0xFF;
         }
 
-        private static void save_vga_text_state () {
+        internal static void save_vga_text_state () {
             if (vga_saved != 0)
                 return;
             vga_state_buf = Pmm.alloc_contiguous (3); // 8 KiB font + VGA registers
@@ -220,7 +318,7 @@ namespace Planet.Kernel {
             vga_saved = 1;
         }
 
-        private static void restore_vga_text_state () {
+        internal static void restore_vga_text_state () {
             if (vga_saved == 0 || vga_state_buf == 0)
                 return;
             vga_outb (0x3C2, vga_misc);
@@ -266,40 +364,25 @@ namespace Planet.Kernel {
             if (fb_phys_addr != 0 && fb_owner_cr3 != 0 && cur_cr3 != fb_owner_cr3)
                 return 0;
             if (VirtioGpu.is_present ()) {
-                VirtioGpu.set_console_active (false);
-                int vfb = VirtioGpu.init_scanout (w, h);
+                var vg = new VirtioGpuDisplay ();
+                int vfb = vg.init_mode (w, h);
                 if (vfb != 0) {
-                    fb_backend = 2;
+                    active_backend = vg;
                     fb_phys_addr = vfb;
                     fb_width = w;
                     fb_height = h;
-                    fb_page = 0;
                     fb_owner_cr3 = cur_cr3;
                     return vfb;
                 }
             }
-            int ver = bga_read (0);
-            if (ver < 0xB0C0 || ver > 0xB0C6)
-                return 0;
-            int bar0 = find_vga_bar0 ();
+            var bga = new BgaDisplay ();
+            int bar0 = bga.init_mode (w, h);
             if (bar0 == 0)
                 return 0;
-            save_vga_text_state ();
-            map_lfb (bar0);
-            bga_write (4, 0);       // VBE_DISPI_INDEX_ENABLE = 0
-            bga_write (1, w);       // XRES
-            bga_write (2, h);       // YRES
-            bga_write (3, 32);      // BPP = 32 ARGB
-            bga_write (6, w);       // VIRT_WIDTH = w
-            bga_write (7, h * 2);   // VIRT_HEIGHT = 2*h (hardware double-buffering)
-            bga_write (8, 0);       // X_OFFSET = 0
-            bga_write (9, 0);       // Y_OFFSET = 0
-            bga_write (4, 0x41);    // ENABLED | LFB_ENABLED
-            fb_backend = 1;
+            active_backend = bga;
             fb_phys_addr = bar0;
             fb_width = w;
             fb_height = h;
-            fb_page = 0;
             fb_owner_cr3 = cur_cr3;
             return bar0;
         }
@@ -319,36 +402,16 @@ namespace Planet.Kernel {
             fb_copy_dwords_avx2 (dst, src, count);
         }
 
-        private static void copy_pixels (int dst, int src, int count) {
-            copy_fast (dst, src, count);
-        }
-
         public static void blit (int src_buf, int w, int h) {
-            if (fb_phys_addr == 0 || src_buf == 0)
+            if (fb_phys_addr == 0 || src_buf == 0 || active_backend == null)
                 return;
             if (fb_owner_cr3 != 0 && Sched.current_cr3 () != fb_owner_cr3)
                 return;
-            if (fb_backend == 2) {
-                VirtioGpu.present_full (src_buf, w, h);
-                return;
-            }
-            int back = 1 - fb_page;
-            int dst_base = fb_phys_addr + back * fb_width * fb_height * 4;
-            int cw = (w < fb_width) ? w : fb_width;
-            int ch = (h < fb_height) ? h : fb_height;
-            if (cw == fb_width) {
-                copy_pixels (dst_base, src_buf, cw * ch);
-            } else {
-                for (int y = 0; y < ch; y++) {
-                    copy_pixels (dst_base + y * fb_width * 4, src_buf + y * w * 4, cw);
-                }
-            }
-            fb_page = back;
-            bga_write (9, back * fb_height); // Page flip via Y_OFFSET
+            active_backend.blit_full (src_buf, w, h);
         }
 
         public static void blit_rect (int src_buf, int xy_packed, int wh_packed) {
-            if (fb_phys_addr == 0 || src_buf == 0)
+            if (fb_phys_addr == 0 || src_buf == 0 || active_backend == null)
                 return;
             if (fb_owner_cr3 != 0 && Sched.current_cr3 () != fb_owner_cr3)
                 return;
@@ -356,21 +419,7 @@ namespace Planet.Kernel {
             int ry = xy_packed & 0xFFFF;
             int rw = (wh_packed >> 16) & 0xFFFF;
             int rh = wh_packed & 0xFFFF;
-            if (fb_backend == 2) {
-                VirtioGpu.present_rect (src_buf, rx, ry, rw, rh);
-                return;
-            }
-            if (rx < 0) rx = 0;
-            if (ry < 0) ry = 0;
-            if (rx + rw > fb_width) rw = fb_width - rx;
-            if (ry + rh > fb_height) rh = fb_height - ry;
-            if (rw <= 0 || rh <= 0)
-                return;
-            int dst_base = fb_phys_addr + fb_page * fb_width * fb_height * 4;
-            for (int row = 0; row < rh; row++) {
-                int off = ((ry + row) * fb_width + rx) * 4;
-                copy_pixels (dst_base + off, src_buf + off, rw);
-            }
+            active_backend.blit_rect (src_buf, rx, ry, rw, rh);
         }
 
         public static int width () {
@@ -392,21 +441,13 @@ namespace Planet.Kernel {
             if (fb_owner_cr3 != 0 && Sched.current_cr3 () != fb_owner_cr3)
                 return;
             if (fb_phys_addr != 0) {
-                if (fb_backend == 2) {
-                    VirtioGpu.close_scanout ();
-                    if (VirtioGpu.init_scanout (1280, 720) != 0)
-                        VirtioGpu.set_console_active (true);
-                } else {
-                    bga_write (4, 0);
-                    bga_write (8, 0);
-                    bga_write (9, 0);
-                    restore_vga_text_state ();
+                if (active_backend != null) {
+                    active_backend.close_mode ();
+                    active_backend = null;
                 }
-                fb_backend = 0;
                 fb_phys_addr = 0;
                 fb_width = 0;
                 fb_height = 0;
-                fb_page = 0;
                 fb_owner_cr3 = 0;
                 Vga.init ();
             }

@@ -314,4 +314,47 @@ Outside the scope of the current specification, but with the decisions that must
 | Widget kit | own Vala library on top of `planetrt` |
 | Rejected | Wayland, X11, GTK, and any toolkit that depends on C |
 
+### 12.1 Shared window surfaces (implemented)
+
+The compositor allocates one block per external window and exports its base
+address as `PLANET_WIN_SHM`; the kernel identity-maps user frames, so the client
+attaches the very same address with `SYS_MAP_USER_AT` and both processes see the
+same bytes. The block is one 4 KiB header page followed by `w * h * 4` ARGB
+pixels (`Gdk.SharedSurface`):
+
+| Offset | Word | Meaning |
+|---|---|---|
+| `+0` | magic | `0x4D48534F` ("OSHM") |
+| `+4` / `+8` | width / height | pixel dimensions of the client surface |
+| `+12` | seq | frame counter, written last by the client |
+| `+16` / `+20` | dx / dy | damage origin of rectangle 0, window-local |
+| `+24` / `+28` | dw / dh | damage size of rectangle 0 |
+| `+32` | dcount | rectangles in this frame (1..4) |
+| `+36`..`+80` | rect 1..3 | three more `x, y, w, h` groups, 16 bytes each |
+| `+84` | ev seq | last input event the compositor wrote |
+| `+88` | ev ack | last input event the client consumed |
+| `+92` | ev slots | 16 slots x `type, p1, p2, p3` (16 bytes each) |
+
+The client draws straight into the pixels and only publishes its damage
+rectangles plus a new `seq`; the compositor samples the header every frame (no
+syscalls) and damages exactly those rectangles. Rectangles are kept apart when
+they are far from each other (four at most, then they collapse into one bounding
+box), so a keystroke repaints the edited line and the status label instead of the
+whole window and the gap between them.
+
+Input uses the same block: the compositor writes one ring slot and bumps
+`ev seq`, the client copies everything up to that sequence and acknowledges it in
+`ev ack`. A slot index is `seq % 16`, so the ring never allocates and neither side
+needs a syscall per event. Overruns drop the oldest events, not the newest.
+
+The PWIN file transports (`PLANET_WIN_FILE` for whole frames and
+`PLANET_WIN_EV` for events) remain as the fallback when the block cannot be
+allocated.
+
+On the client side `Gtk` widgets queue damage rectangles
+(`Widget.damage_box`/`gather_damage`): `GtkWindow.run` repaints and publishes the
+accumulated rectangles (at most four), and falls back to a full repaint whenever
+an input handler reports a change without damage, so a missed damage call costs
+speed but never correctness.
+
 There is no requirement of compatibility with existing graphical applications, and therefore there is no restriction that pushes towards a foreign toolkit.

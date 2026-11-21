@@ -80,6 +80,235 @@ namespace Cairo {
     ")]
     private extern int __c_peek32 (int addr);
 
+    [AsmBody(@"
+        # Data pointer of a uint8[] (header is 16 bytes)
+        add $16, %rdi
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __c_arr_data (uint8[] a);
+
+    [AsmBody(@"
+        # __c_blend_mask_rect(dst in rdi, mask in rsi, span in rdx, rows in rcx,
+        #                     strides in r8, col_sa in r9)
+        # strides = (dst_stride_bytes << 32) | (mw & 0xFFFFFFFF)
+        # col_sa  = (sa << 24) | (sr << 16) | (sg << 8) | sb
+        push %rbx
+        push %r12
+        push %r13
+        push %r14
+        push %r15
+
+        mov %r8d, %r11d
+        shr $32, %r8
+
+        # xmm15 = 0
+        .byte 0x66, 0x45, 0x0f, 0xef, 0xff
+        # xmm14 = [128 x 8]
+        mov $0x00800080, %eax
+        .byte 0x66, 0x44, 0x0f, 0x6e, 0xf0
+        .byte 0x66, 0x45, 0x0f, 0x70, 0xf6, 0x00
+        # xmm13 = [0xFF000000 x 4]
+        mov $0xFF000000, %eax
+        .byte 0x66, 0x44, 0x0f, 0x6e, 0xe8
+        .byte 0x66, 0x45, 0x0f, 0x70, 0xed, 0x00
+        # xmm12 = [255 x 8]
+        mov $0x00FF00FF, %eax
+        .byte 0x66, 0x44, 0x0f, 0x6e, 0xe0
+        .byte 0x66, 0x45, 0x0f, 0x70, 0xe4, 0x00
+        # xmm11 = [sa x 8]
+        mov %r9d, %eax
+        shr $24, %eax
+        mov %eax, %r10d
+        shl $16, %r10d
+        or %r10d, %eax
+        .byte 0x66, 0x44, 0x0f, 0x6e, 0xd8
+        .byte 0x66, 0x45, 0x0f, 0x70, 0xdb, 0x00
+        # xmm10 = src_16 [sb, sg, sr, 255, sb, sg, sr, 255]
+        mov %r9d, %eax
+        or $0xFF000000, %eax
+        .byte 0x66, 0x44, 0x0f, 0x6e, 0xd0
+        .byte 0x66, 0x45, 0x0f, 0x70, 0xd2, 0x00
+        .byte 0x66, 0x45, 0x0f, 0x60, 0xd7
+        # xmm9 = opaque_col x 4
+        .byte 0x66, 0x44, 0x0f, 0x6e, 0xc8
+        .byte 0x66, 0x45, 0x0f, 0x70, 0xc9, 0x00
+
+    _bm_row:
+        test %rcx, %rcx
+        jz _bm_done
+        mov %rdi, %rbx
+        mov %rsi, %r12
+        mov %rdx, %r10
+
+    _bm_col4:
+        cmp $4, %r10
+        jb _bm_tail
+        .byte 0x66, 0x41, 0x0f, 0x6e, 0x04, 0x24
+        .byte 0x66, 0x0f, 0x7e, 0xc0
+        test %eax, %eax
+        jz _bm_skip4
+        cmp $0xFF000000, %r9d
+        jb _bm_sa4
+        cmp $0xFFFFFFFF, %eax
+        jne _bm_go4
+        .byte 0xf3, 0x44, 0x0f, 0x7f, 0x0b
+        jmp _bm_skip4
+
+    _bm_sa4:
+        .byte 0x66, 0x41, 0x0f, 0x60, 0xc7
+        .byte 0x66, 0x41, 0x0f, 0xd5, 0xc3
+        .byte 0x66, 0x41, 0x0f, 0xfd, 0xc6
+        .byte 0x66, 0x0f, 0x6f, 0xc8
+        .byte 0x66, 0x0f, 0x71, 0xd1, 0x08
+        .byte 0x66, 0x0f, 0xfd, 0xc1
+        .byte 0x66, 0x0f, 0x71, 0xd0, 0x08
+        jmp _bm_unpacked4
+
+    _bm_go4:
+        .byte 0x66, 0x41, 0x0f, 0x60, 0xc7
+
+    _bm_unpacked4:
+        .byte 0x66, 0x0f, 0x61, 0xc0
+        .byte 0x66, 0x0f, 0x70, 0xc8, 0x50
+        .byte 0x66, 0x0f, 0x70, 0xd0, 0xfa
+        .byte 0x66, 0x41, 0x0f, 0x6f, 0xdc
+        .byte 0x66, 0x0f, 0xf9, 0xd9
+        .byte 0x66, 0x41, 0x0f, 0x6f, 0xe4
+        .byte 0x66, 0x0f, 0xf9, 0xe2
+
+        .byte 0xf3, 0x0f, 0x6f, 0x03
+        .byte 0x66, 0x0f, 0x6f, 0xe8
+        .byte 0x66, 0x41, 0x0f, 0x60, 0xc7
+        .byte 0x66, 0x41, 0x0f, 0x68, 0xef
+
+        .byte 0x66, 0x41, 0x0f, 0x6f, 0xf2
+        .byte 0x66, 0x0f, 0xd5, 0xf1
+        .byte 0x66, 0x0f, 0xd5, 0xc3
+        .byte 0x66, 0x0f, 0xfd, 0xc6
+        .byte 0x66, 0x41, 0x0f, 0xfd, 0xc6
+        .byte 0x66, 0x0f, 0x6f, 0xf0
+        .byte 0x66, 0x0f, 0x71, 0xd6, 0x08
+        .byte 0x66, 0x0f, 0xfd, 0xc6
+        .byte 0x66, 0x0f, 0x71, 0xd0, 0x08
+
+        .byte 0x66, 0x41, 0x0f, 0x6f, 0xfa
+        .byte 0x66, 0x0f, 0xd5, 0xfa
+        .byte 0x66, 0x0f, 0xd5, 0xec
+        .byte 0x66, 0x0f, 0xfd, 0xef
+        .byte 0x66, 0x41, 0x0f, 0xfd, 0xee
+        .byte 0x66, 0x0f, 0x6f, 0xfd
+        .byte 0x66, 0x0f, 0x71, 0xd7, 0x08
+        .byte 0x66, 0x0f, 0xfd, 0xef
+        .byte 0x66, 0x0f, 0x71, 0xd5, 0x08
+
+        .byte 0x66, 0x0f, 0x67, 0xc5
+        .byte 0x66, 0x41, 0x0f, 0xeb, 0xc5
+        .byte 0xf3, 0x0f, 0x7f, 0x03
+
+    _bm_skip4:
+        add $16, %rbx
+        add $4, %r12
+        sub $4, %r10
+        jmp _bm_col4
+
+    _bm_tail:
+        test %r10, %r10
+        jz _bm_next_row
+        movzbl (%r12), %r13d
+        test %r13d, %r13d
+        jz _bm_tail_next
+        mov %r9d, %eax
+        shr $24, %eax
+        cmp $255, %eax
+        jae _bm_tail_sa_ok
+        imul %r13d, %eax
+        add $128, %eax
+        mov %eax, %r15d
+        shl $8, %r15d
+        add %r15d, %eax
+        shr $16, %eax
+        mov %eax, %r13d
+        test %r13d, %r13d
+        jz _bm_tail_next
+
+    _bm_tail_sa_ok:
+        cmp $255, %r13d
+        jb _bm_tail_blend
+        mov %r9d, %eax
+        or $0xFF000000, %eax
+        mov %eax, (%rbx)
+        jmp _bm_tail_next
+
+    _bm_tail_blend:
+        mov $255, %r14d
+        sub %r13d, %r14d
+
+        movzbl 0(%rbx), %r15d
+        imul %r14d, %r15d
+        mov %r9d, %eax
+        and $0xFF, %eax
+        imul %r13d, %eax
+        add %r15d, %eax
+        add $128, %eax
+        mov %eax, %r15d
+        shl $8, %r15d
+        add %r15d, %eax
+        shr $16, %eax
+        mov %al, 0(%rbx)
+
+        movzbl 1(%rbx), %r15d
+        imul %r14d, %r15d
+        mov %r9d, %eax
+        shr $8, %eax
+        and $0xFF, %eax
+        imul %r13d, %eax
+        add %r15d, %eax
+        add $128, %eax
+        mov %eax, %r15d
+        shl $8, %r15d
+        add %r15d, %eax
+        shr $16, %eax
+        mov %al, 1(%rbx)
+
+        movzbl 2(%rbx), %r15d
+        imul %r14d, %r15d
+        mov %r9d, %eax
+        shr $16, %eax
+        and $0xFF, %eax
+        imul %r13d, %eax
+        add %r15d, %eax
+        add $128, %eax
+        mov %eax, %r15d
+        shl $8, %r15d
+        add %r15d, %eax
+        shr $16, %eax
+        mov %al, 2(%rbx)
+
+        movb $0xFF, 3(%rbx)
+
+    _bm_tail_next:
+        add $4, %rbx
+        add $1, %r12
+        dec %r10
+        jmp _bm_tail
+
+    _bm_next_row:
+        add %r8, %rdi
+        add %r11, %rsi
+        dec %rcx
+        jmp _bm_row
+
+    _bm_done:
+        pop %r15
+        pop %r14
+        pop %r13
+        pop %r12
+        pop %rbx
+        ret
+    ")]
+    private extern void __c_blend_mask_rect (int dst, int mask, int span, int rows, int strides, int col_sa);
+
     public class Context : Object {
         private ImageSurface surf;
         private uint8 src_r = 255;
@@ -773,6 +1002,8 @@ namespace Cairo {
         public void blit_alpha_mask (uint8[] mask, int mw, int mh, int dx, int dy) {
             if (mw <= 0 || mh <= 0 || src_a == 0 || surf == null || surf.buf_addr == 0)
                 return;
+            if (mask.length < mw * mh)
+                return;
             int cx0 = clip_on ? clip_x0 : 0;
             int cy0 = clip_on ? clip_y0 : 0;
             int cx1 = clip_on ? clip_x1 : surf.width;
@@ -781,42 +1012,16 @@ namespace Cairo {
             int y0 = (dy > cy0) ? dy : cy0;
             int x1 = (dx + mw < cx1) ? (dx + mw) : cx1;
             int y1 = (dy + mh < cy1) ? (dy + mh) : cy1;
-            if (x1 <= x0 || y1 <= y0)
+            int span = x1 - x0;
+            int rows = y1 - y0;
+            if (span <= 0 || rows <= 0)
                 return;
-            int sr = (int) src_r;
-            int sg = (int) src_g;
-            int sb = (int) src_b;
-            int sa = (int) src_a;
-            int opaque_col = (255 << 24) | (sr << 16) | (sg << 8) | sb;
-            int stride = surf.width;
-            int base_addr = surf.buf_addr;
-            for (int py0 = y0; py0 < y1; py0++) {
-                int moff = (py0 - dy) * mw - dx;
-                int row_addr = base_addr + py0 * stride * 4;
-                for (int px0 = x0; px0 < x1; px0++) {
-                    int a = (int) mask[moff + px0];
-                    if (a == 0)
-                        continue;
-                    if (sa < 255)
-                        a = ((sa * a + 128) * 257) >> 16;
-                    if (a == 0)
-                        continue;
-                    int addr = row_addr + px0 * 4;
-                    if (a >= 255) {
-                        __c_poke32 (addr, opaque_col);
-                        continue;
-                    }
-                    int dst = __c_peek32 (addr);
-                    int dr = (dst >> 16) & 0xFF;
-                    int dg = (dst >> 8) & 0xFF;
-                    int db = dst & 0xFF;
-                    int ia = 255 - a;
-                    int rr = ((sr * a + dr * ia + 128) * 257) >> 16;
-                    int rg = ((sg * a + dg * ia + 128) * 257) >> 16;
-                    int rb = ((sb * a + db * ia + 128) * 257) >> 16;
-                    __c_poke32 (addr, (255 << 24) | (rr << 16) | (rg << 8) | rb);
-                }
-            }
+            int stride_bytes = surf.width * 4;
+            int dst_addr = surf.buf_addr + y0 * stride_bytes + x0 * 4;
+            int mask_addr = __c_arr_data (mask) + (y0 - dy) * mw + (x0 - dx);
+            int strides = (stride_bytes << 32) | mw;
+            int col_sa = ((int) src_a << 24) | ((int) src_r << 16) | ((int) src_g << 8) | (int) src_b;
+            __c_blend_mask_rect (dst_addr, mask_addr, span, rows, strides, col_sa);
         }
 
         // Compact 5x7 bitmap glyph rows (encoded as 7 rows of 5 bits) for ASCII 32..126

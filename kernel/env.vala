@@ -8,12 +8,11 @@ namespace Planet.Kernel {
     ")]
     private extern int env_read_u8 (int addr);
 
-    private const int ENV_MAX_VARS = 32;
-    private string[] env_keys;
-    private string[] env_vals;
-    private int env_count = 0;
-
-    public class Env : Object {
+    public sealed class Env : Object {
+        private const int ENV_MAX_VARS = 32;
+        private static string[] env_keys;
+        private static string[] env_vals;
+        private static int env_count = 0;
 
         private static string copy_from_user (int ptr, int len) {
             if (ptr == 0 || len <= 0)

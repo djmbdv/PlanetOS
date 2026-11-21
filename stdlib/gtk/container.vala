@@ -129,6 +129,32 @@ namespace Gtk {
             }
         }
 
+        public override void gather_damage () {
+            for (int i = 0; i < children.length; i++) {
+                children[i].gather_damage ();
+                int n = children[i].damage_rect_count ();
+                for (int j = 0; j < n; j++) {
+                    int x = 0;
+                    int y = 0;
+                    int w = 0;
+                    int h = 0;
+                    if (children[i].damage_rect_at (j, out x, out y, out w, out h))
+                        damage_box (x, y, w, h);
+                }
+                children[i].clear_damage ();
+            }
+        }
+
+        public override bool handle_key (int key) {
+            if (!visible || !sensitive)
+                return false;
+            for (int i = 0; i < children.length; i++) {
+                if (children[i].handle_key (key))
+                    return true;
+            }
+            return on_key_press (key);
+        }
+
         public override bool on_pointer_motion (int mx, int my) {
             if (!visible || !sensitive)
                 return false;
@@ -245,6 +271,30 @@ namespace Gtk {
             }
             if (child != null)
                 child.draw (cr);
+        }
+
+        public override void gather_damage () {
+            if (child == null)
+                return;
+            child.gather_damage ();
+            int n = child.damage_rect_count ();
+            for (int j = 0; j < n; j++) {
+                int x = 0;
+                int y = 0;
+                int w = 0;
+                int h = 0;
+                if (child.damage_rect_at (j, out x, out y, out w, out h))
+                    damage_box (x, y, w, h);
+            }
+            child.clear_damage ();
+        }
+
+        public override bool handle_key (int key) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            if (child.handle_key (key))
+                return true;
+            return on_key_press (key);
         }
 
         public override bool on_pointer_motion (int mx, int my) {

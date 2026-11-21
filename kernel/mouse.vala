@@ -66,23 +66,22 @@ namespace Planet.Kernel {
     ")]
     public extern int addr_isr_irq12 ();
 
-    private int mouse_x = 400;
-    private int mouse_y = 300;
-    private int mouse_btn = 0;
-    private int mouse_wheel = 0;
-    private int mouse_phase = 0;
-    private int mouse_b0 = 0;
-    private int mouse_b1 = 0;
-    private int mouse_b2 = 0;
-    private bool mouse_has_wheel = false;
+    public sealed class Mouse : Object {
+        private static int mouse_x = 400;
+        private static int mouse_y = 300;
+        private static int mouse_btn = 0;
+        private static int mouse_wheel = 0;
+        private static int mouse_phase = 0;
+        private static int mouse_b0 = 0;
+        private static int mouse_b1 = 0;
+        private static int mouse_b2 = 0;
+        private static bool mouse_has_wheel = false;
 
-    // Counters: cheap, always on, and enough to tell "no bytes arrive" from
-    // "bytes arrive but the decoder drops them" without per-event logging.
-    private int mouse_bytes = 0;
-    private int mouse_packets = 0;
-    private int mouse_resync = 0;
-
-    public class Mouse : Object {
+        // Counters: cheap, always on, and enough to tell "no bytes arrive" from
+        // "bytes arrive but the decoder drops them" without per-event logging.
+        private static int mouse_bytes = 0;
+        private static int mouse_packets = 0;
+        private static int mouse_resync = 0;
         private static void send_mouse (int val) {
             ps2_wait_write ();
             out64 (0xD4);
@@ -192,28 +191,33 @@ namespace Planet.Kernel {
                 if (b < 0)
                     break;
                 mouse_bytes = mouse_bytes + 1;
-                if (mouse_phase == 0) {
-                    if ((b & 0x08) == 0 || (b & 0xC0) != 0) {
-                        mouse_resync = mouse_resync + 1;
-                        continue;
-                    }
-                    mouse_b0 = b;
-                    mouse_phase = 1;
-                } else if (mouse_phase == 1) {
-                    mouse_b1 = b;
-                    mouse_phase = 2;
-                } else if (mouse_phase == 2) {
-                    if (mouse_has_wheel) {
-                        mouse_b2 = b;
-                        mouse_phase = 3;
-                    } else {
-                        commit_packet (b, 0);
-                    }
-                } else {
-                    int dz = b & 0x0F;
-                    if ((dz & 0x08) != 0)
-                        dz = dz - 16;
-                    commit_packet (mouse_b2, dz);
+                switch (mouse_phase) {
+                    case 0:
+                        if ((b & 0x08) == 0 || (b & 0xC0) != 0) {
+                            mouse_resync = mouse_resync + 1;
+                            continue;
+                        }
+                        mouse_b0 = b;
+                        mouse_phase = 1;
+                        break;
+                    case 1:
+                        mouse_b1 = b;
+                        mouse_phase = 2;
+                        break;
+                    case 2:
+                        if (mouse_has_wheel) {
+                            mouse_b2 = b;
+                            mouse_phase = 3;
+                        } else {
+                            commit_packet (b, 0);
+                        }
+                        break;
+                    default:
+                        int dz = b & 0x0F;
+                        if ((dz & 0x08) != 0)
+                            dz = dz - 16;
+                        commit_packet (mouse_b2, dz);
+                        break;
                 }
             }
             if (out_buf != 0) {

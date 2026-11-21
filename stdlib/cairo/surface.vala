@@ -37,6 +37,22 @@ namespace Cairo {
             }
         }
 
+        // Wraps memory the caller already owns (a compositor shared surface, for
+        // instance). destroy () leaves the pixels alone because alloc_pages stays
+        // zero, so the owner keeps control of their lifetime.
+        public ImageSurface.wrap (int buf, int w, int h) {
+            format = Format.ARGB32;
+            width = 0;
+            height = 0;
+            buf_addr = 0;
+            alloc_pages = 0;
+            if (buf <= 0 || w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM)
+                return;
+            width = w;
+            height = h;
+            buf_addr = buf;
+        }
+
         public bool is_valid () {
             return buf_addr != 0 && width > 0 && height > 0;
         }

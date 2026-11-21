@@ -35,9 +35,15 @@ namespace Gtk {
         public void scroll_to (int sx, int sy) {
             int max_x = (content_w > width) ? (content_w - width) : 0;
             int max_y = (content_h > height) ? (content_h - height) : 0;
-            scroll_x = (sx < 0) ? 0 : ((sx > max_x) ? max_x : sx);
-            scroll_y = (sy < 0) ? 0 : ((sy > max_y) ? max_y : sy);
+            int nx = (sx < 0) ? 0 : ((sx > max_x) ? max_x : sx);
+            int ny = (sy < 0) ? 0 : ((sy > max_y) ? max_y : sy);
+            if (nx == scroll_x && ny == scroll_y)
+                return;
+            scroll_x = nx;
+            scroll_y = ny;
             position_child ();
+            // The content moved: the viewport is stale until it is repainted.
+            damage_self ();
         }
 
         public void scroll_by (int dx, int dy) {
@@ -153,6 +159,30 @@ namespace Gtk {
             cr.restore ();
         }
 
+        // A child may damage rows that are scrolled out: clamp its rectangles to
+        // the viewport before hoisting them.
+        public override void gather_damage () {
+            if (child == null)
+                return;
+            child.gather_damage ();
+            int n = child.damage_rect_count ();
+            for (int j = 0; j < n; j++) {
+                int cx = 0;
+                int cy = 0;
+                int cw = 0;
+                int ch = 0;
+                if (!child.damage_rect_at (j, out cx, out cy, out cw, out ch))
+                    continue;
+                int x0 = (cx > x) ? cx : x;
+                int y0 = (cy > y) ? cy : y;
+                int x1 = (cx + cw < x + width) ? (cx + cw) : (x + width);
+                int y1 = (cy + ch < y + height) ? (cy + ch) : (y + height);
+                if (x1 > x0 && y1 > y0)
+                    damage_box (x0, y0, x1 - x0, y1 - y0);
+            }
+            child.clear_damage ();
+        }
+
         public override bool on_pointer_motion (int mx, int my) {
             if (!visible || !sensitive)
                 return false;
@@ -171,11 +201,16 @@ namespace Gtk {
                 }
                 return true;
             }
-            bool prev = hovered;
             hovered = contains (mx, my);
             bool prev_sb = sb_hovered;
             sb_hovered = (content_h > height && hovered && mx >= x + width - SB_W - 2);
-            bool ch = (hovered != prev) || (sb_hovered != prev_sb);
+            bool ch = false;
+            // Only the scrollbar strip draws a hover state; the content behind it
+            // does not change when the pointer merely enters.
+            if (sb_hovered != prev_sb) {
+                damage_box (x + width - SB_W - 2, y, SB_W + 2, height);
+                ch = true;
+            }
             if (child != null && hovered && !sb_hovered && child.on_pointer_motion (mx, my))
                 ch = true;
             return ch;
@@ -184,6 +219,7 @@ namespace Gtk {
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive || !contains (mx, my))
                 return false;
+            grab_focus ();
             sync_content ();
             if (button == 4) {
                 scroll_by (0, -36);
@@ -202,6 +238,7 @@ namespace Gtk {
                 if (my >= bar_y && my < bar_y + bar_h) {
                     sb_dragging = true;
                     sb_drag_off = my - bar_y;
+                    damage_self ();
                 } else if (my < bar_y) {
                     scroll_by (0, -(height - 24));
                 } else {
@@ -218,11 +255,25 @@ namespace Gtk {
             bool ch = false;
             if (sb_dragging) {
                 sb_dragging = false;
+                damage_self ();
                 ch = true;
             }
             if (child != null && child.on_pointer_release (mx, my, button))
                 ch = true;
             return ch;
+        }
+
+        // Keys go to the focused widget inside the viewport first. Scrolling the
+        // viewport with the keyboard is a fallback for when this widget owns
+        // focus, otherwise it would swallow the arrows meant for the editor.
+        public override bool handle_key (int key) {
+            if (!visible || !sensitive)
+                return false;
+            if (child != null && child.handle_key (key))
+                return true;
+            if (!focused)
+                return false;
+            return on_key_press (key);
         }
 
         public override bool on_key_press (int key) {
@@ -236,14 +287,16 @@ namespace Gtk {
                 }
                 return true;
             }
+            if (!focused)
+                return false;
             if (key == 0x81 || key == 0xFF52) { scroll_by (0, -28); return true; } // Up
             if (key == 0x82 || key == 0xFF54) { scroll_by (0, 28); return true; }  // Down
             if (key == 0x83) { scroll_by (-28, 0); return true; }                  // Left
             if (key == 0x84) { scroll_by (28, 0); return true; }                   // Right
             if (key == 0x85) { scroll_to (scroll_x, 0); return true; }             // Home
             if (key == 0x86) { scroll_to (scroll_x, content_h); return true; }     // End
-            if (key == 0xFF55) { scroll_by (0, -(height - 20)); return true; }     // PageUp
-            if (key == 0xFF56) { scroll_by (0, height - 20); return true; }        // PageDown
+            if (key == 0x87 || key == 0xFF55) { scroll_by (0, -(height - 20)); return true; } // PageUp
+            if (key == 0x88 || key == 0xFF56) { scroll_by (0, height - 20); return true; }    // PageDown
             return false;
         }
 
@@ -281,7 +334,11 @@ namespace Gtk {
         }
 
         public void set_position (int pos) {
-            position = (pos < 40) ? 40 : pos;
+            int np = (pos < 40) ? 40 : pos;
+            if (np == position)
+                return;
+            position = np;
+            damage_self ();
         }
 
         public int get_position () {
@@ -350,11 +407,41 @@ namespace Gtk {
             cr.fill ();
         }
 
+        public override void gather_damage () {
+            if (start_child != null) {
+                start_child.gather_damage ();
+                int n = start_child.damage_rect_count ();
+                for (int j = 0; j < n; j++) {
+                    int x = 0;
+                    int y = 0;
+                    int w = 0;
+                    int h = 0;
+                    if (start_child.damage_rect_at (j, out x, out y, out w, out h))
+                        damage_box (x, y, w, h);
+                }
+                start_child.clear_damage ();
+            }
+            if (end_child != null) {
+                end_child.gather_damage ();
+                int n = end_child.damage_rect_count ();
+                for (int j = 0; j < n; j++) {
+                    int x = 0;
+                    int y = 0;
+                    int w = 0;
+                    int h = 0;
+                    if (end_child.damage_rect_at (j, out x, out y, out w, out h))
+                        damage_box (x, y, w, h);
+                }
+                end_child.clear_damage ();
+            }
+        }
+
         public override bool on_pointer_motion (int mx, int my) {
             if (dragging) {
                 int np = (orientation == Orientation.HORIZONTAL) ? (mx - x) : (my - y);
                 set_position (np);
                 allocate (x, y, width, height);
+                damage_self ();
                 return true;
             }
             bool ch = false;
@@ -403,6 +490,16 @@ namespace Gtk {
             if (end_child != null && end_child.on_key_press (key))
                 return true;
             return false;
+        }
+
+        public override bool handle_key (int key) {
+            if (!visible || !sensitive)
+                return false;
+            if (start_child != null && start_child.handle_key (key))
+                return true;
+            if (end_child != null && end_child.handle_key (key))
+                return true;
+            return on_key_press (key);
         }
 
         public override bool on_scroll (int mx, int my, int dx, int dy) {
@@ -464,6 +561,7 @@ namespace Gtk {
             current_page = page_num;
             if (width > 0 && height > tab_h)
                 pages[current_page].allocate (x, y + tab_h, width, height - tab_h);
+            damage_self ();
             switch_page (pages[current_page], current_page);
         }
 
@@ -530,6 +628,22 @@ namespace Gtk {
                 pages[current_page].draw (cr);
         }
 
+        public override void gather_damage () {
+            if (current_page < 0 || current_page >= pages.length)
+                return;
+            pages[current_page].gather_damage ();
+            int n = pages[current_page].damage_rect_count ();
+            for (int j = 0; j < n; j++) {
+                int x = 0;
+                int y = 0;
+                int w = 0;
+                int h = 0;
+                if (pages[current_page].damage_rect_at (j, out x, out y, out w, out h))
+                    damage_box (x, y, w, h);
+            }
+            pages[current_page].clear_damage ();
+        }
+
         public override bool on_pointer_motion (int mx, int my) {
             if (current_page >= 0 && current_page < pages.length)
                 return pages[current_page].on_pointer_motion (mx, my);
@@ -563,6 +677,13 @@ namespace Gtk {
             return false;
         }
 
+        public override bool handle_key (int key) {
+            if (!visible || !sensitive || current_page < 0 || current_page >= pages.length)
+                return false;
+            if (pages[current_page].handle_key (key))
+                return true;
+            return on_key_press (key);
+        }
         public override bool on_scroll (int mx, int my, int dx, int dy) {
             if (!visible || !sensitive)
                 return false;

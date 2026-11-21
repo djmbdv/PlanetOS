@@ -2,8 +2,6 @@
 
 namespace Planet.Kernel {
 
-    private int exec_depth = 0;
-
     [AsmBody(@"
         mov %rsi, %rsp
         push %rdi
@@ -55,7 +53,8 @@ namespace Planet.Kernel {
     ")]
     public extern void exec_return_to_parent (int exit_code, int slot_addr);
 
-    public class ElfLoader : Object {
+    public sealed class ElfLoader : Object {
+        public static int exec_depth = 0;
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);
             return (w >> ((addr & 3) * 8)) & 0xFF;

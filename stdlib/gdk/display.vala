@@ -25,9 +25,49 @@ namespace Gdk {
             return (v >= MIN_WIN_DIM) ? v : fallback;
         }
 
+        // Addresses are far above MAX_WIN_DIM, so they need their own parser.
+        private static int parse_addr (string s) {
+            if (s.length == 0)
+                return 0;
+            int v = 0;
+            for (int i = 0; i < s.length; i++) {
+                uint8 c = (uint8) s[i];
+                if (c < '0' || c > '9')
+                    return 0;
+                v = v * 10 + (int) (c - '0');
+                if (v <= 0)
+                    return 0;
+            }
+            return v;
+        }
+
+        // Attaches a compositor block the caller already owns. Used by the
+        // compositor self-test, which has to drive both sides of the protocol.
+        public static Window? attach_shared (int w, int h, int shm_base, string ev_path = "") {
+            var win = new Window.compositor_shared (w, h, shm_base, ev_path);
+            if (!win.is_valid ()) {
+                win.close ();
+                return null;
+            }
+            return win;
+        }
+
         public static Window? open_window (int w = 800, int h = 600) {
             if (w <= 0 || h <= 0 || w > MAX_WIN_DIM || h > MAX_WIN_DIM)
                 return null;
+            string shm = Sys.getenv ("PLANET_WIN_SHM");
+            if (shm.length > 0) {
+                int shm_base = parse_addr (shm);
+                int cw = parse_pos_int (Sys.getenv ("PLANET_WIN_W"), w);
+                int ch = parse_pos_int (Sys.getenv ("PLANET_WIN_H"), h);
+                string ev_path = Sys.getenv ("PLANET_WIN_EV");
+                if (shm_base > 0) {
+                    var swin = new Window.compositor_shared (cw, ch, shm_base, ev_path);
+                    if (swin.is_valid ())
+                        return swin;
+                    swin.close ();
+                }
+            }
             string comp_path = Sys.getenv ("PLANET_WIN_FILE");
             if (comp_path.length > 0) {
                 int cw = parse_pos_int (Sys.getenv ("PLANET_WIN_W"), w);

@@ -277,11 +277,11 @@ The `Planet.Pruebas` package is not a luxury: without it, verification inside th
 | `GLib` ([stdlib/glib_compat.vala](../../stdlib/glib_compat.vala)) | `StringBuilder`, `FileUtils`, `Str`, `Environment`, `Gee.ArrayList` and the `MainContext`/`MainLoop` event loop |
 | `Gio` ([stdlib/gio_compat.vala](../../stdlib/gio_compat.vala)) | `File`, `FileInfo`, `FileEnumerator`, streams, `Cancellable`, `Application` |
 | `Cairo` ([stdlib/cairo/](../../stdlib/cairo/context.vala)) | surfaces, context, AVX2 32-bit fill/blit, scanline + FMA3 polygon rasterizer |
-| `Gdk` ([stdlib/gdk/](../../stdlib/gdk/window.vala)) | `RGBA`, `Event`/`EventType.SCROLL`, `Window`, `Display` (framebuffer + compositor `PWIN` surfaces, IntelliMouse wheel) |
-| `Gsk` ([stdlib/gsk/](../../stdlib/gsk/nodes.vala)) | `Rect`/`RoundedRect`, render nodes, `CairoRenderer`/`VulkanRenderer`, and `Gsk.Path` SVG parser with FMA3/hw sqrt |
-| `Gtk` ([stdlib/gtk/](../../stdlib/gtk/window.vala)) | `GtkWindow`, `Box`, `Frame`, `ScrolledWindow` (draggable scrollbar + wheel), `Paned`, `Notebook`, `ListView`, `Switch`, `Scale`, `Entry`, `Button` |
+| `Gdk` ([stdlib/gdk/](../../stdlib/gdk/window.vala)) | `RGBA`, `Event`/`EventType.SCROLL`, `Window`, `Display` (framebuffer, compositor `PWIN` files, and zero-copy shared compositor surfaces with damage rectangles and a shared input ring, IntelliMouse wheel) |
+| `Gsk` ([stdlib/gsk/](../../stdlib/gsk/nodes.vala)) | `Rect`/`RoundedRect`, render nodes (including `ShaderNode`, which bakes a compiled SPIR-V module into Cairo blocks), `CairoRenderer`/`VulkanRenderer`, and `Gsk.Path` SVG parser with FMA3/hw sqrt |
+| `Gtk` ([stdlib/gtk/](../../stdlib/gtk/window.vala)) | `GtkWindow`, `Box`, `Frame`, `ScrolledWindow` (draggable scrollbar + wheel), `Paned`, `Notebook`, `ListView`, `Switch`, `Scale`, `Entry`, `Button`; widgets queue damage rectangles so a repaint covers only what changed, and keys are routed to the single focus owner (`grab_focus`) before any legacy handler |
 | `GObject` ([stdlib/gobject_compat.vala](../../stdlib/gobject_compat.vala)) | `Type` ids, `type_register`/`type_name` and the tagged `Value` container |
-| `Spv` ([stdlib/spirv_compat.vala](../../stdlib/spirv_compat.vala)) | SPIR-V 1.0 module loader and pure-Vala SSA evaluator: fragment color plus word/insn counts |
+| `Spv` ([stdlib/spirv_compat.vala](../../stdlib/spirv_compat.vala)) | SPIR-V 1.0 module loader and pure-Vala SSA evaluator: fragment color, `GLSL.std.450` scalar math, push-constant params (`set_params`) and local-coordinate origin (`set_origin`), plus word/insn counts |
 | `Pango` + `PangoCairo` ([stdlib/pango_compat.vala](../../stdlib/pango_compat.vala)) | font descriptions, layout metrics, word wrap, ellipsize, alignment and text drawing |
 | `GModule` ([stdlib/gmodule_compat.vala](../../stdlib/gmodule_compat.vala)) | `Module` with `NOT_SUPPORTED` for `open()` (no dynamic linker) and a static module/symbol registry |
 | `pluto` / `saturn` ([user/pluto.vala](../../user/pluto.vala), [user/saturn.vala](../../user/saturn.vala)) | native nano-style terminal editor (`pluto.elf`) and Geany-inspired GTK IDE (`saturn.elf`) |

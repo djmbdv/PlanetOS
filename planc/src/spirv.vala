@@ -27,6 +27,8 @@ namespace Planc {
         private const uint16 OP_ACCESS_CHAIN        = 65;
         private const uint16 OP_COMPOSITE_CONSTRUCT = 80;
         private const uint16 OP_COMPOSITE_EXTRACT   = 81;
+        private const uint16 OP_EXT_INST_IMPORT     = 11;
+        private const uint16 OP_EXT_INST            = 12;
         private const uint16 OP_CONVERT_S_TO_F      = 111;
         private const uint16 OP_S_NEGATE            = 126;
         private const uint16 OP_F_NEGATE            = 127;
@@ -70,6 +72,8 @@ namespace Planc {
         private uint32 ty_ptr_pc_f32 = 0;
         private uint32 pc_id = 0;
         private bool pc_used = false;
+        private bool ext_used = false;
+        private uint32 ext_set_id = 0;
         private uint32 main_fn_id = 0;
 
         private uint32 alloc_id () {
@@ -145,8 +149,10 @@ namespace Planc {
             ty_ptr_pc_block = alloc_id ();
             ty_ptr_pc_f32 = alloc_id ();
             pc_id = alloc_id ();
-            // struct { float time; float width; float height; float pad; }
-            emit_op (type_words, OP_TYPE_STRUCT, new uint32[] { ty_block, ty_f32, ty_f32, ty_f32, ty_f32 });
+            // struct { float time; float width; float height; float pad;
+            //          float p0; float p1; float p2; float p3; }
+            emit_op (type_words, OP_TYPE_STRUCT, new uint32[] {
+                ty_block, ty_f32, ty_f32, ty_f32, ty_f32, ty_f32, ty_f32, ty_f32, ty_f32 });
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_pc_block, 9, ty_block }); // PushConstant=9
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_pc_f32, 9, ty_f32 });
             emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_pc_block, pc_id, 9 });
@@ -159,6 +165,40 @@ namespace Planc {
             emit_op (fn_words, OP_ACCESS_CHAIN, new uint32[] { ty_ptr_pc_f32, ptr, pc_id, idx });
             uint32 res = alloc_id ();
             emit_op (fn_words, OP_LOAD, new uint32[] { ty_f32, res, ptr });
+            return res;
+        }
+
+        // GLSL.std.450 opcode for the scalar math builtins, or 0 when the name
+        // is not one of them.
+        private static int ext_opcode (string name, out int argc) {
+            argc = 0;
+            if (name == "abs") { argc = 1; return 4; }
+            if (name == "floor") { argc = 1; return 8; }
+            if (name == "fract") { argc = 1; return 10; }
+            if (name == "sqrt") { argc = 1; return 31; }
+            if (name == "min") { argc = 2; return 37; }
+            if (name == "max") { argc = 2; return 38; }
+            if (name == "clamp") { argc = 3; return 43; }
+            if (name == "mix") { argc = 3; return 46; }
+            if (name == "step") { argc = 2; return 48; }
+            if (name == "smoothstep") { argc = 3; return 49; }
+            return 0;
+        }
+
+        private uint32 gen_ext (int ext_op, uint32[] args) {
+            if (!ext_used) {
+                ext_used = true;
+                ext_set_id = alloc_id ();
+            }
+            uint32 res = alloc_id ();
+            var a = new uint32[4 + args.length];
+            a[0] = ty_f32;
+            a[1] = res;
+            a[2] = ext_set_id;
+            a[3] = (uint32) ext_op;
+            for (int i = 0; i < args.length; i++)
+                a[4 + i] = args[i];
+            emit_op (fn_words, OP_EXT_INST, a);
             return res;
         }
 
@@ -250,6 +290,31 @@ namespace Planc {
                     else if (ce.callee == "uniform_height") member = 2;
                     out_ty = ty_f32;
                     return gen_uniform_member (member);
+                }
+                if ((ce.callee == "uniform_p0" || ce.callee == "uniform_p1"
+                     || ce.callee == "uniform_p2" || ce.callee == "uniform_p3")
+                    && ce.args.length == 0) {
+                    int member = 4;
+                    if (ce.callee == "uniform_p1") member = 5;
+                    else if (ce.callee == "uniform_p2") member = 6;
+                    else if (ce.callee == "uniform_p3") member = 7;
+                    out_ty = ty_f32;
+                    return gen_uniform_member (member);
+                }
+                int ext_argc = 0;
+                int ext_op = ext_opcode (ce.callee, out ext_argc);
+                if (ext_op != 0) {
+                    if (ce.args.length != ext_argc)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"[spirv] $(ce.callee)() expects $ext_argc argument(s) at $(ce.line):$(ce.column)");
+                    var arg_ids = new uint32[ext_argc];
+                    for (int k = 0; k < ext_argc; k++) {
+                        uint32 at = 0;
+                        uint32 av = gen_expr (ce.args[k], out at);
+                        arg_ids[k] = to_f32 (av, at);
+                    }
+                    out_ty = ty_f32;
+                    return gen_ext (ext_op, arg_ids);
                 }
                 if (ce.callee == "vec4" && ce.args.length == 4) {
                     var comps = new uint32[4];
@@ -351,8 +416,19 @@ namespace Planc {
             throw new SemanticError.TYPE_MISMATCH (@"[spirv] unsupported statement in shader at $(s.line):$(s.column)");
         }
 
+        // Program always carries the synthesized root; it is not a user type.
+        private static bool is_builtin_root (ClassDecl cd) {
+            return cd.name == "Object" && cd.base_name == ""
+                && cd.fields.length == 0 && cd.signals.length == 0 && cd.dtor == null;
+        }
+
         public uint8[] generate (Program prog) throws SemanticError {
-            if (prog.classes.length > 0 || prog.interfaces.length > 0 || prog.structs.length > 0)
+            int user_classes = 0;
+            for (int i = 0; i < prog.classes.length; i++) {
+                if (!is_builtin_root (prog.classes[i]))
+                    user_classes++;
+            }
+            if (user_classes > 0 || prog.interfaces.length > 0 || prog.structs.length > 0)
                 throw new SemanticError.TYPE_MISMATCH ("[spirv] classes/structs/interfaces are not supported in shader target");
             var main_fn = prog.find ("main");
             if (main_fn == null)
@@ -416,6 +492,14 @@ namespace Planc {
             words.add (0x00000000u);
 
             emit_op (words, OP_CAPABILITY, new uint32[] { 1 }); // Shader
+            if (ext_used) {
+                var ext_str = new GenericArray<uint32> ();
+                emit_str_words (ext_str, "GLSL.std.450");
+                words.add (((uint32) (2 + ext_str.length) << 16) | (uint32) OP_EXT_INST_IMPORT);
+                words.add (ext_set_id);
+                for (int i = 0; i < ext_str.length; i++)
+                    words.add (ext_str[i]);
+            }
             emit_op (words, OP_MEMORY_MODEL, new uint32[] { 0, 1 }); // Logical, GLSL450
 
             // OpEntryPoint Fragment %main "main" %out_color
@@ -439,6 +523,10 @@ namespace Planc {
                 emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 1, 35, 4 });  // Offset 4
                 emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 2, 35, 8 });  // Offset 8
                 emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 3, 35, 12 }); // Offset 12
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 4, 35, 16 }); // Offset 16
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 5, 35, 20 }); // Offset 20
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 6, 35, 24 }); // Offset 24
+                emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 7, 35, 28 }); // Offset 28
             }
 
             for (int i = 0; i < type_words.length; i++)

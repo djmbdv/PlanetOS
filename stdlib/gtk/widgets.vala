@@ -15,7 +15,10 @@ namespace Gtk {
         }
 
         public void set_text (string text) {
+            if (text == label)
+                return;
             label = text;
+            damage_self ();
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -49,7 +52,10 @@ namespace Gtk {
         }
 
         public void set_label (string text) {
+            if (text == label)
+                return;
             label = text;
+            damage_self ();
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -98,10 +104,14 @@ namespace Gtk {
                 bool changed = hovered || pressed;
                 hovered = false;
                 pressed = false;
+                if (changed)
+                    damage_self ();
                 return changed;
             }
             bool prev = hovered;
             hovered = contains (mx, my);
+            if (hovered != prev)
+                damage_self ();
             return hovered != prev;
         }
 
@@ -110,6 +120,7 @@ namespace Gtk {
                 return false;
             if (contains (mx, my)) {
                 pressed = true;
+                damage_self ();
                 return true;
             }
             return false;
@@ -120,6 +131,7 @@ namespace Gtk {
                 return false;
             bool inside = contains (mx, my);
             pressed = false;
+            damage_self ();
             if (inside && visible && sensitive)
                 clicked ();
             return true;
@@ -138,7 +150,10 @@ namespace Gtk {
         }
 
         public void set_text (string t) {
+            if (t == text)
+                return;
             text = t;
+            damage_self ();
             changed ();
         }
 
@@ -198,12 +213,12 @@ namespace Gtk {
 
         public override bool on_pointer_press (int mx, int my, int button) {
             bool prev = focused;
-            if (!visible || !sensitive) {
-                focused = false;
+            if (!visible || !sensitive || !contains (mx, my)) {
+                drop_focus ();
                 return prev;
             }
-            focused = contains (mx, my);
-            return focused || prev;
+            grab_focus ();
+            return true;
         }
 
         public override bool on_key_press (int key) {
@@ -216,6 +231,7 @@ namespace Gtk {
             if (key == 8 || key == 127) {
                 if (text.length > 0) {
                     text = text.substring (0, text.length - 1);
+                    damage_self ();
                     changed ();
                 }
                 return true;
@@ -223,6 +239,7 @@ namespace Gtk {
             if (key >= 32 && key < 127) {
                 string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
                 text = text + ascii.substring (key - 32, 1);
+                damage_self ();
                 changed ();
                 return true;
             }
@@ -248,8 +265,19 @@ namespace Gtk {
         public void set_active (bool v) {
             if (active != v) {
                 active = v;
+                damage_self ();
                 toggled ();
             }
+        }
+
+        // The check box border changes colour on hover, so this widget does need
+        // to repaint itself when the pointer enters or leaves.
+        public override bool on_pointer_motion (int mx, int my) {
+            bool prev = hovered;
+            hovered = visible && sensitive && contains (mx, my);
+            if (hovered != prev)
+                damage_self ();
+            return hovered != prev;
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -316,6 +344,7 @@ namespace Gtk {
             pressed = false;
             if (inside && visible && sensitive) {
                 active = !active;
+                damage_self ();
                 toggled ();
             }
             return true;
@@ -332,11 +361,17 @@ namespace Gtk {
         public void set_fraction (double f) {
             if (!(f >= 0.0)) f = 0.0;
             if (f > 1.0) f = 1.0;
+            if (f == fraction)
+                return;
             fraction = f;
+            damage_self ();
         }
 
         public void set_text (string t) {
+            if (t == text)
+                return;
             text = t;
+            damage_self ();
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -404,12 +439,22 @@ namespace Gtk {
         public void set_active (bool v) {
             if (active != v) {
                 active = v;
+                damage_self ();
                 toggled ();
             }
         }
 
         public bool get_active () {
             return active;
+        }
+
+        // The pill draws a hover colour, so it repaints itself on enter/leave.
+        public override bool on_pointer_motion (int mx, int my) {
+            bool prev = hovered;
+            hovered = visible && sensitive && contains (mx, my);
+            if (hovered != prev)
+                damage_self ();
+            return hovered != prev;
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -441,7 +486,7 @@ namespace Gtk {
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive || button != 1 || !contains (mx, my))
                 return false;
-            focused = true;
+            grab_focus ();
             set_active (!active);
             return true;
         }
@@ -480,6 +525,7 @@ namespace Gtk {
             double nv = (v < min_val) ? min_val : ((v > max_val) ? max_val : v);
             if (nv != value) {
                 value = nv;
+                damage_self ();
                 value_changed (value);
             }
         }
@@ -544,8 +590,9 @@ namespace Gtk {
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive || button != 1 || !contains (mx, my))
                 return false;
-            focused = true;
+            grab_focus ();
             dragging = true;
+            damage_self ();
             set_from_x (mx);
             return true;
         }
@@ -553,6 +600,7 @@ namespace Gtk {
         public override bool on_pointer_release (int mx, int my, int button) {
             if (dragging) {
                 dragging = false;
+                damage_self ();
                 return true;
             }
             return false;

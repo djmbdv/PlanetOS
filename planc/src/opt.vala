@@ -82,9 +82,23 @@ namespace Planc {
             return false;
         }
 
+        private static bool is_signed_64_int_name (string name) {
+            return name == "" || name == "int" || name == "int64"
+                || name == "long" || name == "ssize_t";
+        }
+
+        private static bool is_unsigned_64_int_name (string name) {
+            return name == "uint64" || name == "ulong" || name == "size_t";
+        }
+
         private static Expr? const_to_literal (ConstDecl cd, int line, int col) {
-            if (cd.const_type == ValaType.INT)
-                return new IntLiteral () { value = cd.int_value, line = line, column = col };
+            if (cd.const_type == ValaType.INT) {
+                if (is_signed_64_int_name (cd.type_name))
+                    return new IntLiteral () { value = cd.int_value, line = line, column = col };
+                if (is_unsigned_64_int_name (cd.type_name))
+                    return new IntLiteral () { value = cd.int_value, is_unsigned = true, is_long = true, line = line, column = col };
+                return null;
+            }
             if (cd.const_type == ValaType.BOOL)
                 return new BoolLiteral () { value = (cd.int_value != 0), line = line, column = col };
             if (cd.const_type == ValaType.STRING)
@@ -143,8 +157,10 @@ namespace Planc {
                 var vr = (VarRef) e;
                 var c = get_const (names, vals, vr.name);
                 if (c != null) {
-                    if (c is IntLiteral)
-                        return new IntLiteral () { value = ((IntLiteral) c).value, line = e.line, column = e.column };
+                    if (c is IntLiteral) {
+                        var ic = (IntLiteral) c;
+                        return new IntLiteral () { value = ic.value, is_unsigned = ic.is_unsigned, is_long = ic.is_long, line = e.line, column = e.column };
+                    }
                     if (c is BoolLiteral)
                         return new BoolLiteral () { value = ((BoolLiteral) c).value, line = e.line, column = e.column };
                 }
@@ -246,22 +262,38 @@ namespace Planc {
                     if (opt_s is VarDeclStatement) {
                         var vd = (VarDeclStatement) opt_s;
                         active_locals.add (vd.name);
-                        if (vd.infer_type || vd.decl_type == ValaType.INT || vd.decl_type == ValaType.BOOL || vd.decl_type == ValaType.STRING) {
-                            if (vd.init != null && (vd.init is IntLiteral || vd.init is BoolLiteral || vd.init is StringLiteral))
-                                set_const (cnames, cvals, ctracked, vd.name, vd.init);
-                            else
+                        bool track_const = vd.decl_type == ValaType.BOOL || vd.decl_type == ValaType.STRING;
+                        if (vd.decl_type == ValaType.INT && is_signed_64_int_name (vd.decl_type_name))
+                            track_const = true;
+                        else if (vd.infer_type && vd.init != null) {
+                            if (vd.init is IntLiteral) {
+                                var il = (IntLiteral) vd.init;
+                                track_const = !il.is_unsigned && !il.is_long;
+                            } else if (vd.init is BoolLiteral || vd.init is StringLiteral) {
+                                track_const = true;
+                            }
+                        }
+                        if (track_const) {
+                            if (vd.init != null && (vd.init is IntLiteral || vd.init is BoolLiteral || vd.init is StringLiteral)) {
+                                if (vd.init is IntLiteral && (((IntLiteral) vd.init).is_unsigned || ((IntLiteral) vd.init).is_long))
+                                    set_const (cnames, cvals, ctracked, vd.name, null);
+                                else
+                                    set_const (cnames, cvals, ctracked, vd.name, vd.init);
+                            } else {
                                 set_const (cnames, cvals, ctracked, vd.name, null);
+                            }
                         }
                     } else if (opt_s is AssignStatement) {
                         var asg = (AssignStatement) opt_s;
                         if (is_tracked_const_var (cnames, asg.name)) {
-                            if (asg.value is IntLiteral || asg.value is BoolLiteral || asg.value is StringLiteral)
+                            if ((asg.value is IntLiteral && !((IntLiteral) asg.value).is_unsigned && !((IntLiteral) asg.value).is_long)
+                                || asg.value is BoolLiteral || asg.value is StringLiteral)
                                 set_const (cnames, cvals, ctracked, asg.name, asg.value);
                             else
                                 set_const (cnames, cvals, ctracked, asg.name, null);
                         }
-                    } else if (opt_s is IfStatement || opt_s is WhileStatement || opt_s is ForStatement
-                               || opt_s is ForeachStatement || opt_s is SwitchStatement
+                    } else if (opt_s is IfStatement || opt_s is WhileStatement || opt_s is DoWhileStatement
+                               || opt_s is ForStatement || opt_s is ForeachStatement || opt_s is SwitchStatement
                                || opt_s is TryStatement || opt_s is BlockStatement) {
                         invalidate_all_consts (cvals);
                     }
@@ -366,6 +398,15 @@ namespace Planc {
                     return null; // DCE: while (false)
                 return s;
             }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                if (dw.body != null) {
+                    var dwb = opt_stmt (dw.body);
+                    dw.body = dwb != null ? dwb : new BlockStatement ();
+                }
+                dw.condition = opt_expr (dw.condition);
+                return s;
+            }
             if (s is ForStatement) {
                 var fs = (ForStatement) s;
                 if (fs.init != null)
@@ -441,16 +482,29 @@ namespace Planc {
                 var u = (UnaryExpr) e;
                 u.operand = opt_expr (u.operand);
                 if (u.operand is IntLiteral) {
-                    int64 v = ((IntLiteral) u.operand).value;
-                    if (u.op == "-") {
-                        if (v == int64.MIN) {
-                            Host.eprintln (@"planc: warning: integer overflow in unary '-' at $(loc_str (e.line, e.column))");
-                            return u;
+                    var il = (IntLiteral) u.operand;
+                    int64 v = il.value;
+                    if (il.is_unsigned) {
+                        bool is64 = il.is_long || ((uint64) v) > (uint64) 0xFFFFFFFFu;
+                        if (u.op == "-") {
+                            int64 nv = is64 ? (int64) (-(uint64) v) : (int64) ((uint64) (uint32) (-(uint32) (uint64) v));
+                            return new IntLiteral () { value = nv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
                         }
-                        return new IntLiteral () { value = -v, line = e.line, column = e.column };
+                        if (u.op == "~") {
+                            int64 nv = is64 ? ~v : (int64) ((uint64) (uint32) (~(uint32) (uint64) v));
+                            return new IntLiteral () { value = nv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                    } else {
+                        if (u.op == "-") {
+                            if (v == int64.MIN) {
+                                Host.eprintln (@"planc: warning: integer overflow in unary '-' at $(loc_str (e.line, e.column))");
+                                return u;
+                            }
+                            return new IntLiteral () { value = -v, is_long = il.is_long, line = e.line, column = e.column };
+                        }
+                        if (u.op == "~")
+                            return new IntLiteral () { value = ~v, is_long = il.is_long, line = e.line, column = e.column };
                     }
-                    if (u.op == "~")
-                        return new IntLiteral () { value = ~v, line = e.line, column = e.column };
                 }
                 if (u.operand is BoolLiteral && u.op == "!") {
                     bool bv = ((BoolLiteral) u.operand).value;
@@ -486,79 +540,150 @@ namespace Planc {
                 b.right = opt_expr (b.right);
 
                 if (b.left is IntLiteral && b.right is IntLiteral) {
-                    int64 l = ((IntLiteral) b.left).value;
-                    int64 r = ((IntLiteral) b.right).value;
-                    if (b.op == "+") {
-                        if ((r > 0 && l > int64.MAX - r) || (r < 0 && l < int64.MIN - r)) {
-                            Host.eprintln (@"planc: warning: integer overflow in '+' at $(loc_str (e.line, e.column))");
-                            return b;
+                    var ll = (IntLiteral) b.left;
+                    var rl = (IntLiteral) b.right;
+                    int64 l = ll.value;
+                    int64 r = rl.value;
+                    if (ll.is_unsigned && rl.is_unsigned) {
+                        bool is64 = ll.is_long || rl.is_long
+                            || ((uint64) l) > (uint64) 0xFFFFFFFFu
+                            || ((uint64) r) > (uint64) 0xFFFFFFFFu;
+                        uint64 ul = is64 ? (uint64) l : (uint64) (uint32) (uint64) l;
+                        uint64 ur = is64 ? (uint64) r : (uint64) (uint32) (uint64) r;
+                        int bits = is64 ? 64 : 32;
+                        if (b.op == "+") {
+                            uint64 res = ul + ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
                         }
-                        return new IntLiteral () { value = l + r, line = e.line, column = e.column };
+                        if (b.op == "-") {
+                            uint64 res = ul - ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                        if (b.op == "*") {
+                            uint64 res = ul * ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                        if (b.op == "/") {
+                            if (ur == 0) {
+                                Host.eprintln (@"planc: warning: division by zero at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            uint64 res = ul / ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                        if (b.op == "%") {
+                            if (ur == 0) {
+                                Host.eprintln (@"planc: warning: modulo by zero at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            uint64 res = ul % ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                        if (b.op == "&") return new IntLiteral () { value = (int64) (ul & ur), is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        if (b.op == "|") return new IntLiteral () { value = (int64) (ul | ur), is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        if (b.op == "^") return new IntLiteral () { value = (int64) (ul ^ ur), is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        if (b.op == "<<") {
+                            if (ur >= (uint64) bits) {
+                                Host.eprintln (@"planc: warning: shift count out of range in '<<' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            uint64 res = ul << (int) ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                        if (b.op == ">>") {
+                            if (ur >= (uint64) bits) {
+                                Host.eprintln (@"planc: warning: shift count out of range in '>>' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            uint64 res = ul >> (int) ur;
+                            int64 fv = is64 ? (int64) res : (int64) (uint64) (uint32) res;
+                            return new IntLiteral () { value = fv, is_unsigned = true, is_long = is64, line = e.line, column = e.column };
+                        }
+                        if (b.op == "==") return new BoolLiteral () { value = (ul == ur), line = e.line, column = e.column };
+                        if (b.op == "!=") return new BoolLiteral () { value = (ul != ur), line = e.line, column = e.column };
+                        if (b.op == "<")  return new BoolLiteral () { value = (ul < ur),  line = e.line, column = e.column };
+                        if (b.op == "<=") return new BoolLiteral () { value = (ul <= ur), line = e.line, column = e.column };
+                        if (b.op == ">")  return new BoolLiteral () { value = (ul > ur),  line = e.line, column = e.column };
+                        if (b.op == ">=") return new BoolLiteral () { value = (ul >= ur), line = e.line, column = e.column };
+                    } else if (!ll.is_unsigned && !rl.is_unsigned) {
+                        if (b.op == "+") {
+                            if ((r > 0 && l > int64.MAX - r) || (r < 0 && l < int64.MIN - r)) {
+                                Host.eprintln (@"planc: warning: integer overflow in '+' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l + r, line = e.line, column = e.column };
+                        }
+                        if (b.op == "-") {
+                            if ((r < 0 && l > int64.MAX + r) || (r > 0 && l < int64.MIN + r)) {
+                                Host.eprintln (@"planc: warning: integer overflow in '-' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l - r, line = e.line, column = e.column };
+                        }
+                        if (b.op == "*") {
+                            bool ov = false;
+                            if (l > 0 && r > 0 && l > int64.MAX / r) ov = true;
+                            else if (l > 0 && r < 0 && r < int64.MIN / l) ov = true;
+                            else if (l < 0 && r > 0 && l < int64.MIN / r) ov = true;
+                            else if (l < 0 && r < 0 && l < int64.MAX / r) ov = true;
+                            if (ov) {
+                                Host.eprintln (@"planc: warning: integer overflow in '*' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l * r, line = e.line, column = e.column };
+                        }
+                        if (b.op == "/") {
+                            if (r == 0) {
+                                Host.eprintln (@"planc: warning: division by zero at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            if (l == int64.MIN && r == -1) {
+                                Host.eprintln (@"planc: warning: integer overflow in '/' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l / r, line = e.line, column = e.column };
+                        }
+                        if (b.op == "%") {
+                            if (r == 0) {
+                                Host.eprintln (@"planc: warning: modulo by zero at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            if (l == int64.MIN && r == -1) {
+                                Host.eprintln (@"planc: warning: integer overflow in '%' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l % r, line = e.line, column = e.column };
+                        }
+                        if (b.op == "&") return new IntLiteral () { value = l & r, line = e.line, column = e.column };
+                        if (b.op == "|") return new IntLiteral () { value = l | r, line = e.line, column = e.column };
+                        if (b.op == "^") return new IntLiteral () { value = l ^ r, line = e.line, column = e.column };
+                        if (b.op == "<<") {
+                            if (r < 0 || r >= 64) {
+                                Host.eprintln (@"planc: warning: shift count out of range in '<<' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l << r, line = e.line, column = e.column };
+                        }
+                        if (b.op == ">>") {
+                            if (r < 0 || r >= 64) {
+                                Host.eprintln (@"planc: warning: shift count out of range in '>>' at $(loc_str (e.line, e.column))");
+                                return b;
+                            }
+                            return new IntLiteral () { value = l >> r, line = e.line, column = e.column };
+                        }
+                        if (b.op == "==") return new BoolLiteral () { value = (l == r), line = e.line, column = e.column };
+                        if (b.op == "!=") return new BoolLiteral () { value = (l != r), line = e.line, column = e.column };
+                        if (b.op == "<")  return new BoolLiteral () { value = (l < r),  line = e.line, column = e.column };
+                        if (b.op == "<=") return new BoolLiteral () { value = (l <= r), line = e.line, column = e.column };
+                        if (b.op == ">")  return new BoolLiteral () { value = (l > r),  line = e.line, column = e.column };
+                        if (b.op == ">=") return new BoolLiteral () { value = (l >= r), line = e.line, column = e.column };
                     }
-                    if (b.op == "-") {
-                        if ((r < 0 && l > int64.MAX + r) || (r > 0 && l < int64.MIN + r)) {
-                            Host.eprintln (@"planc: warning: integer overflow in '-' at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        return new IntLiteral () { value = l - r, line = e.line, column = e.column };
-                    }
-                    if (b.op == "*") {
-                        bool ov = false;
-                        if (l > 0 && r > 0 && l > int64.MAX / r) ov = true;
-                        else if (l > 0 && r < 0 && r < int64.MIN / l) ov = true;
-                        else if (l < 0 && r > 0 && l < int64.MIN / r) ov = true;
-                        else if (l < 0 && r < 0 && l < int64.MAX / r) ov = true;
-                        if (ov) {
-                            Host.eprintln (@"planc: warning: integer overflow in '*' at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        return new IntLiteral () { value = l * r, line = e.line, column = e.column };
-                    }
-                    if (b.op == "/") {
-                        if (r == 0) {
-                            Host.eprintln (@"planc: warning: division by zero at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        if (l == int64.MIN && r == -1) {
-                            Host.eprintln (@"planc: warning: integer overflow in '/' at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        return new IntLiteral () { value = l / r, line = e.line, column = e.column };
-                    }
-                    if (b.op == "%") {
-                        if (r == 0) {
-                            Host.eprintln (@"planc: warning: modulo by zero at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        if (l == int64.MIN && r == -1) {
-                            Host.eprintln (@"planc: warning: integer overflow in '%' at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        return new IntLiteral () { value = l % r, line = e.line, column = e.column };
-                    }
-                    if (b.op == "&") return new IntLiteral () { value = l & r, line = e.line, column = e.column };
-                    if (b.op == "|") return new IntLiteral () { value = l | r, line = e.line, column = e.column };
-                    if (b.op == "^") return new IntLiteral () { value = l ^ r, line = e.line, column = e.column };
-                    if (b.op == "<<") {
-                        if (r < 0 || r >= 64) {
-                            Host.eprintln (@"planc: warning: shift count out of range in '<<' at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        return new IntLiteral () { value = l << r, line = e.line, column = e.column };
-                    }
-                    if (b.op == ">>") {
-                        if (r < 0 || r >= 64) {
-                            Host.eprintln (@"planc: warning: shift count out of range in '>>' at $(loc_str (e.line, e.column))");
-                            return b;
-                        }
-                        return new IntLiteral () { value = l >> r, line = e.line, column = e.column };
-                    }
-                    if (b.op == "==") return new BoolLiteral () { value = (l == r), line = e.line, column = e.column };
-                    if (b.op == "!=") return new BoolLiteral () { value = (l != r), line = e.line, column = e.column };
-                    if (b.op == "<")  return new BoolLiteral () { value = (l < r),  line = e.line, column = e.column };
-                    if (b.op == "<=") return new BoolLiteral () { value = (l <= r), line = e.line, column = e.column };
-                    if (b.op == ">")  return new BoolLiteral () { value = (l > r),  line = e.line, column = e.column };
-                    if (b.op == ">=") return new BoolLiteral () { value = (l >= r), line = e.line, column = e.column };
                 }
 
                 if (b.left is BoolLiteral && b.right is BoolLiteral) {
@@ -634,9 +759,9 @@ namespace Planc {
                     if ((b.op == "==" && !rv) || (b.op == "!=" && rv))
                         return new UnaryExpr () { op = "!", operand = b.left, line = e.line, column = e.column };
                 }
-                if (level >= 2 && b.right is IntLiteral && b.left is BinaryExpr) {
+                if (level >= 2 && b.right is IntLiteral && !((IntLiteral) b.right).is_unsigned && b.left is BinaryExpr) {
                     var lb = (BinaryExpr) b.left;
-                    if (lb.right is IntLiteral) {
+                    if (lb.right is IntLiteral && !((IntLiteral) lb.right).is_unsigned) {
                         int64 c1 = ((IntLiteral) lb.right).value;
                         int64 c2 = ((IntLiteral) b.right).value;
                         if (b.op == "+" && lb.op == "+") {

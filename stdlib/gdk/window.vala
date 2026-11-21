@@ -12,7 +12,69 @@ namespace Gdk {
     private extern int __g_peek64 (int addr);
 
     /**
-     * Window backed by either the kernel linear framebuffer or a compositor PWIN file.
+     * Layout of the compositor shared window block (PLANET_WIN_SHM).
+     *
+     * One 4 KiB header page followed by the ARGB pixels. The compositor owns the
+     * memory: it allocates the frames and exports the base address, and because
+     * the kernel identity-maps user pages the client attaches the very same
+     * address with Sys.map_user_at. The client only ever writes the damage
+     * rectangle and the sequence number; the pixels are written straight into
+     * the shared buffer, so a frame costs no copy and no file rewrite.
+     */
+    public class SharedSurface : Object {
+        public const int MAGIC = 0x4D48534F; // "OSHM"
+        public const int HDR_BYTES = 4096;
+        public const int OFF_MAGIC = 0;
+        public const int OFF_WIDTH = 4;
+        public const int OFF_HEIGHT = 8;
+        public const int OFF_SEQ = 12;
+        public const int OFF_DX = 16;
+        public const int OFF_DY = 20;
+        public const int OFF_DW = 24;
+        public const int OFF_DH = 28;
+        // Up to four damage rectangles per published frame; rectangle 0 reuses
+        // the offsets above, the rest follow the count word.
+        public const int OFF_DCOUNT = 32;
+        public const int OFF_RECT1 = 36;
+        public const int MAX_RECTS = 4;
+        // Input ring. The compositor writes a slot and then bumps OFF_EV_SEQ; the
+        // client copies up to that sequence and acknowledges with OFF_EV_ACK, so
+        // the two ends never need a syscall to exchange an event.
+        public const int OFF_EV_SEQ = 84;
+        public const int OFF_EV_ACK = 88;
+        public const int OFF_EV_SLOT = 92;
+        public const int EV_SLOTS = 16;
+        public const int EV_WORDS = 4;      // type, p1, p2, p3
+
+        public static int pixel_offset () {
+            return HDR_BYTES;
+        }
+
+        public static int ev_slot (int idx) {
+            return OFF_EV_SLOT + idx * EV_WORDS * 4;
+        }
+
+        public static int rect_off (int idx) {
+            return (idx == 0) ? OFF_DX : OFF_RECT1 + (idx - 1) * 16;
+        }
+
+        public static int bytes_for (int w, int h) {
+            if (w <= 0 || h <= 0)
+                return 0;
+            return HDR_BYTES + w * h * 4;
+        }
+
+        public static int pages_for (int w, int h) {
+            int bytes = bytes_for (w, h);
+            if (bytes <= 0)
+                return 0;
+            return (bytes + 4095) / 4096;
+        }
+    }
+
+    /**
+     * Window backed by either the kernel linear framebuffer, a compositor PWIN
+     * file, or a compositor shared surface.
      */
     public class Window : Object {
         private const int MIN_DIM = 1;
@@ -24,7 +86,9 @@ namespace Gdk {
         public ImageSurface surface { get; private set; }
         public string comp_file = "";
         public string comp_ev_file = "";
+        public int comp_shm = 0;
         public bool closed { get; private set; }
+        private int comp_shm_seq = 0;
 
         private int mouse_buf = 0;
         private int last_mx = -1;
@@ -86,8 +150,40 @@ namespace Gdk {
             ev_read_buf = new uint8[324];
         }
 
+        /**
+         * Shared-surface client: attaches the block the compositor allocated and
+         * draws straight into its pixel buffer. An attach that fails leaves the
+         * window invalid so Display can fall back to the PWIN file transport.
+         */
+        public Window.compositor_shared (int w, int h, int shm_base, string ev_path = "") {
+            width = clamp_dim (w);
+            height = clamp_dim (h);
+            closed = false;
+            comp_file = "";
+            comp_ev_file = ev_path;
+            comp_hdr = new uint8[16];
+            ev_q = new int32[64];
+            ev_read_buf = new uint8[324];
+            int px = 0;
+            int bytes = SharedSurface.bytes_for (width, height);
+            if (shm_base > 0 && bytes > 0 && Sys.map_user_at (shm_base, bytes) == 0) {
+                if (Sys.peek32 (shm_base + SharedSurface.OFF_MAGIC) == SharedSurface.MAGIC) {
+                    px = shm_base + SharedSurface.pixel_offset ();
+                    comp_shm = shm_base;
+                    comp_shm_seq = Sys.peek32 (shm_base + SharedSurface.OFF_SEQ);
+                }
+            }
+            surface = new ImageSurface.wrap (px, width, height);
+        }
+
         public bool is_valid () {
             return !closed && surface != null && surface.buf_addr != 0;
+        }
+
+        // True when the pixels live in a compositor surface, so the window must
+        // not draw its own cursor nor touch the kernel framebuffer.
+        public bool composited () {
+            return comp_shm != 0 || comp_file.length > 0;
         }
 
         public Context create_cairo_context () {
@@ -137,9 +233,97 @@ namespace Gdk {
             }
         }
 
+        // Publishes a damage rectangle. The pixels are already in the shared
+        // buffer, so this only records the rect and bumps the sequence number,
+        // which the compositor reads as "frame N is complete".
+        private void publish_shared (int dx, int dy, int dw, int dh) {
+            if (comp_shm == 0)
+                return;
+            if (dx < 0) {
+                dw = dw + dx;
+                dx = 0;
+            }
+            if (dy < 0) {
+                dh = dh + dy;
+                dy = 0;
+            }
+            if (dx + dw > width)
+                dw = width - dx;
+            if (dy + dh > height)
+                dh = height - dy;
+            if (dw <= 0 || dh <= 0)
+                return;
+            Sys.poke32 (comp_shm + SharedSurface.OFF_DX, dx);
+            Sys.poke32 (comp_shm + SharedSurface.OFF_DY, dy);
+            Sys.poke32 (comp_shm + SharedSurface.OFF_DW, dw);
+            Sys.poke32 (comp_shm + SharedSurface.OFF_DH, dh);
+            Sys.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, 1);
+            comp_shm_seq = comp_shm_seq + 1;
+            Sys.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
+        }
+
+        // Publishes several rectangles at once: distant changes stay separate, so
+        // the compositor never repaints the gap between an edited line and a
+        // status label in a far corner.
+        private void publish_shared_rects (int[] xs, int[] ys, int[] ws, int[] hs, int n) {
+            if (comp_shm == 0)
+                return;
+            int out_n = 0;
+            for (int i = 0; i < n && out_n < SharedSurface.MAX_RECTS; i++) {
+                int x = xs[i];
+                int y = ys[i];
+                int w = ws[i];
+                int h = hs[i];
+                if (x < 0) {
+                    w = w + x;
+                    x = 0;
+                }
+                if (y < 0) {
+                    h = h + y;
+                    y = 0;
+                }
+                if (x + w > width)
+                    w = width - x;
+                if (y + h > height)
+                    h = height - y;
+                if (w <= 0 || h <= 0)
+                    continue;
+                int off = comp_shm + SharedSurface.rect_off (out_n);
+                Sys.poke32 (off + 0, x);
+                Sys.poke32 (off + 4, y);
+                Sys.poke32 (off + 8, w);
+                Sys.poke32 (off + 12, h);
+                out_n = out_n + 1;
+            }
+            if (out_n == 0)
+                return;
+            Sys.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, out_n);
+            comp_shm_seq = comp_shm_seq + 1;
+            Sys.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
+        }
+
+        public void present_rects (int[] xs, int[] ys, int[] ws, int[] hs, int n) {
+            if (!is_valid ())
+                return;
+            if (comp_shm != 0) {
+                publish_shared_rects (xs, ys, ws, hs, n);
+                return;
+            }
+            if (comp_file.length > 0) {
+                flush_to_comp_file ();
+                return;
+            }
+            for (int i = 0; i < n; i++)
+                present_rect (xs[i], ys[i], ws[i], hs[i]);
+        }
+
         public void present () {
             if (!is_valid ())
                 return;
+            if (comp_shm != 0) {
+                publish_shared (0, 0, width, height);
+                return;
+            }
             if (comp_file.length > 0) {
                 flush_to_comp_file ();
                 return;
@@ -154,6 +338,10 @@ namespace Gdk {
         public void present_rect (int x, int y, int w, int h) {
             if (!is_valid ())
                 return;
+            if (comp_shm != 0) {
+                publish_shared (x, y, w, h);
+                return;
+            }
             if (comp_file.length > 0) {
                 flush_to_comp_file ();
                 return;
@@ -256,6 +444,8 @@ namespace Gdk {
         private Event poll_comp_event () {
             if (ev_q_pos < ev_q_len)
                 return pop_comp_event ();
+            if (comp_shm != 0)
+                return poll_shared_event ();
             if (comp_ev_file.length == 0)
                 return new Event ();
             int fd = Sys.open (comp_ev_file);
@@ -292,11 +482,42 @@ namespace Gdk {
             return new Event ();
         }
 
+        // Shared input ring: read everything the compositor wrote since the last
+        // acknowledgement, then ack it so those slots can be reused.
+        private Event poll_shared_event () {
+            int shm = comp_shm;
+            int written = Sys.peek32 (shm + SharedSurface.OFF_EV_SEQ);
+            int ack = Sys.peek32 (shm + SharedSurface.OFF_EV_ACK);
+            if (written == ack)
+                return new Event ();
+            // Overrun: the compositor reused slots, so jump to the oldest event
+            // that is still intact instead of mixing stale payloads.
+            if (written - ack > SharedSurface.EV_SLOTS)
+                ack = written - SharedSurface.EV_SLOTS;
+            if (ev_q == null || ev_q.length < 64)
+                ev_q = new int32[64];
+            ev_q_len = 0;
+            ev_q_pos = 0;
+            for (int s = ack + 1; s <= written; s++) {
+                int off = shm + SharedSurface.ev_slot (s % SharedSurface.EV_SLOTS);
+                int dst = (int) ev_q_len * 4;
+                ev_q[dst + 0] = Sys.peek32 (off + 0);
+                ev_q[dst + 1] = Sys.peek32 (off + 4);
+                ev_q[dst + 2] = Sys.peek32 (off + 8);
+                ev_q[dst + 3] = Sys.peek32 (off + 12);
+                ev_q_len++;
+            }
+            Sys.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
+            if (ev_q_pos < ev_q_len)
+                return pop_comp_event ();
+            return new Event ();
+        }
+
         public Event poll_event () {
             var ev = new Event ();
             if (closed)
                 return ev;
-            if (comp_file.length > 0)
+            if (composited ())
                 return poll_comp_event ();
             int key = Sys.read_key ();
             if (key > 0) {
@@ -363,9 +584,12 @@ namespace Gdk {
             closed = true;
             if (comp_file.length > 0) {
                 Sys.unlink (comp_file);
-            } else {
+            } else if (comp_shm == 0) {
                 Sys.sys (23, 0, 0, 0);
             }
+            // The shared block belongs to the compositor: drop the reference but
+            // never release frames the client does not own.
+            comp_shm = 0;
             if (mouse_buf > 0) {
                 Sys.free_page (mouse_buf);
                 mouse_buf = 0;

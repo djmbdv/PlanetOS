@@ -1,6 +1,8 @@
-# Translate C -> Vala -> ELF64 and execute it entirely inside PlanetOS!
-c2vala arith.c -o arith.vala
-planc arith.vala -o arith.elf
-arith.elf
-rm arith.vala
-rm arith.elf
+# Translate C -> Vala -> ELF64 and execute it entirely inside PlanetOS, with
+# all generated files under test/c2vala.
+mkdir test
+mkdir test/c2vala
+cp arith.c test/c2vala/arith.c
+c2vala test/c2vala/arith.c -o test/c2vala/arith.vala
+planc test/c2vala/arith.vala -o test/c2vala/arith.elf
+test/c2vala/arith.elf

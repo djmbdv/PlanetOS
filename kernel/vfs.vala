@@ -4,7 +4,7 @@
 
 namespace Planet.Kernel {
 
-    public class Vfs : Object {
+    public sealed class Vfs : Object {
         public const int KIND_NONE = 0;
         public const int KIND_XFS = 1;
         public const int KIND_FILE = 2;

@@ -360,7 +360,7 @@ serial log when a case fails.
 
 | Track | Next Milestones | Target Outcome |
 |---|---|---|
-| **Compositor & Wayland-lite** | Bidirectional pointer/keyboard event forwarding to `Kind.EXT` windows, shared-memory (`SYS_SHM`) zero-copy surfaces, dynamic window resize, and Virgl/Vulkan ICD acceleration. | External pure-Vala GUI apps run interactively inside compositor windows with zero copies. |
+| **Compositor & Wayland-lite** | Bidirectional pointer/keyboard event forwarding to `Kind.EXT` windows through a shared input ring (done), zero-copy shared window surfaces with up to four damage rectangles per frame (done, attached with `SYS_MAP_USER_AT`), dynamic window resize, and Virgl/Vulkan ICD acceleration. | External pure-Vala GUI apps run interactively inside compositor windows with zero copies. |
 | **`pcm4` & Desktop Apps** | Port `volume-manager` & `connect-server-dialog`, add multi-tab file browsing, image/code previews, and a built-in graphical terminal + text editor. | Full daily-driver file manager and desktop workflow inside PlanetOS. |
 | **Kernel & IPC** | Kernel in-memory `SYS_PIPE`, shared memory regions, `virtio-net` NIC driver + pure-Vala TCP/IP stack, and audio (`virtio-snd` / AC97). | Real inter-process pipelines, networking, and multimedia. |
 | **Self-Hosted SDK** | Compile GUI apps (`gtk_demo.elf`, `pcm4.elf`) directly inside PlanetOS using `planc.elf` with pre-indexed modular `stdlib/` packages. | Self-sufficient Vala OS capable of building its own desktop software on-target. |

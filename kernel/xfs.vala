@@ -16,30 +16,29 @@ namespace Planet.Kernel {
     ")]
     public extern void xfs_memcpy (int dst, int src, int len);
 
-    private bool xfs_mounted = false;
-    private int xfs_blocksize = 4096;
-    private int xfs_agblocks = 0;
-    private int xfs_dblocks = 0;
-    private int xfs_agblklog = 0;
-    private int xfs_inodesize = 256;
-    private int xfs_inopblog = 0;
-    private int xfs_rootino = 128;
-    private int xfs_sec_buf = 0;
-    private int xfs_cached_ino = -1;
+    public sealed class Xfs : Object {
+        private static bool xfs_mounted = false;
+        private static int xfs_blocksize = 4096;
+        private static int xfs_agblocks = 0;
+        private static int xfs_dblocks = 0;
+        private static int xfs_agblklog = 0;
+        private static int xfs_inodesize = 256;
+        private static int xfs_inopblog = 0;
+        private static int xfs_rootino = 128;
+        private static int xfs_sec_buf = 0;
+        private static int xfs_cached_ino = 0;
 
-    // Allocator state for persistent XFS writes (initialized by scan_alloc_state)
-    private int xfs_alloc_ready = 0;
-    private int xfs_next_ino = 0;
-    private int xfs_max_ino = 0;
-    private int xfs_next_blk = 0;
+        // Allocator state for persistent XFS writes (initialized by scan_alloc_state)
+        private static int xfs_alloc_ready = 0;
+        private static int xfs_next_ino = 0;
+        private static int xfs_max_ino = 0;
+        private static int xfs_next_blk = 0;
 
-    // 8-slot 4 KiB sector-group cache (keyed by LBA aligned to 8 sectors)
-    private const int XFS_CACHE_SLOTS = 8;
-    private int xfs_bcache_mem = 0;
-    private int[] xfs_bcache_lba;
-    private int xfs_bcache_next = 0;
-
-    public class Xfs : Object {
+        // 8-slot 4 KiB sector-group cache (keyed by LBA aligned to 8 sectors)
+        private const int XFS_CACHE_SLOTS = 8;
+        private static int xfs_bcache_mem = 0;
+        private static int[] xfs_bcache_lba;
+        private static int xfs_bcache_next = 0;
 
         private static bool is_pow2 (int v) {
             return v > 0 && (v & (v - 1)) == 0;

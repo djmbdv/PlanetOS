@@ -12,7 +12,7 @@ namespace Planet.Kernel {
     ")]
     private extern int __rtc_read_reg (int reg);
 
-    public class Rtc : Object {
+    public sealed class Rtc : Object {
 
         private static int bcd_to_bin (int v) {
             return ((v >> 4) & 0x0f) * 10 + (v & 0x0f);

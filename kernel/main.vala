@@ -3,7 +3,7 @@
 using Planet.Rt;
 using Planet.Kernel;
 
-class KernelBanner {
+sealed class KernelBanner {
     public string name;
     public int major;
     public int minor;

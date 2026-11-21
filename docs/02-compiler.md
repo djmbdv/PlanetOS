@@ -410,6 +410,8 @@ The second backend target. It consumes the same SSA IR and emits a **SPIR-V bina
 | Inputs/outputs | function parameters and return value (or an `in`/`out` struct) annotated `[Location(n)]` → interface variables |
 | Determinism | byte-identical module for the same input (TC-05 applies identically); no timestamps, the generator word is fixed |
 
+The implemented fragment subset is straight-line and scalar: `frag_coord_x/y/z/w`, `uniform_time/width/height`, `uniform_p0()..uniform_p3()` (an 8-float push-constant block), `+ - * /`, and the `GLSL.std.450` scalar builtins `abs`, `floor`, `fract`, `sqrt`, `min`, `max`, `clamp`, `mix`, `step` and `smoothstep`. Modules import the extended instruction set only when one of those is used, and [stdlib/spirv_compat.vala](../../stdlib/spirv_compat.vala) evaluates exactly this subset, which is what lets `Gsk.ShaderNode` paint a render node from the same module the compositor bakes.
+
 The shader dialect is a **restricted subset**, not an extension: what SPIR-V's execution models cannot express is rejected at compile time with a positioned diagnostic (TC-12), following the same rule as the measured Vala rejections in [E-01](experiments/E01-dialect.md):
 
 | Rejected | Reason |

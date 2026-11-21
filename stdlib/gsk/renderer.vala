@@ -44,14 +44,28 @@ namespace Gsk {
         public override string backend_name () {
             if (!realized || vk == null)
                 return "unrealized";
-            return vk.using_hw_venus ? "venus-vulkan" : "vulkan-fallback-cairo";
+            if (vk.using_hw_venus)
+                return "venus-vulkan";
+            if (vk.using_hw_virgl)
+                return "virgl-3d-cairo";
+            return "vulkan-fallback-cairo";
         }
 
         public override void render (RenderNode root, ImageSurface target) {
             if (root == null || target == null || target.buf_addr == 0)
                 return;
-            if (realized && vk != null && vk.using_hw_venus)
-                vk.draw_fullscreen (1);
+            if (realized && vk != null) {
+                if (vk.using_hw_venus) {
+                    vk.draw_fullscreen (1);
+                } else if (vk.using_hw_virgl && root is ColorNode) {
+                    var cn = (ColorNode) root;
+                    if (cn.bounds != null && cn.bounds.x <= 0.0 && cn.bounds.y <= 0.0
+                        && cn.bounds.w >= (double) target.width && cn.bounds.h >= (double) target.height
+                        && vk.virgl_clear_target (target.width, target.height, cn.r, cn.g, cn.b, cn.a, target.buf_addr)) {
+                        return;
+                    }
+                }
+            }
             fallback.render (root, target);
         }
 

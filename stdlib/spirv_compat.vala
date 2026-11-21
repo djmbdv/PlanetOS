@@ -34,6 +34,14 @@ namespace Spv {
         private double uni_time = 0.0;
         private double uni_width = 800.0;
         private double uni_height = 600.0;
+        private double uni_p0 = 1.0;
+        private double uni_p1 = 1.0;
+        private double uni_p2 = 0.0;
+        private double uni_p3 = 0.0;
+        // Pixel-space origin subtracted from gl_FragCoord, so a GSK node can
+        // evaluate the same shader in its own local coordinates.
+        private double origin_x = 0.0;
+        private double origin_y = 0.0;
         private int[] pc_member;
         private int[] ivals;
         private double[] fvals;
@@ -54,6 +62,19 @@ namespace Spv {
             uni_height = height;
         }
 
+        // Effect parameters exposed to the shader as uniform_p0()..uniform_p3().
+        public void set_params (double p0, double p1, double p2, double p3) {
+            uni_p0 = p0;
+            uni_p1 = p1;
+            uni_p2 = p2;
+            uni_p3 = p3;
+        }
+
+        public void set_origin (double x, double y) {
+            origin_x = x;
+            origin_y = y;
+        }
+
         public double uniform_time_value () { return uni_time; }
 
         // Evaluates the fragment stage for one pixel (coordinates are the
@@ -67,6 +88,29 @@ namespace Spv {
         public int ir () { return to255 (r); }
         public int ig () { return to255 (g); }
         public int ib () { return to255 (b); }
+        public int ia () { return to255 (a); }
+
+        private static double dfloor (double x) {
+            int n = (int) x;
+            if ((double) n > x)
+                n = n - 1;
+            return (double) n;
+        }
+
+        // Newton iteration: the runtime has no libm, and the shaders only need
+        // a handful of square roots per vertex/block.
+        private static double dsqrt (double x) {
+            if (x <= 0.0)
+                return 0.0;
+            double g = (x > 1.0) ? x : 1.0;
+            for (int i = 0; i < 40; i++) {
+                double next = 0.5 * (g + x / g);
+                if (next == g)
+                    break;
+                g = next;
+            }
+            return g;
+        }
 
         private static int to255 (double v) {
             int n = (int) (v * 255.0);
@@ -244,6 +288,37 @@ namespace Spv {
                     vec_g[res] = fvals[(int) w[wi + 4]];
                     vec_b[res] = fvals[(int) w[wi + 5]];
                     vec_a[res] = fvals[(int) w[wi + 6]];
+                } else if (opc == 12 && wc >= 6) { // OpExtInst (GLSL.std.450)
+                    int res = (int) w[wi + 2];
+                    int inst = (int) w[wi + 4];
+                    double x = fvals[(int) w[wi + 5]];
+                    double y = (wc >= 7) ? fvals[(int) w[wi + 6]] : 0.0;
+                    double z = (wc >= 8) ? fvals[(int) w[wi + 7]] : 0.0;
+                    if (inst == 4) { // abs
+                        fvals[res] = (x < 0.0) ? -x : x;
+                    } else if (inst == 8) { // floor
+                        fvals[res] = dfloor (x);
+                    } else if (inst == 10) { // fract
+                        fvals[res] = x - dfloor (x);
+                    } else if (inst == 31) { // sqrt
+                        fvals[res] = dsqrt (x);
+                    } else if (inst == 37) { // min
+                        fvals[res] = (x < y) ? x : y;
+                    } else if (inst == 38) { // max
+                        fvals[res] = (x > y) ? x : y;
+                    } else if (inst == 43) { // clamp
+                        double lo = (x < y) ? y : x;
+                        fvals[res] = (lo > z) ? z : lo;
+                    } else if (inst == 46) { // mix
+                        fvals[res] = x * (1.0 - z) + y * z;
+                    } else if (inst == 48) { // step
+                        fvals[res] = (y < x) ? 0.0 : 1.0;
+                    } else if (inst == 49) { // smoothstep
+                        double t = (y > x) ? (z - x) / (y - x) : 0.0;
+                        if (t < 0.0) t = 0.0;
+                        if (t > 1.0) t = 1.0;
+                        fvals[res] = t * t * (3.0 - 2.0 * t);
+                    }
                 } else if (opc == 81 && wc >= 5) { // OpCompositeExtract
                     int res = (int) w[wi + 2];
                     int src = (int) w[wi + 3];
@@ -268,13 +343,14 @@ namespace Spv {
                     int res = (int) w[wi + 2];
                     int ptr = (int) w[wi + 3];
                     if (per_pixel && ptr == input_id) {
-                        // gl_FragCoord with OriginUpperLeft
-                        vec_r[res] = (double) px + 0.5;
-                        vec_g[res] = (double) py + 0.5;
+                        // gl_FragCoord with OriginUpperLeft, relative to the
+                        // evaluation origin (a GSK node's top-left corner).
+                        vec_r[res] = (double) px + 0.5 - origin_x;
+                        vec_g[res] = (double) py + 0.5 - origin_y;
                         vec_b[res] = 0.0;
                         vec_a[res] = 1.0;
                     } else if (pc_member[ptr] >= 0) {
-                        // push constant member: 0 time, 1 width, 2 height, 3 pad
+                        // 0 time, 1 width, 2 height, 3 pad, 4..7 effect params
                         int m = pc_member[ptr];
                         if (m == 0)
                             fvals[res] = uni_time;
@@ -282,6 +358,14 @@ namespace Spv {
                             fvals[res] = uni_width;
                         else if (m == 2)
                             fvals[res] = uni_height;
+                        else if (m == 4)
+                            fvals[res] = uni_p0;
+                        else if (m == 5)
+                            fvals[res] = uni_p1;
+                        else if (m == 6)
+                            fvals[res] = uni_p2;
+                        else if (m == 7)
+                            fvals[res] = uni_p3;
                         else
                             fvals[res] = 0.0;
                     } else {

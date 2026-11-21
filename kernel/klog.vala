@@ -12,18 +12,16 @@
 
 namespace Planet.Kernel {
 
-    private const int REC_SIZE = 64;
-    private const int REC_TEXT = 40;
-    private const int REC_SLOTS = 128;
+    public sealed class Klog : Object {
+        private const int REC_SIZE = 64;
+        private const int REC_TEXT = 40;
+        private const int REC_SLOTS = 128;
 
-    // Runtime filter state. Plain globals: the language has no way to declare a
-    // static buffer, and these are scalars anyway.
-    private int klog_mask = 0x7F;   // all categories on
-    private int klog_level = 2;     // Klog.LVL_INFO
-    private int klog_head = 0;
-    private int klog_total = 0;
-
-    public class Klog : Object {
+        // Runtime filter state.
+        private static int klog_mask = 0x7F;   // all categories on
+        private static int klog_level = 2;     // Klog.LVL_INFO
+        private static int klog_head = 0;
+        private static int klog_total = 0;
         // Categories. A category is enabled/disabled independently so one noisy
         // subsystem does not have to drown out the others.
         public const int CAT_BOOT  = 0;

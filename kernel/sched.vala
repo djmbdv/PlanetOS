@@ -147,7 +147,7 @@ namespace Planet.Kernel {
     ")]
     public extern int addr_isr_sched_irq0 ();
 
-    public class Sched : Object {
+    public sealed class Sched : Object {
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);
             return (w >> ((addr & 3) * 8)) & 0xFF;
