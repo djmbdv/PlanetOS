@@ -27,6 +27,9 @@ namespace C2Vala {
             // Standard C99 / stdint / stddef typedefs
             add_typedef ("size_t", CType.scalar ("size_t"));
             add_typedef ("ssize_t", CType.scalar ("ssize_t"));
+            add_typedef ("uintptr_t", CType.scalar ("uint64"));
+            add_typedef ("intptr_t", CType.scalar ("int64"));
+            add_typedef ("ptrdiff_t", CType.scalar ("int64"));
             add_typedef ("int8_t", CType.scalar ("int8"));
             add_typedef ("uint8_t", CType.scalar ("uint8"));
             add_typedef ("int16_t", CType.scalar ("int16"));
@@ -38,6 +41,13 @@ namespace C2Vala {
             add_typedef ("bool", CType.scalar ("bool"));
             add_typedef ("va_list", CType.scalar ("int"));
             add_typedef ("FILE", new CType (CTypeKind.STRUCT, "FILE"));
+            // TODO: temporary POSIX opaque stubs; replace with proper header/target model later
+            add_typedef ("pthread_t", CType.scalar ("uint64"));
+            add_typedef ("pthread_mutex_t", new CType (CTypeKind.STRUCT, "pthread_mutex_t"));
+            add_typedef ("pthread_cond_t", new CType (CTypeKind.STRUCT, "pthread_cond_t"));
+            add_typedef ("pthread_attr_t", new CType (CTypeKind.STRUCT, "pthread_attr_t"));
+            add_typedef ("pthread_once_t", CType.scalar ("int"));
+            add_typedef ("pthread_key_t", CType.scalar ("uint32"));
         }
 
         private void add_typedef (string name, CType ct) {
@@ -127,6 +137,50 @@ namespace C2Vala {
             return tu;
         }
 
+        private GenericArray<string> pending_attrs = new GenericArray<string> ();
+
+        private void take_pending_attrs (GenericArray<string> dst) {
+            for (int i = 0; i < pending_attrs.length; i++)
+                dst.add (pending_attrs[i]);
+            pending_attrs = new GenericArray<string> ();
+        }
+
+        private void skip_attributes () {
+            while (at (TokKind.IDENT)) {
+                string kw = cur ().text;
+                if (kw == "__attribute__" || kw == "__attribute" || kw == "__declspec" || kw == "__asm__" || kw == "__asm") {
+                    var sb = new StrBuilder (kw);
+                    advance ();
+                    if (at (TokKind.LPAREN)) {
+                        int depth = 0;
+                        while (!at (TokKind.EOF)) {
+                            string t = cur ().text;
+                            if (at (TokKind.LPAREN)) {
+                                depth++;
+                                sb.append (t);
+                                advance ();
+                            } else if (at (TokKind.RPAREN)) {
+                                depth--;
+                                sb.append (t);
+                                advance ();
+                                if (depth <= 0) break;
+                            } else {
+                                if (t == ",") sb.append (", ");
+                                else sb.append (t);
+                                advance ();
+                            }
+                        }
+                    }
+                    pending_attrs.add (sb.str);
+                } else if (kw == "__extension__") {
+                    pending_attrs.add (kw);
+                    advance ();
+                } else {
+                    break;
+                }
+            }
+        }
+
         private void parse_top_decl (TranslationUnit tu) throws RefuseError {
             var start_tok = cur ();
             bool is_typedef = false;
@@ -135,11 +189,13 @@ namespace C2Vala {
             bool has_extern = false;
 
             while (at (TokKind.IDENT)) {
+                skip_attributes ();
+                if (!at (TokKind.IDENT)) break;
                 string kw = cur ().text;
                 if (kw == "typedef") { is_typedef = true; advance (); }
                 else if (kw == "static") { has_static = true; advance (); }
                 else if (kw == "extern") { has_extern = true; advance (); }
-                else if (kw == "inline") { has_inline = true; advance (); }
+                else if (kw == "inline" || kw == "__inline" || kw == "__inline__") { has_inline = true; advance (); }
                 else break;
             }
             // Suppress unused warnings
@@ -149,6 +205,7 @@ namespace C2Vala {
 
             if (at (TokKind.SEMI)) {
                 advance ();
+                pending_attrs = new GenericArray<string> ();
                 return;
             }
 
@@ -163,10 +220,10 @@ namespace C2Vala {
                 parse_declarator (ref decl_t, out name, out is_func, params, out is_varargs);
 
                 if (is_typedef) {
-                    if (decl_t.kind == CTypeKind.FUNC_PTR)
-                        refuse (start_tok, "function pointers are not supported");
                     if (decl_t.kind == CTypeKind.ARRAY)
                         refuse (start_tok, "array typedefs are not supported");
+                    if (decl_t.kind == CTypeKind.FUNC_PTR && name != "")
+                        decl_t.name = name;
                     if (name != "") {
                         // If typedef struct/enum had an anonymous tag, rename it to typedef name
                         if (decl_t.kind == CTypeKind.STRUCT && decl_t.name.has_prefix ("__anon_")) {
@@ -197,6 +254,7 @@ namespace C2Vala {
                         continue;
                     }
                     expect (TokKind.SEMI, "';'");
+                    pending_attrs = new GenericArray<string> ();
                     return;
                 }
 
@@ -204,6 +262,7 @@ namespace C2Vala {
                     var fn = new FuncDef (name, decl_t, start_tok.file, start_tok.line);
                     fn.params = params;
                     fn.is_varargs = is_varargs;
+                    take_pending_attrs (fn.ignored_attrs);
                     fn.body = parse_block ();
                     tu.funcs.add (fn);
                     tu.top_order.add (name);
@@ -218,6 +277,7 @@ namespace C2Vala {
                         continue;
                     }
                     expect (TokKind.SEMI, "';'");
+                    pending_attrs = new GenericArray<string> ();
                     return;
                 }
 
@@ -227,7 +287,9 @@ namespace C2Vala {
                     advance ();
                     ginit = parse_expr_or_init ();
                 }
-                tu.globals.add (new GlobalVarDef (name, decl_t, ginit, start_tok.file, start_tok.line));
+                var gv = new GlobalVarDef (name, decl_t, ginit, start_tok.file, start_tok.line);
+                take_pending_attrs (gv.ignored_attrs);
+                tu.globals.add (gv);
                 tu.top_order.add (name);
                 tu.top_kinds.add ("global");
                 if (at (TokKind.COMMA)) {
@@ -236,6 +298,14 @@ namespace C2Vala {
                 }
                 expect (TokKind.SEMI, "';'");
                 return;
+            }
+        }
+
+        private void consume_trailing_qualifiers (ref bool is_const) {
+            while (at_ident ("const") || at_ident ("volatile") || at_ident ("restrict")) {
+                if (cur ().text == "const")
+                    is_const = true;
+                advance ();
             }
         }
 
@@ -249,9 +319,13 @@ namespace C2Vala {
             string? base_kw = null;
 
             while (at (TokKind.IDENT)) {
+                skip_attributes ();
+                if (!at (TokKind.IDENT)) break;
                 string kw = cur ().text;
                 if (kw == "const") { is_const = true; advance (); continue; }
-                if (kw == "volatile" || kw == "restrict" || kw == "static" || kw == "extern" || kw == "inline") {
+                if (kw == "volatile" || kw == "restrict" || kw == "__restrict" || kw == "__restrict__"
+                    || kw == "static" || kw == "extern" || kw == "inline" || kw == "__inline" || kw == "__inline__"
+                    || kw == "register" || kw == "auto") {
                     advance ();
                     continue;
                 }
@@ -267,38 +341,61 @@ namespace C2Vala {
                 if (kw == "enum") {
                     advance ();
                     var ct = parse_enum_spec (tu, start_tok);
+                    consume_trailing_qualifiers (ref is_const);
                     ct.is_const = is_const;
                     return ct;
                 }
                 if (kw == "struct") {
                     advance ();
                     var ct = parse_struct_spec (tu, start_tok);
+                    consume_trailing_qualifiers (ref is_const);
                     ct.is_const = is_const;
                     return ct;
                 }
                 if (kw == "union") {
                     advance ();
                     var ct = parse_struct_spec (tu, start_tok, true);
+                    consume_trailing_qualifiers (ref is_const);
                     ct.is_const = is_const;
                     return ct;
                 }
                 var td = find_typedef (kw);
                 if (td != null && base_kw == null && !is_unsigned && !is_signed && !is_short && long_count == 0) {
                     advance ();
+                    consume_trailing_qualifiers (ref is_const);
                     var ct = td.ctype.clone_type ();
                     if (is_const)
                         ct.is_const = true;
                     return ct;
                 }
+                if (base_kw == null && !is_unsigned && !is_signed && !is_short && long_count == 0) {
+                    string? std_scalar = null;
+                    if (kw == "uint8_t") std_scalar = "uint8";
+                    else if (kw == "int8_t") std_scalar = "int8";
+                    else if (kw == "uint16_t") std_scalar = "uint16";
+                    else if (kw == "int16_t") std_scalar = "int16";
+                    else if (kw == "uint32_t") std_scalar = "uint32";
+                    else if (kw == "int32_t") std_scalar = "int32";
+                    else if (kw == "uint64_t") std_scalar = "uint64";
+                    else if (kw == "int64_t") std_scalar = "int64";
+                    else if (kw == "size_t") std_scalar = "size_t";
+                    else if (kw == "ssize_t") std_scalar = "ssize_t";
+                    else if (kw == "uintptr_t") std_scalar = "uint64";
+                    else if (kw == "intptr_t" || kw == "ptrdiff_t") std_scalar = "int64";
+                    else if (kw == "u_char" || kw == "uchar") std_scalar = "uchar";
+                    else if (kw == "bool") std_scalar = "bool";
+                    if (std_scalar != null) {
+                        advance ();
+                        consume_trailing_qualifiers (ref is_const);
+                        var res = CType.scalar (std_scalar);
+                        res.is_const = is_const;
+                        return res;
+                    }
+                }
                 break;
             }
 
-            // Consume trailing const/volatile
-            while (at_ident ("const") || at_ident ("volatile") || at_ident ("restrict")) {
-                if (cur ().text == "const")
-                    is_const = true;
-                advance ();
-            }
+            consume_trailing_qualifiers (ref is_const);
 
             string scalar = "int";
             if (base_kw == "void") scalar = "void";
@@ -370,10 +467,12 @@ namespace C2Vala {
         }
 
         private CType parse_struct_spec (TranslationUnit? tu, CTok start_tok, bool is_union = false) throws RefuseError {
+            skip_attributes ();
             string tag = "";
             if (at (TokKind.IDENT)) {
                 tag = advance ().text;
             }
+            skip_attributes ();
             if (at (TokKind.LBRACE)) {
                 advance ();
                 if (tag == "") {
@@ -386,6 +485,7 @@ namespace C2Vala {
                     struct_tags.add (tag);
                 var sd = new StructDef (tag, start_tok.file, start_tok.line);
                 sd.is_union = is_union;
+                take_pending_attrs (sd.ignored_attrs);
                 while (!at (TokKind.RBRACE) && !at (TokKind.EOF)) {
                     var ft = cur ();
                     var fbase = parse_base_type (tu);
@@ -396,13 +496,30 @@ namespace C2Vala {
                         bool is_va = false;
                         var fparams = new GenericArray<ParamDef> ();
                         parse_declarator (ref ftype, out fname, out is_fn, fparams, out is_va);
-                        if (at (TokKind.COLON))
-                            refuse (cur (), "bitfields are not supported");
-                        if (ftype.kind == CTypeKind.FUNC_PTR)
-                            refuse (ft, "function pointers are not supported");
-                        if (fname == "")
+                        int bf_width = -1;
+                        if (at (TokKind.COLON)) {
+                            advance ();
+                            var bw_e = parse_assign ();
+                            bf_width = (bw_e is ExprInt) ? (int) ((ExprInt) bw_e).val : 1;
+                        }
+                        if (fname == "" && (ftype.kind == CTypeKind.STRUCT || ftype.kind == CTypeKind.UNION) && tu != null) {
+                            for (int si = 0; si < tu.structs.length; si++) {
+                                if (tu.structs[si].name == ftype.name) {
+                                    var sub_sd = tu.structs[si];
+                                    for (int sfi = 0; sfi < sub_sd.fields.length; sfi++)
+                                        sd.fields.add (sub_sd.fields[sfi]);
+                                    break;
+                                }
+                            }
+                        } else if (fname == "" && bf_width >= 0) {
+                            // Zero-width or anonymous bitfield padding
+                            sd.fields.add (new StructField ("", ftype, ft.file, ft.line, bf_width));
+                        } else if (fname == "") {
                             refuse (ft, "anonymous struct member");
-                        sd.fields.add (new StructField (fname, ftype, ft.file, ft.line));
+                        } else {
+                            sd.fields.add (new StructField (fname, ftype, ft.file, ft.line, bf_width));
+                        }
+                        skip_attributes ();
                         if (at (TokKind.COMMA)) {
                             advance ();
                             continue;
@@ -412,6 +529,8 @@ namespace C2Vala {
                     expect (TokKind.SEMI, "';'");
                 }
                 expect (TokKind.RBRACE, "'}'");
+                skip_attributes ();
+                take_pending_attrs (sd.ignored_attrs);
                 if (tu != null) {
                     tu.structs.add (sd);
                     tu.top_order.add (tag);
@@ -443,6 +562,7 @@ namespace C2Vala {
             is_func = false;
             is_varargs = false;
             name = "";
+            skip_attributes ();
 
             while (at (TokKind.STAR)) {
                 advance ();
@@ -454,24 +574,58 @@ namespace C2Vala {
                 }
                 ctype = CType.make_ptr (ctype, ptr_const);
             }
+            skip_attributes ();
 
-            // Function pointer declarator: (*name)(...)
+            // Function pointer declarator: (*name)(params)
             if (at (TokKind.LPAREN) && peek (1).kind == TokKind.STAR) {
                 advance (); // (
                 advance (); // *
+                while (at_ident ("const") || at_ident ("volatile") || at_ident ("restrict"))
+                    advance ();
                 if (at (TokKind.IDENT))
                     name = advance ().text;
                 expect (TokKind.RPAREN, "')'");
+                var fp_params = new GenericArray<ParamDef> ();
                 if (at (TokKind.LPAREN)) {
                     advance ();
-                    int depth = 1;
-                    while (depth > 0 && !at (TokKind.EOF)) {
-                        if (at (TokKind.LPAREN)) depth++;
-                        else if (at (TokKind.RPAREN)) depth--;
-                        advance ();
+                    if (!at (TokKind.RPAREN)) {
+                        if (at_ident ("void") && peek (1).kind == TokKind.RPAREN) {
+                            advance ();
+                        } else {
+                            int p_idx = 0;
+                            while (true) {
+                                if (at (TokKind.ELLIPSIS)) {
+                                    advance ();
+                                    is_varargs = true;
+                                    break;
+                                }
+                                var ptok = cur ();
+                                var pbase = parse_base_type (null);
+                                string pname = "";
+                                bool p_fn = false;
+                                bool p_va = false;
+                                var sub_p = new GenericArray<ParamDef> ();
+                                parse_declarator (ref pbase, out pname, out p_fn, sub_p, out p_va);
+                                if (pbase.kind == CTypeKind.ARRAY && pbase.inner != null)
+                                    pbase = CType.make_ptr (pbase.inner);
+                                if (pname == "")
+                                    pname = @"p$p_idx";
+                                p_idx++;
+                                fp_params.add (new ParamDef (pname, pbase, ptok.file, ptok.line));
+                                if (at (TokKind.COMMA)) {
+                                    advance ();
+                                    continue;
+                                }
+                                break;
+                            }
+                        }
                     }
+                    expect (TokKind.RPAREN, "')'");
                 }
-                ctype = new CType (CTypeKind.FUNC_PTR, name);
+                var fp = new CType (CTypeKind.FUNC_PTR, name);
+                fp.fp_ret = ctype;
+                fp.fp_params = fp_params;
+                ctype = fp;
                 return;
             }
 
@@ -510,8 +664,6 @@ namespace C2Vala {
                             bool p_va = false;
                             var sub_p = new GenericArray<ParamDef> ();
                             parse_declarator (ref pbase, out pname, out p_fn, sub_p, out p_va);
-                            if (pbase.kind == CTypeKind.FUNC_PTR)
-                                refuse (ptok, "function pointers are not supported");
                             // Array parameter `T a[]` decays to pointer `T *a`
                             if (pbase.kind == CTypeKind.ARRAY && pbase.inner != null)
                                 pbase = CType.make_ptr (pbase.inner);
@@ -526,6 +678,7 @@ namespace C2Vala {
                 }
                 expect (TokKind.RPAREN, "')'");
             }
+            skip_attributes ();
         }
 
         // ---- Statements ----
@@ -560,8 +713,6 @@ namespace C2Vala {
                 bool is_va = false;
                 var dummy_p = new GenericArray<ParamDef> ();
                 parse_declarator (ref dt, out name, out is_fn, dummy_p, out is_va);
-                if (dt.kind == CTypeKind.FUNC_PTR)
-                    refuse (start_tok, "function pointers are not supported");
                 CExpr? init_e = null;
                 if (at (TokKind.ASSIGN)) {
                     advance ();
@@ -791,6 +942,13 @@ namespace C2Vala {
                 il.file = t.file;
                 il.line = t.line;
                 while (!at (TokKind.RBRACE) && !at (TokKind.EOF)) {
+                    string fname = "";
+                    if (at (TokKind.DOT) && peek (1).kind == TokKind.IDENT) {
+                        advance (); // '.'
+                        fname = advance ().text;
+                        expect (TokKind.ASSIGN, "'='");
+                    }
+                    il.field_names.add (fname);
                     il.items.add (parse_expr_or_init ());
                     if (at (TokKind.COMMA))
                         advance ();
@@ -804,7 +962,19 @@ namespace C2Vala {
         }
 
         private CExpr parse_expr () throws RefuseError {
-            return parse_assign ();
+            var left = parse_assign ();
+            while (at (TokKind.COMMA)) {
+                var ct = advance ();
+                var right = parse_assign ();
+                var b = new ExprBinary ();
+                b.file = ct.file;
+                b.line = ct.line;
+                b.op = ",";
+                b.left = left;
+                b.right = right;
+                left = b;
+            }
+            return left;
         }
 
         private CExpr parse_assign () throws RefuseError {
@@ -980,6 +1150,15 @@ namespace C2Vala {
                 var t = advance (); // (
                 var ct = parse_type_name ();
                 expect (TokKind.RPAREN, "')'");
+                if (at (TokKind.LBRACE)) {
+                    var il = (ExprInitList) parse_expr_or_init ();
+                    var cl = new ExprCompoundLit ();
+                    cl.file = t.file;
+                    cl.line = t.line;
+                    cl.target_type = ct;
+                    cl.init = il;
+                    return cl;
+                }
                 var inner = parse_cast ();
                 var ce = new ExprCast ();
                 ce.file = t.file;
@@ -1001,6 +1180,14 @@ namespace C2Vala {
                     advance ();
                 }
                 base_t = CType.make_ptr (base_t, pc);
+            }
+            while (at (TokKind.LBRACKET)) {
+                advance ();
+                CExpr? len_e = null;
+                if (!at (TokKind.RBRACKET))
+                    len_e = parse_assign ();
+                expect (TokKind.RBRACKET, "']'");
+                base_t = CType.make_array (base_t, len_e);
             }
             return base_t;
         }
@@ -1094,6 +1281,7 @@ namespace C2Vala {
                 e.file = t.file; e.line = t.line; e.raw = t.text;
                 e.val = Preprocessor.parse_int_lit (t.text);
                 e.is_unsigned = t.text.index_of ("u") >= 0 || t.text.index_of ("U") >= 0;
+                e.is_long = t.text.index_of ("l") >= 0 || t.text.index_of ("L") >= 0;
                 return e;
             }
             if (t.kind == TokKind.FLOAT_LIT) {

@@ -12,6 +12,7 @@ namespace C2Vala {
         public GenericArray<string> params = new GenericArray<string> ();
         public bool is_varargs = false;
         public string body = "";
+        public bool expanding = false;
 
         public MacroDef (string name, string body) {
             this.name = name;
@@ -32,9 +33,22 @@ namespace C2Vala {
     }
 
     public class Preprocessor : Object {
+        private const int MACRO_CAP = 32768;
         private GenericArray<string> include_dirs = new GenericArray<string> ();
         private GenericArray<MacroDef> macros = new GenericArray<MacroDef> ();
+        private int[] macro_idx = new int[32768];
         private GenericArray<string> included_once = new GenericArray<string> ();
+        public bool verbose = false;
+
+        private static uint32 hash_str (string s) {
+            uint32 h = 2166136261u;
+            int slen = s.length;
+            for (int i = 0; i < slen; i++) {
+                h ^= (uint32) s[i];
+                h *= 16777619u;
+            }
+            return h;
+        }
 
         public Preprocessor () {
             // Standard predefined macros
@@ -43,6 +57,17 @@ namespace C2Vala {
             define_object ("NULL", "0");
             define_object ("true", "1");
             define_object ("false", "0");
+            // Standard C99 <inttypes.h> format macros
+            define_object ("PRId64", "\"lld\"");
+            define_object ("PRIi64", "\"lli\"");
+            define_object ("PRIu64", "\"llu\"");
+            define_object ("PRIx64", "\"llx\"");
+            define_object ("PRIX64", "\"llX\"");
+            define_object ("PRId32", "\"d\"");
+            define_object ("PRIi32", "\"i\"");
+            define_object ("PRIu32", "\"u\"");
+            define_object ("PRIx32", "\"x\"");
+            define_object ("PRIX32", "\"X\"");
         }
 
         public void add_include_dir (string dir) {
@@ -50,28 +75,52 @@ namespace C2Vala {
         }
 
         public void define_object (string name, string val) {
-            undef (name);
-            macros.add (new MacroDef (name, val));
+            define_macro (new MacroDef (name, val));
         }
 
         public void define_macro (MacroDef m) {
-            undef (m.name);
-            macros.add (m);
+            uint32 idx = hash_str (m.name) & (uint32) (MACRO_CAP - 1);
+            int first_tomb = -1;
+            for (int probe = 0; probe < MACRO_CAP; probe++) {
+                int slot = macro_idx[idx];
+                if (slot == 0) {
+                    int target = (first_tomb >= 0) ? first_tomb : (int) idx;
+                    macros.add (m);
+                    macro_idx[target] = macros.length;
+                    return;
+                }
+                if (slot < 0) {
+                    if (first_tomb < 0)
+                        first_tomb = (int) idx;
+                } else if (macros[slot - 1].name == m.name) {
+                    macros[slot - 1] = m;
+                    return;
+                }
+                idx = (idx + 1) & (uint32) (MACRO_CAP - 1);
+            }
         }
 
         public void undef (string name) {
-            for (int i = 0; i < macros.length; i++) {
-                if (macros[i].name == name) {
-                    macros.remove_index (i);
+            uint32 idx = hash_str (name) & (uint32) (MACRO_CAP - 1);
+            for (int probe = 0; probe < MACRO_CAP; probe++) {
+                int slot = macro_idx[idx];
+                if (slot == 0) return;
+                if (slot > 0 && macros[slot - 1].name == name) {
+                    macro_idx[idx] = -1;
                     return;
                 }
+                idx = (idx + 1) & (uint32) (MACRO_CAP - 1);
             }
         }
 
         private MacroDef? find_macro (string name) {
-            for (int i = 0; i < macros.length; i++) {
-                if (macros[i].name == name)
-                    return macros[i];
+            uint32 idx = hash_str (name) & (uint32) (MACRO_CAP - 1);
+            for (int probe = 0; probe < MACRO_CAP; probe++) {
+                int slot = macro_idx[idx];
+                if (slot == 0) return null;
+                if (slot > 0 && macros[slot - 1].name == name)
+                    return macros[slot - 1];
+                idx = (idx + 1) & (uint32) (MACRO_CAP - 1);
             }
             return null;
         }
@@ -130,20 +179,23 @@ namespace C2Vala {
         // and join backslash-continued lines.
         private static GenericArray<PreLine> split_logical_lines (string src, string file) {
             var raw_lines = new GenericArray<string> ();
-            var cur = new StrBuilder ();
-            for (int i = 0; i < src.length; i++) {
-                uint8 c = src[i];
-                if (c == '\r')
-                    continue;
-                if (c == '\n') {
-                    raw_lines.add (cur.str);
-                    cur = new StrBuilder ();
-                } else {
-                    cur.append_c ((char) c);
+            int slen = src.length;
+            int ls = 0;
+            for (int i = 0; i < slen; i++) {
+                if (src[i] == '\n') {
+                    int le = i;
+                    if (le > ls && src[le - 1] == '\r')
+                        le--;
+                    raw_lines.add (src.substring (ls, le - ls));
+                    ls = i + 1;
                 }
             }
-            if (cur.length > 0)
-                raw_lines.add (cur.str);
+            if (ls < slen) {
+                int le = slen;
+                if (le > ls && src[le - 1] == '\r')
+                    le--;
+                raw_lines.add (src.substring (ls, le - ls));
+            }
 
             // Pass 1: join backslash line continuations, keeping original start line number
             var spliced = new GenericArray<PreLine> ();
@@ -171,14 +223,15 @@ namespace C2Vala {
             for (int li = 0; li < spliced.length; li++) {
                 var pl = spliced[li];
                 string ln = pl.text;
+                int llen = ln.length;
                 var sb = new StrBuilder ();
                 bool in_str = false;
                 bool in_chr = false;
                 int i = 0;
-                while (i < ln.length) {
+                while (i < llen) {
                     uint8 c = ln[i];
                     if (in_block) {
-                        if (c == '*' && i + 1 < ln.length && ln[i + 1] == '/') {
+                        if (c == '*' && i + 1 < llen && ln[i + 1] == '/') {
                             in_block = false;
                             sb.append_c (' ');
                             i += 2;
@@ -189,7 +242,7 @@ namespace C2Vala {
                     }
                     if (in_str) {
                         sb.append_c ((char) c);
-                        if (c == '\\' && i + 1 < ln.length) {
+                        if (c == '\\' && i + 1 < llen) {
                             sb.append_c ((char) ln[i + 1]);
                             i += 2;
                             continue;
@@ -201,7 +254,7 @@ namespace C2Vala {
                     }
                     if (in_chr) {
                         sb.append_c ((char) c);
-                        if (c == '\\' && i + 1 < ln.length) {
+                        if (c == '\\' && i + 1 < llen) {
                             sb.append_c ((char) ln[i + 1]);
                             i += 2;
                             continue;
@@ -219,9 +272,9 @@ namespace C2Vala {
                         in_chr = true;
                         sb.append_c ((char) c);
                         i++;
-                    } else if (c == '/' && i + 1 < ln.length && ln[i + 1] == '/') {
+                    } else if (c == '/' && i + 1 < llen && ln[i + 1] == '/') {
                         break;
-                    } else if (c == '/' && i + 1 < ln.length && ln[i + 1] == '*') {
+                    } else if (c == '/' && i + 1 < llen && ln[i + 1] == '*') {
                         in_block = true;
                         i += 2;
                     } else {
@@ -235,24 +288,29 @@ namespace C2Vala {
         }
 
         public GenericArray<PreLine> process_file (string path) throws RefuseError {
+            if (verbose) Host.eprintln (@"[pp] read $path...");
             string src;
             try {
                 src = Host.read_file (path);
             } catch (FileError e) {
                 throw new RefuseError.FAILED (@"$path: cannot read: $(e.message)");
             }
+            if (verbose) Host.eprintln (@"[pp] read done ($(src.length) bytes)");
             return process_source (src, path);
         }
 
         public GenericArray<PreLine> process_source (string src, string file) throws RefuseError {
             var out_lines = new GenericArray<PreLine> ();
             var lines = split_logical_lines (src, file);
+            if (verbose) Host.eprintln (@"[pp] $file: $(lines.length) logical lines");
 
             // Conditional stack: each entry has (active, any_taken)
             var cond_active = new GenericArray<bool> ();
             var cond_taken = new GenericArray<bool> ();
 
             for (int li = 0; li < lines.length; li++) {
+                if (verbose && (li % 10000) == 0 && li > 0)
+                    Host.eprintln (@"[pp] $file: $li/$(lines.length)");
                 var pl = lines[li];
                 string trimmed = trim_str (pl.text);
 
@@ -466,9 +524,9 @@ namespace C2Vala {
             if (depth > 20)
                 return text;
             var sb = new StrBuilder ();
-            bool changed = false;
+            int tlen = text.length;
             int i = 0;
-            while (i < text.length) {
+            while (i < tlen) {
                 uint8 c = text[i];
                 if (c == '"' || c == '\'') {
                     uint8 q = c;
@@ -493,10 +551,11 @@ namespace C2Vala {
                         i++;
                     string ident = text.substring (start, i - start);
                     var m = find_macro (ident);
-                    if (m != null) {
+                    if (m != null && !m.expanding) {
                         if (!m.is_func) {
-                            sb.append (m.body);
-                            changed = true;
+                            m.expanding = true;
+                            sb.append (expand_macros (m.body, depth + 1));
+                            m.expanding = false;
                             continue;
                         } else {
                             // Check for '(' after optional whitespace
@@ -507,9 +566,11 @@ namespace C2Vala {
                                 int end_paren = j;
                                 var args = parse_macro_args (text, j, out end_paren);
                                 if (end_paren > j) {
-                                    sb.append (subst_macro (m, args));
+                                    string sub = subst_macro (m, args);
+                                    m.expanding = true;
+                                    sb.append (expand_macros (sub, depth + 1));
+                                    m.expanding = false;
                                     i = end_paren;
-                                    changed = true;
                                     continue;
                                 }
                             }
@@ -521,10 +582,7 @@ namespace C2Vala {
                 sb.append_c ((char) c);
                 i++;
             }
-            string res = sb.str;
-            if (changed)
-                return expand_macros (res, depth + 1);
-            return res;
+            return sb.str;
         }
 
         private static GenericArray<string> parse_macro_args (string text, int open_idx, out int end_idx) {
@@ -600,6 +658,19 @@ namespace C2Vala {
             return args;
         }
 
+        private static string stringify_arg (string s) {
+            string t = trim_str (s);
+            var sb = new StrBuilder ("\"");
+            for (int i = 0; i < t.length; i++) {
+                uint8 ch = t[i];
+                if (ch == '"' || ch == '\\')
+                    sb.append_c ('\\');
+                sb.append_c ((char) ch);
+            }
+            sb.append_c ('"');
+            return sb.str;
+        }
+
         private static string subst_macro (MacroDef m, GenericArray<string> args) {
             var sb = new StrBuilder ();
             string body = m.body;
@@ -623,11 +694,51 @@ namespace C2Vala {
                     }
                     continue;
                 }
+                if (c == '#' && i + 1 < body.length && body[i + 1] == '#') {
+                    // Token pasting: remove trailing whitespace before ## and leading whitespace after ##
+                    while (sb.length > 0 && (sb.str[sb.length - 1] == ' ' || sb.str[sb.length - 1] == '\t'))
+                        sb.truncate (sb.length - 1);
+                    i += 2;
+                    while (i < body.length && (body[i] == ' ' || body[i] == '\t'))
+                        i++;
+                    continue;
+                }
+                if (c == '#') {
+                    int j = i + 1;
+                    while (j < body.length && (body[j] == ' ' || body[j] == '\t'))
+                        j++;
+                    if (j < body.length && is_ident_start (body[j])) {
+                        int start = j;
+                        while (j < body.length && is_ident_char (body[j]))
+                            j++;
+                        string pname = body.substring (start, j - start);
+                        int p_idx = -1;
+                        for (int pi = 0; pi < m.params.length; pi++) {
+                            if (m.params[pi] == pname) {
+                                p_idx = pi;
+                                break;
+                            }
+                        }
+                        if (p_idx >= 0 && p_idx < args.length) {
+                            sb.append (stringify_arg (args[p_idx]));
+                            i = j;
+                            continue;
+                        }
+                    }
+                }
                 if (is_ident_start (c)) {
                     int start = i;
                     while (i < body.length && is_ident_char (body[i]))
                         i++;
                     string ident = body.substring (start, i - start);
+                    if (m.is_varargs && ident == "__VA_ARGS__") {
+                        for (int ai = m.params.length; ai < args.length; ai++) {
+                            if (ai > m.params.length)
+                                sb.append (", ");
+                            sb.append (args[ai]);
+                        }
+                        continue;
+                    }
                     int p_idx = -1;
                     for (int pi = 0; pi < m.params.length; pi++) {
                         if (m.params[pi] == ident) {

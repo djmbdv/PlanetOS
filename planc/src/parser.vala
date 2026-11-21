@@ -52,6 +52,17 @@ namespace Planc {
         private Program program;
         private int pending_gt = 0;
         private GenericArray<string> current_type_params = new GenericArray<string> ();
+        private GenericArray<string> alias_names = new GenericArray<string> ();
+        private GenericArray<ValaType> alias_types = new GenericArray<ValaType> ();
+        private GenericArray<string> alias_tnames = new GenericArray<string> ();
+
+        private int find_type_alias (string name) {
+            for (int i = 0; i < alias_names.length; i++) {
+                if (alias_names[i] == name) return i;
+            }
+            return -1;
+        }
+
         private string last_parsed_type_token = "";
 
         private string source_text;
@@ -61,6 +72,7 @@ namespace Planc {
                 || text == "int16" || text == "int8"
                 || text == "uint" || text == "uint64" || text == "uint32" || text == "uint16" || text == "unichar"
                 || text == "uint8" || text == "size_t" || text == "ssize_t"
+                || text == "uintptr_t" || text == "intptr_t" || text == "ptrdiff_t"
                 || text == "short" || text == "ushort" || text == "long" || text == "ulong"
                 || text == "char" || text == "uchar";
         }
@@ -73,6 +85,8 @@ namespace Planc {
             if (is_int_type_name (text) || is_fp_type_name (text))
                 return true;
             if (text == "bool" || text == "string" || text == "void")
+                return true;
+            if (find_type_alias (text) >= 0)
                 return true;
             return program.find_class (text) != null
                 || program.find_struct (text) != null
@@ -285,6 +299,14 @@ namespace Planc {
                 if (text == "GenericArray" || text == "Channel" || text == "Mutex") {
                     t = ValaType.CLASS;
                     tname = text;
+                    return true;
+                }
+            }
+            if (!is_escaped) {
+                int ai = find_type_alias (text);
+                if (ai >= 0) {
+                    t = alias_types[ai];
+                    tname = alias_tnames[ai];
                     return true;
                 }
             }
@@ -721,6 +743,37 @@ namespace Planc {
 
             if (is_tok_kw (current, "const")) {
                 parse_const_decl ("");
+                return;
+            }
+
+            if (is_tok_kw (current, "type")) {
+                advance (); // 'type'
+                if (current.kind != TokenKind.IDENTIFIER)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expected type alias name after 'type' at $(current.line):$(current.column)");
+                string aname = current.text;
+                advance ();
+                expect (TokenKind.ASSIGN, "'='");
+                if (current.kind != TokenKind.IDENTIFIER)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expected type name after '=' at $(current.line):$(current.column)");
+                ValaType at;
+                string at_name;
+                if (!parse_type (current.text, out at, out at_name, current.is_escaped))
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"unknown target type '$(current.text)' at $(current.line):$(current.column)");
+                advance ();
+                parse_type_suffix (ref at, ref at_name);
+                expect (TokenKind.SEMICOLON, "';'");
+                int prev_ai = find_type_alias (aname);
+                if (prev_ai >= 0) {
+                    alias_types[prev_ai] = at;
+                    alias_tnames[prev_ai] = at_name;
+                } else {
+                    alias_names.add (aname);
+                    alias_types.add (at);
+                    alias_tnames.add (at_name);
+                }
                 return;
             }
 
@@ -3651,10 +3704,9 @@ namespace Planc {
                         }
                         if (pending_gt == 0 && current.kind == TokenKind.RPAREN
                             && (ct == ValaType.CLASS || ct == ValaType.INTERFACE || ct == ValaType.ENUM
-                                || ct_is_del
-                                || (!raw_esc && (is_int_type_name (raw_name) || is_fp_type_name (raw_name))))) {
+                                || ct_is_del || ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE)) {
                             advance (); // ')'
-                            if (ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE)
+                            if ((ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE) && ct_name == "")
                                 ct_name = raw_name;
                             var tc = new TypeCheckExpr () {
                                 op = "cast",

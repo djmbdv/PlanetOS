@@ -158,6 +158,20 @@ namespace C2Vala {
                             i += 2;
                             while (i < s.length && is_hex_digit (s[i]))
                                 i++;
+                            if (i < s.length && s[i] == '.') {
+                                is_float = true;
+                                i++;
+                                while (i < s.length && is_hex_digit (s[i]))
+                                    i++;
+                            }
+                            if (i < s.length && (s[i] == 'p' || s[i] == 'P')) {
+                                is_float = true;
+                                i++;
+                                if (i < s.length && (s[i] == '+' || s[i] == '-'))
+                                    i++;
+                                while (i < s.length && is_digit (s[i]))
+                                    i++;
+                            }
                         } else if (c == '0' && i + 1 < s.length && (s[i + 1] == 'b' || s[i + 1] == 'B')) {
                             i += 2;
                             while (i < s.length && (s[i] == '0' || s[i] == '1'))

@@ -84,11 +84,12 @@ namespace Planc {
 
         private static bool is_signed_64_int_name (string name) {
             return name == "" || name == "int" || name == "int64"
-                || name == "long" || name == "ssize_t";
+                || name == "long" || name == "ssize_t"
+                || name == "intptr_t" || name == "ptrdiff_t";
         }
 
         private static bool is_unsigned_64_int_name (string name) {
-            return name == "uint64" || name == "ulong" || name == "size_t";
+            return name == "uint64" || name == "ulong" || name == "size_t" || name == "uintptr_t";
         }
 
         private static Expr? const_to_literal (ConstDecl cd, int line, int col) {

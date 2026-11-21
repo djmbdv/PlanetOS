@@ -22,6 +22,8 @@ namespace C2Vala {
         public CType? inner = null;    // for PTR / ARRAY
         public CExpr? array_len = null; // for ARRAY
         public bool is_const = false;
+        public CType? fp_ret = null;   // for FUNC_PTR
+        public GenericArray<ParamDef>? fp_params = null; // for FUNC_PTR
 
         public CType (CTypeKind kind, string name = "") {
             this.kind = kind;
@@ -69,6 +71,14 @@ namespace C2Vala {
             t.inner = inner != null ? inner.clone_type () : null;
             t.array_len = array_len;
             t.is_const = is_const;
+            t.fp_ret = fp_ret != null ? fp_ret.clone_type () : null;
+            if (fp_params != null) {
+                t.fp_params = new GenericArray<ParamDef> ();
+                for (int i = 0; i < fp_params.length; i++) {
+                    var p = fp_params[i];
+                    t.fp_params.add (new ParamDef (p.name, p.ctype.clone_type (), p.file, p.line));
+                }
+            }
             return t;
         }
     }
@@ -105,14 +115,16 @@ namespace C2Vala {
     public class StructField : Object {
         public string name;
         public CType ctype;
+        public int bit_width = -1;
         public string file;
         public int line;
 
-        public StructField (string name, CType ctype, string file, int line) {
+        public StructField (string name, CType ctype, string file, int line, int bit_width = -1) {
             this.name = name;
             this.ctype = ctype;
             this.file = file;
             this.line = line;
+            this.bit_width = bit_width;
         }
     }
 
@@ -120,6 +132,7 @@ namespace C2Vala {
         public string name;
         public bool is_union = false;
         public GenericArray<StructField> fields = new GenericArray<StructField> ();
+        public GenericArray<string> ignored_attrs = new GenericArray<string> ();
         public string file;
         public int line;
 
@@ -148,6 +161,7 @@ namespace C2Vala {
         public string name;
         public CType ret_type;
         public GenericArray<ParamDef> params = new GenericArray<ParamDef> ();
+        public GenericArray<string> ignored_attrs = new GenericArray<string> ();
         public StmtBlock? body = null;
         public bool is_varargs = false;
         public string file;
@@ -176,6 +190,7 @@ namespace C2Vala {
         public string name;
         public CType ctype;
         public CExpr? init = null;
+        public GenericArray<string> ignored_attrs = new GenericArray<string> ();
     }
 
     public class StmtIf : CStmt {
@@ -242,6 +257,7 @@ namespace C2Vala {
         public string raw;
         public int64 val;
         public bool is_unsigned = false;
+        public bool is_long = false;
     }
 
     public class ExprFloat : CExpr {
@@ -317,12 +333,19 @@ namespace C2Vala {
 
     public class ExprInitList : CExpr {
         public GenericArray<CExpr> items = new GenericArray<CExpr> ();
+        public GenericArray<string> field_names = new GenericArray<string> ();
+    }
+
+    public class ExprCompoundLit : CExpr {
+        public CType target_type;
+        public ExprInitList init;
     }
 
     public class GlobalVarDef : Object {
         public string name;
         public CType ctype;
         public CExpr? init = null;
+        public GenericArray<string> ignored_attrs = new GenericArray<string> ();
         public string file = "";
         public int line = 0;
 

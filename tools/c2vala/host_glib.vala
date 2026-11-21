@@ -55,6 +55,7 @@ namespace Planc {
 
         public static void eprintln (string s) {
             stderr.printf ("%s\n", s);
+            stderr.flush ();
         }
 
         public static void println (string s) {

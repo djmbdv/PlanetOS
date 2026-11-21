@@ -30,6 +30,7 @@ namespace C2Vala {
         var defines = new GenericArray<string> ();
         string output_path = "";
         bool report_mode = false;
+        bool verbose = false;
 
         for (int i = 1; i < args.length; i++) {
             string a = args[i];
@@ -60,6 +61,8 @@ namespace C2Vala {
                     i++;
             } else if (a == "--report") {
                 report_mode = true;
+            } else if (a == "-v" || a == "--verbose") {
+                verbose = true;
             } else if (a == "-h" || a == "--help") {
                 Host.println (USAGE);
                 return 0;
@@ -77,6 +80,7 @@ namespace C2Vala {
         }
 
         var pp = new Preprocessor ();
+        pp.verbose = verbose;
         for (int i = 0; i < include_dirs.length; i++)
             pp.add_include_dir (include_dirs[i]);
 
@@ -92,16 +96,20 @@ namespace C2Vala {
 
         var all_lines = new GenericArray<PreLine> ();
         try {
+            if (verbose) Host.eprintln ("[c2vala] 1/4 preproc...");
             for (int i = 0; i < inputs.length; i++) {
                 var lines = pp.process_file (inputs[i]);
                 for (int li = 0; li < lines.length; li++)
                     all_lines.add (lines[li]);
             }
 
+            if (verbose) Host.eprintln (@"[c2vala] 2/4 lex ($(all_lines.length) lines)...");
             var toks = CLexer.tokenize (all_lines);
+            if (verbose) Host.eprintln (@"[c2vala] 3/4 parse ($(toks.length) toks)...");
             var parser = new CParser (toks);
             var tu = parser.parse_tu ();
 
+            if (verbose) Host.eprintln (@"[c2vala] 4/4 translate ($(tu.funcs.length) funcs)...");
             var tr = new Translator (tu);
             string vala_out = tr.translate (report_mode);
 

@@ -4822,12 +4822,13 @@ namespace Planc {
                 || name == "int16" || name == "int8"
                 || name == "uint" || name == "uint64" || name == "uint32" || name == "uint16" || name == "unichar"
                 || name == "uint8" || name == "size_t" || name == "ssize_t"
+                || name == "uintptr_t" || name == "intptr_t" || name == "ptrdiff_t"
                 || name == "short" || name == "ushort" || name == "long" || name == "ulong"
                 || name == "char" || name == "uchar";
         }
 
         private static bool is_unsigned_64 (string name) {
-            return name == "uint64" || name == "ulong" || name == "size_t";
+            return name == "uint64" || name == "ulong" || name == "size_t" || name == "uintptr_t";
         }
 
         private static bool is_unsigned_32 (string name) {
@@ -4842,7 +4843,8 @@ namespace Planc {
 
         private static bool is_signed_64_int_type (string name) {
             return name == "" || name == "int" || name == "int64"
-                || name == "long" || name == "ssize_t";
+                || name == "long" || name == "ssize_t"
+                || name == "intptr_t" || name == "ptrdiff_t";
         }
 
         private static string promote_int_type (string l, string r) {
@@ -4938,11 +4940,11 @@ namespace Planc {
                 if (tname == "int8") { val = -128; return true; }
                 if (tname == "int16" || tname == "short") { val = -32768; return true; }
                 if (tname == "int32" || tname == "int") { val = -2147483648; return true; }
-                if (tname == "int64" || tname == "long" || tname == "ssize_t") { val = -9223372036854775807 - 1; return true; }
+                if (tname == "int64" || tname == "long" || tname == "ssize_t" || tname == "intptr_t" || tname == "ptrdiff_t") { val = -9223372036854775807 - 1; return true; }
                 if (tname == "uint8" || tname == "uchar" || tname == "char"
                     || tname == "uint16" || tname == "ushort"
                     || tname == "uint32" || tname == "uint" || tname == "unichar"
-                    || tname == "uint64" || tname == "ulong" || tname == "size_t") {
+                    || tname == "uint64" || tname == "ulong" || tname == "size_t" || tname == "uintptr_t") {
                     val = 0; return true;
                 }
                 return false;
@@ -4954,8 +4956,8 @@ namespace Planc {
                 if (tname == "uint16" || tname == "ushort") { val = 65535; return true; }
                 if (tname == "int32" || tname == "int") { val = 2147483647; return true; }
                 if (tname == "uint32" || tname == "uint" || tname == "unichar") { val = 4294967295; return true; }
-                if (tname == "int64" || tname == "long" || tname == "ssize_t") { val = 9223372036854775807; return true; }
-                if (tname == "uint64" || tname == "ulong" || tname == "size_t") { val = (int64) (-1); return true; }
+                if (tname == "int64" || tname == "long" || tname == "ssize_t" || tname == "intptr_t" || tname == "ptrdiff_t") { val = 9223372036854775807; return true; }
+                if (tname == "uint64" || tname == "ulong" || tname == "size_t" || tname == "uintptr_t") { val = (int64) (-1); return true; }
                 return false;
             }
             return false;
