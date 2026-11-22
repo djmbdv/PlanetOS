@@ -407,10 +407,80 @@ namespace C2Vala {
                 if (trimmed == "")
                     continue;
 
-                string expanded = expand_macros (pl.text, 0);
+                string line_text = pl.text;
+                while (has_unclosed_func_macro (line_text) && li + 1 < lines.length) {
+                    string nxt_trim = trim_str (lines[li + 1].text);
+                    if (nxt_trim.has_prefix ("#"))
+                        break;
+                    li++;
+                    line_text = line_text + " " + lines[li].text;
+                }
+                string expanded = expand_macros (line_text, 0, base_of (pl.file), pl.line);
                 out_lines.add (new PreLine (base_of (pl.file), pl.line, expanded));
             }
             return out_lines;
+        }
+
+        private bool has_unclosed_func_macro (string text) {
+            int tlen = text.length;
+            int i = 0;
+            bool in_str = false;
+            bool in_chr = false;
+            while (i < tlen) {
+                uint8 c = text[i];
+                if (in_str) {
+                    if (c == '\\' && i + 1 < tlen) { i += 2; continue; }
+                    if (c == '"') in_str = false;
+                    i++; continue;
+                }
+                if (in_chr) {
+                    if (c == '\\' && i + 1 < tlen) { i += 2; continue; }
+                    if (c == '\'') in_chr = false;
+                    i++; continue;
+                }
+                if (c == '"') { in_str = true; i++; continue; }
+                if (c == '\'') { in_chr = true; i++; continue; }
+                if (is_ident_start (c)) {
+                    int start = i;
+                    i++;
+                    while (i < tlen && is_ident_char (text[i])) i++;
+                    string ident = text.substring (start, i - start);
+                    var m = find_macro (ident);
+                    if (m != null && m.is_func) {
+                        int j = i;
+                        while (j < tlen && (text[j] == ' ' || text[j] == '\t')) j++;
+                        if (j < tlen && text[j] == '(') {
+                            int depth = 1;
+                            j++;
+                            bool s2 = false;
+                            bool c2 = false;
+                            while (j < tlen && depth > 0) {
+                                uint8 ch = text[j];
+                                if (s2) {
+                                    if (ch == '\\' && j + 1 < tlen) { j += 2; continue; }
+                                    if (ch == '"') s2 = false;
+                                } else if (c2) {
+                                    if (ch == '\\' && j + 1 < tlen) { j += 2; continue; }
+                                    if (ch == '\'') c2 = false;
+                                } else {
+                                    if (ch == '"') s2 = true;
+                                    else if (ch == '\'') c2 = true;
+                                    else if (ch == '(') depth++;
+                                    else if (ch == ')') depth--;
+                                }
+                                j++;
+                            }
+                            if (depth > 0)
+                                return true;
+                            i = j;
+                            continue;
+                        }
+                    }
+                    continue;
+                }
+                i++;
+            }
+            return false;
         }
 
         private static string first_ident (string s) {
@@ -474,12 +544,190 @@ namespace C2Vala {
             }
         }
 
+        private bool mark_included_once (string key) {
+            for (int i = 0; i < included_once.length; i++) {
+                if (included_once[i] == key)
+                    return false;
+            }
+            included_once.add (key);
+            return true;
+        }
+
+        private void handle_sys_include (string hdr, GenericArray<PreLine> out_lines) throws RefuseError {
+            string key = "<" + hdr + ">";
+            if (!mark_included_once (key))
+                return;
+            string src = "";
+            if (hdr == "stdint.h" || hdr == "inttypes.h" || hdr == "limits.h") {
+                src = "#ifndef _C2V_INT_LIMITS\n#define _C2V_INT_LIMITS 1\n"
+                    + "#define CHAR_BIT 8\n"
+                    + "#define SCHAR_MIN (-128)\n#define SCHAR_MAX 127\n#define UCHAR_MAX 255\n"
+                    + "#define SHRT_MIN (-32768)\n#define SHRT_MAX 32767\n#define USHRT_MAX 65535\n"
+                    + "#define INT_MIN (-2147483647 - 1)\n#define INT_MAX 2147483647\n#define UINT_MAX 4294967295U\n"
+                    + "#define LONG_MIN (-9223372036854775807L - 1L)\n#define LONG_MAX 9223372036854775807L\n#define ULONG_MAX 18446744073709551615UL\n"
+                    + "#define LLONG_MIN (-9223372036854775807LL - 1LL)\n#define LLONG_MAX 9223372036854775807LL\n#define ULLONG_MAX 18446744073709551615ULL\n"
+                    + "#define INT8_MIN (-128)\n#define INT8_MAX 127\n#define UINT8_MAX 255\n"
+                    + "#define INT16_MIN (-32768)\n#define INT16_MAX 32767\n#define UINT16_MAX 65535\n"
+                    + "#define INT32_MIN (-2147483647 - 1)\n#define INT32_MAX 2147483647\n#define UINT32_MAX 4294967295U\n"
+                    + "#define INT64_MIN (-9223372036854775807LL - 1LL)\n#define INT64_MAX 9223372036854775807LL\n#define UINT64_MAX 18446744073709551615ULL\n"
+                    + "#define SIZE_MAX 18446744073709551615ULL\n"
+                    + "#define INTPTR_MIN INT64_MIN\n#define INTPTR_MAX INT64_MAX\n#define UINTPTR_MAX UINT64_MAX\n"
+                    + "#define PTRDIFF_MIN INT64_MIN\n#define PTRDIFF_MAX INT64_MAX\n"
+                    + "#endif\n";
+            } else if (hdr == "float.h") {
+                src = "#define DBL_MAX 1.7976931348623157e+308\n#define DBL_MIN 2.2250738585072014e-308\n#define DBL_EPSILON 2.2204460492503131e-16\n"
+                    + "#define FLT_MAX 3.40282347e+38F\n#define FLT_MIN 1.17549435e-38F\n#define FLT_EPSILON 1.19209290e-7F\n"
+                    + "#define DBL_MANT_DIG 53\n#define FLT_MANT_DIG 24\n";
+            } else if (hdr == "stdio.h") {
+                src = "#ifndef NULL\n#define NULL 0\n#endif\n#define EOF (-1)\n#define SEEK_SET 0\n#define SEEK_CUR 1\n#define SEEK_END 2\n#define FILENAME_MAX 4096\n"
+                    + "typedef struct _c2v_FILE { int _opaque; } FILE;\n"
+                    + "extern FILE *stdin;\nextern FILE *stdout;\nextern FILE *stderr;\n"
+                    + "FILE *fopen(const char *pathname, const char *mode);\n"
+                    + "FILE *fdopen(int fd, const char *mode);\n"
+                    + "int fclose(FILE *stream);\n"
+                    + "unsigned long fread(void *ptr, unsigned long size, unsigned long nmemb, FILE *stream);\n"
+                    + "unsigned long fwrite(const void *ptr, unsigned long size, unsigned long nmemb, FILE *stream);\n"
+                    + "char *fgets(char *s, int size, FILE *stream);\n"
+                    + "int fputs(const char *s, FILE *stream);\n"
+                    + "int fputc(int c, FILE *stream);\n"
+                    + "int putc(int c, FILE *stream);\n"
+                    + "int fgetc(FILE *stream);\n"
+                    + "int getc(FILE *stream);\n"
+                    + "int ungetc(int c, FILE *stream);\n"
+                    + "int fflush(FILE *stream);\n"
+                    + "int fseek(FILE *stream, long offset, int whence);\n"
+                    + "long ftell(FILE *stream);\n"
+                    + "void rewind(FILE *stream);\n"
+                    + "int feof(FILE *stream);\n"
+                    + "int ferror(FILE *stream);\n"
+                    + "void clearerr(FILE *stream);\n"
+                    + "int fileno(FILE *stream);\n"
+                    + "int fprintf(FILE *stream, const char *format, ...);\n"
+                    + "int snprintf(char *str, unsigned long size, const char *format, ...);\n"
+                    + "int vsnprintf(char *str, unsigned long size, const char *format, va_list ap);\n"
+                    + "int puts(const char *s);\n"
+                    + "int remove(const char *pathname);\n"
+                    + "int rename(const char *oldpath, const char *newpath);\n";
+            } else if (hdr == "ctype.h") {
+                src = "int isspace(int c);\nint isdigit(int c);\nint isalpha(int c);\nint isalnum(int c);\n"
+                    + "int isxdigit(int c);\nint isupper(int c);\nint islower(int c);\nint tolower(int c);\nint toupper(int c);\n";
+            } else if (hdr == "stdlib.h" || hdr == "stddef.h" || hdr == "string.h") {
+                src = "#ifndef NULL\n#define NULL 0\n#endif\n#define EXIT_SUCCESS 0\n#define EXIT_FAILURE 1\n"
+                    + "#ifndef _C2V_STDLIB_PROTOS\n#define _C2V_STDLIB_PROTOS 1\n"
+                    + "double strtod(const char *nptr, char **endptr);\n"
+                    + "char *getenv(const char *name);\n"
+                    + "void exit(int status);\n"
+                    + "void *alloca(unsigned long size);\n"
+                    + "unsigned long malloc_usable_size(const void *ptr);\n"
+                    + "void *memchr(const void *s, int c, unsigned long n);\n"
+                    + "#endif\n";
+            } else if (hdr == "math.h") {
+                src = "#define M_E 2.7182818284590452354\n#define M_LN2 0.69314718055994530942\n#define M_LN10 2.30258509299404568402\n#define M_PI 3.14159265358979323846\n"
+                    + "#define M_PI_2 1.57079632679489661923\n#define M_PI_4 0.78539816339744830962\n#define M_SQRT2 1.41421356237309504880\n"
+                    + "#define NAN (0.0/0.0)\n#define INFINITY (1.0/0.0)\n"
+                    + "double fabs(double x);\ndouble floor(double x);\ndouble ceil(double x);\ndouble trunc(double x);\ndouble round(double x);\n"
+                    + "double sqrt(double x);\ndouble cbrt(double x);\ndouble hypot(double x, double y);\ndouble pow(double x, double y);\n"
+                    + "double exp(double x);\ndouble exp2(double x);\ndouble expm1(double x);\n"
+                    + "double log(double x);\ndouble log2(double x);\ndouble log10(double x);\ndouble log1p(double x);\n"
+                    + "double sin(double x);\ndouble cos(double x);\ndouble tan(double x);\n"
+                    + "double asin(double x);\ndouble acos(double x);\ndouble atan(double x);\ndouble atan2(double y, double x);\n"
+                    + "double sinh(double x);\ndouble cosh(double x);\ndouble tanh(double x);\n"
+                    + "double asinh(double x);\ndouble acosh(double x);\ndouble atanh(double x);\n"
+                    + "double fmax(double x, double y);\ndouble fmin(double x, double y);\n"
+                    + "double fmod(double x, double y);\ndouble copysign(double x, double y);\nlong lrint(double x);\nint signbit(double x);\n";
+            } else if (hdr == "time.h" || hdr == "sys/time.h") {
+                src = "#ifndef _C2V_TIME_H\n#define _C2V_TIME_H 1\n"
+                    + "typedef int64_t time_t;\ntypedef int64_t clock_t;\ntypedef int64_t suseconds_t;\n"
+                    + "struct tm { int tm_sec; int tm_min; int tm_hour; int tm_mday; int tm_mon; int tm_year; int tm_wday; int tm_yday; int tm_isdst; };\n"
+                    + "struct timespec { time_t tv_sec; long tv_nsec; };\n"
+                    + "struct timeval { time_t tv_sec; suseconds_t tv_usec; };\n"
+                    + "int gettimeofday(struct timeval *tv, void *tz);\n"
+                    + "struct tm *localtime(const time_t *timep);\n"
+                    + "struct tm *localtime_r(const time_t *timep, struct tm *result);\n"
+                    + "int nanosleep(const struct timespec *req, struct timespec *rem);\n"
+                    + "#endif\n";
+            } else if (hdr == "pthread.h") {
+                src = "typedef uint64_t pthread_t;\n"
+                    + "typedef struct pthread_mutex_t { int _opaque; } pthread_mutex_t;\n"
+                    + "typedef struct pthread_mutexattr_t { int _opaque; } pthread_mutexattr_t;\n"
+                    + "typedef struct pthread_cond_t { int _opaque; } pthread_cond_t;\n"
+                    + "typedef struct pthread_condattr_t { int _opaque; } pthread_condattr_t;\n"
+                    + "typedef struct pthread_attr_t { int _opaque; } pthread_attr_t;\n"
+                    + "typedef struct pthread_rwlock_t { int _opaque; } pthread_rwlock_t;\n"
+                    + "typedef int pthread_once_t;\ntypedef uint32_t pthread_key_t;\n"
+                    + "#define PTHREAD_MUTEX_INITIALIZER { 0 }\n#define PTHREAD_COND_INITIALIZER { 0 }\n#define PTHREAD_ONCE_INIT 0\n"
+                    + "#define PTHREAD_MUTEX_NORMAL 0\n#define PTHREAD_MUTEX_RECURSIVE 1\n#define PTHREAD_MUTEX_ERRORCHECK 2\n"
+                    + "int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine)(void *), void *arg);\n"
+                    + "int pthread_mutexattr_init(pthread_mutexattr_t *attr);\n"
+                    + "int pthread_mutex_lock(pthread_mutex_t *mutex);\n"
+                    + "int pthread_mutex_trylock(pthread_mutex_t *mutex);\n"
+                    + "int pthread_mutex_unlock(pthread_mutex_t *mutex);\n"
+                    + "int pthread_mutex_destroy(pthread_mutex_t *mutex);\n";
+            } else if (hdr == "sys/types.h" || hdr == "unistd.h" || hdr == "fcntl.h" || hdr == "sys/stat.h") {
+                src = "#ifndef _C2V_POSIX_TYPES\n#define _C2V_POSIX_TYPES 1\n"
+                    + "typedef int64_t off_t;\ntypedef int32_t pid_t;\ntypedef uint32_t uid_t;\ntypedef uint32_t gid_t;\n"
+                    + "typedef uint32_t mode_t;\ntypedef uint64_t dev_t;\ntypedef uint64_t ino_t;\ntypedef uint32_t socklen_t;\n"
+                    + "typedef uint64_t nlink_t;\n"
+                    + "struct flock { short l_type; short l_whence; off_t l_start; off_t l_len; pid_t l_pid; };\n"
+                    + "struct stat { dev_t st_dev; ino_t st_ino; mode_t st_mode; nlink_t st_nlink; uid_t st_uid; gid_t st_gid; dev_t st_rdev; off_t st_size; int64_t st_blksize; int64_t st_blocks; int64_t st_atime; int64_t st_mtime; int64_t st_ctime; };\n"
+                    + "#define S_ISDIR(m) (((m) & 0170000) == 0040000)\n#define S_ISREG(m) (((m) & 0170000) == 0100000)\n"
+                    + "#define STDIN_FILENO 0\n#define STDOUT_FILENO 1\n#define STDERR_FILENO 2\n"
+                    + "#define F_OK 0\n#define X_OK 1\n#define W_OK 2\n#define R_OK 4\n"
+                    + "#define _SC_PAGESIZE 30\n#define _SC_PAGE_SIZE 30\n#define _SC_NPROCESSORS_ONLN 84\n"
+                    + "#define O_RDONLY 0\n#define O_WRONLY 1\n#define O_RDWR 2\n#define O_CREAT 64\n#define O_EXCL 128\n#define O_TRUNC 512\n#define O_APPEND 1024\n#define O_NOFOLLOW 131072\n#define O_CLOEXEC 524288\n"
+                    + "#define F_DUPFD 0\n#define F_GETFD 1\n#define F_SETFD 2\n#define F_GETFL 3\n#define F_SETFL 4\n"
+                    + "#define F_GETLK 5\n#define F_SETLK 6\n#define F_SETLKW 7\n"
+                    + "#define F_RDLCK 0\n#define F_WRLCK 1\n#define F_UNLCK 2\n"
+                    + "int open(const char *pathname, int flags, ...);\n"
+                    + "off_t lseek(int fd, off_t offset, int whence);\n"
+                    + "int fsync(int fd);\n"
+                    + "pid_t getpid(void);\n"
+                    + "long sysconf(int name);\n"
+                    + "int utimes(const char *filename, void *times);\n"
+                    + "#endif\n";
+            } else if (hdr == "setjmp.h") {
+                src = "typedef struct jmp_buf { int _opaque; } jmp_buf;\n";
+            } else if (hdr == "errno.h") {
+                src = "static int _c2v_errno = 0;\n#define errno _c2v_errno\n"
+                    + "#define EPERM 1\n#define ENOENT 2\n#define ESRCH 3\n#define EINTR 4\n#define EIO 5\n"
+                    + "#define EAGAIN 11\n#define EWOULDBLOCK 11\n#define ENOMEM 12\n#define EACCES 13\n#define EFAULT 14\n"
+                    + "#define EBUSY 16\n#define EEXIST 17\n#define ENODEV 19\n#define EINVAL 22\n"
+                    + "#define ENOSPC 28\n#define EROFS 30\n#define EPIPE 32\n#define ERANGE 34\n"
+                    + "#define ENOLCK 37\n#define ENOSYS 38\n#define ENOTEMPTY 39\n#define EOVERFLOW 75\n#define ETIMEDOUT 110\n";
+            } else if (hdr == "fenv.h") {
+                src = "#define FE_TONEAREST 0\n#define FE_DOWNWARD 1\n#define FE_UPWARD 2\n#define FE_TOWARDZERO 3\n"
+                    + "int fesetround(int round);\n";
+            } else if (hdr == "dlfcn.h") {
+                src = "#define RTLD_LAZY 1\n#define RTLD_NOW 2\n#define RTLD_GLOBAL 256\n#define RTLD_LOCAL 0\n"
+                    + "void *dlopen(const char *filename, int flags);\n"
+                    + "void *dlsym(void *handle, const char *symbol);\n"
+                    + "char *dlerror(void);\nint dlclose(void *handle);\n";
+            } else if (hdr == "utime.h") {
+                src = "struct utimbuf { int64_t actime; int64_t modtime; };\n";
+            } else if (hdr == "dirent.h") {
+                src = "typedef struct _c2v_DIR { int _opaque; } DIR;\n"
+                    + "struct dirent { uint64_t d_ino; int64_t d_off; uint16_t d_reclen; uint8_t d_type; char d_name[256]; };\n"
+                    + "DIR *opendir(const char *name);\n"
+                    + "struct dirent *readdir(DIR *dirp);\n"
+                    + "int closedir(DIR *dirp);\n";
+            }
+            if (src != "") {
+                var inc_lines = process_source (src, key);
+                for (int i = 0; i < inc_lines.length; i++)
+                    out_lines.add (inc_lines[i]);
+            }
+        }
+
         private void handle_include (string arg, string cur_file, int line, GenericArray<PreLine> out_lines) throws RefuseError {
             if (arg.length < 2)
                 return;
             uint8 delim = arg[0];
             if (delim == '<') {
-                // System / fake-libc headers: handled natively by built-in type table
+                int end = 1;
+                while (end < arg.length && arg[end] != '>')
+                    end++;
+                string hdr = arg.substring (1, end - 1);
+                handle_sys_include (hdr, out_lines);
                 return;
             }
             if (delim != '"')
@@ -520,7 +768,7 @@ namespace C2Vala {
         }
 
         // Expand macros in text with bounded recursion depth.
-        private string expand_macros (string text, int depth) {
+        private string expand_macros (string text, int depth, string cur_file = "", int cur_line = 0) {
             if (depth > 20)
                 return text;
             var sb = new StrBuilder ();
@@ -550,11 +798,19 @@ namespace C2Vala {
                     while (i < text.length && is_ident_char (text[i]))
                         i++;
                     string ident = text.substring (start, i - start);
+                    if (ident == "__LINE__" && cur_line > 0) {
+                        sb.append (@"$cur_line");
+                        continue;
+                    }
+                    if (ident == "__FILE__" && cur_file != "") {
+                        sb.append (@"\"$cur_file\"");
+                        continue;
+                    }
                     var m = find_macro (ident);
                     if (m != null && !m.expanding) {
                         if (!m.is_func) {
                             m.expanding = true;
-                            sb.append (expand_macros (m.body, depth + 1));
+                            sb.append (expand_macros (m.body, depth + 1, cur_file, cur_line));
                             m.expanding = false;
                             continue;
                         } else {

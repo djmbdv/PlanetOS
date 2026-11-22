@@ -6,6 +6,7 @@ namespace Gio {
 
     public class ListStore<G> : Object {
         private GenericArray<G> items;
+        private G zero_val;
 
         public signal void items_changed (int position, int removed, int added);
 
@@ -18,6 +19,8 @@ namespace Gio {
         }
 
         public G get_item (int position) {
+            if (position < 0 || position >= items.length)
+                return zero_val;
             return items[position];
         }
 
@@ -65,6 +68,37 @@ namespace Gio {
                 }
             }
             return false;
+        }
+
+        public void splice (int position, int removals, G[] additions) {
+            int n = items.length;
+            if (position < 0)
+                position = 0;
+            if (position > n)
+                position = n;
+            int rem = removals;
+            if (rem < 0)
+                rem = 0;
+            if (position + rem > n)
+                rem = n - position;
+            for (int i = 0; i < rem; i++)
+                items.remove_index (position);
+            for (int i = 0; i < additions.length; i++)
+                insert_raw (position + i, additions[i]);
+            if (rem > 0 || additions.length > 0)
+                items_changed (position, rem, additions.length);
+        }
+
+        private void insert_raw (int position, G item) {
+            int n = items.length;
+            if (position >= n) {
+                items.add (item);
+                return;
+            }
+            items.add (items[n - 1]);
+            for (int i = n - 1; i > position; i--)
+                items[i] = items[i - 1];
+            items[position] = item;
         }
     }
 
@@ -188,18 +222,29 @@ namespace Gio {
         }
 
         public bool launch (GenericArray<File>? files = null) {
-            if (cmd == "exec" && files != null && files.length > 0) {
-                string target = files[0].get_path ();
-                if (target.has_prefix ("/"))
-                    target = target.substring (1);
-                return Sys.spawn (target, target) >= 0;
+            try {
+                if (cmd == "exec" && files != null && files.length > 0) {
+                    string target = files[0].get_path ();
+                    if (target.has_prefix ("/"))
+                        target = target.substring (1);
+                    string[] argv = { target };
+                    int pid = 0;
+                    return Process.spawn_async (null, argv, null, SpawnFlags.SEARCH_PATH, null, out pid);
+                }
+                var base_argv = Process.split_command_line (cmd);
+                int extra = (files != null) ? files.length : 0;
+                var argv = new string[base_argv.length + extra];
+                for (int i = 0; i < base_argv.length; i++)
+                    argv[i] = base_argv[i];
+                if (files != null) {
+                    for (int i = 0; i < files.length; i++)
+                        argv[base_argv.length + i] = files[i].get_path ();
+                }
+                int pid = 0;
+                return Process.spawn_async (null, argv, null, SpawnFlags.SEARCH_PATH, null, out pid);
+            } catch (SpawnError e) {
+                return false;
             }
-            string cmdline = cmd;
-            if (files != null && files.length > 0) {
-                for (int i = 0; i < files.length; i++)
-                    cmdline = cmdline + " " + files[i].get_path ();
-            }
-            return Sys.spawn (cmd, cmdline) >= 0;
         }
     }
 

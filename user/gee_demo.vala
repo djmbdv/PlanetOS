@@ -121,6 +121,37 @@ int main () {
     if (ll2.get (1) != 2 || ll2.get (2) != 3 || ll2.remove_at (1) != 2 || ll2.size != 3)
         fails++;
 
+    // 11. EytzingerBTree<int, int> (splits + updates + lookups)
+    var btree = new EytzingerBTree<int, int> (new IntComparator ());
+    for (int i = 0; i < 60; i++)
+        btree.set ((i * 17) % 60, i * 10);
+    btree.set (7, 7777);
+    if (btree.size != 60 || !btree.has_key (42) || btree.has_key (99) || btree.get (7) != 7777)
+        fails++;
+
+    // 12. AdaptiveRadixTree<int> (path compression, node growth, prefix search, remove)
+    var art = new AdaptiveRadixTree<int> ();
+    art.set ("kernel", 1);
+    art.set ("klog", 2);
+    art.set ("keyboard", 3);
+    art.set ("key", 4);
+    for (int i = 0; i < 20; i++)
+        art.set (@"k_$(i)", 100 + i);
+    var kpref = art.keys_with_prefix ("key");
+    if (art.size != 24 || art.get ("key") != 4 || art.get ("k_19") != 119 || kpref.size != 2)
+        fails++;
+    if (!art.remove ("keyboard") || art.has_key ("keyboard") || art.size != 23)
+        fails++;
+
+    // 13. CuckooFilter (insert, contains, remove)
+    var cf = new CuckooFilter (64);
+    for (int i = 0; i < 40; i++)
+        cf.add (@"item_$i");
+    if (cf.size != 40 || !cf.contains ("item_0") || !cf.contains ("item_39"))
+        fails++;
+    if (!cf.remove ("item_12") || cf.size != 39)
+        fails++;
+
     print (@"gee_demo: list=$(list.size) map=$(map.size) fails=$fails\n");
     return (fails == 0) ? 0 : 1;
 }

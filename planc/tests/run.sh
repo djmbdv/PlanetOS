@@ -685,7 +685,7 @@ PYEOF
     p_elf="$WORK/planc.elf"
     p_disk="$WORK/planet_planc_disk.img"
     p_ser="$WORK/qemu_planc_serial.log"
-    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/preproc.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
+    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/diag.vala" "$ROOT/planc/src/preproc.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
         ko "planetos_planc_qemu" "planc.elf compile failed: $(cat "$WORK/p_elf.err")"
     else
     python3 - "$p_disk" "$s_bin" "$p_elf" "$HERE/valid/utf8.vala" "$HERE/valid/class_basic.vala" << 'PYEOF'

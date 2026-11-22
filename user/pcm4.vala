@@ -88,14 +88,23 @@ bool is_gui_elf (string nm) {
         || nm == "compositor.elf";
 }
 
-void run_cli_capture (Pcm4State st, string fp, string label_nm) {
+void run_cli_capture_argv (Pcm4State st, string[] argv, string label_nm) {
     int out_fd = Sys.create ("_pcm4_out.txt");
     if (out_fd < 0) {
         set_status (st, @"Cannot capture output for $label_nm");
         return;
     }
     Sys.sys (19, 0, out_fd, 0);
-    int tid = Sys.spawn (fp, "");
+    int tid = -1;
+    try {
+        Process.spawn_async (null, argv, null, SpawnFlags.SEARCH_PATH, null, out tid);
+    } catch (SpawnError se) {
+        Sys.sys (19, 0, 1, 0);
+        Sys.close (out_fd);
+        Sys.unlink ("_pcm4_out.txt");
+        set_status (st, @"Cannot run $label_nm: $(se.message)");
+        return;
+    }
     int rc = (tid >= 0) ? Sys.wait (tid) : -1;
     Sys.sys (19, 0, 1, 0);
     Sys.close (out_fd);
@@ -109,6 +118,11 @@ void run_cli_capture (Pcm4State st, string fp, string label_nm) {
     if (st.nb != null)
         st.nb.set_current_page (1);
     set_status (st, @"Finished $label_nm (exit=$rc)");
+}
+
+void run_cli_capture (Pcm4State st, string fp, string label_nm) {
+    string[] argv = { fp };
+    run_cli_capture_argv (st, argv, label_nm);
 }
 
 void open_item (Pcm4State st, string name) {
@@ -132,11 +146,16 @@ void open_item (Pcm4State st, string name) {
                         app_nm = name;
                     bool is_term = kf.get_boolean ("Desktop Entry", "Terminal");
                     if (exec_nm.length > 0) {
-                        if (is_term)
-                            run_cli_capture (st, exec_nm, app_nm);
-                        else {
-                            Sys.spawn (exec_nm, "");
-                            set_status (st, @"Launched $app_nm");
+                        try {
+                            if (is_term) {
+                                var argv = Process.split_command_line (exec_nm);
+                                run_cli_capture_argv (st, argv, app_nm);
+                            } else {
+                                Process.spawn_command_line_async (exec_nm);
+                                set_status (st, @"Launched $app_nm");
+                            }
+                        } catch (SpawnError se) {
+                            set_status (st, @"Launch error: $(se.message)");
                         }
                         return;
                     }

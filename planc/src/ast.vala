@@ -104,6 +104,7 @@ namespace Planc {
         public GenericArray<Expr> elements { get; private set; }
         public ValaType elem_type { get; set; default = ValaType.INT; }
         public string elem_type_name { get; set; default = ""; }
+        public bool is_varargs_pack { get; set; default = false; }
 
         public ArrayLiteralExpr () {
             elements = new GenericArray<Expr> ();
@@ -160,6 +161,12 @@ namespace Planc {
         public string type_name { get; set; default = ""; }
         public Expr? operand { get; set; default = null; }
         public bool is_type_form { get; set; default = true; }
+    }
+
+    public class VaArgExpr : Expr {
+        public Expr target { get; set; }
+        public ValaType arg_type { get; set; }
+        public string arg_type_name { get; set; default = ""; }
     }
 
     public class ClassNewExpr : Expr {
@@ -343,6 +350,7 @@ namespace Planc {
 
     public class ForeachStatement : Statement {        public ValaType elem_type { get; set; default = ValaType.INT; }
         public string elem_type_name { get; set; default = ""; }
+        public bool is_varargs_pack { get; set; default = false; }
         public bool infer_type { get; set; default = false; }
         public string var_name { get; set; }
         public Expr collection { get; set; }
@@ -475,6 +483,7 @@ namespace Planc {
         public string name { get; set; }
         public string file { get; set; default = ""; }
         public bool is_compact_free { get; set; default = false; }
+        public bool is_varargs { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
         public bool is_generic_template { get; set; default = false; }
         public string method_name { get; set; default = ""; }
@@ -577,6 +586,7 @@ namespace Planc {
         public int vtable_rodata_offset { get; set; default = -1; }
         public int itable_rodata_offset { get; set; default = -1; }
         public bool needs_finalizer { get; set; default = false; }
+        public bool has_trivial_init { get; set; default = false; }
         public GenericArray<string> vtable_method_names { get; private set; }
         public GenericArray<string> vtable_impl_symbols { get; private set; }
         public int line { get; set; }
@@ -730,6 +740,8 @@ namespace Planc {
     public class DelegateDecl : Object {
         public string name { get; set; }
         public bool is_defined { get; set; default = false; }
+        public bool is_generic_template { get; set; default = false; }
+        public GenericArray<string> type_params { get; private set; }
         public ValaType return_type { get; set; default = ValaType.VOID; }
         public string return_type_name { get; set; default = ""; }
         public GenericArray<Param> params { get; private set; }
@@ -738,6 +750,7 @@ namespace Planc {
         public int column { get; set; }
 
         public DelegateDecl () {
+            type_params = new GenericArray<string> ();
             params = new GenericArray<Param> ();
             throws_domains = new GenericArray<string> ();
         }
@@ -748,6 +761,7 @@ namespace Planc {
         public string mangled_name { get; set; }
         public bool is_struct { get; set; default = false; }
         public bool is_interface { get; set; default = false; }
+        public bool is_delegate { get; set; default = false; }
         public bool has_type_param { get; set; default = false; }
         public GenericArray<ValaType> arg_types { get; private set; }
         public GenericArray<string> arg_type_names { get; private set; }
@@ -858,6 +872,8 @@ namespace Planc {
         public GenericArray<InterfaceDecl> interfaces { get; private set; }
         public GenericArray<DelegateDecl> delegates { get; private set; }
         public GenericArray<GenericInstantiation> instantiations { get; private set; }
+        private int monomorphized_cursor = 0;
+        private const int MAX_GENERIC_INSTANTIATIONS = 4096;
 
         public Program () {
             functions = new GenericArray<Function> ();
@@ -1015,7 +1031,8 @@ namespace Planc {
         public string request_instantiation (string template_name, bool is_struct,
                                              GenericArray<ValaType> arg_types,
                                              GenericArray<string> arg_type_names,
-                                             bool is_interface = false) {
+                                             bool is_interface = false,
+                                             bool is_delegate = false) {
             bool has_tp = false;
             for (int i = 0; i < arg_types.length; i++) {
                 if (arg_types[i] == ValaType.TYPE_PARAM) {
@@ -1046,6 +1063,7 @@ namespace Planc {
                     mangled_name = mangled,
                     is_struct = is_struct,
                     is_interface = is_interface,
+                    is_delegate = is_delegate,
                     has_type_param = false
                 };
                 for (int i = 0; i < arg_types.length; i++) {
@@ -1060,6 +1078,8 @@ namespace Planc {
             foreach (unowned var existing in instantiations) {
                 if (existing.has_type_param && existing.template_name == template_name
                     && existing.is_struct == is_struct
+                    && existing.is_interface == is_interface
+                    && existing.is_delegate == is_delegate
                     && existing.arg_types.length == arg_types.length) {
                     bool same = true;
                     for (int i = 0; i < arg_types.length; i++) {
@@ -1078,6 +1098,8 @@ namespace Planc {
                 template_name = template_name,
                 mangled_name = tpl_mangled,
                 is_struct = is_struct,
+                is_interface = is_interface,
+                is_delegate = is_delegate,
                 has_type_param = true
             };
             for (int i = 0; i < arg_types.length; i++) {
@@ -1149,12 +1171,12 @@ namespace Planc {
                         ntypes.add (at);
                         nnames.add (an);
                     }
-                    var rm = request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames);
+                    var rm = request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames, sub.is_interface, sub.is_delegate);
                     tname = arr_null ? (rm + "?") : rm;
                 }
                 return;
             }
-            if ((t == ValaType.CLASS || t == ValaType.STRUCT) && tname != "") {
+            if ((t == ValaType.CLASS || t == ValaType.STRUCT || t == ValaType.INTERFACE) && tname != "") {
                 bool is_null = tname.has_suffix ("?");
                 var bare = strip_q_str (tname);
                 unowned var sub = find_instantiation_by_mangled (bare);
@@ -1168,7 +1190,7 @@ namespace Planc {
                         ntypes.add (at);
                         nnames.add (an);
                     }
-                    var rm = request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames);
+                    var rm = request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames, sub.is_interface, sub.is_delegate);
                     tname = is_null ? (rm + "?") : rm;
                 }
             }
@@ -1344,6 +1366,15 @@ namespace Planc {
                     target = clone_expr (o.target, tparams, targs, targ_names),
                     start = clone_expr (o.start, tparams, targs, targ_names),
                     end = clone_expr (o.end, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is VaArgExpr) {
+                var o = (VaArgExpr) e;
+                return new VaArgExpr () {
+                    target = clone_expr (o.target, tparams, targs, targ_names),
+                    arg_type = o.arg_type,
+                    arg_type_name = o.arg_type_name,
                     line = o.line, column = o.column
                 };
             }
@@ -1941,10 +1972,37 @@ namespace Planc {
             nf.method_name = mangled_name;
             nf.is_generic_template = false;
             functions.add (nf);
+            monomorphize_all ();
             return nf;
         }
 
-        public void monomorphize_all () {            for (int ii = 0; ii < instantiations.length; ii++) {
+        private string substitute_mangled_type_ref (string raw_name,
+                                                  GenericArray<string> tparams,
+                                                  GenericArray<ValaType> targs,
+                                                  GenericArray<string> targ_names) {
+            if (raw_name == "")
+                return "";
+            unowned var sub = find_instantiation_by_mangled (raw_name);
+            if (sub == null || !sub.has_type_param)
+                return raw_name;
+            var ntypes = new GenericArray<ValaType> ();
+            var nnames = new GenericArray<string> ();
+            for (int j = 0; j < sub.arg_types.length; j++) {
+                var at = sub.arg_types[j];
+                var an = sub.arg_type_names[j];
+                substitute_type (ref at, ref an, tparams, targs, targ_names);
+                ntypes.add (at);
+                nnames.add (an);
+            }
+            return request_instantiation (sub.template_name, sub.is_struct, ntypes, nnames,
+                                          sub.is_interface, sub.is_delegate);
+        }
+
+        public void monomorphize_all () {
+            for (; monomorphized_cursor < instantiations.length; monomorphized_cursor++) {
+                if (monomorphized_cursor >= MAX_GENERIC_INSTANTIATIONS)
+                    Host.panic ("generic instantiation limit exceeded (possible cyclic generic type)");
+                int ii = monomorphized_cursor;
                 var inst = instantiations[ii];
                 if (inst.has_type_param)
                     continue;
@@ -1956,6 +2014,43 @@ namespace Planc {
                 if (inst.template_name == "Channel") {
                     if (inst.arg_types.length == 1)
                         synthesize_channel (inst);
+                    continue;
+                }
+                if (inst.is_delegate) {
+                    unowned var tmpl_dd = find_delegate (inst.template_name);
+                    if (tmpl_dd == null || tmpl_dd.type_params.length != inst.arg_types.length)
+                        continue;
+                    if (find_delegate (inst.mangled_name) != null)
+                        continue;
+                    var rt = tmpl_dd.return_type;
+                    var rn = tmpl_dd.return_type_name;
+                    substitute_type (ref rt, ref rn, tmpl_dd.type_params, inst.arg_types, inst.arg_type_names);
+                    var ndd = new DelegateDecl () {
+                        name = inst.mangled_name,
+                        is_defined = tmpl_dd.is_defined,
+                        is_generic_template = false,
+                        return_type = rt,
+                        return_type_name = rn,
+                        line = tmpl_dd.line,
+                        column = tmpl_dd.column
+                    };
+                    foreach (var td in tmpl_dd.throws_domains)
+                        ndd.throws_domains.add (td);
+                    foreach (var p in tmpl_dd.params) {
+                        var pt = p.param_type;
+                        var pn = p.type_name;
+                        substitute_type (ref pt, ref pn, tmpl_dd.type_params, inst.arg_types, inst.arg_type_names);
+                        ndd.params.add (new Param () {
+                            param_type = pt,
+                            type_name = pn,
+                            name = p.name,
+                            is_ref = p.is_ref,
+                            is_out = p.is_out,
+                            unmanaged = p.unmanaged
+                        });
+                    }
+                    delegates.add (ndd);
+                    register_delegate_struct (inst.mangled_name);
                     continue;
                 }
                 if (inst.is_interface) {
@@ -1972,7 +2067,7 @@ namespace Planc {
                         column = tmpl_it.column
                     };
                     foreach (var pn in tmpl_it.prereq_names)
-                        nit.prereq_names.add (pn);
+                        nit.prereq_names.add (substitute_mangled_type_ref (pn, tmpl_it.type_params, inst.arg_types, inst.arg_type_names));
                     foreach (var m in tmpl_it.methods)
                         nit.methods.add (clone_function (m, inst.mangled_name, tmpl_it.type_params, inst.arg_types, inst.arg_type_names));
                     interfaces.add (nit);
@@ -2015,14 +2110,14 @@ namespace Planc {
                     var ncd = new ClassDecl () {
                         name = inst.mangled_name,
                         file = tmpl_cd.file,
-                        base_name = tmpl_cd.base_name,
+                        base_name = substitute_mangled_type_ref (tmpl_cd.base_name, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names),
                         is_abstract = tmpl_cd.is_abstract,
                         is_defined = tmpl_cd.is_defined,
                         line = tmpl_cd.line,
                         column = tmpl_cd.column
                     };
                     foreach (var iname in tmpl_cd.iface_names)
-                        ncd.iface_names.add (iname);
+                        ncd.iface_names.add (substitute_mangled_type_ref (iname, tmpl_cd.type_params, inst.arg_types, inst.arg_type_names));
                     foreach (var fld in tmpl_cd.fields) {
                         var ft = fld.field_type;
                         var fn = fld.type_name;

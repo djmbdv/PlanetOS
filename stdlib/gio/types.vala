@@ -8,8 +8,22 @@ namespace Gio {
         FAILED,
         NOT_FOUND,
         EXISTS,
+        IS_DIRECTORY,
+        NOT_DIRECTORY,
+        NOT_EMPTY,
+        NOT_REGULAR_FILE,
+        PERMISSION_DENIED,
         INVALID_ARGUMENT,
         NOT_SUPPORTED,
+        TIMED_OUT,
+        WOULD_BLOCK,
+        PARTIAL_INPUT,
+        INVALID_DATA,
+        HOST_NOT_FOUND,
+        CONNECTION_REFUSED,
+        BROKEN_PIPE,
+        BUSY,
+        PENDING,
         CANCELLED,
         CLOSED
     }
@@ -39,7 +53,10 @@ namespace Gio {
         NONE,
         OVERWRITE,
         BACKUP,
-        ALL_METADATA
+        NOFOLLOW_SYMLINKS,
+        ALL_METADATA,
+        NO_FALLBACK_FOR_MOVE,
+        TARGET_DEFAULT_PERMS
     }
 
     public enum SeekType {
@@ -48,10 +65,43 @@ namespace Gio {
         END
     }
 
+    public enum DataStreamByteOrder {
+        BIG_ENDIAN,
+        LITTLE_ENDIAN,
+        HOST_ENDIAN
+    }
+
+    public enum DataStreamNewlineType {
+        LF,
+        CR,
+        CR_LF,
+        ANY
+    }
+
+    public enum OutputStreamSpliceFlags {
+        NONE,
+        CLOSE_SOURCE,
+        CLOSE_TARGET
+    }
+
     public enum ApplicationFlags {
         FLAGS_NONE,
         HANDLES_OPEN,
-        NON_UNIQUE
+        HANDLES_COMMAND_LINE,
+        SEND_ENVIRONMENT,
+        NON_UNIQUE,
+        IS_SERVICE,
+        IS_LAUNCHER,
+        ALLOW_REPLACEMENT,
+        REPLACE
+    }
+
+    public interface Seekable : Object {
+        public abstract int tell ();
+        public abstract bool can_seek ();
+        public abstract bool seek (int offset, SeekType type, Cancellable? cancellable = null) throws IOError;
+        public abstract bool can_truncate ();
+        public abstract bool truncate (int offset, Cancellable? cancellable = null) throws IOError;
     }
 
     public class Cancellable : Object {

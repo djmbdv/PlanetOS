@@ -1,8 +1,38 @@
 // Pure-Vala Gee ArrayList<G> and LinkedList<G>.
 namespace Gee {
 
-    public class ArrayList<G> : Object {
+    internal class ArrayListIterator<G> : Object, Iterator<G> {
+        private ArrayList<G> list;
+        private int pos;
+        private G zero_val;
+
+        public ArrayListIterator (ArrayList<G> l) {
+            list = l;
+            pos = -1;
+        }
+
+        public bool has_next () {
+            return (pos + 1) < list.size;
+        }
+
+        public bool next () {
+            if ((pos + 1) < list.size) {
+                pos++;
+                return true;
+            }
+            return false;
+        }
+
+        public G get () {
+            if (pos < 0 || pos >= list.size)
+                return zero_val;
+            return list.get (pos);
+        }
+    }
+
+    public class ArrayList<G> : Object, List<G> {
         private GenericArray<G> inner;
+        private G zero_val;
 
         public int size {
             get { return inner.length; }
@@ -22,10 +52,14 @@ namespace Gee {
         }
 
         public G get (int index) {
+            if (index < 0 || index >= inner.length)
+                return zero_val;
             return inner[index];
         }
 
         public void set (int index, G item) {
+            if (index < 0 || index >= inner.length)
+                return;
             inner[index] = item;
         }
 
@@ -62,6 +96,8 @@ namespace Gee {
         }
 
         public G remove_at (int index) {
+            if (index < 0 || index >= inner.length)
+                return zero_val;
             G val = inner[index];
             inner.remove_index (index);
             return val;
@@ -76,10 +112,14 @@ namespace Gee {
         }
 
         public G first () {
+            if (inner.length == 0)
+                return zero_val;
             return inner[0];
         }
 
         public G last () {
+            if (inner.length == 0)
+                return zero_val;
             return inner[inner.length - 1];
         }
 
@@ -92,6 +132,46 @@ namespace Gee {
             int n = other.size;
             for (int i = 0; i < n; i++)
                 inner.add (other.get (i));
+        }
+
+        public bool contains_all (ArrayList<G> other) {
+            int n = other.size;
+            for (int i = 0; i < n; i++) {
+                if (!contains (other.get (i)))
+                    return false;
+            }
+            return true;
+        }
+
+        public bool remove_all (ArrayList<G> other) {
+            bool changed = false;
+            int n = other.size;
+            for (int i = 0; i < n; i++) {
+                if (remove (other.get (i)))
+                    changed = true;
+            }
+            return changed;
+        }
+
+        public Iterator<G> iterator () {
+            return new ArrayListIterator<G> (this);
+        }
+
+        public bool forall (ForallFunc<G> f) {
+            int n = inner.length;
+            for (int i = 0; i < n; i++) {
+                if (!f (inner[i]))
+                    return false;
+            }
+            return true;
+        }
+
+        public G[] to_array () {
+            int n = inner.length;
+            var res = new G[n];
+            for (int i = 0; i < n; i++)
+                res[i] = inner[i];
+            return res;
         }
 
         public ArrayList<G> slice (int start, int stop) {
@@ -121,8 +201,38 @@ namespace Gee {
             inner[b] = tmp;
         }
 
-        private void qsort_range (int lo, int hi, Comparator<G> cmp) {
+        private void sift_down (int lo, int start, int count, Comparator<G> cmp) {
+            int root = start;
+            while ((root << 1) + 1 < count) {
+                int child = (root << 1) + 1;
+                if (child + 1 < count && cmp.compare (inner[lo + child], inner[lo + child + 1]) < 0)
+                    child++;
+                if (cmp.compare (inner[lo + root], inner[lo + child]) < 0) {
+                    swap_idx (lo + root, lo + child);
+                    root = child;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        private void heapsort_range (int lo, int hi, Comparator<G> cmp) {
+            int count = hi - lo + 1;
+            for (int i = (count >> 1) - 1; i >= 0; i--)
+                sift_down (lo, i, count, cmp);
+            for (int end = count - 1; end > 0; end--) {
+                swap_idx (lo, lo + end);
+                sift_down (lo, 0, end, cmp);
+            }
+        }
+
+        private void introsort_range (int lo, int hi, int depth_limit, Comparator<G> cmp) {
             while (hi - lo > 16) {
+                if (depth_limit <= 0) {
+                    heapsort_range (lo, hi, cmp);
+                    return;
+                }
+                depth_limit--;
                 int mid = lo + ((hi - lo) >> 1);
                 if (cmp.compare (inner[mid], inner[lo]) < 0)
                     swap_idx (lo, mid);
@@ -144,11 +254,11 @@ namespace Gee {
                 }
                 if (j - lo < hi - i) {
                     if (lo < j)
-                        qsort_range (lo, j, cmp);
+                        introsort_range (lo, j, depth_limit, cmp);
                     lo = i;
                 } else {
                     if (i < hi)
-                        qsort_range (i, hi, cmp);
+                        introsort_range (i, hi, depth_limit, cmp);
                     hi = j;
                 }
             }
@@ -158,8 +268,99 @@ namespace Gee {
 
         public void sort (Comparator<G> cmp) {
             int n = inner.length;
-            if (n > 1)
-                qsort_range (0, n - 1, cmp);
+            if (n > 1) {
+                int depth_limit = 0;
+                for (int t = n; t > 1; t >>= 1)
+                    depth_limit += 2;
+                introsort_range (0, n - 1, depth_limit, cmp);
+            }
+        }
+
+        private void insertion_sort_fn (int lo, int hi, CompareDataFunc<G> cmp) {
+            for (int i = lo + 1; i <= hi; i++) {
+                G key = inner[i];
+                int j = i - 1;
+                while (j >= lo && cmp (inner[j], key) > 0) {
+                    inner[j + 1] = inner[j];
+                    j--;
+                }
+                inner[j + 1] = key;
+            }
+        }
+
+        private void sift_down_fn (int lo, int start, int count, CompareDataFunc<G> cmp) {
+            int root = start;
+            while ((root << 1) + 1 < count) {
+                int child = (root << 1) + 1;
+                if (child + 1 < count && cmp (inner[lo + child], inner[lo + child + 1]) < 0)
+                    child++;
+                if (cmp (inner[lo + root], inner[lo + child]) < 0) {
+                    swap_idx (lo + root, lo + child);
+                    root = child;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        private void heapsort_range_fn (int lo, int hi, CompareDataFunc<G> cmp) {
+            int count = hi - lo + 1;
+            for (int i = (count >> 1) - 1; i >= 0; i--)
+                sift_down_fn (lo, i, count, cmp);
+            for (int end = count - 1; end > 0; end--) {
+                swap_idx (lo, lo + end);
+                sift_down_fn (lo, 0, end, cmp);
+            }
+        }
+
+        private void introsort_range_fn (int lo, int hi, int depth_limit, CompareDataFunc<G> cmp) {
+            while (hi - lo > 16) {
+                if (depth_limit <= 0) {
+                    heapsort_range_fn (lo, hi, cmp);
+                    return;
+                }
+                depth_limit--;
+                int mid = lo + ((hi - lo) >> 1);
+                if (cmp (inner[mid], inner[lo]) < 0)
+                    swap_idx (lo, mid);
+                if (cmp (inner[hi], inner[lo]) < 0)
+                    swap_idx (lo, hi);
+                if (cmp (inner[hi], inner[mid]) < 0)
+                    swap_idx (mid, hi);
+                G pivot = inner[mid];
+                int i = lo;
+                int j = hi;
+                while (i <= j) {
+                    while (cmp (inner[i], pivot) < 0) i++;
+                    while (cmp (inner[j], pivot) > 0) j--;
+                    if (i <= j) {
+                        swap_idx (i, j);
+                        i++;
+                        j--;
+                    }
+                }
+                if (j - lo < hi - i) {
+                    if (lo < j)
+                        introsort_range_fn (lo, j, depth_limit, cmp);
+                    lo = i;
+                } else {
+                    if (i < hi)
+                        introsort_range_fn (i, hi, depth_limit, cmp);
+                    hi = j;
+                }
+            }
+            if (lo < hi)
+                insertion_sort_fn (lo, hi, cmp);
+        }
+
+        public void sort_func (CompareDataFunc<G> cmp) {
+            int n = inner.length;
+            if (n > 1) {
+                int depth_limit = 0;
+                for (int t = n; t > 1; t >>= 1)
+                    depth_limit += 2;
+                introsort_range_fn (0, n - 1, depth_limit, cmp);
+            }
         }
     }
 
@@ -175,10 +376,50 @@ namespace Gee {
         }
     }
 
-    public class LinkedList<G> : Object {
+    internal class LinkedListIterator<G> : Object, Iterator<G> {
+        private unowned LinkNode<G>? cur;
+        private bool started;
+        private unowned LinkNode<G>? head_ref;
+        private G zero_val;
+
+        public LinkedListIterator (LinkNode<G>? h) {
+            head_ref = h;
+            cur = null;
+            started = false;
+        }
+
+        public bool has_next () {
+            if (!started)
+                return head_ref != null;
+            return cur != null && cur.next != null;
+        }
+
+        public bool next () {
+            if (!started) {
+                started = true;
+                cur = head_ref;
+                return cur != null;
+            }
+            if (cur != null && cur.next != null) {
+                cur = cur.next;
+                return true;
+            }
+            cur = null;
+            return false;
+        }
+
+        public G get () {
+            if (cur == null)
+                return zero_val;
+            return cur.val;
+        }
+    }
+
+    public class LinkedList<G> : Object, List<G>, Deque<G> {
         private LinkNode<G>? head;
         private LinkNode<G>? tail;
         private int _size;
+        private G zero_val;
 
         public int size {
             get { return _size; }
@@ -224,6 +465,8 @@ namespace Gee {
 
         public G get (int index) {
             unowned LinkNode<G>? n = node_at (index);
+            if (n == null)
+                return zero_val;
             return n.val;
         }
 
@@ -257,11 +500,15 @@ namespace Gee {
         }
 
         public G remove_at (int index) {
+            if (index < 0 || index >= _size)
+                return zero_val;
             if (index == 0)
                 return poll_head ();
             if (index == _size - 1)
                 return poll_tail ();
             LinkNode<G>? target = node_at (index);
+            if (target == null)
+                return zero_val;
             G val = target.val;
             LinkNode<G>? prv = target.prev;
             LinkNode<G>? nxt = target.next;
@@ -316,11 +563,23 @@ namespace Gee {
         }
 
         public G first () {
+            if (head == null)
+                return zero_val;
             return head.val;
         }
 
         public G last () {
+            if (tail == null)
+                return zero_val;
             return tail.val;
+        }
+
+        public G peek_head () {
+            return first ();
+        }
+
+        public G peek_tail () {
+            return last ();
         }
 
         public void clear () {
@@ -352,6 +611,8 @@ namespace Gee {
 
         public G poll_head () {
             LinkNode<G>? h = head;
+            if (h == null)
+                return zero_val;
             G val = h.val;
             head = h.next;
             h.next = null;
@@ -378,8 +639,48 @@ namespace Gee {
             return true;
         }
 
+        public Iterator<G> iterator () {
+            return new LinkedListIterator<G> (head);
+        }
+
+        public bool forall (ForallFunc<G> f) {
+            unowned LinkNode<G>? cur = head;
+            while (cur != null) {
+                if (!f (cur.val))
+                    return false;
+                cur = cur.next;
+            }
+            return true;
+        }
+
+        public G[] to_array () {
+            var res = new G[_size];
+            unowned LinkNode<G>? cur = head;
+            int idx = 0;
+            while (cur != null) {
+                res[idx] = cur.val;
+                cur = cur.next;
+                idx++;
+            }
+            return res;
+        }
+
+        public bool offer (G item) {
+            return offer_tail (item);
+        }
+
+        public G peek () {
+            return first ();
+        }
+
+        public G poll () {
+            return poll_head ();
+        }
+
         public G poll_tail () {
             LinkNode<G>? t = tail;
+            if (t == null)
+                return zero_val;
             G val = t.val;
             tail = t.prev;
             t.prev = null;

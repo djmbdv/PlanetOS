@@ -148,14 +148,21 @@ namespace Planc {
             if ((t != ValaType.CLASS && t != ValaType.STRUCT && t != ValaType.INTERFACE)
                 || current.kind != TokenKind.LT)
                 return;
+            bool is_del_tmpl = false;
             if (t == ValaType.CLASS && tname != "GenericArray" && tname != "Channel") {
                 unowned var cd = program.find_class (tname);
                 if (cd == null || !cd.is_generic_template)
                     return;
             } else if (t == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (tname);
-                if (sd == null || !sd.is_generic_template)
-                    return;
+                if (sd != null && sd.is_generic_template) {
+                    // generic struct
+                } else {
+                    unowned var dd = program.find_delegate (tname);
+                    if (dd == null || !dd.is_generic_template)
+                        return;
+                    is_del_tmpl = true;
+                }
             } else if (t == ValaType.INTERFACE) {
                 unowned var it = program.find_interface (tname);
                 if (it == null || !it.is_generic_template)
@@ -200,6 +207,10 @@ namespace Planc {
                 unowned var it = program.find_interface (tname);
                 if (it != null && (it.is_defined || it.type_params.length > 0))
                     expected_arity = it.type_params.length;
+            } else if (is_del_tmpl) {
+                unowned var dd = program.find_delegate (tname);
+                if (dd != null && (dd.is_defined || dd.type_params.length > 0))
+                    expected_arity = dd.type_params.length;
             } else {
                 unowned var sd = program.find_struct (tname);
                 if (sd != null && (sd.is_defined || sd.type_params.length > 0))
@@ -211,7 +222,7 @@ namespace Planc {
             }
 
             tname = program.request_instantiation (tname, t == ValaType.STRUCT, atypes, anames,
-                                                   t == ValaType.INTERFACE);
+                                                   t == ValaType.INTERFACE, is_del_tmpl);
         }
 
         private void parse_type_suffix (ref ValaType t, ref string tname)
@@ -222,12 +233,25 @@ namespace Planc {
             }
             if (pending_gt > 0)
                 return;
-            if (current.kind == TokenKind.LBRACKET) {
-                if (t == ValaType.VOID || t == ValaType.STRUCT || t == ValaType.ARRAY)
+            if (current.kind == TokenKind.QUESTION) {
+                bool allow_del = (t == ValaType.STRUCT && program.find_delegate (tname) != null);
+                if (t != ValaType.CLASS && t != ValaType.INTERFACE && t != ValaType.STRING
+                    && t != ValaType.TYPE_PARAM && !allow_del)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"only reference types can be nullable ('?') at $(current.line):$(current.column)");
+                advance ();
+                tname = tname + "?";
+            }
+            while (current.kind == TokenKind.LBRACKET) {
+                if (t == ValaType.VOID || t == ValaType.STRUCT)
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"unsupported array element type at $(current.line):$(current.column)");
                 advance ();
                 expect (TokenKind.RBRACKET, "']'");
+                if (t == ValaType.ARRAY) {
+                    tname = tname + "[]";
+                    continue;
+                }
                 if (t == ValaType.INT) {
                     if (last_parsed_type_token == "uint8" || last_parsed_type_token == "uchar"
                         || last_parsed_type_token == "char")
@@ -282,6 +306,11 @@ namespace Planc {
                 }
                 if (text == "double") {
                     t = ValaType.DOUBLE;
+                    return true;
+                }
+                if (text == "va_list") {
+                    t = ValaType.ARRAY;
+                    tname = "uint64";
                     return true;
                 }
                 if (text == "bool") {
@@ -481,8 +510,18 @@ namespace Planc {
             }
         }
 
+        private int brace_depth = 0;
+        private bool have_current = false;
+
         private void advance () throws ParseError, LexError {
+            if (have_current) {
+                if (current.kind == TokenKind.LBRACE)
+                    brace_depth++;
+                else if (current.kind == TokenKind.RBRACE && brace_depth > 0)
+                    brace_depth--;
+            }
             current = lexer.next ();
+            have_current = true;
         }
 
         private void expect (TokenKind expected, string what) throws ParseError, LexError {
@@ -492,10 +531,107 @@ namespace Planc {
             advance ();
         }
 
+        public bool recover { get; set; default = true; }
+        private bool at_least_one_error = false;
+
         public void parse_unit () throws ParseError, LexError {
             advance ();
-            while (current.kind != TokenKind.EOF)
-                parse_top_level ();
+            while (current.kind != TokenKind.EOF) {
+                // Stray separators left behind by recovery are not errors.
+                if (current.kind == TokenKind.SEMICOLON) {
+                    advance ();
+                    continue;
+                }
+                if (current.kind == TokenKind.RBRACE && brace_depth == 0) {
+                    Diagnostics.add (Diagnostics.current_file, current.line, current.column,
+                                     "syntax error", "unexpected '}'");
+                    if (!advance_recovering ())
+                        return;
+                    at_least_one_error = true;
+                    continue;
+                }
+                int start_depth = brace_depth;
+                int line_before = current.line;
+                int col_before = current.column;
+                try {
+                    parse_top_level ();
+                } catch (ParseError e) {
+                    if (!recover)
+                        throw new ParseError.UNEXPECTED_TOKEN (e.message);
+                    Diagnostics.add (Diagnostics.current_file, current.line, current.column,
+                                     "syntax error", e.message);
+                    if (Diagnostics.is_full ())
+                        return;
+                    if (!resync_top_level (start_depth))
+                        return;
+                    at_least_one_error = true;
+                } catch (LexError e) {
+                    if (!recover)
+                        throw new LexError.UNEXPECTED_CHARACTER (e.message);
+                    Diagnostics.add (Diagnostics.current_file, lexer.cur_line (), lexer.cur_column (),
+                                     "lexical error", e.message);
+                    if (Diagnostics.is_full ())
+                        return;
+                    lexer.skip_one_char ();
+                    if (!advance_recovering ())
+                        return;
+                    at_least_one_error = true;
+                }
+                // A malformed declaration must never loop forever: if nothing
+                // moved, consume one token.
+                if (current.line == line_before && current.column == col_before
+                    && current.kind != TokenKind.EOF) {
+                    if (!advance_recovering ())
+                        return;
+                }
+            }
+        }
+
+        public bool had_errors () {
+            return at_least_one_error || Diagnostics.count () > 0;
+        }
+
+        // Fetches the next token, reporting (and skipping over) lexical errors.
+        private bool advance_recovering () throws ParseError {
+            int guard = 0;
+            while (guard < 4096) {
+                guard++;
+                try {
+                    advance ();
+                    return true;
+                } catch (LexError e) {
+                    Diagnostics.add (Diagnostics.current_file, lexer.cur_line (), lexer.cur_column (),
+                                     "lexical error", e.message);
+                    if (Diagnostics.is_full ())
+                        return false;
+                    if (lexer.at_eof ())
+                        return false;
+                    lexer.skip_one_char ();
+                }
+            }
+            return false;
+        }
+
+        // Panic-mode recovery for top-level declarations: skip tokens until the
+        // broken declaration is closed, either by the `;` of a declaration at
+        // the starting brace depth or by the `}` that ends the block it opened.
+        private bool resync_top_level (int start_depth) throws ParseError {
+            int guard = 0;
+            while (current.kind != TokenKind.EOF && guard < 1000000) {
+                guard++;
+                if (brace_depth == start_depth && current.kind == TokenKind.SEMICOLON) {
+                    advance_recovering ();
+                    return current.kind != TokenKind.EOF;
+                }
+                bool closing = (current.kind == TokenKind.RBRACE);
+                if (!advance_recovering ())
+                    return false;
+                if (closing && brace_depth == start_depth)
+                    return current.kind != TokenKind.EOF;
+                if (brace_depth < start_depth)
+                    return current.kind != TokenKind.EOF;
+            }
+            return false;
         }
 
         public Program parse_program () throws ParseError, LexError {
@@ -1123,9 +1259,15 @@ namespace Planc {
                     if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
                         throw new ParseError.UNEXPECTED_TOKEN (
                             @"expected prerequisite interface name after ':' at $(current.line):$(current.column)");
-                    if (current.text != "Object" || program.find_interface ("Object") != null)
-                        existing.prereq_names.add (current.text);
+                    string pname = current.text;
                     advance ();
+                    if (pname != "Object" || program.find_interface ("Object") != null) {
+                        if (current.kind == TokenKind.LT) {
+                            ValaType pt = ValaType.INTERFACE;
+                            parse_generic_type_args (ref pt, ref pname);
+                        }
+                        existing.prereq_names.add (pname);
+                    }
                     if (current.kind == TokenKind.COMMA) {
                         advance ();
                         continue;
@@ -1310,11 +1452,22 @@ namespace Planc {
             skip_ownership_modifiers ();
             ValaType rt = ValaType.VOID;
             string rt_name = "";
-            if (current.kind != TokenKind.IDENTIFIER || !parse_type (current.text, out rt, out rt_name, current.is_escaped))
+            string deferred_rt = "";
+            bool deferred_rt_q = false;
+            if (current.kind == TokenKind.IDENTIFIER && parse_type (current.text, out rt, out rt_name, current.is_escaped)) {
+                advance ();
+                parse_type_suffix (ref rt, ref rt_name);
+            } else if (current.kind == TokenKind.IDENTIFIER && !is_tok_reserved (current)) {
+                deferred_rt = current.text;
+                advance ();
+                if (current.kind == TokenKind.QUESTION) {
+                    deferred_rt_q = true;
+                    advance ();
+                }
+            } else {
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"expected return type in delegate declaration at $(current.line):$(current.column)");
-            advance ();
-            parse_type_suffix (ref rt, ref rt_name);
+            }
             if (current.kind != TokenKind.IDENTIFIER)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"expected delegate name at $(current.line):$(current.column)");
@@ -1323,6 +1476,42 @@ namespace Planc {
                     @"'$(current.text)' is a keyword and cannot name a delegate at $(current.line):$(current.column)");
             var name = current.text;
             advance ();
+            var parsed_tparams = new GenericArray<string> ();
+            if (current.kind == TokenKind.LT) {
+                advance ();
+                while (true) {
+                    if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected type parameter name in delegate '$name' at $(current.line):$(current.column)");
+                    foreach (var prev_tp in parsed_tparams) {
+                        if (prev_tp == current.text)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"duplicate type parameter '$(current.text)' in delegate '$name' at $(current.line):$(current.column)");
+                    }
+                    parsed_tparams.add (current.text);
+                    advance ();
+                    if (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        continue;
+                    }
+                    break;
+                }
+                expect (TokenKind.GT, "'>'");
+            }
+            if (deferred_rt != "") {
+                bool found_tp = false;
+                for (int i = 0; i < parsed_tparams.length; i++) {
+                    if (parsed_tparams[i] == deferred_rt) {
+                        found_tp = true;
+                        break;
+                    }
+                }
+                if (!found_tp)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expected return type in delegate declaration at $l:$c");
+                rt = ValaType.TYPE_PARAM;
+                rt_name = deferred_rt_q ? (deferred_rt + "?") : deferred_rt;
+            }
             if (has_other_top_name (name, "delegate"))
                 throw new ParseError.DUPLICATE_FUNCTION (
                     @"duplicate name: $name at $l:$c");
@@ -1345,10 +1534,21 @@ namespace Planc {
             existing.return_type_name = rt_name;
             existing.line = l;
             existing.column = c;
+            var saved_tp = new GenericArray<string> ();
+            for (int i = 0; i < current_type_params.length; i++)
+                saved_tp.add (current_type_params[i]);
+            if (parsed_tparams.length > 0) {
+                existing.is_generic_template = true;
+                foreach (var tp in parsed_tparams) {
+                    existing.type_params.add (tp);
+                    current_type_params.add (tp);
+                }
+            }
             var plist = parse_param_list ();
             foreach (var p in plist)
                 existing.params.add (p);
             parse_throws_clause (existing.throws_domains);
+            current_type_params = saved_tp;
             expect (TokenKind.SEMICOLON, "';'");
             program.register_delegate_struct (name);
         }
@@ -1854,6 +2054,20 @@ namespace Planc {
             expect (TokenKind.LPAREN, "'('");
             if (current.kind != TokenKind.RPAREN) {
                 while (true) {
+                    if (current.kind == TokenKind.ELLIPSIS) {
+                        var vl = current.line;
+                        var vc = current.column;
+                        advance ();
+                        var vp = new Param () {
+                            param_type = ValaType.ARRAY,
+                            type_name = "uint64",
+                            name = "__planc_va_list",
+                            line = vl,
+                            column = vc
+                        };
+                        plist.add (vp);
+                        break;
+                    }
                     bool is_ref = false;
                     bool is_out = false;
                     if (is_tok_kw (current, "ref")) {
@@ -1962,6 +2176,12 @@ namespace Planc {
                 expect (TokenKind.GT, "'>'");
             }
 
+            if (is_tmpl) {
+                current_type_params = new GenericArray<string> ();
+                foreach (var tp in parsed_tparams)
+                    current_type_params.add (tp);
+            }
+
             var base_name = "";
             var parsed_ifaces = new GenericArray<string> ();
             if (current.kind == TokenKind.COLON) {
@@ -2015,11 +2235,8 @@ namespace Planc {
                 cd_existing.is_generic_template = true;
                 while (cd_existing.type_params.length > 0)
                     cd_existing.type_params.remove_index (cd_existing.type_params.length - 1);
-                current_type_params = new GenericArray<string> ();
-                foreach (var tp in parsed_tparams) {
+                foreach (var tp in parsed_tparams)
                     cd_existing.type_params.add (tp);
-                    current_type_params.add (tp);
-                }
             }
             foreach (var iname in parsed_ifaces)
                 cd_existing.iface_names.add (iname);
@@ -2661,6 +2878,46 @@ namespace Planc {
                     expect (TokenKind.RPAREN, "')'");
                     expect (TokenKind.SEMICOLON, "';'");
                     return s;
+                }
+                if (name == "assert") {
+                    advance ();
+                    expect (TokenKind.LPAREN, "'('");
+                    var cond = parse_expr ();
+                    expect (TokenKind.RPAREN, "')'");
+                    expect (TokenKind.SEMICOLON, "';'");
+                    var not_cond = new UnaryExpr ();
+                    not_cond.op = "!";
+                    not_cond.operand = cond;
+                    not_cond.line = l;
+                    not_cond.column = c;
+                    var msg = new StringLiteral ();
+                    msg.value = @"assertion failed at $l:$c\n";
+                    msg.line = l;
+                    msg.column = c;
+                    var pr = new PrintStatement ();
+                    pr.value = msg;
+                    pr.line = l;
+                    pr.column = c;
+                    var code_lit = new IntLiteral ();
+                    code_lit.value = 134;
+                    code_lit.line = l;
+                    code_lit.column = c;
+                    var ex = new ExitStatement ();
+                    ex.value = code_lit;
+                    ex.line = l;
+                    ex.column = c;
+                    var blk = new BlockStatement ();
+                    blk.statements.add (pr);
+                    blk.statements.add (ex);
+                    blk.line = l;
+                    blk.column = c;
+                    var ifs = new IfStatement ();
+                    ifs.condition = not_cond;
+                    ifs.then_body = blk;
+                    ifs.else_body = null;
+                    ifs.line = l;
+                    ifs.column = c;
+                    return ifs;
                 }
                 if (name == "return") {
                     advance ();
@@ -3443,6 +3700,10 @@ namespace Planc {
         }
 
         private Expr parse_unary () throws ParseError, LexError {
+            if (current.kind == TokenKind.PLUS) {
+                advance ();
+                return parse_unary ();
+            }
             if (current.kind == TokenKind.MINUS || current.kind == TokenKind.NOT
                 || current.kind == TokenKind.TILDE) {
                 var l = current.line;
@@ -3498,6 +3759,32 @@ namespace Planc {
                             @"expected member name after '.' at $(current.line):$(current.column)");
                     var member = current.text;
                     advance ();
+                    if (member == "arg" && current.kind == TokenKind.LT) {
+                        advance (); // '<'
+                        parse_ownership_weak ();
+                        ValaType at = ValaType.VOID;
+                        string an = "";
+                        if (current.kind != TokenKind.IDENTIFIER
+                            || !parse_type (current.text, out at, out an, current.is_escaped)
+                            || at == ValaType.VOID) {
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"expected type argument in 'arg<T>()' at $(current.line):$(current.column)");
+                        }
+                        advance ();
+                        parse_type_suffix (ref at, ref an);
+                        consume_gt ();
+                        expect (TokenKind.LPAREN, "'('");
+                        expect (TokenKind.RPAREN, "')'");
+                        var va = new VaArgExpr () {
+                            target = e,
+                            arg_type = at,
+                            arg_type_name = an,
+                            line = l,
+                            column = c
+                        };
+                        e = va;
+                        continue;
+                    }
                     if (current.kind == TokenKind.LPAREN) {
                         advance ();
                         var mc = new MethodCallExpr () { target = e, method_name = member };
@@ -3697,26 +3984,40 @@ namespace Planc {
                         advance ();
                         parse_generic_type_args (ref ct, ref ct_name);
                         bool ct_is_del = (ct == ValaType.STRUCT && program.find_delegate (ct_name) != null);
-                        if ((ct == ValaType.CLASS || ct == ValaType.INTERFACE || ct_is_del)
+                        if ((ct == ValaType.CLASS || ct == ValaType.INTERFACE || ct == ValaType.STRING || ct_is_del)
                             && current.kind == TokenKind.QUESTION) {
                             ct_name = ct_name + "?";
                             advance ();
                         }
                         if (pending_gt == 0 && current.kind == TokenKind.RPAREN
                             && (ct == ValaType.CLASS || ct == ValaType.INTERFACE || ct == ValaType.ENUM
-                                || ct_is_del || ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE)) {
+                                || ct == ValaType.STRING || ct_is_del
+                                || ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE)) {
                             advance (); // ')'
                             if ((ct == ValaType.INT || ct == ValaType.FLOAT || ct == ValaType.DOUBLE) && ct_name == "")
                                 ct_name = raw_name;
-                            var tc = new TypeCheckExpr () {
-                                op = "cast",
-                                operand = parse_unary (),
-                                target_type = ct,
-                                target_type_name = ct_name
-                            };
-                            tc.line = l;
-                            tc.column = c;
-                            return tc;
+                            // `(x)` is a cast only when an expression follows.
+                            // A name that also happens to be a delegate or
+                            // class type (a single letter in translated C,
+                            // say) must not swallow the operand, so a failed
+                            // parse backtracks to plain grouping.
+                            var after_lex = lexer.clone_state ();
+                            var after_cur = current;
+                            try {
+                                var tc = new TypeCheckExpr () {
+                                    op = "cast",
+                                    operand = parse_unary (),
+                                    target_type = ct,
+                                    target_type_name = ct_name
+                                };
+                                tc.line = l;
+                                tc.column = c;
+                                return tc;
+                            } catch (ParseError e) {
+                                lexer = after_lex;
+                                current = after_cur;
+                                pending_gt = 0;
+                            }
                         }
                     }
                     pending_gt = 0;
@@ -3850,6 +4151,10 @@ namespace Planc {
                         cn.line = l;
                         cn.column = c;
                         return cn;
+                    }
+                    if (current.kind == TokenKind.QUESTION) {
+                        advance ();
+                        et_name = et_name + "?";
                     }
                     expect (TokenKind.LBRACKET, "'['");
                     if (current.kind == TokenKind.RBRACKET) {
@@ -4251,6 +4556,12 @@ namespace Planc {
             }
             parse_arg_list (call.args);
             expect (TokenKind.RPAREN, "')'");
+            if (name == "va_list" && call.args.length == 0) {
+                var vr = new VarRef () { name = "__planc_va_list" };
+                vr.line = l;
+                vr.column = c;
+                return vr;
+            }
             call.line = l;
             call.column = c;
             return call;

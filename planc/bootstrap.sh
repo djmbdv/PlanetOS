@@ -17,6 +17,7 @@ trap cleanup EXIT
 
 SRCS="
 $HERE/src/buffer.vala
+$HERE/src/diag.vala
 $HERE/src/preproc.vala
 $HERE/src/lexer.vala
 $HERE/src/ast.vala

@@ -4,7 +4,7 @@ using Planc;
 
 namespace C2Vala {
 
-    private const string USAGE = "usage: c2vala <input.c>... [-I dir] [-D NAME[=VAL]] [-o out.vala] [--report]";
+    private const string USAGE = "usage: c2vala <input.c>... [-I dir] [-D NAME[=VAL]] [--namespace Name] [-o out.vala] [--report]";
 
     private static int count_lines (string s) {
         if (s.length == 0)
@@ -17,18 +17,12 @@ namespace C2Vala {
         return n;
     }
 
-    private static uint8[] str_to_bytes (string s) {
-        var b = new uint8[s.length];
-        for (int i = 0; i < s.length; i++)
-            b[i] = s[i];
-        return b;
-    }
-
     public static int main (string[] args) {
         var inputs = new GenericArray<string> ();
         var include_dirs = new GenericArray<string> ();
         var defines = new GenericArray<string> ();
         string output_path = "";
+        string ns_name = "";
         bool report_mode = false;
         bool verbose = false;
 
@@ -59,6 +53,14 @@ namespace C2Vala {
             } else if (a == "--cc") {
                 if (i + 1 < args.length)
                     i++;
+            } else if (a == "--namespace") {
+                if (i + 1 >= args.length) {
+                    Host.eprintln (USAGE);
+                    return 2;
+                }
+                ns_name = args[++i];
+            } else if (a.has_prefix ("--namespace=")) {
+                ns_name = a.substring (12);
             } else if (a == "--report") {
                 report_mode = true;
             } else if (a == "-v" || a == "--verbose") {
@@ -111,11 +113,11 @@ namespace C2Vala {
 
             if (verbose) Host.eprintln (@"[c2vala] 4/4 translate ($(tu.funcs.length) funcs)...");
             var tr = new Translator (tu);
-            string vala_out = tr.translate (report_mode);
+            string vala_out = tr.translate (report_mode, ns_name);
 
             if (output_path != "") {
                 try {
-                    Host.write_file (output_path, str_to_bytes (vala_out));
+                    Host.write_file (output_path, vala_out.data);
                 } catch (FileError e) {
                     Host.eprintln (@"c2vala: cannot write $output_path: $(e.message)");
                     return 2;
@@ -140,6 +142,9 @@ namespace C2Vala {
                 Host.println (@"  $(tr.translated_count) translated, $(tr.refused_count) refused");
                 if (tr.refused_count > 0)
                     return 3;
+            } else if (tr.refused_count > 0) {
+                Host.eprintln (@"c2vala: $(tr.refused_count) function(s) left as stubs; look for \"c2vala: UNTRANSLATED\" in the output");
+                return 3;
             }
             return 0;
         } catch (RefuseError e) {

@@ -2,6 +2,80 @@
 
 namespace C2Vala {
 
+    public class NameIndexMap : Object {
+        private string[] keys;
+        private int[] vals;
+        private int cap;
+        private int count = 0;
+
+        public NameIndexMap (int init_cap = 1024) {
+            cap = init_cap;
+            keys = new string[cap];
+            vals = new int[cap];
+        }
+
+        private static uint32 hash_str (string s) {
+            uint32 h = 2166136261u;
+            int n = s.length;
+            for (int i = 0; i < n; i++) {
+                h ^= (uint32) s[i];
+                h *= 16777619u;
+            }
+            return h;
+        }
+
+        private void rehash () {
+            int old_cap = cap;
+            var old_keys = keys;
+            var old_vals = vals;
+            cap = old_cap * 2;
+            keys = new string[cap];
+            vals = new int[cap];
+            count = 0;
+            uint32 mask = (uint32) (cap - 1);
+            for (int i = 0; i < old_cap; i++) {
+                if (old_vals[i] > 0) {
+                    uint32 idx = hash_str (old_keys[i]) & mask;
+                    while (vals[idx] > 0)
+                        idx = (idx + 1) & mask;
+                    keys[idx] = old_keys[i];
+                    vals[idx] = old_vals[i];
+                    count++;
+                }
+            }
+        }
+
+        public int get_index (string key) {
+            uint32 mask = (uint32) (cap - 1);
+            uint32 idx = hash_str (key) & mask;
+            while (true) {
+                int v = vals[idx];
+                if (v == 0)
+                    return -1;
+                if (keys[idx] == key)
+                    return v - 1;
+                idx = (idx + 1) & mask;
+            }
+        }
+
+        public void set_index (string key, int val) {
+            if ((count + 1) * 10 >= cap * 6)
+                rehash ();
+            uint32 mask = (uint32) (cap - 1);
+            uint32 idx = hash_str (key) & mask;
+            while (vals[idx] > 0) {
+                if (keys[idx] == key) {
+                    vals[idx] = val + 1;
+                    return;
+                }
+                idx = (idx + 1) & mask;
+            }
+            keys[idx] = key;
+            vals[idx] = val + 1;
+            count++;
+        }
+    }
+
     public errordomain RefuseError {
         FAILED
     }
@@ -24,6 +98,7 @@ namespace C2Vala {
         public bool is_const = false;
         public CType? fp_ret = null;   // for FUNC_PTR
         public GenericArray<ParamDef>? fp_params = null; // for FUNC_PTR
+        public bool is_func_ptr_decay = false;
 
         public CType (CTypeKind kind, string name = "") {
             this.kind = kind;
@@ -71,6 +146,7 @@ namespace C2Vala {
             t.inner = inner != null ? inner.clone_type () : null;
             t.array_len = array_len;
             t.is_const = is_const;
+            t.is_func_ptr_decay = is_func_ptr_decay;
             t.fp_ret = fp_ret != null ? fp_ret.clone_type () : null;
             if (fp_params != null) {
                 t.fp_params = new GenericArray<ParamDef> ();
@@ -334,11 +410,17 @@ namespace C2Vala {
     public class ExprInitList : CExpr {
         public GenericArray<CExpr> items = new GenericArray<CExpr> ();
         public GenericArray<string> field_names = new GenericArray<string> ();
+        public GenericArray<CExpr?> index_exprs = new GenericArray<CExpr?> ();
     }
 
     public class ExprCompoundLit : CExpr {
         public CType target_type;
         public ExprInitList init;
+    }
+
+    public class ExprVaArg : CExpr {
+        public CExpr ap;
+        public CType target_type;
     }
 
     public class GlobalVarDef : Object {
@@ -362,6 +444,7 @@ namespace C2Vala {
         public GenericArray<EnumDef> enums = new GenericArray<EnumDef> ();
         public GenericArray<StructDef> structs = new GenericArray<StructDef> ();
         public GenericArray<FuncDef> funcs = new GenericArray<FuncDef> ();
+        public GenericArray<FuncDef> protos = new GenericArray<FuncDef> ();
         public GenericArray<GlobalVarDef> globals = new GenericArray<GlobalVarDef> ();
         public GenericArray<string> top_order = new GenericArray<string> ();
         public GenericArray<string> top_kinds = new GenericArray<string> ();

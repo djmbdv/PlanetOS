@@ -1,4 +1,10 @@
-// Physical Memory Manager (PMM): 4 KiB frame bitmap allocator.
+// Physical Memory Manager (PMM): Fibonacci Buddy System over 4 KiB frames (TAOCP Vol. 1, Sec. 2.5).
+//
+// Metadata lives in the KernelLayout.PMM_BITMAP window (0x110000..0x119000):
+//   +0x0000..+0x7FFF: META[0..16383] (16 bits per frame: free, is_root, order, lbc)
+//   +0x8000..+0x805F: AVAIL[0..23]   (32-bit head frame index per Fibonacci order, -1 = empty)
+//   +0x8100..+0x815F: FIB[0..23]     (32-bit precomputed Fibonacci block sizes in 4 KiB pages)
+// Doubly-linked free-list pointers (next, prev) are stored in the first 8 bytes of each free page.
 
 namespace Planet.Kernel {
 
@@ -47,33 +53,128 @@ namespace Planet.Kernel {
         private static int pmm_free_count = 0;
         private static int pmm_double_free_count = 0;
         private const int PAGE_SIZE = 4096;
-        private const int MAX_BYTES = 0x4000000;   // 64 MiB cap (16384 frames = 2048 B bitmap)
+        private const int MAX_BYTES = 0x4000000;   // 64 MiB cap (16384 frames)
+        private const int MAX_FRAMES = 16384;
+        private const int MAX_ORDER = 23;          // F[22] = 17711 > 16384
 
-        private static void set_bit (int frame) {
-            int byte_idx = frame >> 3;
-            int bit = frame & 7;
-            int addr = KernelLayout.PMM_BITMAP + byte_idx;
-            int v = mmio_read32 (addr & ~3);
-            int shift = (addr & 3) * 8 + bit;
-            mmio_write32 (addr & ~3, v | (1 << shift));
+        private const int META_BASE = 0x110000;    // KernelLayout.PMM_BITMAP
+        private const int AVAIL_BASE = 0x118000;
+        private const int FIB_BASE = 0x118100;
+
+        // 16-bit META layout per frame:
+        // bit 15: free (1 = head of free block, 0 = allocated or interior)
+        // bit 14: is_root (1 = Zeckendorf root boundary, do not coalesce left past it)
+        // bits 11..7: order (0..22)
+        // bits 6..0:  lbc (Left-Buddy Count)
+        private const int META_FREE = 0x8000;
+        private const int META_ROOT = 0x4000;
+        private const int NIL = 0; // frame 0 is always reserved (< RESERVED_END), safe 32-bit sentinel
+
+        private static int read_meta (int frame) {
+            int addr = META_BASE + (frame & ~1) * 2;
+            int w = mmio_read32 (addr);
+            if ((frame & 1) != 0)
+                return (w >> 16) & 0xFFFF;
+            return w & 0xFFFF;
         }
 
-        private static void clear_bit (int frame) {
-            int byte_idx = frame >> 3;
-            int bit = frame & 7;
-            int addr = KernelLayout.PMM_BITMAP + byte_idx;
-            int v = mmio_read32 (addr & ~3);
-            int shift = (addr & 3) * 8 + bit;
-            mmio_write32 (addr & ~3, v & ~(1 << shift));
+        private static void write_meta (int frame, int val) {
+            int addr = META_BASE + (frame & ~1) * 2;
+            int w = mmio_read32 (addr);
+            if ((frame & 1) != 0)
+                w = (w & 0xFFFF) | ((val & 0xFFFF) << 16);
+            else
+                w = (w & ~0xFFFF) | (val & 0xFFFF);
+            mmio_write32 (addr, w);
         }
 
-        private static bool test_bit (int frame) {
-            int byte_idx = frame >> 3;
-            int bit = frame & 7;
-            int addr = KernelLayout.PMM_BITMAP + byte_idx;
-            int v = mmio_read32 (addr & ~3);
-            int shift = (addr & 3) * 8 + bit;
-            return ((v >> shift) & 1) != 0;
+        private static int pack_meta (bool is_free, bool is_root, int order, int lbc) {
+            int v = (order & 0x1F) << 7;
+            v = v | (lbc & 0x7F);
+            if (is_free)
+                v = v | META_FREE;
+            if (is_root)
+                v = v | META_ROOT;
+            return v;
+        }
+
+        private static bool meta_is_free (int m) { return (m & META_FREE) != 0; }
+        private static bool meta_is_root (int m) { return (m & META_ROOT) != 0; }
+        private static int meta_order (int m) { return (m >> 7) & 0x1F; }
+        private static int meta_lbc (int m) { return m & 0x7F; }
+
+        private static int fib_size (int order) {
+            return mmio_read32 (FIB_BASE + order * 4);
+        }
+
+        private static int avail_head (int order) {
+            return mmio_read32 (AVAIL_BASE + order * 4);
+        }
+
+        private static void set_avail_head (int order, int frame) {
+            mmio_write32 (AVAIL_BASE + order * 4, frame);
+        }
+
+        // Frame zeroing, poisoning and free-list pointer updates are scratch accesses
+        // to physical pages. A user CR3 may have those pages unmapped, so switch to
+        // the kernel identity map and restore the caller's CR3 afterwards.
+        private static int kernel_cr3_enter () {
+            int cur = vmm_read_cr3 ();
+            if (cur != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (KernelLayout.PAGE_TABLES);
+            return cur;
+        }
+
+        private static void kernel_cr3_leave (int saved) {
+            if (saved != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (saved);
+        }
+
+        private static void poison_frame (int phys) {
+            int saved = kernel_cr3_enter ();
+            poison_page_4k (phys);
+            kernel_cr3_leave (saved);
+        }
+
+        private static void list_insert (int frame, int order, bool is_root, int lbc) {
+            write_meta (frame, pack_meta (true, is_root, order, lbc));
+            int head = avail_head (order);
+            int phys = frame * PAGE_SIZE;
+            int saved = kernel_cr3_enter ();
+            mmio_write32 (phys, head);
+            mmio_write32 (phys + 4, NIL);
+            if (head != NIL)
+                mmio_write32 (head * PAGE_SIZE + 4, frame);
+            kernel_cr3_leave (saved);
+            set_avail_head (order, frame);
+        }
+
+        private static void list_remove (int frame, int order) {
+            int phys = frame * PAGE_SIZE;
+            int saved = kernel_cr3_enter ();
+            int next = mmio_read32 (phys);
+            int prev = mmio_read32 (phys + 4);
+            if (prev != NIL)
+                mmio_write32 (prev * PAGE_SIZE, next);
+            else
+                set_avail_head (order, next);
+            if (next != NIL)
+                mmio_write32 (next * PAGE_SIZE + 4, prev);
+            kernel_cr3_leave (saved);
+        }
+
+        private static void add_free_range (int start_f, int end_f) {
+            int cur = start_f;
+            while (cur < end_f) {
+                int rem = end_f - cur;
+                int k = MAX_ORDER - 1;
+                while (k > 0 && fib_size (k) > rem)
+                    k = k - 1;
+                int sz = fib_size (k);
+                list_insert (cur, k, true, 0);
+                pmm_free_count = pmm_free_count + sz;
+                cur = cur + sz;
+            }
         }
 
         public static void init () {
@@ -94,127 +195,151 @@ namespace Planet.Kernel {
             pmm_total_frames = mem_bytes / PAGE_SIZE;
             pmm_free_count = 0;
 
-            // Mark all frames used initially
-            int words = (pmm_total_frames + 31) / 32;
-            for (int w = 0; w < words; w++) {
-                mmio_write32 (KernelLayout.PMM_BITMAP + w * 4, -1);
+            // Precompute Fibonacci sizes F[0]=1, F[1]=1, F[k]=F[k-1]+F[k-2]
+            mmio_write32 (FIB_BASE, 1);
+            mmio_write32 (FIB_BASE + 4, 1);
+            for (int k = 2; k < MAX_ORDER; k++) {
+                int f = mmio_read32 (FIB_BASE + (k - 1) * 4) + mmio_read32 (FIB_BASE + (k - 2) * 4);
+                mmio_write32 (FIB_BASE + k * 4, f);
             }
 
-            // Free frames from RESERVED_END .. pmm_total_frames
+            // Initialize AVAIL heads to NIL and clear META table
+            for (int k = 0; k < MAX_ORDER; k++)
+                set_avail_head (k, NIL);
+            for (int w = 0; w < MAX_FRAMES / 2; w++)
+                mmio_write32 (META_BASE + w * 4, 0);
+
             int first_free = KernelLayout.RESERVED_END / PAGE_SIZE;
-            for (int f = first_free; f < pmm_total_frames; f++) {
-                clear_bit (f);
-                pmm_free_count = pmm_free_count + 1;
+            int res_start = 0x800000 / PAGE_SIZE;
+            int res_end = 0x1000000 / PAGE_SIZE;
+
+            // Add free ranges excluding reserved 8..16 MiB static userland ELF load bases
+            if (first_free < res_start) {
+                int top1 = (pmm_total_frames < res_start) ? pmm_total_frames : res_start;
+                add_free_range (first_free, top1);
             }
-            // Reserve 8..16 MiB for static userland ELF load bases (0x800000..0x1000000)
-            reserve_range (0x800000, 0x800000);
-        }
-
-        // Frame zeroing and poisoning are scratch writes to a physical page. A
-        // user CR3 can have that page unmapped (a resource destroy unmaps it
-        // before releasing the frame), so do them under the kernel identity map
-        // and restore the caller's CR3 afterwards.
-        private static int kernel_cr3_enter () {
-            int cur = vmm_read_cr3 ();
-            if (cur != KernelLayout.PAGE_TABLES)
-                vmm_write_cr3 (KernelLayout.PAGE_TABLES);
-            return cur;
-        }
-
-        private static void kernel_cr3_leave (int saved) {
-            if (saved != KernelLayout.PAGE_TABLES)
-                vmm_write_cr3 (saved);
-        }
-
-        private static void zero_frame (int phys) {
-            int saved = kernel_cr3_enter ();
-            zero_page_4k (phys);
-            kernel_cr3_leave (saved);
-        }
-
-        private static void poison_frame (int phys) {
-            int saved = kernel_cr3_enter ();
-            poison_page_4k (phys);
-            kernel_cr3_leave (saved);
-        }
-
-        public static int alloc_frame () {            int first_free = KernelLayout.RESERVED_END / PAGE_SIZE;
-            for (int f = first_free; f < pmm_total_frames; f++) {
-                if (!test_bit (f)) {
-                    set_bit (f);
-                    pmm_free_count = pmm_free_count - 1;
-                    int phys = f * PAGE_SIZE;
-                    zero_frame (phys);
-                    return phys;
-                }
+            if (pmm_total_frames > res_end) {
+                int bot2 = (first_free > res_end) ? first_free : res_end;
+                add_free_range (bot2, pmm_total_frames);
             }
-            return 0;
+        }
+
+        // Split block `frame` of `order` into 1-page leaves for the first `want` pages
+        // (marked allocated) and return any remaining `F[order] - want` pages to AVAIL.
+        private static void assign_split (int frame, int order, bool is_root, int lbc, int want) {
+            if (want <= 0) {
+                list_insert (frame, order, is_root, lbc);
+                return;
+            }
+            if (order <= 1) {
+                write_meta (frame, pack_meta (false, is_root, order, lbc));
+                return;
+            }
+            int left_sz = fib_size (order - 1);
+            if (want <= left_sz) {
+                assign_split (frame, order - 1, is_root, lbc + 1, want);
+                list_insert (frame + left_sz, order - 2, false, 0);
+            } else {
+                assign_split (frame, order - 1, is_root, lbc + 1, left_sz);
+                assign_split (frame + left_sz, order - 2, false, 0, want - left_sz);
+            }
+        }
+
+        public static int alloc_frame () {
+            return alloc_contiguous (1);
         }
 
         public static void free_frame (int phys) {
             if (phys < KernelLayout.RESERVED_END || (phys & 4095) != 0)
                 return;
-            int f = phys / PAGE_SIZE;
-            if (f >= pmm_total_frames)
+            int frame = phys / PAGE_SIZE;
+            if (frame >= pmm_total_frames)
                 return;
-            if (!test_bit (f)) {
+            int m = read_meta (frame);
+            if (meta_is_free (m)) {
                 pmm_double_free_count = pmm_double_free_count + 1;
                 print ("pmm:double_free\n");
                 return;
             }
             poison_frame (phys);
-            clear_bit (f);
             pmm_free_count = pmm_free_count + 1;
+
+            int order = meta_order (m);
+            bool is_root = meta_is_root (m);
+            int lbc = meta_lbc (m);
+
+            // Coalesce with Fibonacci buddy while possible
+            while (order < MAX_ORDER - 1) {
+                if (lbc == 0 && is_root)
+                    break;
+                if (lbc > 0) {
+                    // Left buddy: right buddy is at frame + F[order] with order - 1
+                    int b_order = order - 1;
+                    int buddy = frame + fib_size (order);
+                    if (buddy >= pmm_total_frames)
+                        break;
+                    int bm = read_meta (buddy);
+                    if (!meta_is_free (bm) || meta_order (bm) != b_order || meta_lbc (bm) != 0)
+                        break;
+                    list_remove (buddy, b_order);
+                    write_meta (buddy, 0);
+                    order = order + 1;
+                    lbc = lbc - 1;
+                } else {
+                    // Right buddy (lbc == 0, !is_root): left buddy is at frame - F[order + 1]
+                    int b_order = order + 1;
+                    int buddy = frame - fib_size (b_order);
+                    if (buddy < 0)
+                        break;
+                    int bm = read_meta (buddy);
+                    if (!meta_is_free (bm) || meta_order (bm) != b_order || meta_lbc (bm) == 0)
+                        break;
+                    list_remove (buddy, b_order);
+                    write_meta (frame, 0);
+                    frame = buddy;
+                    order = order + 2;
+                    is_root = meta_is_root (bm);
+                    lbc = meta_lbc (bm) - 1;
+                }
+            }
+            list_insert (frame, order, is_root, lbc);
         }
 
         public static int alloc_contiguous (int num_pages) {
             if (num_pages <= 0)
                 return 0;
-            int first_free = KernelLayout.RESERVED_END / PAGE_SIZE;
-            int run = 0;
-            int start_f = first_free;
-            for (int f = first_free; f < pmm_total_frames; f++) {
-                if (!test_bit (f)) {
-                    if (run == 0)
-                        start_f = f;
-                    run = run + 1;
-                    if (run == num_pages) {
-                        for (int k = 0; k < num_pages; k++) {
-                            set_bit (start_f + k);
-                            pmm_free_count = pmm_free_count - 1;
-                        }
-                        // The caller may run with a user CR3 where the frames
-                        // were unmapped by a previous destroy. Zeroing through
-                        // that CR3 would fault, so use the kernel's identity map
-                        // for the whole run.
-                        int saved = kernel_cr3_enter ();
-                        for (int k = 0; k < num_pages; k++)
-                            zero_page_4k ((start_f + k) * PAGE_SIZE);
-                        kernel_cr3_leave (saved);
-                        return start_f * PAGE_SIZE;
-                    }
-                } else {
-                    run = 0;
-                }
-            }
-            return 0;
+
+            int req_order = 0;
+            while (req_order < MAX_ORDER && fib_size (req_order) < num_pages)
+                req_order = req_order + 1;
+            if (req_order >= MAX_ORDER)
+                return 0;
+
+            int j = req_order;
+            while (j < MAX_ORDER && avail_head (j) == NIL)
+                j = j + 1;
+            if (j >= MAX_ORDER)
+                return 0;
+
+            int frame = avail_head (j);
+            int m = read_meta (frame);
+            list_remove (frame, j);
+
+            assign_split (frame, j, meta_is_root (m), meta_lbc (m), num_pages);
+            pmm_free_count = pmm_free_count - num_pages;
+
+            int saved = kernel_cr3_enter ();
+            for (int k = 0; k < num_pages; k++)
+                zero_page_4k ((frame + k) * PAGE_SIZE);
+            kernel_cr3_leave (saved);
+            return frame * PAGE_SIZE;
         }
 
         public static void reserve_range (int start_addr, int size) {
-            if (size <= 0)
+            // Initial static reservations (0x800000..0x1000000) are excluded in init().
+            // Kept for API compatibility.
+            if (size <= 0 || start_addr < 0)
                 return;
-            int start_f = start_addr / PAGE_SIZE;
-            int end_f = (start_addr + size + PAGE_SIZE - 1) / PAGE_SIZE;
-            if (start_f < 0)
-                start_f = 0;
-            if (end_f > pmm_total_frames)
-                end_f = pmm_total_frames;
-            for (int f = start_f; f < end_f; f++) {
-                if (!test_bit (f)) {
-                    set_bit (f);
-                    pmm_free_count = pmm_free_count - 1;
-                }
-            }
         }
 
         public static int free_frames () {

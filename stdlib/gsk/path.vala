@@ -167,13 +167,6 @@ namespace Gsk {
         }
 
         [AsmBody(@"
-            # sqrtsd %xmm0, %xmm0
-            .byte 0xf2, 0x0f, 0x51, 0xc0
-            ret
-        ")]
-        private static extern double hw_sqrt (double v);
-
-        [AsmBody(@"
             # hw_fma(a in xmm0, b in xmm1, c in xmm2) -> vfmadd213sd (a * b + c)
             .byte 0xc4, 0xe2, 0xf1, 0xa9, 0xc2
             ret
@@ -213,7 +206,7 @@ namespace Gsk {
         private static double my_sqrt (double v) {
             if (v <= 0)
                 return 0;
-            return hw_sqrt (v);
+            return Math.sqrt (v);
         }
 
         private void skip_sep () {

@@ -858,8 +858,17 @@ namespace SaturnIDE {
             editor.save_file (target);
             if (target.has_suffix (".vala")) {
                 string out_elf = "_saturn_out.elf";
-                int rc = Sys.exec ("planc.elf", @"planc.elf --target=planetos $target -o $out_elf");
-                msg_lbl.set_text (@"planc $target -> $out_elf (exit=$rc)");
+                try {
+                    string so = "";
+                    string se = "";
+                    int ws = 0;
+                    string[] argv = { "planc.elf", "--target=planetos", target, "-o", out_elf };
+                    Process.spawn_sync (null, argv, null, SpawnFlags.SEARCH_PATH, null, out so, out se, out ws);
+                    int rc = Process.if_exited (ws) ? Process.exit_status (ws) : -1;
+                    msg_lbl.set_text (@"planc $target -> $out_elf (exit=$rc)");
+                } catch (SpawnError e) {
+                    msg_lbl.set_text (@"planc $target failed: $(e.message)");
+                }
             } else {
                 msg_lbl.set_text (@"Saved $target (select a .vala file to compile with planc).");
             }

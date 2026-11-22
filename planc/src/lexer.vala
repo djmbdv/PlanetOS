@@ -24,6 +24,7 @@ namespace Planc {
         SEMICOLON,
         COMMA,
         DOT,         // .
+        ELLIPSIS,    // ...
         COLON,       // :
         QUESTION,    // ?
         QUESTION_QUESTION, // ??
@@ -102,6 +103,25 @@ namespace Planc {
             return cp;
         }
 
+        // Position of the next token, for diagnostics raised inside next ().
+        public int cur_line () {
+            return line;
+        }
+
+        public int cur_column () {
+            return column;
+        }
+
+        // Error recovery: consume the character that made next () fail so the
+        // next call can make progress.
+        public void skip_one_char () {
+            advance ();
+        }
+
+        public bool at_eof () {
+            return pos >= src_len;
+        }
+
         private uint8 current () {
             return pos < src_len ? source[pos] : 0;
         }
@@ -141,31 +161,89 @@ namespace Planc {
             return (uint64) (10 + c - 'A');
         }
 
+        // Consumes up to max_digits hex digits (at least min_digits) and returns
+        // their value; `what` names the escape in error messages.
+        private uint32 scan_hex_digits (int l, int c, int min_digits, int max_digits, string what) throws LexError {
+            uint32 v = 0;
+            int n = 0;
+            while (n < max_digits && pos < src_len) {
+                var hc = current ();
+                uint32 d = 0;
+                if (hc >= '0' && hc <= '9') d = hc - '0';
+                else if (hc >= 'a' && hc <= 'f') d = 10 + hc - 'a';
+                else if (hc >= 'A' && hc <= 'F') d = 10 + hc - 'A';
+                else break;
+                v = (v << 4) | d;
+                advance ();
+                n++;
+            }
+            if (n < min_digits)
+                throw new LexError.UNKNOWN_ESCAPE (@"invalid $what escape at $l:$c");
+            return v;
+        }
+
+        // Consumes the escape sequence whose selector is the current character
+        // (after the backslash) and returns its byte value.
+        private uint8 scan_escape_byte (int l, int c) throws LexError {
+            if (pos >= src_len)
+                throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
+            var e = current ();
+            switch (e) {
+                case 'n':  advance (); return '\n';
+                case 't':  advance (); return '\t';
+                case 'r':  advance (); return '\r';
+                case 'a':  advance (); return '\x07';
+                case 'b':  advance (); return '\b';
+                case 'f':  advance (); return '\f';
+                case 'v':  advance (); return '\v';
+                case '\\': advance (); return '\\';
+                case '\'': advance (); return '\'';
+                case '"':  advance (); return '"';
+                case '0': case '1': case '2': case '3':
+                case '4': case '5': case '6': case '7': {
+                    // Vala (like C) accepts up to three octal digits, `\0`
+                    // included. sqlite3.c and other C sources spell control
+                    // bytes this way ("\011\012\015\040").
+                    int val = 0;
+                    int digits = 0;
+                    while (digits < 3 && pos < src_len) {
+                        var d = current ();
+                        if (d < '0' || d > '7')
+                            break;
+                        val = val * 8 + (int) (d - '0');
+                        advance ();
+                        digits++;
+                    }
+                    return (uint8) val;
+                }
+                case 'x': {
+                    advance ();
+                    return (uint8) scan_hex_digits (l, c, 1, 2, "\\x");
+                }
+                case 'u', 'U': {
+                    int digits = (e == 'u') ? 4 : 8;
+                    advance ();
+                    return (uint8) scan_hex_digits (l, c, digits, digits, "unicode");
+                }
+                default:
+                    throw new LexError.UNKNOWN_ESCAPE (@"unknown escape at $l:$c");
+            }
+        }
+
         private Token scan_char_literal (int l, int c) throws LexError {
             advance (); // skip opening '\''
             if (pos >= src_len)
                 throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
-            uint8 val = current ();
-            if (val == '\'')
+            uint8 val;
+            if (current () == '\'')
                 throw new LexError.UNEXPECTED_CHARACTER (@"empty character literal at $l:$c");
-            if (val == '\\') {
+            if (current () == '\\') {
                 advance ();
-                if (pos >= src_len)
-                    throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
-                var e = current ();
-                switch (e) {
-                    case 'n':  val = '\n'; break;
-                    case 't':  val = '\t'; break;
-                    case 'r':  val = '\r'; break;
-                    case '\\': val = '\\'; break;
-                    case '\'': val = '\''; break;
-                    case '"':  val = '"'; break;
-                    case '0':  val = '\0'; break;
-                    default:
-                        throw new LexError.UNKNOWN_ESCAPE (@"unknown escape at $l:$c");
-                }
+                val = scan_escape_byte (l, c);
+            } else {
+                val = current ();
+                advance ();
             }
-            advance ();
             if (pos >= src_len || current () != '\'')
                 throw new LexError.UNTERMINATED_STRING (@"unterminated character literal at $l:$c");
             advance ();
@@ -451,7 +529,15 @@ namespace Planc {
                 case ']': kind = TokenKind.RBRACKET; break;
                 case ';': kind = TokenKind.SEMICOLON; break;
                 case ',': kind = TokenKind.COMMA; break;
-                case '.': kind = TokenKind.DOT; break;
+                case '.':
+                    if (peek (1) == '.' && peek (2) == '.') {
+                        advance ();
+                        advance ();
+                        advance ();
+                        return Token () { kind = TokenKind.ELLIPSIS, text = "...", line = l, column = c };
+                    }
+                    kind = TokenKind.DOT;
+                    break;
                 case ':': kind = TokenKind.COLON; break;
                 case '?': kind = TokenKind.QUESTION; break;
                 case '~': kind = TokenKind.TILDE; break;
@@ -564,72 +650,33 @@ namespace Planc {
                 }
                 if (x == '\\') {
                     advance ();
+                    if (pos >= src_len)
+                        throw new LexError.UNTERMINATED_STRING (@"unterminated string literal at $l:$c");
                     var e = current ();
-                    switch (e) {
-                        case 'n':  sb.append_c ('\n'); break;
-                        case 't':  sb.append_c ('\t'); break;
-                        case 'r':  sb.append_c ('\r'); break;
-                        case '\\': sb.append_c ('\\'); break;
-                        case '"':  sb.append_c ('"'); break;
-                        case '0':  sb.append_c ('\0'); break;
-                        case 'x': {
-                            advance ();
-                            uint32 v = 0;
-                            for (int hi = 0; hi < 2; hi++) {
-                                if (pos >= src_len)
-                                    throw new LexError.UNKNOWN_ESCAPE (@"truncated \\x escape at $l:$c");
-                                uint8 hc = current ();
-                                uint32 d = 0;
-                                if (hc >= '0' && hc <= '9') d = hc - '0';
-                                else if (hc >= 'a' && hc <= 'f') d = 10 + hc - 'a';
-                                else if (hc >= 'A' && hc <= 'F') d = 10 + hc - 'A';
-                                else throw new LexError.UNKNOWN_ESCAPE (@"invalid hex in \\x escape at $l:$c");
-                                v = (v << 4) | d;
-                                advance ();
-                            }
-                            sb.append_c ((char) (uint8) v);
-                            continue;
+                    if (e == 'u' || e == 'U') {
+                        int digits = (e == 'u') ? 4 : 8;
+                        advance ();
+                        uint32 cp = scan_hex_digits (l, c, digits, digits, "unicode");
+                        if (cp <= 0x7F) {
+                            sb.append_c ((char) (uint8) cp);
+                        } else if (cp <= 0x7FF) {
+                            sb.append_c ((char) (uint8) (0xC0 | (cp >> 6)));
+                            sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
+                        } else if (cp <= 0xFFFF) {
+                            sb.append_c ((char) (uint8) (0xE0 | (cp >> 12)));
+                            sb.append_c ((char) (uint8) (0x80 | ((cp >> 6) & 0x3F)));
+                            sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
+                        } else if (cp <= 0x10FFFF) {
+                            sb.append_c ((char) (uint8) (0xF0 | (cp >> 18)));
+                            sb.append_c ((char) (uint8) (0x80 | ((cp >> 12) & 0x3F)));
+                            sb.append_c ((char) (uint8) (0x80 | ((cp >> 6) & 0x3F)));
+                            sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
+                        } else {
+                            throw new LexError.UNKNOWN_ESCAPE (@"unicode codepoint out of range at $l:$c");
                         }
-                        case 'u', 'U': {
-                            int digits = (e == 'u') ? 4 : 8;
-                            advance ();
-                            uint32 cp = 0;
-                            for (int hi = 0; hi < digits; hi++) {
-                                if (pos >= src_len)
-                                    throw new LexError.UNKNOWN_ESCAPE (@"truncated unicode escape at $l:$c");
-                                uint8 hc = current ();
-                                uint32 d = 0;
-                                if (hc >= '0' && hc <= '9') d = hc - '0';
-                                else if (hc >= 'a' && hc <= 'f') d = 10 + hc - 'a';
-                                else if (hc >= 'A' && hc <= 'F') d = 10 + hc - 'A';
-                                else throw new LexError.UNKNOWN_ESCAPE (@"invalid hex in unicode escape at $l:$c");
-                                cp = (cp << 4) | d;
-                                advance ();
-                            }
-                            if (cp <= 0x7F) {
-                                sb.append_c ((char) (uint8) cp);
-                            } else if (cp <= 0x7FF) {
-                                sb.append_c ((char) (uint8) (0xC0 | (cp >> 6)));
-                                sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
-                            } else if (cp <= 0xFFFF) {
-                                sb.append_c ((char) (uint8) (0xE0 | (cp >> 12)));
-                                sb.append_c ((char) (uint8) (0x80 | ((cp >> 6) & 0x3F)));
-                                sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
-                            } else if (cp <= 0x10FFFF) {
-                                sb.append_c ((char) (uint8) (0xF0 | (cp >> 18)));
-                                sb.append_c ((char) (uint8) (0x80 | ((cp >> 12) & 0x3F)));
-                                sb.append_c ((char) (uint8) (0x80 | ((cp >> 6) & 0x3F)));
-                                sb.append_c ((char) (uint8) (0x80 | (cp & 0x3F)));
-                            } else {
-                                throw new LexError.UNKNOWN_ESCAPE (@"unicode codepoint out of range at $l:$c");
-                            }
-                            continue;
-                        }
-                        default:
-                            throw new LexError.UNKNOWN_ESCAPE (
-                                @"unknown escape at $l:$c");
+                        continue;
                     }
-                    advance ();
+                    sb.append_c ((char) scan_escape_byte (l, c));
                     continue;
                 }
                 sb.append_c ((char) x);

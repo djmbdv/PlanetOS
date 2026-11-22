@@ -5,6 +5,12 @@
 
 namespace Planc {
 
+    private static GenericArray<Function> mt_opt_funcs;
+    private static GenericArray<string> mt_opt_owners;
+    private static Program mt_opt_prog;
+    private static int mt_opt_level = 0;
+    private static int mt_opt_nw = 1;
+
     public sealed class Optimizer : Object {
         private int level = 0;
         private Program? cur_prog = null;
@@ -13,9 +19,70 @@ namespace Planc {
         private Function? cur_func = null;
         private GenericArray<string> active_locals = new GenericArray<string> ();
 
+        private static void mt_opt_worker (int wid) {
+            var opt = new Optimizer ();
+            opt.level = mt_opt_level;
+            opt.cur_prog = mt_opt_prog;
+            int n = mt_opt_funcs.length;
+            for (int i = wid; i < n; i += mt_opt_nw) {
+                opt.cur_owner = mt_opt_owners[i];
+                opt.opt_func (mt_opt_funcs[i]);
+            }
+        }
+
         public static void optimize (Program prog, int opt_level) {
             if (opt_level <= 0)
                 return;
+            var funcs = new GenericArray<Function> ();
+            var owners = new GenericArray<string> ();
+            for (int i = 0; i < prog.functions.length; i++) {
+                funcs.add (prog.functions[i]);
+                owners.add ("");
+            }
+            for (int i = 0; i < prog.classes.length; i++) {
+                var cd = prog.classes[i];
+                for (int j = 0; j < cd.methods.length; j++) {
+                    funcs.add (cd.methods[j]);
+                    owners.add (cd.name);
+                }
+                for (int j = 0; j < cd.named_ctors.length; j++) {
+                    funcs.add (cd.named_ctors[j]);
+                    owners.add (cd.name);
+                }
+                if (cd.ctor != null) { funcs.add (cd.ctor); owners.add (cd.name); }
+                if (cd.dtor != null) { funcs.add (cd.dtor); owners.add (cd.name); }
+            }
+            for (int i = 0; i < prog.structs.length; i++) {
+                var sd = prog.structs[i];
+                for (int j = 0; j < sd.methods.length; j++) {
+                    funcs.add (sd.methods[j]);
+                    owners.add (sd.name);
+                }
+            }
+            for (int i = 0; i < prog.enums.length; i++) {
+                var ed = prog.enums[i];
+                for (int j = 0; j < ed.methods.length; j++) {
+                    funcs.add (ed.methods[j]);
+                    owners.add (ed.name);
+                }
+            }
+            int ncpus = Host.cpu_count ();
+            if (funcs.length >= 16 && ncpus > 1) {
+                int nw = (ncpus < funcs.length) ? ncpus : funcs.length;
+                if (nw > 16) nw = 16;
+                mt_opt_funcs = funcs;
+                mt_opt_owners = owners;
+                mt_opt_prog = prog;
+                mt_opt_level = opt_level;
+                mt_opt_nw = nw;
+                int64[] handles = new int64[nw];
+                for (int wi = 1; wi < nw; wi++)
+                    handles[wi] = Host.thread_spawn (mt_opt_worker, wi);
+                mt_opt_worker (0);
+                for (int wi = 1; wi < nw; wi++)
+                    Host.thread_join (handles[wi]);
+                return;
+            }
             var opt = new Optimizer ();
             opt.level = opt_level;
             opt.cur_prog = prog;

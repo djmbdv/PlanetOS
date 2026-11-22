@@ -4,6 +4,8 @@ using Planet;
 
 namespace Planc {
 
+    public delegate void ThreadEntry (int arg);
+
     public class Host : Object {
 
         public static void eprint (string s) {
@@ -91,6 +93,24 @@ namespace Planc {
 
         public static string getenv (string name) {
             return Sys.getenv (name);
+        }
+
+        public static int cpu_count () {
+            return 1;
+        }
+
+        public static int64 thread_spawn (ThreadEntry fn, int arg) {
+            fn (arg);
+            return 0;
+        }
+
+        public static void thread_join (int64 handle) {
+        }
+
+        public static void spin_lock (int[] lock_arr) {
+        }
+
+        public static void spin_unlock (int[] lock_arr) {
         }
     }
 }

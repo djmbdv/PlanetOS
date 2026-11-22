@@ -68,6 +68,7 @@ namespace Planc {
         private bool in_async_resume = false;
         private GenericArray<Label> async_resume_labels;
         private GenericArray<string> non_null_vars;
+        private GenericArray<string> weak_used_classes = new GenericArray<string> ();
 
         // Per-function local symbol table.
         private GenericArray<string> locals;
@@ -152,6 +153,9 @@ namespace Planc {
         // string: `may_be_string` used to rescan the whole program per `+`.
         private bool program_has_string_slots = false;
         private bool need_str_index_of = false;
+        private bool need_str_last_index_of = false;
+        private bool need_str_index_of_char = false;
+        private bool need_str_last_index_of_char = false;
         private bool need_async = false;
         private bool need_signal = false;
         private bool need_sync = false;
@@ -163,6 +167,11 @@ namespace Planc {
         private bool need_chmod = false;
         private bool need_read_file = false;
         private bool need_write_file = false;
+        private bool need_cpu_count = false;
+        private bool need_thread_spawn = false;
+        private bool need_thread_join = false;
+        private bool need_spin_lock = false;
+        private bool need_spin_unlock = false;
         private bool main_takes_args = false;
         private int lambda_counter = 0;
         private GenericArray<LambdaExpr> pending_lambdas;
@@ -284,7 +293,19 @@ namespace Planc {
             for (int fi = 0; fi < program.functions.length; fi++) {
                 if (freestanding && program.functions[fi].name == "_kstart32")
                     continue;
-                generate_function (program.functions[fi]);
+                var fn = program.functions[fi];
+                try {
+                    generate_function (fn);
+                } catch (SemanticError e) {
+                    // Keep checking the remaining functions so one compile
+                    // reports every error (the output is discarded anyway).
+                    if (!Diagnostics.recover)
+                        throw new SemanticError.TYPE_MISMATCH (e.message);
+                    Diagnostics.add (fn.file, Diagnostics.pos_line (e.message),
+                                     Diagnostics.pos_column (e.message), "semantic error", e.message);
+                    if (Diagnostics.is_full ())
+                        return;
+                }
             }
 
             emit_start ();
@@ -456,8 +477,16 @@ namespace Planc {
                 return scan_expr_heap (((UnaryExpr) e).operand);
             if (e is IncDecExpr)
                 return scan_expr_heap (((IncDecExpr) e).target);
-            if (e is TypeCheckExpr)
-                return scan_expr_heap (((TypeCheckExpr) e).operand);
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                string dummy_s = "";
+                if (tc.op == "cast" && tc.target_type == ValaType.STRING) {
+                    if (try_fold_string_cast (tc, out dummy_s))
+                        return false;
+                    return !(tc.operand is NullLiteral);
+                }
+                return scan_expr_heap (tc.operand);
+            }
             if (e is TernaryExpr) {
                 var te = (TernaryExpr) e;
                 return scan_expr_heap (te.condition) || scan_expr_heap (te.then_expr) || scan_expr_heap (te.else_expr);
@@ -529,50 +558,148 @@ namespace Planc {
             return false;
         }
 
+        // TAOCP Vol. 1, Sec. 2.2.3 - Algorithm T (Topological Sort with in-place linked queue).
+        // Nodes are 1-based (1..n); index 0 is the queue sentinel.
+        // Edges (u -> v) mean node u must precede node v.
+        // Returns 0 on success (filling `order` with 1-based node IDs),
+        // or a 1-based node ID belonging to a cycle if one exists.
+        private static int topo_sort_alg_t (int n,
+                                            int[] head,
+                                            GenericArray<int> suc,
+                                            GenericArray<int> next_edge,
+                                            int[] count,
+                                            int[] order) {
+            // T4: Link all zero-indegree nodes into an in-place queue using count[].
+            int r = 0;
+            count[0] = 0;
+            for (int k = 1; k <= n; k++) {
+                if (count[k] == 0) {
+                    count[r] = k;
+                    r = k;
+                }
+            }
+            int f = count[0];
+            int remaining = n;
+            int out_idx = 0;
+
+            // T5-T7: Pop front f, output it, decrement successors' in-degree, enqueue zeros.
+            while (f != 0) {
+                order[out_idx++] = f;
+                remaining--;
+                int p = head[f];
+                while (p != -1) {
+                    int target = suc[p];
+                    count[target]--;
+                    if (count[target] == 0) {
+                        count[r] = target;
+                        r = target;
+                    }
+                    p = next_edge[p];
+                }
+                f = count[f];
+            }
+
+            if (remaining == 0)
+                return 0;
+
+            // T8: Cycle detected. Follow remaining-indegree predecessors n steps to land on a cycle node.
+            var pred = new int[n + 1];
+            for (int u = 1; u <= n; u++) {
+                if (count[u] <= 0)
+                    continue;
+                int p = head[u];
+                while (p != -1) {
+                    int v = suc[p];
+                    if (count[v] > 0)
+                        pred[v] = u;
+                    p = next_edge[p];
+                }
+            }
+            int cur = 0;
+            for (int k = 1; k <= n; k++) {
+                if (count[k] > 0) {
+                    cur = k;
+                    break;
+                }
+            }
+            for (int step = 0; step < n; step++) {
+                if (pred[cur] != 0)
+                    cur = pred[cur];
+            }
+            return cur;
+        }
+
+        private static int find_decl_idx (GenericArray<string> names, string name) {
+            for (int i = 0; i < names.length; i++) {
+                if (names[i] == name)
+                    return i + 1;
+            }
+            return 0;
+        }
+
         private void check_struct_cycles () throws SemanticError {
-            var visiting = new GenericArray<string> ();
-            var visited = new GenericArray<string> ();
+            var active = new GenericArray<StructDecl> ();
+            var names = new GenericArray<string> ();
             foreach (var sd in program.structs) {
                 if (sd.is_generic_template)
                     continue;
-                visit_struct_cycle (sd, visiting, visited);
+                active.add (sd);
+                names.add (sd.name);
             }
-        }
-
-        private static bool list_contains (GenericArray<string> list, string name) {
-            for (int i = 0; i < list.length; i++) {
-                if (list[i] == name)
-                    return true;
-            }
-            return false;
-        }
-
-        private void visit_struct_cycle (StructDecl sd,
-                                         GenericArray<string> visiting,
-                                         GenericArray<string> visited) throws SemanticError {
-            if (list_contains (visited, sd.name))
+            int n = active.length;
+            if (n == 0)
                 return;
-            if (list_contains (visiting, sd.name))
-                throw new SemanticError.TYPE_MISMATCH (
-                    @"cyclic struct definition '$(sd.name)' at $(sd.line):$(sd.column)");
-            visiting.add (sd.name);
-            foreach (var fld in sd.fields) {
-                if (sd.is_union && is_ref_type (fld.field_type)) {
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"union '$(sd.name)' cannot contain reference-counted field '$(fld.name)' at $(fld.line):$(fld.column)");
-                }
-                if (fld.field_type == ValaType.STRUCT) {
-                    unowned var sub = program.find_struct (fld.type_name);
-                    if (sub != null) {
-                        if (sd.is_union && struct_has_string (sub)) {
-                            throw new SemanticError.TYPE_MISMATCH (
-                                @"union '$(sd.name)' cannot contain struct with reference-counted fields '$(fld.name)' at $(fld.line):$(fld.column)");
+
+            var head = new int[n + 1];
+            for (int i = 0; i <= n; i++)
+                head[i] = -1;
+            var count = new int[n + 1];
+            var suc = new GenericArray<int> ();
+            var next_edge = new GenericArray<int> ();
+
+            for (int i = 0; i < n; i++) {
+                var sd = active[i];
+                int v = i + 1;
+                foreach (var fld in sd.fields) {
+                    if (sd.is_union && is_ref_type (fld.field_type)) {
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"union '$(sd.name)' cannot contain reference-counted field '$(fld.name)' at $(fld.line):$(fld.column)");
+                    }
+                    if (fld.field_type == ValaType.STRUCT) {
+                        int u = find_decl_idx (names, fld.type_name);
+                        if (u > 0) {
+                            suc.add (v);
+                            next_edge.add (head[u]);
+                            head[u] = suc.length - 1;
+                            count[v]++;
                         }
-                        visit_struct_cycle (sub, visiting, visited);
                     }
                 }
             }
-            visited.add (sd.name);
+
+            var order = new int[n];
+            int cyc = topo_sort_alg_t (n, head, suc, next_edge, count, order);
+            if (cyc != 0) {
+                var sd = active[cyc - 1];
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"cyclic struct definition '$(sd.name)' at $(sd.line):$(sd.column)");
+            }
+
+            // Now that the struct graph is a verified DAG, check union ref-counted transitively.
+            for (int i = 0; i < n; i++) {
+                var sd = active[i];
+                if (!sd.is_union)
+                    continue;
+                foreach (var fld in sd.fields) {
+                    if (fld.field_type == ValaType.STRUCT) {
+                        unowned var sub = program.find_struct (fld.type_name);
+                        if (sub != null && struct_has_string (sub)) {
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"union '$(sd.name)' cannot contain struct with reference-counted fields '$(fld.name)' at $(fld.line):$(fld.column)");
+                        }
+                    }
+                }
+            }
         }
 
         private int type_slots (ValaType t, string tname) {
@@ -660,35 +787,57 @@ namespace Planc {
             }
         }
 
-        private void visit_iface_order (InterfaceDecl itf,
-                                        GenericArray<string> visiting,
-                                        GenericArray<string> visited,
-                                        GenericArray<InterfaceDecl> ordered) throws SemanticError {
-            if (list_contains (visited, itf.name))
-                return;
-            if (list_contains (visiting, itf.name))
-                throw new SemanticError.TYPE_MISMATCH (
-                    @"cyclic interface inheritance involving '$(itf.name)' at $(itf.line):$(itf.column)");
-            visiting.add (itf.name);
-            foreach (var pname in itf.prereq_names) {
-                unowned var p = program.find_interface (pname);
-                if (p == null)
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"unknown prerequisite interface '$pname' for '$(itf.name)' at $(itf.line):$(itf.column)");
-                visit_iface_order (p, visiting, visited, ordered);
+        private static bool list_contains (GenericArray<string> list, string name) {
+            for (int i = 0; i < list.length; i++) {
+                if (list[i] == name)
+                    return true;
             }
-            visited.add (itf.name);
-            ordered.add (itf);
+            return false;
         }
 
         private void prepare_interfaces () throws SemanticError {
-            var ordered = new GenericArray<InterfaceDecl> ();
-            var visiting = new GenericArray<string> ();
-            var visited = new GenericArray<string> ();
+            var active = new GenericArray<InterfaceDecl> ();
+            var names = new GenericArray<string> ();
             foreach (var itf in program.interfaces) {
                 if (itf.is_generic_template)
                     continue;
-                visit_iface_order (itf, visiting, visited, ordered);
+                active.add (itf);
+                names.add (itf.name);
+            }
+            var ordered = new GenericArray<InterfaceDecl> ();
+            int n = active.length;
+            if (n > 0) {
+                var head = new int[n + 1];
+                for (int i = 0; i <= n; i++)
+                    head[i] = -1;
+                var count = new int[n + 1];
+                var suc = new GenericArray<int> ();
+                var next_edge = new GenericArray<int> ();
+
+                for (int i = 0; i < n; i++) {
+                    var itf = active[i];
+                    int v = i + 1;
+                    foreach (var pname in itf.prereq_names) {
+                        int u = find_decl_idx (names, pname);
+                        if (u == 0)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"unknown prerequisite interface '$pname' for '$(itf.name)' at $(itf.line):$(itf.column)");
+                        suc.add (v);
+                        next_edge.add (head[u]);
+                        head[u] = suc.length - 1;
+                        count[v]++;
+                    }
+                }
+
+                var order = new int[n];
+                int cyc = topo_sort_alg_t (n, head, suc, next_edge, count, order);
+                if (cyc != 0) {
+                    var itf = active[cyc - 1];
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"cyclic interface inheritance involving '$(itf.name)' at $(itf.line):$(itf.column)");
+                }
+                for (int i = 0; i < n; i++)
+                    ordered.add (active[order[i] - 1]);
             }
 
             foreach (var itf in ordered) {
@@ -901,18 +1050,59 @@ namespace Planc {
             if (program.classes.length == 0)
                 return;
 
-            var ordered = new GenericArray<ClassDecl> ();
-            var visiting = new GenericArray<string> ();
-            var visited = new GenericArray<string> ();
+            var active = new GenericArray<ClassDecl> ();
+            var names = new GenericArray<string> ();
             foreach (var cd in program.classes) {
                 if (cd.is_generic_template)
                     continue;
-                visit_class_order (cd, visiting, visited, ordered);
+                active.add (cd);
+                names.add (cd.name);
             }
+            var ordered = new GenericArray<ClassDecl> ();
+            int n = active.length;
+            if (n > 0) {
+                var head = new int[n + 1];
+                for (int i = 0; i <= n; i++)
+                    head[i] = -1;
+                var count = new int[n + 1];
+                var suc = new GenericArray<int> ();
+                var next_edge = new GenericArray<int> ();
+
+                for (int i = 0; i < n; i++) {
+                    var cd = active[i];
+                    int v = i + 1;
+                    if (cd.base_name != "") {
+                        int u = find_decl_idx (names, cd.base_name);
+                        if (u == 0)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"unknown base class '$(cd.base_name)' for '$(cd.name)' at $(cd.line):$(cd.column)");
+                        var b = active[u - 1];
+                        if (b.is_sealed)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"cannot inherit from sealed class '$(b.name)' at $(cd.line):$(cd.column)");
+                        suc.add (v);
+                        next_edge.add (head[u]);
+                        head[u] = suc.length - 1;
+                        count[v]++;
+                    }
+                }
+
+                var order = new int[n];
+                int cyc = topo_sort_alg_t (n, head, suc, next_edge, count, order);
+                if (cyc != 0) {
+                    var cd = active[cyc - 1];
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"cyclic class inheritance involving '$(cd.name)' at $(cd.line):$(cd.column)");
+                }
+                for (int i = 0; i < n; i++)
+                    ordered.add (active[order[i] - 1]);
+            }
+
+            collect_weak_used_classes ();
 
             foreach (var cd in ordered) {
                 unowned ClassDecl? base_cd = (cd.base_name != "") ? program.find_class (cd.base_name) : null;
-                cd.needs_finalizer = true;
+                cd.needs_finalizer = has_weak_slot (cd) || cd.dtor != null || (base_cd != null && base_cd.needs_finalizer);
 
                 foreach (var fld in cd.fields) {
                     if (fld.is_static)
@@ -1200,7 +1390,7 @@ namespace Planc {
                 prepend_this_param (init_fn, cd.name, true);
                 // The builtin root has nothing to initialize, so chaining into
                 // it would be one wasted call per constructed object.
-                bool base_init_needed = base_cd != null && !is_bare_object (base_cd);
+                bool base_init_needed = base_cd != null && !is_bare_object (base_cd) && !base_cd.has_trivial_init;
                 if (base_init_needed) {
                     var bc = new CallExpr () { callee = @"__planc_init_$(base_cd.name)" };
                     var tv = new VarRef () { name = "this", line = cd.line, column = cd.column };
@@ -1232,7 +1422,9 @@ namespace Planc {
                         init_fn.body.add (fa);
                     }
                 }
-                program.functions.add (init_fn);
+                cd.has_trivial_init = (init_fn.body.length == 0);
+                if (!cd.has_trivial_init)
+                    program.functions.add (init_fn);
 
                 if (cd.dtor != null) {
                     cd.dtor.name = @"$(cd.name)____dtor";
@@ -1268,30 +1460,6 @@ namespace Planc {
                     program.functions.add (fr);
                 }
             }
-        }
-
-        private void visit_class_order (ClassDecl cd,
-                                        GenericArray<string> visiting,
-                                        GenericArray<string> visited,
-                                        GenericArray<ClassDecl> ordered) throws SemanticError {
-            if (list_contains (visited, cd.name))
-                return;
-            if (list_contains (visiting, cd.name))
-                throw new SemanticError.TYPE_MISMATCH (
-                    @"cyclic class inheritance involving '$(cd.name)' at $(cd.line):$(cd.column)");
-            visiting.add (cd.name);
-            if (cd.base_name != "") {
-                unowned var b = program.find_class (cd.base_name);
-                if (b == null)
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"unknown base class '$(cd.base_name)' for '$(cd.name)' at $(cd.line):$(cd.column)");
-                if (b.is_sealed)
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"cannot inherit from sealed class '$(b.name)' at $(cd.line):$(cd.column)");
-                visit_class_order (b, visiting, visited, ordered);
-            }
-            visited.add (cd.name);
-            ordered.add (cd);
         }
 
         private static void prepend_this_param (Function f, string cname, bool unmanaged) {
@@ -1379,10 +1547,167 @@ namespace Planc {
                 && cd.fields.length == 0 && cd.signals.length == 0 && cd.dtor == null;
         }
 
-        private static bool has_weak_slot (ClassDecl cd) {
+        private bool is_weak_used_class (string name) {
+            for (int i = 0; i < weak_used_classes.length; i++) {
+                if (weak_used_classes[i] == name)
+                    return true;
+            }
+            return false;
+        }
+
+        private void add_weak_used_class (string name) {
+            if (!is_weak_used_class (name))
+                weak_used_classes.add (name);
+        }
+
+        private void mark_weak_class_tree (string class_name) {
+            unowned ClassDecl? root = program.find_class (class_name);
+            if (root == null)
+                return;
+            while (root.base_name != "") {
+                unowned var parent = program.find_class (root.base_name);
+                if (parent == null)
+                    break;
+                root = parent;
+            }
+            // Mark the whole hierarchy rooted at `root` so parent and derived
+            // classes always agree on slot 0 (weak_box) field offsets.
+            var stack = new GenericArray<string> ();
+            stack.add (root.name);
+            while (stack.length > 0) {
+                var cur = stack[stack.length - 1];
+                stack.remove_index (stack.length - 1);
+                if (is_weak_used_class (cur))
+                    continue;
+                add_weak_used_class (cur);
+                foreach (var cd in program.classes) {
+                    if (!cd.is_generic_template && cd.base_name == cur)
+                        stack.add (cd.name);
+                }
+            }
+        }
+
+        private void mark_weak_type (ValaType vt, string tname, bool infer_type = false) {
+            if (infer_type || tname == "") {
+                foreach (var cd in program.classes) {
+                    if (!cd.is_generic_template && !cd.is_compact)
+                        add_weak_used_class (cd.name);
+                }
+                return;
+            }
+            var base_tname = strip_null (tname);
+            if (vt == ValaType.CLASS || program.find_class (base_tname) != null) {
+                mark_weak_class_tree (base_tname);
+                return;
+            }
+            if (vt == ValaType.INTERFACE || program.find_interface (base_tname) != null) {
+                foreach (var cd in program.classes) {
+                    if (cd.is_generic_template)
+                        continue;
+                    var ifaces = new GenericArray<string> ();
+                    collect_class_interfaces (cd, ifaces);
+                    for (int i = 0; i < ifaces.length; i++) {
+                        if (ifaces[i] == base_tname) {
+                            mark_weak_class_tree (cd.name);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void scan_weak_stmt (Statement s) {
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                if (d.is_weak)
+                    mark_weak_type (d.decl_type, d.decl_type_name, d.infer_type);
+            } else if (s is BlockStatement) {
+                foreach (var inner in ((BlockStatement) s).statements)
+                    scan_weak_stmt (inner);
+            } else if (s is IfStatement) {
+                var i = (IfStatement) s;
+                scan_weak_stmt (i.then_body);
+                if (i.else_body != null)
+                    scan_weak_stmt (i.else_body);
+            } else if (s is WhileStatement) {
+                scan_weak_stmt (((WhileStatement) s).body);
+            } else if (s is DoWhileStatement) {
+                scan_weak_stmt (((DoWhileStatement) s).body);
+            } else if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                if (fs.init != null)
+                    scan_weak_stmt (fs.init);
+                scan_weak_stmt (fs.body);
+            } else if (s is ForeachStatement) {
+                scan_weak_stmt (((ForeachStatement) s).body);
+            } else if (s is LockStatement) {
+                scan_weak_stmt (((LockStatement) s).body);
+            } else if (s is SwitchStatement) {
+                var sw = (SwitchStatement) s;
+                foreach (var sc in sw.cases) {
+                    foreach (var bs in sc.body)
+                        scan_weak_stmt (bs);
+                }
+            } else if (s is TryStatement) {
+                var t = (TryStatement) s;
+                foreach (var ts in t.try_body)
+                    scan_weak_stmt (ts);
+                foreach (var cc in t.catches) {
+                    foreach (var cs in cc.body)
+                        scan_weak_stmt (cs);
+                }
+                if (t.has_finally) {
+                    foreach (var fst in t.finally_body)
+                        scan_weak_stmt (fst);
+                }
+            }
+        }
+
+        private void scan_weak_func (Function f) {
+            foreach (var p in f.params) {
+                if (p.is_weak)
+                    mark_weak_type (p.param_type, p.type_name);
+            }
+            foreach (var s in f.body)
+                scan_weak_stmt (s);
+        }
+
+        private void collect_weak_used_classes () {
+            weak_used_classes = new GenericArray<string> ();
+            foreach (var f in program.functions)
+                scan_weak_func (f);
+            foreach (var sd in program.structs) {
+                foreach (var fld in sd.fields) {
+                    if (fld.is_weak)
+                        mark_weak_type (fld.field_type, fld.type_name);
+                }
+                foreach (var m in sd.methods)
+                    scan_weak_func (m);
+            }
+            foreach (var cd in program.classes) {
+                if (cd.is_generic_template)
+                    continue;
+                foreach (var fld in cd.fields) {
+                    if (fld.is_weak)
+                        mark_weak_type (fld.field_type, fld.type_name);
+                }
+                if (cd.ctor != null)
+                    scan_weak_func (cd.ctor);
+                if (cd.dtor != null)
+                    scan_weak_func (cd.dtor);
+                foreach (var nc in cd.named_ctors)
+                    scan_weak_func (nc);
+                foreach (var m in cd.methods)
+                    scan_weak_func (m);
+            }
+        }
+
+        private bool has_weak_slot (ClassDecl cd) {
             if (cd.is_compact)
                 return false;
-            return !cd.name.has_prefix ("GenericArray__") && !cd.name.has_prefix ("Channel__");
+            if (cd.name.has_prefix ("GenericArray__") || cd.name.has_prefix ("Channel__"))
+                return false;
+            return is_weak_used_class (cd.name);
         }
 
         // Compact instances have no vtable and no refcount, so their fields
@@ -1729,6 +2054,21 @@ namespace Planc {
                 emitter.emit_rt_str_index_of ();
                 symbols.add (new Symbol ("__planc_str_index_of", start, emitter.here () - start));
             }
+            if (need_str_last_index_of) {
+                var start = emitter.here ();
+                emitter.emit_rt_str_last_index_of ();
+                symbols.add (new Symbol ("__planc_str_last_index_of", start, emitter.here () - start));
+            }
+            if (need_str_index_of_char) {
+                var start = emitter.here ();
+                emitter.emit_rt_str_index_of_char ();
+                symbols.add (new Symbol ("__planc_str_index_of_char", start, emitter.here () - start));
+            }
+            if (need_str_last_index_of_char) {
+                var start = emitter.here ();
+                emitter.emit_rt_str_last_index_of_char ();
+                symbols.add (new Symbol ("__planc_str_last_index_of_char", start, emitter.here () - start));
+            }
             if (need_str_to_int) {
                 var start = emitter.here ();
                 emitter.emit_rt_str_to_int ();
@@ -1748,6 +2088,9 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_bytes_to_str ();
                 symbols.add (new Symbol ("__planc_bytes_to_str", start, emitter.here () - start));
+                var cstart = emitter.here ();
+                emitter.emit_rt_bytes_cast_str ();
+                symbols.add (new Symbol ("__planc_bytes_cast_str", cstart, emitter.here () - cstart));
             }
             if (need_eprint) {
                 var start = emitter.here ();
@@ -1768,6 +2111,31 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_write_file (io_err_msg_off, file_err_dom);
                 symbols.add (new Symbol ("__planc_write_file", start, emitter.here () - start));
+            }
+            if (need_cpu_count) {
+                var start = emitter.here ();
+                emitter.emit_rt_cpu_count ();
+                symbols.add (new Symbol ("__planc_cpu_count", start, emitter.here () - start));
+            }
+            if (need_thread_spawn) {
+                var start = emitter.here ();
+                emitter.emit_rt_thread_spawn ();
+                symbols.add (new Symbol ("__planc_thread_spawn", start, emitter.here () - start));
+            }
+            if (need_thread_join) {
+                var start = emitter.here ();
+                emitter.emit_rt_thread_join ();
+                symbols.add (new Symbol ("__planc_thread_join", start, emitter.here () - start));
+            }
+            if (need_spin_lock) {
+                var start = emitter.here ();
+                emitter.emit_rt_spin_lock ();
+                symbols.add (new Symbol ("__planc_spin_lock", start, emitter.here () - start));
+            }
+            if (need_spin_unlock) {
+                var start = emitter.here ();
+                emitter.emit_rt_spin_unlock ();
+                symbols.add (new Symbol ("__planc_spin_unlock", start, emitter.here () - start));
             }
             emit_panic_sym (need_bounds_panic, bounds_panic_label, "__planc_bounds_panic",
                             "planc: panic: index out of bounds\n");
@@ -2361,6 +2729,8 @@ namespace Planc {
                 da_expr (sl.target);
                 da_expr (sl.start);
                 da_expr (sl.end);
+            } else if (e is VaArgExpr) {
+                da_expr (((VaArgExpr) e).target);
             } else if (e is TernaryExpr) {
                 var t = (TernaryExpr) e;
                 da_expr (t.condition);
@@ -2593,7 +2963,10 @@ namespace Planc {
                 unowned StructField? sf = null;
                 if (sd != null && struct_field_offset_slots (sd, member, out sf) >= 0)
                     return true;
-            } else if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
+            } else if (tt == ValaType.STRING) {
+                if (member == "length" || member == "data")
+                    return true;
+            } else if (tt == ValaType.ARRAY) {
                 if (member == "length")
                     return true;
             } else if (tt == ValaType.ERROR) {
@@ -3605,8 +3978,23 @@ namespace Planc {
                 var sz = (SizeofExpr) e;
                 if (sz.operand != null)
                     prepare_expr (sz.operand, ref struct_temps, ref ref_temps);
+            } else if (e is VaArgExpr) {
+                prepare_expr (((VaArgExpr) e).target, ref struct_temps, ref ref_temps);
             } else if (e is TypeCheckExpr) {
-                prepare_expr (((TypeCheckExpr) e).operand, ref struct_temps, ref ref_temps);
+                var tc = (TypeCheckExpr) e;
+                string dummy_s = "";
+                if (tc.op == "cast" && tc.target_type == ValaType.STRING && try_fold_string_cast (tc, out dummy_s)) {
+                    // Folded to a static .rodata string literal at compile time.
+                } else {
+                    prepare_expr (tc.operand, ref struct_temps, ref ref_temps);
+                    if (tc.op == "cast" && tc.target_type == ValaType.STRING && expr_type (tc.operand) == ValaType.ARRAY) {
+                        need_bytes_to_str = true;
+                        if (program_uses_heap) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
+                    }
+                }
             } else if (e is SliceExpr) {
                 var se = (SliceExpr) e;
                 prepare_expr (se.target, ref struct_temps, ref ref_temps);
@@ -3791,6 +4179,7 @@ namespace Planc {
                         var p = ctor_fn.params[1 + ai];
                         bind_delegate_target (cn.args[ai], p.param_type, p.type_name);
                     }
+                    pack_varargs_if_needed (ctor_fn.params, 1, cn.args, cn.line, cn.column);
                     if (ctor_fn.can_throw)
                         check_domains_handled (ctor_fn.throws_domains, cn.line, cn.column);
                 }
@@ -3867,6 +4256,15 @@ namespace Planc {
                         need_utf8_validate = true;
                     else if (bi_kind == "str_index_of" || bi_kind == "str_contains")
                         need_str_index_of = true;
+                    else if (bi_kind == "str_last_index_of")
+                        need_str_last_index_of = true;
+                    else if (bi_kind == "str_index_of_char") {
+                        need_str_index_of = true;
+                        need_str_index_of_char = true;
+                    } else if (bi_kind == "str_last_index_of_char") {
+                        need_str_last_index_of = true;
+                        need_str_last_index_of_char = true;
+                    }
                     else if (bi_kind == "int_parse")
                         need_str_to_int = true;
                     else if (bi_kind == "float_parse" || bi_kind == "double_parse")
@@ -3937,6 +4335,7 @@ namespace Planc {
                                 var p = m.params[param_off + ai];
                                 bind_delegate_target (mc.args[ai], p.param_type, p.type_name);
                             }
+                            pack_varargs_if_needed (m.params, param_off, mc.args, mc.line, mc.column);
                             if (m.can_throw)
                                 check_domains_handled (m.throws_domains, mc.line, mc.column);
                             if (m.return_type == ValaType.STRUCT) {
@@ -3996,6 +4395,11 @@ namespace Planc {
                 else if (ce.callee == "__planc_host_bytes_to_str") need_bytes_to_str = true;
                 else if (ce.callee == "__planc_host_read_file") need_read_file = true;
                 else if (ce.callee == "__planc_host_write_file") need_write_file = true;
+                else if (ce.callee == "__planc_host_cpu_count") need_cpu_count = true;
+                else if (ce.callee == "__planc_host_thread_spawn") need_thread_spawn = true;
+                else if (ce.callee == "__planc_host_thread_join") need_thread_join = true;
+                else if (ce.callee == "__planc_host_spin_lock") need_spin_lock = true;
+                else if (ce.callee == "__planc_host_spin_unlock") need_spin_unlock = true;
                 if (is_host_intrinsic (ce.callee)) {
                     foreach (var a in ce.args)
                         prepare_expr (a, ref struct_temps, ref ref_temps);
@@ -4006,6 +4410,7 @@ namespace Planc {
                             var p = dd.params[ai];
                             bind_delegate_target (ce.args[ai], p.param_type, p.type_name);
                         }
+                        pack_varargs_if_needed (dd.params, 0, ce.args, ce.line, ce.column);
                         foreach (var a in ce.args)
                             prepare_expr (a, ref struct_temps, ref ref_temps);
                         if (dd.throws_domains.length > 0)
@@ -4029,6 +4434,7 @@ namespace Planc {
                                 var p = f.params[param_off + ai];
                                 bind_delegate_target (ce.args[ai], p.param_type, p.type_name);
                             }
+                            pack_varargs_if_needed (f.params, param_off, ce.args, ce.line, ce.column);
                             if (f.can_throw && !f.is_async)
                                 check_domains_handled (f.throws_domains, ce.line, ce.column);
                             if (f.return_type == ValaType.STRUCT) {
@@ -4189,6 +4595,8 @@ namespace Planc {
                 var sz = (SizeofExpr) e;
                 if (sz.operand != null)
                     fn (sz.operand);
+            } else if (e is VaArgExpr) {
+                fn (((VaArgExpr) e).target);
             } else if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
                 fn (b.left);
@@ -4611,8 +5019,11 @@ namespace Planc {
                 }
             }
 
-            foreach (var s in f.body)
+            foreach (var s in f.body) {
                 gen_statement (s);
+                if (Diagnostics.is_full ())
+                    return;
+            }
 
             // Falling off the end: unref locals, then return deterministic default.
             if (program_uses_heap)
@@ -4968,7 +5379,12 @@ namespace Planc {
                 || callee == "__planc_host_chmod"
                 || callee == "__planc_host_bytes_to_str"
                 || callee == "__planc_host_read_file"
-                || callee == "__planc_host_write_file";
+                || callee == "__planc_host_write_file"
+                || callee == "__planc_host_cpu_count"
+                || callee == "__planc_host_thread_spawn"
+                || callee == "__planc_host_thread_join"
+                || callee == "__planc_host_spin_lock"
+                || callee == "__planc_host_spin_unlock";
         }
 
         private unowned SignalDecl? find_class_signal (ClassDecl? cd, string sname) {
@@ -5227,6 +5643,21 @@ namespace Planc {
                     ret_t = ValaType.INT;
                     return true;
                 }
+                if (mc.method_name == "last_index_of") {
+                    kind = "str_last_index_of";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "index_of_char") {
+                    kind = "str_index_of_char";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "last_index_of_char") {
+                    kind = "str_last_index_of_char";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
                 if (mc.method_name == "contains") {
                     kind = "str_contains";
                     ret_t = ValaType.BOOL;
@@ -5475,6 +5906,90 @@ namespace Planc {
                 @"incompatible branch types $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $line:$col");
         }
 
+        private static string truncate_at_nul (string s) {
+            for (int i = 0; i < s.length; i++) {
+                if (s[i] == 0)
+                    return s.substring (0, i);
+            }
+            return s;
+        }
+
+        private bool try_eval_const_byte (Expr e, out uint8 b) {
+            b = 0;
+            if (e is IntLiteral) {
+                b = (uint8) (((IntLiteral) e).value & 0xff);
+                return true;
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                if (tc.op == "cast" && tc.target_type == ValaType.INT)
+                    return try_eval_const_byte (tc.operand, out b);
+            }
+            return false;
+        }
+
+        private bool try_fold_string_cast (TypeCheckExpr tc, out string folded) {
+            folded = "";
+            if (tc.op != "cast" || tc.target_type != ValaType.STRING)
+                return false;
+            var op = tc.operand;
+            if (op is StringLiteral) {
+                folded = ((StringLiteral) op).value;
+                return true;
+            }
+            if (op is VarRef) {
+                unowned var cd = program.find_const (((VarRef) op).name, "");
+                if (cd != null && cd.const_type == ValaType.STRING) {
+                    folded = cd.str_value;
+                    return true;
+                }
+                return false;
+            }
+            if (op is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) op;
+                if (ma.member == "data") {
+                    if (ma.target is StringLiteral) {
+                        folded = truncate_at_nul (((StringLiteral) ma.target).value);
+                        return true;
+                    }
+                    if (ma.target is VarRef) {
+                        unowned var cd = program.find_const (((VarRef) ma.target).name, "");
+                        if (cd != null && cd.const_type == ValaType.STRING) {
+                            folded = truncate_at_nul (cd.str_value);
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            if (op is ArrayLiteralExpr) {
+                var arr = (ArrayLiteralExpr) op;
+                if (arr.elem_type != ValaType.INT
+                    || (arr.elem_type_name != "uint8" && arr.elem_type_name != "int8" && arr.elem_type_name != "char"))
+                    return false;
+                var buf = new uint8[arr.elements.length];
+                int len = 0;
+                for (int i = 0; i < arr.elements.length; i++) {
+                    uint8 b = 0;
+                    if (!try_eval_const_byte (arr.elements[i], out b))
+                        return false;
+                    if (b == 0) {
+                        // Validate remaining elements are also constant so side effects aren't dropped.
+                        for (int j = i + 1; j < arr.elements.length; j++) {
+                            uint8 dummy = 0;
+                            if (!try_eval_const_byte (arr.elements[j], out dummy))
+                                return false;
+                        }
+                        break;
+                    }
+                    buf[len++] = b;
+                }
+                folded = Host.bytes_to_string (buf, len);
+                return true;
+            }
+            return false;
+        }
+
         private bool is_owned_expr (Expr e) throws SemanticError {
             if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr)
                 return true;
@@ -5491,6 +6006,13 @@ namespace Planc {
                 if (ye.value == null)
                     return false;
                 return is_ref_type (expr_type (ye));
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                string dummy_s = "";
+                return tc.op == "cast" && tc.target_type == ValaType.STRING
+                    && !try_fold_string_cast (tc, out dummy_s)
+                    && expr_type (tc.operand) == ValaType.ARRAY;
             }
             if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
@@ -5819,14 +6341,48 @@ namespace Planc {
             return m;
         }
 
+        private void pack_varargs_if_needed (GenericArray<Param> plist, int param_offset,
+                                             GenericArray<Expr> args, int line, int col) {
+            bool is_va = (plist.length > param_offset && plist[plist.length - 1].name == "__planc_va_list");
+            if (!is_va)
+                return;
+            int expected_count = plist.length - param_offset - 1;
+            if (args.length == expected_count + 1 && args[expected_count] is ArrayLiteralExpr
+                && ((ArrayLiteralExpr) args[expected_count]).is_varargs_pack)
+                return;
+            if (args.length < expected_count)
+                return;
+            var va_arr = new ArrayLiteralExpr ();
+            va_arr.is_varargs_pack = true;
+            va_arr.elem_type = ValaType.INT;
+            va_arr.elem_type_name = "uint64";
+            va_arr.line = line;
+            va_arr.column = col;
+            var idx0 = new IntLiteral ();
+            idx0.value = 1;
+            idx0.line = line;
+            idx0.column = col;
+            va_arr.elements.add (idx0);
+            for (int i = expected_count; i < args.length; i++)
+                va_arr.elements.add (args[i]);
+            // planc's built-in GenericArray exposes add/remove_index only.
+            while (args.length > expected_count)
+                args.remove_index (args.length - 1);
+            args.add (va_arr);
+        }
+
         private void check_arg_param_list (string desc, GenericArray<Param> plist, int param_offset,
                                              GenericArray<Expr> args, int line, int col)
                 throws SemanticError {
-            int expected_count = plist.length - param_offset;
-            if (expected_count != args.length)
+            bool is_va = (plist.length > param_offset && plist[plist.length - 1].name == "__planc_va_list");
+            int expected_count = plist.length - param_offset - (is_va ? 1 : 0);
+            bool already_packed = is_va && args.length == expected_count + 1
+                && args[expected_count] is ArrayLiteralExpr
+                && ((ArrayLiteralExpr) args[expected_count]).is_varargs_pack;
+            if ((!is_va && expected_count != args.length) || (is_va && args.length < expected_count))
                 throw new SemanticError.WRONG_ARG_COUNT (
                     @"$(desc) expects $(expected_count) argument(s), got $(args.length) at $(line):$(col)");
-            for (int i = 0; i < args.length; i++) {
+            for (int i = 0; i < expected_count; i++) {
                 var p = plist[param_offset + i];
                 if (!p.is_ref && !p.is_out)
                     coerce_byte_array_literal (args[i], p.param_type, p.type_name);
@@ -5856,6 +6412,22 @@ namespace Planc {
                 } else if (!type_compatible (pt, pt_name, at, at_name)) {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument $(i + 1) of '$(desc)' expects $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
+                }
+            }
+            if (is_va) {
+                if (already_packed) {
+                    var va_arr = (ArrayLiteralExpr) args[expected_count];
+                    for (int i = 1; i < va_arr.elements.length; i++) {
+                        string vn = "";
+                        expr_type_full (va_arr.elements[i], out vn);
+                    }
+                } else {
+                    pack_varargs_if_needed (plist, param_offset, args, line, col);
+                    var va_arr = (ArrayLiteralExpr) args[expected_count];
+                    for (int i = 1; i < va_arr.elements.length; i++) {
+                        string vn = "";
+                        expr_type_full (va_arr.elements[i], out vn);
+                    }
                 }
             }
         }
@@ -5933,6 +6505,57 @@ namespace Planc {
                         @"argument 1 of '$(c.callee)' expects string, got $(type_label (a0t, a0n)) at $(c.args[0].line):$(c.args[0].column)");
                 return ValaType.STRING;
             }
+            if (c.callee == "__planc_host_cpu_count") {
+                if (c.args.length != 0)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(c.callee) expects 0 argument(s), got $(c.args.length) at $(c.line):$(c.column)");
+                return ValaType.INT;
+            }
+            if (c.callee == "__planc_host_thread_spawn") {
+                if (c.args.length != 2)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(c.callee) expects 2 argument(s), got $(c.args.length) at $(c.line):$(c.column)");
+                string d0n = "";
+                var d0t = expr_type_full (c.args[0], out d0n);
+                var sd0 = (d0t == ValaType.STRUCT) ? program.find_struct (d0n) : null;
+                if (sd0 == null || !sd0.is_delegate)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of '$(c.callee)' expects delegate, got $(type_label (d0t, d0n)) at $(c.args[0].line):$(c.args[0].column)");
+                string d1n = "";
+                var d1t = expr_type_full (c.args[1], out d1n);
+                if (!is_int_like (d1t))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 2 of '$(c.callee)' expects int, got $(type_label (d1t, d1n)) at $(c.args[1].line):$(c.args[1].column)");
+                return ValaType.INT;
+            }
+            if (c.callee == "__planc_host_thread_join") {
+                if (want_value)
+                    throw new SemanticError.VOID_IN_EXPRESSION (
+                        @"void function '$(c.callee)' cannot be used as a value at $(c.line):$(c.column)");
+                if (c.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(c.callee) expects 1 argument(s), got $(c.args.length) at $(c.line):$(c.column)");
+                string j0n = "";
+                var j0t = expr_type_full (c.args[0], out j0n);
+                if (!is_int_like (j0t))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of '$(c.callee)' expects int64, got $(type_label (j0t, j0n)) at $(c.args[0].line):$(c.args[0].column)");
+                return ValaType.VOID;
+            }
+            if (c.callee == "__planc_host_spin_lock" || c.callee == "__planc_host_spin_unlock") {
+                if (want_value)
+                    throw new SemanticError.VOID_IN_EXPRESSION (
+                        @"void function '$(c.callee)' cannot be used as a value at $(c.line):$(c.column)");
+                if (c.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(c.callee) expects 1 argument(s), got $(c.args.length) at $(c.line):$(c.column)");
+                string s0n = "";
+                var s0t = expr_type_full (c.args[0], out s0n);
+                if (!type_compatible (ValaType.ARRAY, "int", s0t, s0n))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of '$(c.callee)' expects int[], got $(type_label (s0t, s0n)) at $(c.args[0].line):$(c.args[0].column)");
+                return ValaType.VOID;
+            }
             // __planc_host_write_file
             if (want_value)
                 throw new SemanticError.VOID_IN_EXPRESSION (
@@ -5986,21 +6609,37 @@ namespace Planc {
                 if (!type_compatible (ValaType.STRING, "", at, an))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument 1 of 'contains' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
-            } else if (kind == "str_index_of") {
+            } else if (kind == "str_index_of" || kind == "str_last_index_of") {
                 if (mc.args.length != 1 && mc.args.length != 2)
                     throw new SemanticError.WRONG_ARG_COUNT (
-                        @"index_of expects 1 or 2 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                        @"$(mc.method_name) expects 1 or 2 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
                 string an = "";
                 var at = expr_type_full (mc.args[0], out an);
                 if (!type_compatible (ValaType.STRING, "", at, an))
                     throw new SemanticError.TYPE_MISMATCH (
-                        @"argument 1 of 'index_of' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                        @"argument 1 of '$(mc.method_name)' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
                 if (mc.args.length == 2) {
                     string sn2 = "";
                     var st2 = expr_type_full (mc.args[1], out sn2);
                     if (!is_int_like (st2))
                         throw new SemanticError.TYPE_MISMATCH (
-                            @"argument 2 of 'index_of' expects int, got $(type_label (st2, sn2)) at $(mc.args[1].line):$(mc.args[1].column)");
+                            @"argument 2 of '$(mc.method_name)' expects int, got $(type_label (st2, sn2)) at $(mc.args[1].line):$(mc.args[1].column)");
+                }
+            } else if (kind == "str_index_of_char" || kind == "str_last_index_of_char") {
+                if (mc.args.length != 1 && mc.args.length != 2)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(mc.method_name) expects 1 or 2 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!is_int_like (at))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of '$(mc.method_name)' expects char/int, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                if (mc.args.length == 2) {
+                    string sn2 = "";
+                    var st2 = expr_type_full (mc.args[1], out sn2);
+                    if (!is_int_like (st2))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument 2 of '$(mc.method_name)' expects int, got $(type_label (st2, sn2)) at $(mc.args[1].line):$(mc.args[1].column)");
                 }
             } else if (kind == "str_char_count" || kind == "str_validate") {
                 if (mc.args.length != 0)
@@ -6238,6 +6877,12 @@ namespace Planc {
                     expr_type (sz.operand);
                 return ValaType.INT;
             }
+            if (e is VaArgExpr) {
+                var va = (VaArgExpr) e;
+                expr_type (va.target);
+                tname = va.arg_type_name;
+                return va.arg_type;
+            }
             if (e is TemplateExpr) {
                 var t = (TemplateExpr) e;
                 foreach (var part in t.parts) {
@@ -6272,6 +6917,10 @@ namespace Planc {
             }
             if (e is ArrayLiteralExpr) {
                 var arr = (ArrayLiteralExpr) e;
+                if (arr.is_varargs_pack) {
+                    tname = "uint64";
+                    return ValaType.ARRAY;
+                }
                 if (arr.elem_type == ValaType.INT
                     && arr.elem_type_name != "" && arr.elem_type_name != "int"
                     && is_int_type_name_cg (arr.elem_type_name)) {
@@ -6422,6 +7071,16 @@ namespace Planc {
                             @"cannot cast $(type_label (ot, ot_name)) to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
                     tname = tc.target_type_name;
                     return tc.target_type;
+                }
+                if (tc.op == "cast" && tc.target_type == ValaType.STRING) {
+                    bool ok = (ot == ValaType.STRING)
+                        || (ot == ValaType.NULL && is_nullable_type (tc.target_type, tc.target_type_name))
+                        || (ot == ValaType.ARRAY && (ot_name == "uint8" || ot_name == "int8" || ot_name == "char"));
+                    if (!ok)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"cannot cast $(type_label (ot, ot_name)) to '$(tc.target_type_name)' at $(tc.line):$(tc.column)");
+                    tname = tc.target_type_name;
+                    return ValaType.STRING;
                 }
                 if (tc.target_type == ValaType.ERROR) {
                     if (ot != ValaType.ERROR && ot != ValaType.NULL)
@@ -6584,7 +7243,17 @@ namespace Planc {
                     throw new SemanticError.UNKNOWN_MEMBER (
                         @"Error has no member '$(m.member)' at $(m.line):$(m.column)");
                 }
-                if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
+                if (tt == ValaType.STRING) {
+                    if (m.member == "length")
+                        return ValaType.INT;
+                    if (m.member == "data") {
+                        tname = "uint8";
+                        return ValaType.ARRAY;
+                    }
+                    throw new SemanticError.UNKNOWN_MEMBER (
+                        @"$(type_label (tt, tt_name)) has no member '$(m.member)' at $(m.line):$(m.column)");
+                }
+                if (tt == ValaType.ARRAY) {
                     if (m.member != "length")
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"$(type_label (tt, tt_name)) has no member '$(m.member)' at $(m.line):$(m.column)");
@@ -6962,6 +7631,9 @@ namespace Planc {
                     return check_host_intrinsic (ce, true);
                 unowned DelegateDecl? dd = resolve_delegate_callee (ce.callee);
                 if (dd != null) {
+                    var dslot = lookup (ce.callee);
+                    if (dslot >= 0)
+                        local_used[dslot] = true;
                     if (dd.return_type == ValaType.VOID)
                         throw new SemanticError.VOID_IN_EXPRESSION (
                             @"void delegate '$(ce.callee)' cannot be used as a value at $(ce.line):$(ce.column)");
@@ -7631,6 +8303,18 @@ namespace Planc {
         }
 
         private void gen_statement (Statement s) throws SemanticError {
+            if (Diagnostics.is_full ())
+                return;
+            try {
+                gen_statement_inner (s);
+            } catch (SemanticError e) {
+                if (!Diagnostics.recover)
+                    throw new SemanticError.TYPE_MISMATCH (e.message);
+                Diagnostics.add (current_file, s.line, s.column, "semantic error", e.message);
+            }
+        }
+
+        private void gen_statement_inner (Statement s) throws SemanticError {
             if (s.line > 0) {
                 int cur_off = emitter.here ();
                 bool add_line = (debug_lines.length == 0);
@@ -8380,8 +9064,17 @@ namespace Planc {
                 cleanup_expr_temps (e);
             } else if (s is BlockStatement) {
                 var saved = locals.length;
-                foreach (var inner in ((BlockStatement) s).statements)
-                    gen_statement (inner);
+                foreach (var inner in ((BlockStatement) s).statements) {
+                    try {
+                        gen_statement (inner);
+                    } catch (SemanticError e) {
+                        if (!Diagnostics.recover)
+                            throw new SemanticError.TYPE_MISMATCH (e.message);
+                        Diagnostics.add (current_file, inner.line, inner.column, "semantic error", e.message);
+                        if (Diagnostics.is_full ())
+                            break;
+                    }
+                }
                 unref_locals_from (saved);
                 deactivate_from (saved);
             } else if (s is IfStatement) {
@@ -9051,6 +9744,19 @@ namespace Planc {
                     st_name = on;
                 }
                 emitter.mov_rax_imm (sizeof_bytes (st, st_name));
+            } else if (e is VaArgExpr) {
+                var va = (VaArgExpr) e;
+                gen_expr (va.target);
+                if (null_check) {
+                    emitter.test_rax_rax ();
+                    emitter.branch (BranchKind.JE, null_panic_label);
+                    need_null_panic = true;
+                }
+                emitter.emit_va_arg ();
+                if (is_fp_type (va.arg_type))
+                    emitter.movq_xmm_rax (0);
+                else if (va.arg_type == ValaType.INT)
+                    emit_int_narrow (va.arg_type_name);
             } else if (e is ClassNewExpr) {
                 var cn = (ClassNewExpr) e;
                 if (cn.class_name == "Mutex") {
@@ -9095,8 +9801,10 @@ namespace Planc {
                     emitter.store_rax_8_rcx ();
                 }
                 emitter.store_local (cn.ref_temp_slot);
-                emitter.mov_rdi_rax ();
-                call_aligned (@"__planc_init_$(cd.name)");
+                if (!cd.has_trivial_init) {
+                    emitter.mov_rdi_rax ();
+                    call_aligned (@"__planc_init_$(cd.name)");
+                }
                 if (program_uses_heap && cn.ref_temp_slot >= 0)
                     add_live_ref_slot (cn.ref_temp_slot);
                 if (ctor_fn != null)
@@ -9175,6 +9883,28 @@ namespace Planc {
                     gen_expr (tc.operand);
                     var src_t = (ot == ValaType.ENUM || ot == ValaType.BOOL) ? ValaType.INT : ot;
                     emit_fp_coerce (src_t, tc.target_type);
+                    return;
+                }
+                if (tc.op == "cast" && tc.target_type == ValaType.STRING) {
+                    string folded_s = "";
+                    if (try_fold_string_cast (tc, out folded_s)) {
+                        var offset = emitter.add_string (folded_s);
+                        emitter.lea_rax_rip (offset);
+                        return;
+                    }
+                    string ot_name = "";
+                    var ot = expr_type_full (tc.operand, out ot_name);
+                    gen_expr (tc.operand);
+                    if (ot == ValaType.ARRAY) {
+                        emitter.mov_rdi_rax ();
+                        call_aligned ("__planc_bytes_cast_str");
+                        if (program_uses_heap && tc.ref_temp_slot >= 0) {
+                            emitter.store_local (tc.ref_temp_slot);
+                            add_live_ref_slot (tc.ref_temp_slot);
+                        }
+                    } else if (!is_nullable_type (tc.target_type, tc.target_type_name)) {
+                        emit_null_check_if_nullable (ot, ot_name);
+                    }
                     return;
                 }
                 if (tc.target_type == ValaType.ERROR) {
@@ -9408,10 +10138,14 @@ namespace Planc {
                 add_live_ref_slot (arr.ref_temp_slot);
                 for (int i = 0; i < n; i++) {
                     gen_expr (arr.elements[i]);
-                    if (elem_ref)
+                    if (arr.is_varargs_pack) {
+                        if (is_fp_type (expr_type (arr.elements[i])))
+                            emitter.movq_rax_xmm (0);
+                    } else if (elem_ref) {
                         consume_ref_expr (arr.elements[i]);
-                    else if (!byte_arr && arr.elem_type == ValaType.INT)
+                    } else if (!byte_arr && arr.elem_type == ValaType.INT) {
                         emit_int_narrow (arr.elem_type_name);
+                    }
                     emitter.mov_rcx_rax ();
                     emitter.load_local (arr.ref_temp_slot);
                     emitter.push_rax ();
@@ -9437,10 +10171,13 @@ namespace Planc {
                         }
                         unowned var cd_const = program.find_const (vr.name, m.member);
                         if (cd_const != null) {
-                            if (cd_const.const_type == ValaType.STRING)
+                            if (cd_const.const_type == ValaType.STRING) {
                                 emitter.lea_rax_rip (emitter.add_string (cd_const.str_value));
-                            else
+                            } else {
                                 emitter.mov_rax_imm (cd_const.int_value);
+                                if (is_fp_type (cd_const.const_type))
+                                    emitter.movq_xmm_rax (0);
+                            }
                             return;
                         }
                         unowned var err_d = program.find_error_domain (vr.name);
@@ -9515,6 +10252,11 @@ namespace Planc {
                     else
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"Error has no member '$(m.member)' at $(m.line):$(m.column)");
+                    return;
+                }
+                if (tt == ValaType.STRING && m.member == "data") {
+                    gen_expr (m.target);
+                    emit_null_check_if_nullable (tt, tt_name);
                     return;
                 }
                 if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
@@ -10739,7 +11481,7 @@ namespace Planc {
                 call_aligned ("__planc_utf8_get_char");
                 return;
             }
-            if (kind == "str_index_of" || kind == "str_contains") {
+            if (kind == "str_index_of" || kind == "str_contains" || kind == "str_last_index_of") {
                 if (mc.target == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'$(mc.method_name)()' requires a string receiver at $(mc.line):$(mc.column)");
@@ -10766,13 +11508,53 @@ namespace Planc {
                 }
                 emitter.pop_reg (Reg.RDI);
                 push_depth--;
-                need_str_index_of = true;
-                call_aligned ("__planc_str_index_of");
+                if (kind == "str_last_index_of") {
+                    need_str_last_index_of = true;
+                    call_aligned ("__planc_str_last_index_of");
+                } else {
+                    need_str_index_of = true;
+                    call_aligned ("__planc_str_index_of");
+                }
                 if (kind == "str_contains") {
                     // rax >= 0 -> 1 else 0
                     emitter.code.u8 (0x48); emitter.code.u8 (0x85); emitter.code.u8 (0xC0); // test rax, rax
                     emitter.code.u8 (0x0F); emitter.code.u8 (0x99); emitter.code.u8 (0xC0); // setns al
                     emitter.code.u8 (0x0F); emitter.code.u8 (0xB6); emitter.code.u8 (0xC0); // movzx eax, al
+                }
+                return;
+            }
+            if (kind == "str_index_of_char" || kind == "str_last_index_of_char") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'$(mc.method_name)()' requires a string receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.STRING, tn);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (mc.args[0]);
+                if (mc.args.length == 2) {
+                    emitter.push_rax ();
+                    push_depth++;
+                    gen_expr (mc.args[1]);
+                    emitter.mov_rdx_rax ();
+                    emitter.pop_reg (Reg.RSI);
+                    push_depth--;
+                } else {
+                    emitter.mov_rsi_rax ();
+                    emitter.xor_edx ();
+                }
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                if (kind == "str_last_index_of_char") {
+                    need_str_last_index_of = true;
+                    need_str_last_index_of_char = true;
+                    call_aligned ("__planc_str_last_index_of_char");
+                } else {
+                    need_str_index_of = true;
+                    need_str_index_of_char = true;
+                    call_aligned ("__planc_str_index_of_char");
                 }
                 return;
             }
@@ -11478,6 +12260,44 @@ namespace Planc {
                 emit_post_call_error_check_flag (true);
                 if (program_uses_heap && e.ref_temp_slot >= 0)
                     emitter.store_local (e.ref_temp_slot);
+                return;
+            }
+            if (e.callee == "__planc_host_cpu_count") {
+                need_cpu_count = true;
+                call_aligned ("__planc_cpu_count");
+                return;
+            }
+            if (e.callee == "__planc_host_thread_spawn") {
+                gen_expr (e.args[0]);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (e.args[1]);
+                emitter.mov_rsi_rax ();
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                need_thread_spawn = true;
+                call_aligned ("__planc_thread_spawn");
+                return;
+            }
+            if (e.callee == "__planc_host_thread_join") {
+                gen_expr (e.args[0]);
+                emitter.mov_rdi_rax ();
+                need_thread_join = true;
+                call_aligned ("__planc_thread_join");
+                return;
+            }
+            if (e.callee == "__planc_host_spin_lock") {
+                gen_expr (e.args[0]);
+                emitter.mov_rdi_rax ();
+                need_spin_lock = true;
+                call_aligned ("__planc_spin_lock");
+                return;
+            }
+            if (e.callee == "__planc_host_spin_unlock") {
+                gen_expr (e.args[0]);
+                emitter.mov_rdi_rax ();
+                need_spin_unlock = true;
+                call_aligned ("__planc_spin_unlock");
                 return;
             }
             // __planc_host_write_file

@@ -92,8 +92,8 @@ namespace Planet.Kernel {
         public const int FD_TABLE_SIZE = 0x200;
         public const int KLOG_RING = 0x108000;     // 128 records x 64 bytes
         public const int KLOG_RING_SIZE = 0x2000;
-        public const int PMM_BITMAP = 0x110000;    // 64 MiB / 4 KiB frames
-        public const int PMM_BITMAP_SIZE = 0x800;
+        public const int PMM_BITMAP = 0x110000;    // 64 MiB / 4 KiB frames: Fibonacci buddy meta + tables
+        public const int PMM_BITMAP_SIZE = 0x9000;
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
         public const int RAMFS_TABLE_SIZE = 0x2000;
         public const int SCHED_CUR = 0x123FF0;     // current tid

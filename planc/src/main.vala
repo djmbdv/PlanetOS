@@ -11,7 +11,44 @@
 
 namespace Planc {
 
-    private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks]";
+    private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--error-limit N] [--no-error-recovery]";
+
+    private static int parse_uint (string s) {
+        int v = 0;
+        for (int i = 0; i < s.length; i++) {
+            if (s[i] < '0' || s[i] > '9')
+                return v;
+            v = v * 10 + (int) (s[i] - '0');
+        }
+        return v;
+    }
+
+    private static GenericArray<string> mt_src_paths;
+    private static GenericArray<string> mt_defines;
+    private static string[] mt_src_out;
+    private static string[] mt_src_err;
+    private static int mt_src_nw = 1;
+
+    private static void mt_preproc_worker (int wid) {
+        int n = mt_src_paths.length;
+        for (int i = wid; i < n; i += mt_src_nw) {
+            string p = mt_src_paths[i];
+            string src;
+            try {
+                src = Host.read_file (p);
+            } catch (FileError e) {
+                mt_src_err[i] = @"planc: cannot read $p: $(e.message)";
+                continue;
+            }
+            try {
+                src = Preprocessor.run (src, mt_defines);
+            } catch (LexError e) {
+                mt_src_err[i] = @"planc: $p: lexical error: $(e.message)";
+                continue;
+            }
+            mt_src_out[i] = src;
+        }
+    }
 
     public static int main (string[] args) {
         var source_paths = new GenericArray<string> ();
@@ -28,6 +65,8 @@ namespace Planc {
         var check_leaks = false;
         var check_overflow = false;
         var freestanding = false;
+        var error_recovery = true;
+        var error_limit = 200;
         var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
         int emit_format = 0; // 0 = elf, 1 = plan, 2 = dlib
@@ -73,6 +112,16 @@ namespace Planc {
                 opt_level = 1;
             } else if (a == "-O2") {
                 opt_level = 2;
+            } else if (a == "--error-limit") {
+                if (i + 1 >= args.length) {
+                    Host.eprintln (USAGE);
+                    return 2;
+                }
+                error_limit = parse_uint (args[++i]);
+            } else if (a.has_prefix ("--error-limit=")) {
+                error_limit = parse_uint (a.substring (14));
+            } else if (a == "--no-error-recovery") {
+                error_recovery = false;
             } else if (a == "--check-leaks") {
                 check_leaks = true;
             } else if (a == "--freestanding") {
@@ -134,22 +183,52 @@ namespace Planc {
         }
 
         var sources = new GenericArray<string> ();
-        for (int i = 0; i < source_paths.length; i++) {
-            string src;
-            try {
-                src = Host.read_file (source_paths[i]);
-            } catch (FileError e) {
-                Host.eprintln (@"planc: cannot read $(source_paths[i]): $(e.message)");
-                return 1;
+        int ncpus = Host.cpu_count ();
+        if (source_paths.length >= 4 && ncpus > 1) {
+            int nw = (ncpus < source_paths.length) ? ncpus : source_paths.length;
+            if (nw > 16) nw = 16;
+            mt_src_paths = source_paths;
+            mt_defines = defines;
+            mt_src_out = new string[source_paths.length];
+            mt_src_err = new string[source_paths.length];
+            for (int i = 0; i < source_paths.length; i++) {
+                mt_src_out[i] = "";
+                mt_src_err[i] = "";
             }
-            try {
-                src = Preprocessor.run (src, defines);
-            } catch (LexError e) {
-                Host.eprintln (@"planc: $(source_paths[i]): lexical error: $(e.message)");
-                return 1;
+            mt_src_nw = nw;
+            int64[] handles = new int64[nw];
+            for (int wi = 1; wi < nw; wi++)
+                handles[wi] = Host.thread_spawn (mt_preproc_worker, wi);
+            mt_preproc_worker (0);
+            for (int wi = 1; wi < nw; wi++)
+                Host.thread_join (handles[wi]);
+            for (int i = 0; i < source_paths.length; i++) {
+                if (mt_src_err[i] != "") {
+                    Host.eprintln (mt_src_err[i]);
+                    return 1;
+                }
+                sources.add (mt_src_out[i]);
             }
-            sources.add (src);
+        } else {
+            for (int i = 0; i < source_paths.length; i++) {
+                string src;
+                try {
+                    src = Host.read_file (source_paths[i]);
+                } catch (FileError e) {
+                    Host.eprintln (@"planc: cannot read $(source_paths[i]): $(e.message)");
+                    return 1;
+                }
+                try {
+                    src = Preprocessor.run (src, defines);
+                } catch (LexError e) {
+                    Host.eprintln (@"planc: $(source_paths[i]): lexical error: $(e.message)");
+                    return 1;
+                }
+                sources.add (src);
+            }
         }
+
+        Diagnostics.init (error_recovery, error_limit);
 
         var program = new Program ();
         string current_parse_file = "";
@@ -169,6 +248,7 @@ namespace Planc {
             }
             for (int i = 0; i < sources.length; i++) {
                 current_parse_file = source_paths[i];
+                Diagnostics.current_file = source_paths[i];
                 int pf = program.functions.length;
                 int pg = program.globals.length;
                 int pco = program.consts.length;
@@ -176,6 +256,7 @@ namespace Planc {
                 int ps = program.structs.length;
                 int pc = program.classes.length;
                 var parser = new Parser.with_program (sources[i], program);
+                parser.recover = error_recovery;
                 parser.parse_unit ();
                 for (int k = pf; k < program.functions.length; k++)
                     program.functions[k].file = source_paths[i];
@@ -217,7 +298,7 @@ namespace Planc {
                 }
             }
             program.monomorphize_all ();
-            if (program.find ("main") == null) {
+            if (program.find ("main") == null && Diagnostics.count () == 0) {
                 if (emit_format == 2) {
                     var stub_p = new Parser.with_program ("int main () { return 0; }", program);
                     stub_p.parse_unit ();
@@ -226,14 +307,15 @@ namespace Planc {
                 }
             }
         } catch (LexError e) {
-            string fpref = (current_parse_file != "") ? @"$current_parse_file: " : "";
-            Host.eprintln (@"planc: $(fpref)lexical error: $(e.message)");
-            return 1;
+            Diagnostics.add (current_parse_file, Diagnostics.pos_line (e.message),
+                             Diagnostics.pos_column (e.message), "lexical error", e.message);
         } catch (ParseError e) {
-            string fpref = (current_parse_file != "") ? @"$current_parse_file: " : "";
-            Host.eprintln (@"planc: $(fpref)syntax error: $(e.message)");
-            return 1;
+            Diagnostics.add (current_parse_file, Diagnostics.pos_line (e.message),
+                             Diagnostics.pos_column (e.message), "syntax error", e.message);
         }
+
+        if (Diagnostics.count () > 0)
+            return Diagnostics.report ();
 
         if (opt_level > 0) {
             Optimizer.optimize (program, opt_level);
@@ -269,10 +351,12 @@ namespace Planc {
         try {
             codegen.generate (program);
         } catch (SemanticError e) {
-            string fpref = (codegen.current_file != "") ? @"$(codegen.current_file): " : "";
-            Host.eprintln (@"planc: $(fpref)semantic error: $(e.message)");
-            return 1;
+            Diagnostics.add (codegen.current_file, Diagnostics.pos_line (e.message),
+                             Diagnostics.pos_column (e.message), "semantic error", e.message);
         }
+
+        if (Diagnostics.count () > 0)
+            return Diagnostics.report ();
         var text = codegen.emitter.code.to_array ();
         var rodata = codegen.emitter.data.to_array ();
         var data = codegen.emitter.init_data.to_array ();

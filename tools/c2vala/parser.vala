@@ -18,6 +18,7 @@ namespace C2Vala {
         private GenericArray<CTok> toks;
         private int pos = 0;
         private GenericArray<TypedefEntry> typedefs = new GenericArray<TypedefEntry> ();
+        private NameIndexMap typedef_map = new NameIndexMap (2048);
         private GenericArray<string> enum_tags = new GenericArray<string> ();
         private GenericArray<string> struct_tags = new GenericArray<string> ();
         private GenericArray<string> union_tags = new GenericArray<string> ();
@@ -39,33 +40,23 @@ namespace C2Vala {
             add_typedef ("int64_t", CType.scalar ("int64"));
             add_typedef ("uint64_t", CType.scalar ("uint64"));
             add_typedef ("bool", CType.scalar ("bool"));
-            add_typedef ("va_list", CType.scalar ("int"));
+            add_typedef ("va_list", CType.scalar ("va_list"));
             add_typedef ("FILE", new CType (CTypeKind.STRUCT, "FILE"));
-            // TODO: temporary POSIX opaque stubs; replace with proper header/target model later
-            add_typedef ("pthread_t", CType.scalar ("uint64"));
-            add_typedef ("pthread_mutex_t", new CType (CTypeKind.STRUCT, "pthread_mutex_t"));
-            add_typedef ("pthread_cond_t", new CType (CTypeKind.STRUCT, "pthread_cond_t"));
-            add_typedef ("pthread_attr_t", new CType (CTypeKind.STRUCT, "pthread_attr_t"));
-            add_typedef ("pthread_once_t", CType.scalar ("int"));
-            add_typedef ("pthread_key_t", CType.scalar ("uint32"));
         }
 
         private void add_typedef (string name, CType ct) {
-            for (int i = 0; i < typedefs.length; i++) {
-                if (typedefs[i].name == name) {
-                    typedefs[i].ctype = ct;
-                    return;
-                }
+            int idx = typedef_map.get_index (name);
+            if (idx >= 0) {
+                typedefs[idx].ctype = ct;
+                return;
             }
+            typedef_map.set_index (name, typedefs.length);
             typedefs.add (new TypedefEntry (name, ct));
         }
 
         private TypedefEntry? find_typedef (string name) {
-            for (int i = 0; i < typedefs.length; i++) {
-                if (typedefs[i].name == name)
-                    return typedefs[i];
-            }
-            return null;
+            int idx = typedef_map.get_index (name);
+            return (idx >= 0) ? typedefs[idx] : null;
         }
 
         private CTok cur () {
@@ -111,9 +102,10 @@ namespace C2Vala {
         private static bool is_type_kw (string s) {
             return s == "void" || s == "char" || s == "short" || s == "int" || s == "long"
                 || s == "float" || s == "double" || s == "signed" || s == "unsigned"
-                || s == "_Bool" || s == "const" || s == "volatile" || s == "restrict"
+                || s == "_Bool" || s == "_Atomic" || s == "const" || s == "volatile" || s == "restrict"
                 || s == "struct" || s == "union" || s == "enum"
-                || s == "static" || s == "extern" || s == "inline" || s == "typedef";
+                || s == "static" || s == "extern" || s == "inline" || s == "typedef"
+                || s == "register" || s == "auto";
         }
 
         private bool is_type_start (int offset = 0) {
@@ -220,6 +212,12 @@ namespace C2Vala {
                 parse_declarator (ref decl_t, out name, out is_func, params, out is_varargs);
 
                 if (is_typedef) {
+                    if (is_func) {
+                        var fp = new CType (CTypeKind.FUNC_PTR, name);
+                        fp.fp_ret = decl_t;
+                        fp.fp_params = params;
+                        decl_t = fp;
+                    }
                     if (decl_t.kind == CTypeKind.ARRAY)
                         refuse (start_tok, "array typedefs are not supported");
                     if (decl_t.kind == CTypeKind.FUNC_PTR && name != "")
@@ -271,7 +269,14 @@ namespace C2Vala {
                 }
 
                 if (is_func) {
-                    // Function prototype: skip
+                    // Function prototype: remember the signature so calls to
+                    // functions defined in other translation units resolve.
+                    if (name != "") {
+                        var pf = new FuncDef (name, decl_t, start_tok.file, start_tok.line);
+                        pf.params = params;
+                        pf.is_varargs = is_varargs;
+                        tu.protos.add (pf);
+                    }
                     if (at (TokKind.COMMA)) {
                         advance ();
                         continue;
@@ -323,6 +328,18 @@ namespace C2Vala {
                 if (!at (TokKind.IDENT)) break;
                 string kw = cur ().text;
                 if (kw == "const") { is_const = true; advance (); continue; }
+                if (kw == "_Atomic") {
+                    advance ();
+                    if (at (TokKind.LPAREN)) {
+                        advance ();
+                        var ct = parse_type_name ();
+                        expect (TokKind.RPAREN, "')'");
+                        consume_trailing_qualifiers (ref is_const);
+                        if (is_const) ct.is_const = true;
+                        return ct;
+                    }
+                    continue;
+                }
                 if (kw == "volatile" || kw == "restrict" || kw == "__restrict" || kw == "__restrict__"
                     || kw == "static" || kw == "extern" || kw == "inline" || kw == "__inline" || kw == "__inline__"
                     || kw == "register" || kw == "auto") {
@@ -557,6 +574,44 @@ namespace C2Vala {
             }
         }
 
+        private void parse_param_list (GenericArray<ParamDef> out_params, out bool is_varargs) throws RefuseError {
+            is_varargs = false;
+            advance (); // '('
+            if (!at (TokKind.RPAREN)) {
+                if (at_ident ("void") && peek (1).kind == TokKind.RPAREN) {
+                    advance ();
+                } else {
+                    int p_idx = 0;
+                    while (true) {
+                        if (at (TokKind.ELLIPSIS)) {
+                            advance ();
+                            is_varargs = true;
+                            break;
+                        }
+                        var ptok = cur ();
+                        var pbase = parse_base_type (null);
+                        string pname = "";
+                        bool p_fn = false;
+                        bool p_va = false;
+                        var sub_p = new GenericArray<ParamDef> ();
+                        parse_declarator (ref pbase, out pname, out p_fn, sub_p, out p_va);
+                        if (pbase.kind == CTypeKind.ARRAY && pbase.inner != null)
+                            pbase = CType.make_ptr (pbase.inner);
+                        if (pname == "")
+                            pname = @"p$p_idx";
+                        p_idx++;
+                        out_params.add (new ParamDef (pname, pbase, ptok.file, ptok.line));
+                        if (at (TokKind.COMMA)) {
+                            advance ();
+                            continue;
+                        }
+                        break;
+                    }
+                }
+            }
+            expect (TokKind.RPAREN, "')'");
+        }
+
         private void parse_declarator (ref CType ctype, out string name, out bool is_func,
                                        GenericArray<ParamDef> params, out bool is_varargs) throws RefuseError {
             is_func = false;
@@ -572,64 +627,73 @@ namespace C2Vala {
                         ptr_const = true;
                     advance ();
                 }
-                ctype = CType.make_ptr (ctype, ptr_const);
+                if (ctype.kind == CTypeKind.FUNC_PTR && !ctype.is_func_ptr_decay) {
+                    ctype = ctype.clone_type ();
+                    ctype.is_func_ptr_decay = true;
+                } else {
+                    ctype = CType.make_ptr (ctype, ptr_const);
+                }
             }
             skip_attributes ();
 
-            // Function pointer declarator: (*name)(params)
+            // Function pointer declarator: (*name)(params) or (*(*name)(p1))(p2)
             if (at (TokKind.LPAREN) && peek (1).kind == TokKind.STAR) {
                 advance (); // (
                 advance (); // *
+                while (at (TokKind.STAR))
+                    advance ();
                 while (at_ident ("const") || at_ident ("volatile") || at_ident ("restrict"))
                     advance ();
-                if (at (TokKind.IDENT))
+                CType? inner_fp = null;
+                if (at (TokKind.LPAREN) && peek (1).kind == TokKind.STAR) {
+                    CType dummy = ctype;
+                    bool dummy_fn = false;
+                    bool dummy_va = false;
+                    var dummy_p = new GenericArray<ParamDef> ();
+                    parse_declarator (ref dummy, out name, out dummy_fn, dummy_p, out dummy_va);
+                    inner_fp = dummy;
+                } else if (at (TokKind.IDENT)) {
                     name = advance ().text;
+                    if (at (TokKind.LPAREN)) {
+                        is_func = true;
+                        parse_param_list (params, out is_varargs);
+                    }
+                }
+                CExpr? fp_arr_len = null;
+                bool is_fp_arr = false;
+                while (at (TokKind.LBRACKET)) {
+                    is_fp_arr = true;
+                    advance ();
+                    if (!at (TokKind.RBRACKET))
+                        fp_arr_len = parse_assign ();
+                    expect (TokKind.RBRACKET, "']'");
+                }
                 expect (TokKind.RPAREN, "')'");
                 var fp_params = new GenericArray<ParamDef> ();
                 if (at (TokKind.LPAREN)) {
-                    advance ();
-                    if (!at (TokKind.RPAREN)) {
-                        if (at_ident ("void") && peek (1).kind == TokKind.RPAREN) {
-                            advance ();
-                        } else {
-                            int p_idx = 0;
-                            while (true) {
-                                if (at (TokKind.ELLIPSIS)) {
-                                    advance ();
-                                    is_varargs = true;
-                                    break;
-                                }
-                                var ptok = cur ();
-                                var pbase = parse_base_type (null);
-                                string pname = "";
-                                bool p_fn = false;
-                                bool p_va = false;
-                                var sub_p = new GenericArray<ParamDef> ();
-                                parse_declarator (ref pbase, out pname, out p_fn, sub_p, out p_va);
-                                if (pbase.kind == CTypeKind.ARRAY && pbase.inner != null)
-                                    pbase = CType.make_ptr (pbase.inner);
-                                if (pname == "")
-                                    pname = @"p$p_idx";
-                                p_idx++;
-                                fp_params.add (new ParamDef (pname, pbase, ptok.file, ptok.line));
-                                if (at (TokKind.COMMA)) {
-                                    advance ();
-                                    continue;
-                                }
-                                break;
-                            }
-                        }
-                    }
-                    expect (TokKind.RPAREN, "')'");
+                    bool fp_va = false;
+                    parse_param_list (fp_params, out fp_va);
+                    if (!is_func && fp_va) is_varargs = true;
                 }
-                var fp = new CType (CTypeKind.FUNC_PTR, name);
+                var fp = new CType (CTypeKind.FUNC_PTR, is_func ? "" : name);
                 fp.fp_ret = ctype;
                 fp.fp_params = fp_params;
-                ctype = fp;
+                if (inner_fp != null && inner_fp.kind == CTypeKind.FUNC_PTR) {
+                    fp.name = "";
+                    inner_fp.fp_ret = fp;
+                    ctype = inner_fp;
+                } else {
+                    ctype = is_fp_arr ? CType.make_array (fp, fp_arr_len) : fp;
+                }
                 return;
             }
 
-            if (at (TokKind.IDENT)) {
+            // Parenthesized declarator without '*': (name) or (name[N])
+            if (at (TokKind.LPAREN) && peek (1).kind == TokKind.IDENT) {
+                advance (); // (
+                parse_declarator (ref ctype, out name, out is_func, params, out is_varargs);
+                expect (TokKind.RPAREN, "')'");
+            } else if (at (TokKind.IDENT)) {
                 name = advance ().text;
             }
 
@@ -696,6 +760,32 @@ namespace C2Vala {
         }
 
         private void parse_block_item (GenericArray<CStmt> out_stmts) throws RefuseError {
+            if (at_ident ("typedef")) {
+                advance ();
+                var base_t = parse_base_type (null);
+                while (true) {
+                    var dt = base_t.clone_type ();
+                    string name = "";
+                    bool is_fn = false;
+                    bool is_va = false;
+                    var ps = new GenericArray<ParamDef> ();
+                    parse_declarator (ref dt, out name, out is_fn, ps, out is_va);
+                    if (is_fn) {
+                        var fp = new CType (CTypeKind.FUNC_PTR, name);
+                        fp.fp_ret = dt;
+                        fp.fp_params = ps;
+                        dt = fp;
+                    }
+                    if (dt.kind == CTypeKind.FUNC_PTR && name != "")
+                        dt.name = name;
+                    if (name != "")
+                        add_typedef (name, dt);
+                    if (at (TokKind.COMMA)) { advance (); continue; }
+                    break;
+                }
+                expect (TokKind.SEMI, "';'");
+                return;
+            }
             if (is_type_start (0)) {
                 parse_local_decls (out_stmts);
                 return;
@@ -851,6 +941,7 @@ namespace C2Vala {
                 sw.file = t.file;
                 sw.line = t.line;
                 sw.cond = cond;
+                var pre_stmts = new GenericArray<CStmt> ();
                 while (!at (TokKind.RBRACE) && !at (TokKind.EOF)) {
                     if (at_ident ("case")) {
                         var ct = advance ();
@@ -876,11 +967,21 @@ namespace C2Vala {
                             parse_block_item (sc.stmts);
                         }
                         sw.cases.add (sc);
+                    } else if (sw.cases.length == 0) {
+                        parse_block_item (pre_stmts);
                     } else {
                         refuse (cur (), "statement directly inside a switch");
                     }
                 }
                 expect (TokKind.RBRACE, "'}'");
+                if (pre_stmts.length > 0) {
+                    var blk = new StmtBlock ();
+                    blk.file = sw.file; blk.line = sw.line;
+                    for (int pi = 0; pi < pre_stmts.length; pi++)
+                        blk.stmts.add (pre_stmts[pi]);
+                    blk.stmts.add (sw);
+                    return blk;
+                }
                 return sw;
             }
 
@@ -913,8 +1014,34 @@ namespace C2Vala {
                 return s;
             }
 
+            if (at_ident ("case")) {
+                advance ();
+                parse_ternary ();
+                expect (TokKind.COLON, "':'");
+                if (at (TokKind.RBRACE))
+                    return new StmtBlock ();
+                return parse_stmt ();
+            }
+            if (at_ident ("default") && peek (1).kind == TokKind.COLON) {
+                advance ();
+                advance ();
+                if (at (TokKind.RBRACE))
+                    return new StmtBlock ();
+                return parse_stmt ();
+            }
+
             if (at_ident ("goto")) {
                 advance ();
+                if (at (TokKind.STAR)) {
+                    advance ();
+                    parse_expr ();
+                    expect (TokKind.SEMI, "';'");
+                    var s = new StmtGoto ();
+                    s.file = t.file;
+                    s.line = t.line;
+                    s.label = "";
+                    return s;
+                }
                 var lt = expect (TokKind.IDENT, "label name");
                 expect (TokKind.SEMI, "';'");
                 var s = new StmtGoto ();
@@ -935,6 +1062,26 @@ namespace C2Vala {
 
         // ---- Expressions ----
 
+        private static void add_init_item (ExprInitList il, string fname, CExpr? idx_expr, CExpr val) {
+            if (fname != "" && idx_expr == null && val is ExprInitList) {
+                for (int i = 0; i < il.field_names.length; i++) {
+                    if (il.field_names[i] == fname && il.index_exprs[i] == null && il.items[i] is ExprInitList) {
+                        var existing = (ExprInitList) il.items[i];
+                        var sub = (ExprInitList) val;
+                        for (int j = 0; j < sub.items.length; j++) {
+                            string sf = (j < sub.field_names.length) ? sub.field_names[j] : "";
+                            CExpr? si = (j < sub.index_exprs.length) ? sub.index_exprs[j] : null;
+                            add_init_item (existing, sf, si, sub.items[j]);
+                        }
+                        return;
+                    }
+                }
+            }
+            il.field_names.add (fname);
+            il.index_exprs.add (idx_expr);
+            il.items.add (val);
+        }
+
         private CExpr parse_expr_or_init () throws RefuseError {
             if (at (TokKind.LBRACE)) {
                 var t = advance ();
@@ -942,14 +1089,42 @@ namespace C2Vala {
                 il.file = t.file;
                 il.line = t.line;
                 while (!at (TokKind.RBRACE) && !at (TokKind.EOF)) {
-                    string fname = "";
-                    if (at (TokKind.DOT) && peek (1).kind == TokKind.IDENT) {
-                        advance (); // '.'
-                        fname = advance ().text;
-                        expect (TokKind.ASSIGN, "'='");
+                    var desig_fields = new GenericArray<string> ();
+                    var desig_indices = new GenericArray<CExpr?> ();
+                    while (at (TokKind.DOT) || at (TokKind.LBRACKET)) {
+                        if (at (TokKind.DOT)) {
+                            advance (); // '.'
+                            var ft = expect (TokKind.IDENT, "field name");
+                            desig_fields.add (ft.text);
+                            desig_indices.add (null);
+                        } else {
+                            advance (); // '['
+                            var idx_e = parse_ternary ();
+                            if (at (TokKind.ELLIPSIS)) {
+                                advance ();
+                                parse_ternary ();
+                            }
+                            expect (TokKind.RBRACKET, "']'");
+                            desig_fields.add ("");
+                            desig_indices.add (idx_e);
+                        }
                     }
-                    il.field_names.add (fname);
-                    il.items.add (parse_expr_or_init ());
+                    if (desig_fields.length > 0)
+                        expect (TokKind.ASSIGN, "'='");
+                    CExpr val = parse_expr_or_init ();
+                    if (desig_fields.length == 0) {
+                        add_init_item (il, "", null, val);
+                    } else {
+                        CExpr cur_val = val;
+                        for (int di = desig_fields.length - 1; di >= 1; di--) {
+                            var sub = new ExprInitList ();
+                            sub.file = val.file;
+                            sub.line = val.line;
+                            add_init_item (sub, desig_fields[di], desig_indices[di], cur_val);
+                            cur_val = sub;
+                        }
+                        add_init_item (il, desig_fields[0], desig_indices[0], cur_val);
+                    }
                     if (at (TokKind.COMMA))
                         advance ();
                     else
@@ -1181,6 +1356,14 @@ namespace C2Vala {
                 }
                 base_t = CType.make_ptr (base_t, pc);
             }
+            if (at (TokKind.LPAREN) && peek (1).kind == TokKind.STAR) {
+                string dummy_name;
+                bool dummy_fn;
+                bool dummy_va;
+                var dummy_p = new GenericArray<ParamDef> ();
+                parse_declarator (ref base_t, out dummy_name, out dummy_fn, dummy_p, out dummy_va);
+                return base_t;
+            }
             while (at (TokKind.LBRACKET)) {
                 advance ();
                 CExpr? len_e = null;
@@ -1209,6 +1392,19 @@ namespace C2Vala {
                 se.file = t.file; se.line = t.line;
                 se.expr = parse_unary ();
                 return se;
+            }
+            if (at (TokKind.ANDAND)) {
+                advance ();
+                var lt = expect (TokKind.IDENT, "label name");
+                var u = new ExprUnary ();
+                u.file = t.file; u.line = t.line;
+                u.op = "&&";
+                var id = new ExprIdent ();
+                id.file = lt.file; id.line = lt.line;
+                id.name = lt.text;
+                u.operand = id;
+                u.is_post = false;
+                return u;
             }
             if (at (TokKind.PLUSPLUS) || at (TokKind.MINUSMINUS) || at (TokKind.AMP)
                 || at (TokKind.STAR) || at (TokKind.PLUS) || at (TokKind.MINUS)
@@ -1303,6 +1499,18 @@ namespace C2Vala {
                 var e = new ExprStr ();
                 e.file = t.file; e.line = t.line; e.raw = t.text;
                 return e;
+            }
+            if (t.kind == TokKind.IDENT && t.text == "va_arg" && peek (1).kind == TokKind.LPAREN) {
+                advance (); // va_arg
+                advance (); // '('
+                var ap = parse_assign ();
+                expect (TokKind.COMMA, "','");
+                var vt = parse_type_name ();
+                expect (TokKind.RPAREN, "')'");
+                var va = new ExprVaArg ();
+                va.file = t.file; va.line = t.line;
+                va.ap = ap; va.target_type = vt;
+                return va;
             }
             if (t.kind == TokKind.IDENT) {
                 advance ();

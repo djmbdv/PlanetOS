@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/language-100%25%20Vala-6366f1?style=flat-square" alt="100% Vala">
   <img src="https://img.shields.io/badge/toolchain-self--hosted%20planc-8b5cf6?style=flat-square" alt="Self-hosted planc">
   <img src="https://img.shields.io/badge/C%20%2F%20libc-none-10b981?style=flat-square" alt="Zero C / Zero libc">
-  <img src="https://img.shields.io/badge/tests-185%2F185%20passing-22c55e?style=flat-square" alt="185/185 passing">
+  <img src="https://img.shields.io/badge/planc%20tests-226%2F228%20passing-22c55e?style=flat-square" alt="226/228 passing">
 </p>
 
 # PlanetOS
@@ -28,10 +28,12 @@ per-process `CR3` isolation, per-process framebuffer ownership (`fb_owner_cr3`)
 and per-TCB stdio, preemptive `IRQ0` scheduling with non-blocking `wait_nb`/`kill`,
 ATA LBA48 + XFS + RAMFS, PS/2 input, double-buffered BGA + VirtIO-GPU PCI, a
 modular desktop compositor (`user/compositor/`), the `pcm4` file manager with
-`.desktop` manifest support, and pure-Vala `GLib` (`KeyFile`, `MainLoop`),
-`Gee`, `Gio` (`ListStore`, `SimpleAction`, `AppInfo`), `Cairo`, `Pango`,
-`libschrift` TrueType, and `GTK` widgets styled with an elementary OS-inspired
-Granite light palette.
+`.desktop` manifest support, and pure-Vala `GLib` (`core`, `Math`, `Process`,
+`KeyFile`, `MainLoop`, ReDoS-safe `Regex`), `Gee` (`gee-0.8` interfaces and
+generic delegates, Robin Hood hashing, Introsort), `Gio` (`File`, `FileInfo`,
+`FileEnumerator`, streams, `ListStore`, `SimpleAction`, `AppInfo`, `Application`),
+`Cairo`, `Pango`, `libschrift` TrueType, and `GTK` widgets styled with an
+elementary OS-inspired Granite light palette.
 
 ---
 
@@ -159,6 +161,7 @@ problems** and **creates six**:
 | [docs/planc/slice-48-virtio-gpu-phase3.md](docs/planc/slice-48-virtio-gpu-phase3.md) | **Implemented slice 48 (Phase 3)**: fixes the `RESOURCE_CREATE_BLOB` wire order (`blob_id` before `size`) and the Venus capset check (`max_size > 0`); adds `CTX_DETACH_RESOURCE`, `RESOURCE_UNREF`, per-task context/blob ownership and release on reap, a checked blob mapping with unwind, `SYS_GPU_BLOB_DESTROY`, and the `gpu` / `gpu probe` instrument that verifies context create, `SUBMIT_3D` and cleanup under `virtio-gpu-gl-pci` |
 | [docs/planc/slice-49-gpu-res3d-and-svg-cursor.md](docs/planc/slice-49-gpu-res3d-and-svg-cursor.md) | **Implemented slice 49**: classic VirGL 3D resources (`RESOURCE_CREATE_3D` + attach, `SYS_GPU_3D_CREATE`, `resource_destroy` for blobs and 3D), the PMM zero/poison-under-kernel-CR3 fix that the probe exposed, and the real `cursor.svg` in the compositor via `Gsk.Path` (SVG path parser), Cairo polygon fill/`draw_rgba`, and the same BGRA image for the software and VirtIO-GPU cursors |
 | — | **Recent enhancements**: x86-64-v3 SIMD (`AVX2`/`FMA3`/`SSE4.1`) in `mathlib.dlib`, `Cairo`, `Fb`, and `Gsk.Path`; modular `stdlib/gdk/` and `stdlib/gsk/`; PS/2 IntelliMouse scroll wheel (`kernel/mouse.vala` → `Gdk.EventType.SCROLL` → `Gtk`/`Compositor`); draggable `ScrolledWindow`, `Switch`, `Scale`, and `Frame` widgets; dedicated `vte_sh.elf` (`0xB00000`) for compositor VTE; native editors `pluto.elf` (nano-style TUI) and `saturn.elf` (Geany-style GTK IDE) |
+| — | **Stdlib & Compiler hardening**: generic delegates (`CompareDataFunc<G>`, `MapFunc<R, G>`, etc.) and transitive generic inheritance/monomorphization with anti-DoS cap (`MAX_GENERIC_INSTANTIATIONS`) in `planc`; modular `stdlib/glib/` (`Math`, `Process`, memoized ReDoS-safe `Regex`), `stdlib/gee/` (`gee-0.8` `Iterator`/`Iterable`/`Collection`/`List`/`Set`/`Queue`/`Deque`, Robin Hood hashing + backward-shift deletion, Introsort), and `stdlib/gio/` (`OutputStream.write_string`, bitmask flags, `File.replace` backup, `ListStore.splice`); safe `GLib.Process` argument quoting/splitting integrated into `saturn.elf`, `pcm4.elf`, and `Gio.AppInfo` |
 
 ## 5. State of the measurements
 
@@ -195,7 +198,7 @@ the system.
 printf 'int fact(int n) {\n    if (n <= 1) { return 1; }\n    return n * fact(n - 1);\n}\nint main() {\n    var r = fact(5);\n    print(@"fact(5)=$r\n");\n    return r;\n}\n' > /tmp/fact.vala
 ./planc/build/planc /tmp/fact.vala -o /tmp/fact
 /tmp/fact; echo $?     # prints fact(5)=120 and exits 120 under the project ABI
-./planc/tests/run.sh   # 185 cases, 185 pass
+./planc/tests/run.sh   # full compiler & runtime test suite (226/228 cases passing)
 ./planc/bootstrap.sh   # self-hosted fixed point: sha256(planc2) == sha256(planc3)
 ```
 

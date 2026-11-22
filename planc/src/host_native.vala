@@ -2,6 +2,8 @@
 
 namespace Planc {
 
+    public delegate void ThreadEntry (int arg);
+
     public class Host : Object {
 
         public static void eprint (string s) {
@@ -64,6 +66,26 @@ namespace Planc {
 
         public static string getenv (string name) {
             return "";
+        }
+
+        public static int cpu_count () {
+            return __planc_host_cpu_count ();
+        }
+
+        public static int64 thread_spawn (ThreadEntry fn, int arg) {
+            return __planc_host_thread_spawn (fn, arg);
+        }
+
+        public static void thread_join (int64 handle) {
+            __planc_host_thread_join (handle);
+        }
+
+        public static void spin_lock (int[] lock_arr) {
+            __planc_host_spin_lock (lock_arr);
+        }
+
+        public static void spin_unlock (int[] lock_arr) {
+            __planc_host_spin_unlock (lock_arr);
         }
     }
 }

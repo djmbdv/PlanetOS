@@ -91,25 +91,13 @@ namespace Spv {
         public int ia () { return to255 (a); }
 
         private static double dfloor (double x) {
-            int n = (int) x;
-            if ((double) n > x)
-                n = n - 1;
-            return (double) n;
+            return Math.floor (x);
         }
 
-        // Newton iteration: the runtime has no libm, and the shaders only need
-        // a handful of square roots per vertex/block.
         private static double dsqrt (double x) {
             if (x <= 0.0)
                 return 0.0;
-            double g = (x > 1.0) ? x : 1.0;
-            for (int i = 0; i < 40; i++) {
-                double next = 0.5 * (g + x / g);
-                if (next == g)
-                    break;
-                g = next;
-            }
-            return g;
+            return Math.sqrt (x);
         }
 
         private static int to255 (double v) {
@@ -300,6 +288,22 @@ namespace Spv {
                         fvals[res] = dfloor (x);
                     } else if (inst == 10) { // fract
                         fvals[res] = x - dfloor (x);
+                    } else if (inst == 13) { // sin
+                        fvals[res] = Math.sin (x);
+                    } else if (inst == 14) { // cos
+                        fvals[res] = Math.cos (x);
+                    } else if (inst == 15) { // tan
+                        fvals[res] = Math.tan (x);
+                    } else if (inst == 26) { // pow
+                        fvals[res] = Math.pow (x, y);
+                    } else if (inst == 27) { // exp
+                        fvals[res] = Math.exp (x);
+                    } else if (inst == 28) { // log
+                        fvals[res] = Math.log (x);
+                    } else if (inst == 29) { // exp2
+                        fvals[res] = Math.exp2 (x);
+                    } else if (inst == 30) { // log2
+                        fvals[res] = Math.log2 (x);
                     } else if (inst == 31) { // sqrt
                         fvals[res] = dsqrt (x);
                     } else if (inst == 37) { // min

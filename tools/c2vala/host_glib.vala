@@ -15,6 +15,8 @@
 
 namespace Planc {
 
+    public delegate void ThreadEntry (int arg);
+
     public class StrBuilder : Object {
 
         private StringBuilder sb;
@@ -113,11 +115,52 @@ namespace Planc {
             return out_str;
         }
 
+        private static GLib.Mutex g_thr_lock;
+        private static GenericArray<GLib.Thread<void*>> g_threads = new GenericArray<GLib.Thread<void*>> ();
+
         public static string getenv (string name) {
             string? v = Environment.get_variable (name);
             if (v == null)
                 return "";
             return v;
+        }
+
+        public static int cpu_count () {
+            int n = (int) GLib.get_num_processors ();
+            return n > 0 ? n : 1;
+        }
+
+        public static int64 thread_spawn (ThreadEntry fn, int arg) {
+            var thr = new GLib.Thread<void*> ("c2v-worker", () => {
+                fn (arg);
+                return null;
+            });
+            g_thr_lock.lock ();
+            if (g_threads == null)
+                g_threads = new GenericArray<GLib.Thread<void*>> ();
+            int64 id = g_threads.length + 1;
+            g_threads.add (thr);
+            g_thr_lock.unlock ();
+            return id;
+        }
+
+        public static void thread_join (int64 handle) {
+            if (handle <= 0)
+                return;
+            g_thr_lock.lock ();
+            var thr = g_threads[(int) (handle - 1)];
+            g_thr_lock.unlock ();
+            thr.join ();
+        }
+
+        public static void spin_lock (int[] lock_arr) {
+            while (!GLib.AtomicInt.compare_and_exchange (ref lock_arr[0], 0, 1)) {
+                GLib.Thread.yield ();
+            }
+        }
+
+        public static void spin_unlock (int[] lock_arr) {
+            GLib.AtomicInt.set (ref lock_arr[0], 0);
         }
     }
 }
