@@ -55,11 +55,13 @@ namespace Gtk {
             if (!visible || width <= 0 || height <= 0)
                 return;
             if (selected) {
-                cr.set_source_rgb (0.21, 0.54, 0.90);
+                // Celestial Cerulean (#3897F0)
+                cr.set_source_rgb (0.220, 0.592, 0.941);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
             } else if (hovered) {
-                cr.set_source_rgb (0.92, 0.95, 0.98);
+                // Elevated Surface (#212B36)
+                cr.set_source_rgb (0.129, 0.169, 0.212);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
             }
@@ -348,11 +350,13 @@ namespace Gtk {
             for (int i = i0; i <= i1; i++) {
                 int ry = y + i * row_height;
                 if (i == selected_index) {
-                    cr.set_source_rgb (0.21, 0.54, 0.90);
+                    // Celestial Cerulean (#3897F0)
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
                     cr.rectangle ((double) x, (double) ry, (double) width, (double) row_height);
                     cr.fill ();
                 } else if (i == hovered_index) {
-                    cr.set_source_rgb (0.92, 0.95, 0.98);
+                    // Elevated Surface (#212B36)
+                    cr.set_source_rgb (0.129, 0.169, 0.212);
                     cr.rectangle ((double) x, (double) ry, (double) width, (double) row_height);
                     cr.fill ();
                 }
@@ -361,10 +365,8 @@ namespace Gtk {
                     Image.draw_builtin_icon (cr, icon_names[i], x + 8, ry + 5, row_height - 10);
                     tx = x + row_height + 4;
                 }
-                if (i == selected_index)
-                    cr.set_source_rgb (1.0, 1.0, 1.0);
-                else
-                    cr.set_source_rgb (0.20, 0.20, 0.20);
+                // Lunar White (#F0F4F8)
+                cr.set_source_rgb (0.941, 0.957, 0.973);
                 TextHelper.draw_text (cr, labels[i], tx, ry + (row_height - 16) / 2, font_size);
             }
         }

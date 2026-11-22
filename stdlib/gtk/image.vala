@@ -46,28 +46,30 @@ namespace Gtk {
             double y = (double) iy;
             double s = (double) sz;
             if (name == "folder" || name == "inode-directory") {
-                cr.set_source_rgb (0.86, 0.67, 0.25);
+                // Amber Warning (#F59E0B)
+                cr.set_source_rgb (0.840, 0.540, 0.035);
                 cr.rectangle (x, y + s * 0.15, s * 0.45, s * 0.2);
                 cr.fill ();
-                cr.set_source_rgb (0.93, 0.75, 0.32);
+                cr.set_source_rgb (0.961, 0.620, 0.043);
                 cr.rectangle (x, y + s * 0.28, s, s * 0.62);
                 cr.fill ();
                 return;
             }
             if (name == "application-x-executable") {
-                cr.set_source_rgb (0.32, 0.65, 0.88);
+                // Celestial Cerulean (#3897F0) & Lunar White (#F0F4F8)
+                cr.set_source_rgb (0.220, 0.592, 0.941);
                 cr.rectangle (x + s * 0.12, y + s * 0.12, s * 0.76, s * 0.76);
                 cr.fill ();
-                cr.set_source_rgb (0.95, 0.97, 0.99);
+                cr.set_source_rgb (0.941, 0.957, 0.973);
                 cr.rectangle (x + s * 0.34, y + s * 0.34, s * 0.32, s * 0.32);
                 cr.fill ();
                 return;
             }
-            // Default document/file icon
-            cr.set_source_rgb (0.76, 0.81, 0.88);
+            // Default document/file icon: Titanium Mist (#8B9BB0) & Slate Atmosphere (#182028)
+            cr.set_source_rgb (0.545, 0.608, 0.690);
             cr.rectangle (x + s * 0.18, y + s * 0.08, s * 0.64, s * 0.84);
             cr.fill ();
-            cr.set_source_rgb (0.28, 0.34, 0.42);
+            cr.set_source_rgb (0.094, 0.125, 0.157);
             cr.rectangle (x + s * 0.28, y + s * 0.32, s * 0.44, 1.5);
             cr.fill ();
             cr.rectangle (x + s * 0.28, y + s * 0.52, s * 0.44, 1.5);

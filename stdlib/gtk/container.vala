@@ -258,15 +258,17 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
-            cr.set_source_rgb (0.98, 0.98, 0.99);
+            // Slate Atmosphere (#182028) card fill & Stratosphere Line (#26323F) border
+            cr.set_source_rgb (0.094, 0.125, 0.157);
             cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 6.0);
             cr.fill ();
-            cr.set_source_rgb (0.80, 0.82, 0.86);
+            cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.set_line_width (1.0);
             cr.rounded_rectangle ((double) x + 0.5, (double) y + 0.5, (double) (width - 1), (double) (height - 1), 6.0);
             cr.stroke ();
             if (label != null && label.length > 0) {
-                cr.set_source_rgb (0.25, 0.28, 0.34);
+                // Lunar White (#F0F4F8)
+                cr.set_source_rgb (0.941, 0.957, 0.973);
                 TextHelper.draw_text (cr, label, x + pad, y + 4, 13.0);
             }
             if (child != null)

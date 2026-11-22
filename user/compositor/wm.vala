@@ -38,9 +38,10 @@ namespace Wm {
         private Module shader;
         private bool shader_ok = false;
         private int backend_id = 0;
-        private double acc_r = 0.227;
-        private double acc_g = 0.518;
-        private double acc_b = 0.882;
+        // Default accent: Celestial Cerulean (#3897F0)
+        private double acc_r = 0.220;
+        private double acc_g = 0.592;
+        private double acc_b = 0.941;
         private int[] dmg;
         private int[] last;
         private int last_n = 0;
@@ -97,7 +98,7 @@ namespace Wm {
             notes_lay.set_spacing (4);
             notes_lay.set_text ("notes\nopenbox interaction model\ngala style shadows + dock\n100% vala, no mutter\ngdk + cairo framebuffer\nspir-v accent pipeline");
             // highlight the last line ("spir-v accent pipeline")
-            notes_lay.add_color_attribute (103, 125, 0.22, 0.74, 0.97);
+            notes_lay.add_color_attribute (103, 125, 0.220, 0.592, 0.941);
             pat = new int[1];
             load_cursor_svg ();
         }
@@ -165,9 +166,9 @@ namespace Wm {
                 return;
             var cr = new Context (surf);
             cr.clear ();
-            cr.set_source_rgba (0.04, 0.06, 0.10, 0.85);
+            cr.set_source_rgba (0.059, 0.078, 0.098, 0.85);
             path.fill_translated (cr, 1.2, 1.2);
-            cr.set_source_rgba (0.97, 0.98, 1.0, 1.0);
+            cr.set_source_rgba (0.941, 0.957, 0.973, 1.0);
             path.fill (cr);
             cursor_pix = new uint8[CURSOR_TEX * CURSOR_TEX * 4];
             int minx = CURSOR_TEX;
@@ -1503,9 +1504,10 @@ namespace Wm {
             int bands = 24;
             for (int i = 0; i < bands; i++) {
                 double t = (double) i / (double) (bands - 1);
-                double r = 0.043 + 0.058 * t;
-                double g = 0.055 + 0.078 * t;
-                double b = 0.086 + 0.115 * t;
+                // Obsidian Orbit (#0F1419) to Slate Atmosphere (#182028)
+                double r = 0.059 + 0.035 * t;
+                double g = 0.078 + 0.047 * t;
+                double b = 0.098 + 0.059 * t;
                 cr.set_source_rgb (r, g, b);
                 cr.rectangle (0, (double) (i * SCREEN_H) / (double) bands, SCREEN_W,
                               (double) SCREEN_H / (double) bands + 1.0);
@@ -1549,14 +1551,16 @@ namespace Wm {
         private void draw_top_bar (Context cr) {
             if (!rect_hits (cr, 0, 0, SCREEN_W, TOP_H))
                 return;
-            cr.set_source_rgb (0.071, 0.086, 0.125);
+            // Obsidian Orbit (#0F1419)
+            cr.set_source_rgb (0.059, 0.078, 0.098);
             cr.rectangle (0, 0, SCREEN_W, TOP_H);
             cr.fill ();
             cr.set_source_rgb (acc_r, acc_g, acc_b);
             cr.rectangle (0, TOP_H - 2, SCREEN_W, 2);
             cr.fill ();
 
-            cr.set_source_rgb (0.86, 0.90, 0.96);
+            // Lunar White (#F0F4F8)
+            cr.set_source_rgb (0.941, 0.957, 0.973);
             TextHelper.draw_text (cr, "PlanetOS", 14, 6, 15.0);
 
             string t = "desktop";
@@ -1566,7 +1570,8 @@ namespace Wm {
             cr.set_source_rgb (acc_r, acc_g, acc_b);
             TextHelper.draw_text (cr, t, 110, 6, 15.0);
 
-            cr.set_source_rgb (0.55, 0.62, 0.73);
+            // Titanium Mist (#8B9BB0)
+            cr.set_source_rgb (0.545, 0.608, 0.690);
             TextHelper.draw_mono (cr, @"$(count ()) win", SCREEN_W - 190, 6, 14.0);
             int total = Sys.ticks () / 100;
             TextHelper.draw_mono (cr, @"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))", SCREEN_W - 110, 6, 14.0);
@@ -1628,14 +1633,14 @@ namespace Wm {
             bool foc = (w.id == focused_id);
 
             // Subtle flat 2px drop shadow (opaque for fast SSE2 fill)
-            cr.set_source_rgb (0.045, 0.055, 0.075);
+            cr.set_source_rgb (0.035, 0.047, 0.060);
             cr.rectangle (w.x + w.w, w.y + SHADOW, SHADOW, w.h);
             cr.fill ();
             cr.rectangle (w.x + SHADOW, w.y + w.h, w.w, SHADOW);
             cr.fill ();
 
-            // Enterprise flat window body
-            cr.set_source_rgb (0.094, 0.110, 0.141);
+            // Window body: Slate Atmosphere (#182028)
+            cr.set_source_rgb (0.094, 0.125, 0.157);
             cr.rectangle (w.x, w.y, w.w, w.h);
             cr.fill ();
 
@@ -1646,43 +1651,46 @@ namespace Wm {
             draw_content (cr, w);
             cr.restore ();
 
-            // Subtle minimalist title bar
+            // Title bar: Elevated Surface (#212B36) focused, Slate Atmosphere (#182028) unfocused
             if (foc) {
-                cr.set_source_rgb (0.129, 0.157, 0.204);
+                cr.set_source_rgb (0.129, 0.169, 0.212);
             } else {
-                cr.set_source_rgb (0.082, 0.098, 0.125);
+                cr.set_source_rgb (0.094, 0.125, 0.157);
             }
             cr.rectangle (w.x + 1, w.y + 1, w.w - 2, TITLE_H);
             cr.fill ();
 
-            // Subtle 1px titlebar bottom separator
-            cr.set_source_rgb (0.173, 0.204, 0.259);
+            // 1px titlebar bottom separator: Stratosphere Line (#26323F)
+            cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.rectangle (w.x + 1, w.y + TITLE_H, w.w - 2, 1);
             cr.fill ();
 
+            // Title text: Lunar White (#F0F4F8) focused, Titanium Mist (#8B9BB0) unfocused
             if (foc)
-                cr.set_source_rgb (0.93, 0.95, 0.98);
+                cr.set_source_rgb (0.941, 0.957, 0.973);
             else
-                cr.set_source_rgb (0.62, 0.67, 0.75);
+                cr.set_source_rgb (0.545, 0.608, 0.690);
             TextHelper.draw_text (cr, w.title, w.x + 12, w.y + BORDER + 4, 15.0);
 
             int by = w.btn_y ();
-            cr.set_source_rgb (0.18, 0.21, 0.27);
+            // Maximize: Elevated Surface (#212B36), Close: Crimson Alert (#EF4444)
+            cr.set_source_rgb (0.129, 0.169, 0.212);
             cr.rectangle (w.max_x (), by, BTN, BTN);
             cr.fill ();
-            cr.set_source_rgb (0.58, 0.23, 0.25);
+            cr.set_source_rgb (0.937, 0.267, 0.267);
             cr.rectangle (w.close_x (), by, BTN, BTN);
             cr.fill ();
 
-            // Crisp 1px enterprise border
+            // Crisp 1px border: Celestial Cerulean (#3897F0) focused, Stratosphere Line (#26323F) unfocused
             if (foc)
-                cr.set_source_rgb (0.29, 0.49, 0.72);
+                cr.set_source_rgb (0.220, 0.592, 0.941);
             else
-                cr.set_source_rgb (0.19, 0.22, 0.28);
+                cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.set_line_width (1);
             cr.rectangle (w.x, w.y, w.w, w.h);
             cr.stroke ();
-            cr.set_source_rgb (0.90, 0.93, 0.97);
+            // Button icons: Lunar White (#F0F4F8)
+            cr.set_source_rgb (0.941, 0.957, 0.973);
             cr.set_line_width (1);
             int mx0 = w.max_x () + 4;
             cr.rectangle (mx0, by + 4, 8, 8);
@@ -1735,13 +1743,15 @@ namespace Wm {
             if (w.kind == Kind.TERMINAL && w.term != null) {
                 w.term.draw (cr, cx, cy, cw, ch, w.id == focused_id, acc_r, acc_g, acc_b);
             } else if (w.kind == Kind.CLOCK) {
-                cr.set_source_rgb (0.086, 0.102, 0.137);
+                // Slate Atmosphere (#182028)
+                cr.set_source_rgb (0.094, 0.125, 0.157);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 int rad = clock_radius (cw, ch);
                 int ccx = cx + cw / 2;
                 int ccy = cy + ch / 2;
-                cr.set_source_rgb (0.20, 0.24, 0.31);
+                // Stratosphere Line (#26323F)
+                cr.set_source_rgb (0.149, 0.196, 0.247);
                 cr.set_line_width (2);
                 cr.arc (ccx, ccy, rad, 0, 6.28);
                 cr.stroke ();
@@ -1753,43 +1763,48 @@ namespace Wm {
                 int total = Sys.ticks () / 100;
                 int sec = total % 60;
                 int min = (total / 60) % 60;
-                // minute hand: 6 degrees per minute
+                // minute hand: 6 degrees per minute (Lunar White #F0F4F8)
                 int ang = min * 6;
                 int hx = hand_x (ccx, ang, rad - 10);
                 int hy = hand_y (ccy, ang, rad - 10);
-                cr.set_source_rgb (0.93, 0.95, 0.98);
+                cr.set_source_rgb (0.941, 0.957, 0.973);
                 cr.set_line_width (2);
                 cr.move_to (ccx, ccy);
                 cr.line_to (hx, hy);
                 cr.stroke ();
                 int sx = hand_x (ccx, sec * 6, rad - 5);
                 int sy = hand_y (ccy, sec * 6, rad - 5);
-                cr.set_source_rgb (acc_r * 1.15, acc_g * 1.10, acc_b);
+                cr.set_source_rgb (acc_r, acc_g, acc_b);
                 cr.set_line_width (1);
                 cr.move_to (ccx, ccy);
                 cr.line_to (sx, sy);
                 cr.stroke ();
-                cr.set_source_rgb (0.97, 0.98, 1.0);
+                cr.set_source_rgb (0.941, 0.957, 0.973);
                 cr.arc (ccx, ccy, 3, 0, 6.28);
                 cr.fill ();
 
-                cr.set_source_rgb (0.72, 0.78, 0.86);
+                // Titanium Mist (#8B9BB0)
+                cr.set_source_rgb (0.545, 0.608, 0.690);
                 TextHelper.draw_mono (cr, @"T+$(pad2 (min)):$(pad2 (sec))", cx + 12, cy + ch - 28, 15.0);
             } else if (w.kind == Kind.SHADER) {
-                cr.set_source_rgb (0.086, 0.102, 0.137);
+                // Slate Atmosphere (#182028)
+                cr.set_source_rgb (0.094, 0.125, 0.157);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
                 cr.rectangle (cx + 14, cy + 16, 56, 56);
                 cr.fill ();
                 cr.set_line_width (1);
-                cr.set_source_rgb (0.24, 0.28, 0.35);
+                // Stratosphere Line (#26323F)
+                cr.set_source_rgb (0.149, 0.196, 0.247);
                 cr.rectangle (cx + 14, cy + 16, 56, 56);
                 cr.stroke ();
 
-                cr.set_source_rgb (0.90, 0.93, 0.97);
+                // Lunar White (#F0F4F8)
+                cr.set_source_rgb (0.941, 0.957, 0.973);
                 TextHelper.draw_text (cr, "spir-v frag", cx + 84, cy + 18, 16.0);
-                cr.set_source_rgb (0.66, 0.72, 0.81);
+                // Titanium Mist (#8B9BB0)
+                cr.set_source_rgb (0.545, 0.608, 0.690);
                 if (shader_ok)
                     TextHelper.draw_mono (cr, @"words $(shader.words)", cx + 84, cy + 38, 14.0);
                 else
@@ -1800,7 +1815,8 @@ namespace Wm {
                     TextHelper.draw_mono (cr, "cpu accent", cx + 84, cy + 56, 14.0);
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
                 TextHelper.draw_mono (cr, @"rgba $(accent_ir ()) $(accent_ig ()) $(accent_ib ())", cx + 14, cy + 92, 14.0);
-                cr.set_source_rgb (0.45, 0.52, 0.62);
+                // Teal Shield (#14B8A6) for system/GPU capability status
+                cr.set_source_rgb (0.078, 0.722, 0.651);
                 int gcaps = Sys.gpu_info ();
                 string gmsg = "gpu: bga + spv/simd (no virtio)";
                 if ((gcaps & 16) != 0)
@@ -1811,7 +1827,8 @@ namespace Wm {
                     gmsg = "gpu: virtio-gpu 2d + spv/simd";
                 TextHelper.draw_mono (cr, gmsg, cx + 14, cy + 116, 14.0);
             } else if ((w.kind == Kind.GTK || w.kind == Kind.FILES) && w.gtk_root != null) {
-                cr.set_source_rgb (0.96, 0.96, 0.96);
+                // Slate Atmosphere (#182028)
+                cr.set_source_rgb (0.094, 0.125, 0.157);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 int gx = cx + 12;
@@ -1830,7 +1847,8 @@ namespace Wm {
                 }
                 w.gtk_root.draw (cr);
             } else if (w.kind == Kind.EXT) {
-                cr.set_source_rgb (0.96, 0.96, 0.96);
+                // Slate Atmosphere (#182028)
+                cr.set_source_rgb (0.094, 0.125, 0.157);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 if (w.ext_shm_surf != null) {
@@ -1838,15 +1856,18 @@ namespace Wm {
                 } else if (w.ext_surf != null) {
                     cr.blit_surface (w.ext_surf, cx, cy, cw, ch);
                 } else {
-                    cr.set_source_rgb (0.72, 0.78, 0.86);
+                    // Titanium Mist (#8B9BB0)
+                    cr.set_source_rgb (0.545, 0.608, 0.690);
                     TextHelper.draw_mono (cr, "Starting GUI app...", cx + 16, cy + 20, 14.0);
                 }
             } else {
-                cr.set_source_rgb (0.086, 0.102, 0.137);
+                // Slate Atmosphere (#182028)
+                cr.set_source_rgb (0.094, 0.125, 0.157);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 // One Pango layout with a colour attribute run on the last line.
-                cr.set_source_rgb (0.62, 0.69, 0.78);
+                // Titanium Mist (#8B9BB0)
+                cr.set_source_rgb (0.545, 0.608, 0.690);
                 show_layout_at (cr, notes_lay, cx + 14, cy + 12);
             }
         }
@@ -1877,10 +1898,12 @@ namespace Wm {
             int y0 = SCREEN_H - DOCK_H;
             if (!rect_hits (cr, 0, y0, SCREEN_W, DOCK_H))
                 return;
-            cr.set_source_rgb (0.067, 0.082, 0.110);
+            // Dock surface: Slate Atmosphere (#182028)
+            cr.set_source_rgb (0.094, 0.125, 0.157);
             cr.rectangle (0, y0, SCREEN_W, DOCK_H);
             cr.fill ();
-            cr.set_source_rgb (0.173, 0.204, 0.259);
+            // 1px divider: Stratosphere Line (#26323F)
+            cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.rectangle (0, y0, SCREEN_W, 1);
             cr.fill ();
 
@@ -1893,21 +1916,26 @@ namespace Wm {
                 int bx = DOCK_X0 + i * (DOCK_BTN_W + DOCK_BTN_GAP);
                 int by = y0 + 5;
                 if (foc)
-                    cr.set_source_rgb (0.145, 0.184, 0.247);
+                    // Elevated Surface (#212B36)
+                    cr.set_source_rgb (0.129, 0.169, 0.212);
                 else
-                    cr.set_source_rgb (0.098, 0.118, 0.157);
+                    // Obsidian Orbit (#0F1419)
+                    cr.set_source_rgb (0.059, 0.078, 0.098);
                 cr.rectangle (bx, by, DOCK_BTN_W, DOCK_H - 10);
                 cr.fill ();
                 if (foc) {
-                    cr.set_source_rgb (0.29, 0.49, 0.72);
+                    // Celestial Cerulean (#3897F0)
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
                     cr.rectangle (bx, by + DOCK_H - 12, DOCK_BTN_W, 2);
                     cr.fill ();
                 }
                 cr.set_font_size (16);
                 if (foc)
-                    cr.set_source_rgb (0.96, 0.98, 1.0);
+                    // Lunar White (#F0F4F8)
+                    cr.set_source_rgb (0.941, 0.957, 0.973);
                 else
-                    cr.set_source_rgb (0.68, 0.74, 0.83);
+                    // Titanium Mist (#8B9BB0)
+                    cr.set_source_rgb (0.545, 0.608, 0.690);
                 draw_dock_label (cr, w.title, bx + 10, by + 5);
             }
         }
@@ -1931,7 +1959,7 @@ namespace Wm {
             cr.move_to (x + 6, y + 11);
             cr.line_to (x + 10, y + 17);
             cr.stroke ();
-            cr.set_source_rgb (0.97, 0.98, 1.0);
+            cr.set_source_rgb (0.941, 0.957, 0.973);
             cr.move_to (x, y);
             cr.line_to (x, y + 14);
             cr.stroke ();

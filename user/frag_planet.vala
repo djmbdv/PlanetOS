@@ -1,9 +1,10 @@
 // Pure-Vala Fragment Shader compiled by `planc --target=spirv` -> `frag.spv`.
 
 void main () {
-    float r = 0.12 + 0.10;
-    float g = 0.37 * 2.0;
-    float b = 0.97;
+    // Celestial Cerulean (#3897F0)
+    float r = 0.220;
+    float g = 0.592;
+    float b = 0.941;
     float a = 1.0;
     frag_color (r, g, b, a);
 }

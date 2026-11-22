@@ -144,15 +144,19 @@ namespace Gtk {
                 int max_y = 0;
                 vbar_metrics (out bar_y, out bar_h, out track, out max_y);
                 int sb_x = x + width - SB_W;
-                cr.set_source_rgba (0.85, 0.87, 0.90, 0.45);
+                // Obsidian Orbit (#0F1419) track
+                cr.set_source_rgba (0.059, 0.078, 0.098, 0.45);
                 cr.rectangle ((double) sb_x, (double) y, (double) SB_W, (double) height);
                 cr.fill ();
                 if (sb_dragging)
-                    cr.set_source_rgba (0.21, 0.54, 0.90, 0.85);
+                    // Celestial Cerulean (#3897F0)
+                    cr.set_source_rgba (0.220, 0.592, 0.941, 0.85);
                 else if (sb_hovered)
-                    cr.set_source_rgba (0.35, 0.48, 0.65, 0.78);
+                    // Titanium Mist (#8B9BB0)
+                    cr.set_source_rgba (0.545, 0.608, 0.690, 0.78);
                 else
-                    cr.set_source_rgba (0.45, 0.55, 0.70, 0.60);
+                    // Dim Carbon (#526275)
+                    cr.set_source_rgba (0.322, 0.384, 0.459, 0.60);
                 cr.rounded_rectangle ((double) (sb_x + 2), (double) (bar_y + 1), (double) (SB_W - 4), (double) (bar_h - 2), 3.0);
                 cr.fill ();
             }
@@ -399,7 +403,8 @@ namespace Gtk {
                 start_child.draw (cr);
             if (end_child != null)
                 end_child.draw (cr);
-            cr.set_source_rgb (0.83, 0.83, 0.83);
+            // Stratosphere Line (#26323F)
+            cr.set_source_rgb (0.149, 0.196, 0.247);
             if (orientation == Orientation.HORIZONTAL)
                 cr.rectangle ((double) (x + position), (double) y, 4.0, (double) height);
             else
@@ -598,30 +603,37 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
-            cr.set_source_rgb (0.93, 0.93, 0.93);
+            // Obsidian Orbit (#0F1419) tab strip
+            cr.set_source_rgb (0.059, 0.078, 0.098);
             cr.rectangle ((double) x, (double) y, (double) width, (double) tab_h);
             cr.fill ();
             int tx = x + 4;
             for (int i = 0; i < pages.length; i++) {
                 if (i == current_page)
-                    cr.set_source_rgb (0.98, 0.98, 0.98);
+                    // Slate Atmosphere (#182028)
+                    cr.set_source_rgb (0.094, 0.125, 0.157);
                 else
-                    cr.set_source_rgb (0.89, 0.89, 0.89);
+                    // Obsidian Orbit (#0F1419)
+                    cr.set_source_rgb (0.059, 0.078, 0.098);
                 cr.rectangle ((double) tx, (double) (y + 3), (double) (tab_w - 4), (double) (tab_h - 3));
                 cr.fill ();
                 if (i == current_page) {
-                    cr.set_source_rgb (0.21, 0.54, 0.90);
+                    // Celestial Cerulean (#3897F0)
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
                     cr.rectangle ((double) tx, (double) (y + 3), (double) (tab_w - 4), 2.0);
                     cr.fill ();
                 }
                 if (i == current_page)
-                    cr.set_source_rgb (0.20, 0.20, 0.20);
+                    // Lunar White (#F0F4F8)
+                    cr.set_source_rgb (0.941, 0.957, 0.973);
                 else
-                    cr.set_source_rgb (0.42, 0.42, 0.42);
+                    // Titanium Mist (#8B9BB0)
+                    cr.set_source_rgb (0.545, 0.608, 0.690);
                 TextHelper.draw_text (cr, labels[i], tx + 10, y + 7, 13.0);
                 tx += tab_w;
             }
-            cr.set_source_rgb (0.80, 0.80, 0.80);
+            // Stratosphere Line (#26323F)
+            cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.rectangle ((double) x, (double) (y + tab_h - 1), (double) width, 1.0);
             cr.fill ();
             if (current_page >= 0 && current_page < pages.length)

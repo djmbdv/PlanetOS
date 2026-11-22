@@ -179,16 +179,17 @@ namespace SaturnIDE {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
-            // Editor background
-            cr.set_source_rgb (1.0, 1.0, 1.0);
+            // Editor background: Obsidian Orbit (#0F1419)
+            cr.set_source_rgb (0.059, 0.078, 0.098);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
 
-            // Gutter background
-            cr.set_source_rgb (0.94, 0.95, 0.96);
+            // Gutter background: Slate Atmosphere (#182028)
+            cr.set_source_rgb (0.094, 0.125, 0.157);
             cr.rectangle ((double) x, (double) y, (double) gutter_w, (double) height);
             cr.fill ();
-            cr.set_source_rgb (0.84, 0.85, 0.88);
+            // Gutter separator: Stratosphere Line (#26323F)
+            cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.rectangle ((double) (x + gutter_w - 1), (double) y, 1.0, (double) height);
             cr.fill ();
 
@@ -199,22 +200,27 @@ namespace SaturnIDE {
             for (int i = i0; i <= i1; i++) {
                 int ly = y + i * line_h;
                 if (i == cy) {
-                    cr.set_source_rgb (0.95, 0.97, 1.0);
+                    // Active line: Elevated Surface (#212B36)
+                    cr.set_source_rgb (0.129, 0.169, 0.212);
                     cr.rectangle ((double) (x + gutter_w), (double) ly, (double) (width - gutter_w), (double) line_h);
                     cr.fill ();
                 }
-                cr.set_source_rgb ((i == cy) ? 0.20 : 0.55, (i == cy) ? 0.25 : 0.58, (i == cy) ? 0.35 : 0.62);
+                // Line numbers: Titanium Mist (#8B9BB0) active, Dim Carbon (#526275) inactive
+                cr.set_source_rgb ((i == cy) ? 0.545 : 0.322, (i == cy) ? 0.608 : 0.384, (i == cy) ? 0.690 : 0.459);
                 string lnum = @"$(i + 1)";
                 TextHelper.draw_mono (cr, lnum, x + 8, ly + 2, 12.0);
 
                 string ln = lines[i];
                 if (ln.length > 0) {
                     if (is_comment_line (ln))
-                        cr.set_source_rgb (0.35, 0.55, 0.35);
+                        // Emerald Check (#10B981)
+                        cr.set_source_rgb (0.063, 0.725, 0.506);
                     else if (has_keyword_prefix (ln))
-                        cr.set_source_rgb (0.12, 0.34, 0.68);
+                        // Celestial Cerulean (#3897F0)
+                        cr.set_source_rgb (0.220, 0.592, 0.941);
                     else
-                        cr.set_source_rgb (0.14, 0.15, 0.18);
+                        // Lunar White (#F0F4F8)
+                        cr.set_source_rgb (0.941, 0.957, 0.973);
                     TextHelper.draw_mono (cr, ln, x + gutter_w + 8, ly + 2, font_size);
                 }
                 if (i == cy && focused) {
@@ -222,7 +228,8 @@ namespace SaturnIDE {
                     // painted on every repaint and a prefix measure walks the
                     // whole glyph run again.
                     int cw = (cx > 0) ? TextHelper.mono_advance (font_size) * cx : 0;
-                    cr.set_source_rgb (0.12, 0.38, 0.82);
+                    // Celestial Cerulean (#3897F0)
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
                     cr.rectangle ((double) (x + gutter_w + 8 + cw), (double) (ly + 2), 2.0, (double) (line_h - 4));
                     cr.fill ();
                 }

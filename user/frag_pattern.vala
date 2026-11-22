@@ -27,8 +27,9 @@ void main () {
     float d = sqrt (dx * dx + dy * dy);
     float glow = clamp (1.0 - d * radius, 0.0, 1.0) * gain;
 
-    float r = mix (0.05, 0.21, horizon) + glow * 0.10;
-    float g = mix (0.07, 0.27, horizon) + glow * 0.30;
-    float b = mix (0.12, 0.46, horizon) + glow * 0.55;
+    // Obsidian Orbit (#0F1419) to Slate Atmosphere (#182028) with Celestial Cerulean (#3897F0) glow
+    float r = mix (0.059, 0.094, horizon) + glow * 0.08;
+    float g = mix (0.078, 0.125, horizon) + glow * 0.22;
+    float b = mix (0.098, 0.157, horizon) + glow * 0.36;
     frag_color (r, g, b, 1.0);
 }

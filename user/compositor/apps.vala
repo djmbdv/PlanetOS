@@ -476,7 +476,8 @@ namespace Wm {
         }
 
         public void draw (Context cr, int cx, int cy, int cw, int ch, bool focused, double ar, double ag, double ab) {
-            cr.set_source_rgb (0.051, 0.063, 0.090);
+            // Obsidian Orbit (#0F1419)
+            cr.set_source_rgb (0.059, 0.078, 0.098);
             cr.rectangle (cx, cy, cw, ch);
             cr.fill ();
             int row_h = 18;
@@ -487,7 +488,8 @@ namespace Wm {
             if (end < 0) end = 0;
             int start = (end > hist_rows) ? (end - hist_rows) : 0;
             int y = cy + 8;
-            cr.set_source_rgb (0.78, 0.83, 0.90);
+            // Lunar White (#F0F4F8)
+            cr.set_source_rgb (0.941, 0.957, 0.973);
             for (int i = start; i < end; i++) {
                 TextHelper.draw_mono (cr, lines[i], cx + 10, y, 14.0);
                 y += row_h;
