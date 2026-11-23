@@ -231,7 +231,7 @@ Rules:
 - Stable numbers, documented in `docs/abi.md` and frozen per version.
 - `sys_llamar_v` carries `abi_version` in the argument structure in order to evolve without breaking binaries.
 - If a handler returns a pointer, the dispatcher checks that it lies in user space.
-- Every resource is named by a **per-process handle with rights**, never by a global slot index ([08](08-io-data-path.md)). The current global `FD_TABLE` and `SYS_MAP_USER_AT` are transitional and must not be extended.
+- Every resource is named by a **handle with owner, generation and rights**, never by a global slot index ([08](08-io-data-path.md)). `FD_TABLE` is a shared slot pool, but the value handed to userland carries the generation, so a forged or stale value is rejected with `EBADF`. `SYS_MAP_USER_AT` is still transitional and must not be extended.
 - Pointer validation is against the caller's page table and is recoverable (KR-07). Today `user_ok` only bounds the address against `USER_LIMIT`.
 
 ## 8. VFS

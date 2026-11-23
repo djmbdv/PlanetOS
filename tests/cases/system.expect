@@ -6,4 +6,6 @@
 =sleep=ok
 =wait=ok
 =fdguard=ok
+=rights=ok
+=stale=ok
 !FAIL

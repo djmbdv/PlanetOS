@@ -154,5 +154,34 @@ int main (string[] args) {
     if (owned_fd >= 3)
         Sys.close (owned_fd);
 
+    // 9. Rights are per operation: a handle created for writing cannot read.
+    int wfd = Sys.create ("/rights_probe.txt");
+    var rbuf = new uint8[1];
+    int rr = (wfd >= 3) ? Sys.read (wfd, rbuf, 1) : -9;
+    int rerr = Sys.errno_code ();
+    if (wfd >= 3 && rr == -1 && rerr == Sys.EACCES)
+        print ("rights=ok\n");
+    else {
+        print ("rights=FAIL\n");
+        fails++;
+    }
+    if (wfd >= 3) {
+        Sys.close (wfd);
+        Sys.unlink ("/rights_probe.txt");
+    }
+
+    // 10. A value from a closed handle is stale and never resolves again.
+    int sfd = Sys.open ("/hello.txt");
+    if (sfd >= 3)
+        Sys.close (sfd);
+    int sr = (sfd >= 3) ? Sys.read (sfd, rbuf, 1) : -9;
+    int serr = Sys.errno_code ();
+    if (sfd >= 3 && sr == -1 && serr == Sys.EBADF)
+        print ("stale=ok\n");
+    else {
+        print ("stale=FAIL\n");
+        fails++;
+    }
+
     return fails;
 }

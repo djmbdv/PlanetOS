@@ -179,6 +179,10 @@ namespace Planet {
             return __sys4 (34, 0, 0, 0, 0);
         }
 
+        public static int tid () {
+            return __sys4 (62, 0, 0, 0, 0);
+        }
+
         public static string getenv (string key) {
             if (key.length == 0 || key.length > MAX_PATH)
                 return "";
@@ -293,6 +297,58 @@ namespace Planet {
             return done;
         }
 
+        // Reads into an existing buffer at `offset`. This lets callers fill a
+        // large destination directly instead of allocating a temporary slice
+        // per read.
+        public static int read_into (int fd, uint8[] buf, int offset, int count) {
+            if (fd < 0 || offset < 0 || count < 0 || count > buf.length - offset)
+                return -1;
+            if (count == 0)
+                return 0;
+            int buf_addr = __arr_data (buf) + offset;
+            int done = 0;
+            while (done < count) {
+                int want = count - done;
+                if (want > MAX_IO)
+                    want = MAX_IO;
+                int r = __sys4 (7, fd, buf_addr + done, want, 0);
+                if (r <= 0) {
+                    if (done > 0)
+                        break;
+                    return r;
+                }
+                done = done + r;
+                if (r < want)
+                    break;
+            }
+            return done;
+        }
+
+        // Writes a slice of an existing buffer without copying it first.
+        public static int write_from (int fd, uint8[] buf, int offset, int count) {
+            if (fd < 0 || offset < 0 || count < 0 || count > buf.length - offset)
+                return -1;
+            if (count == 0)
+                return 0;
+            int buf_addr = __arr_data (buf) + offset;
+            int done = 0;
+            while (done < count) {
+                int want = count - done;
+                if (want > MAX_IO)
+                    want = MAX_IO;
+                int w = __sys4 (15, fd, buf_addr + done, want, 0);
+                if (w <= 0) {
+                    if (done > 0)
+                        break;
+                    return w;
+                }
+                done = done + w;
+                if (w < want)
+                    break;
+            }
+            return done;
+        }
+
         public static int write (int fd, uint8[] buf, int count) {
             if (fd < 0 || count < 0 || count > buf.length)
                 return -1;
@@ -402,6 +458,13 @@ namespace Planet {
         // entries (bit i = fds[i]), 0 on timeout, -1 on error.
         public static int poll (int[] fds, int timeout_ms) {
             return __sys4 (59, __iarr_data (fds), fds.length, timeout_ms, 0);
+        }
+
+        // Polls the first `nfds` entries of a reusable buffer.
+        public static int poll_n (int[] fds, int nfds, int timeout_ms) {
+            if (nfds < 0 || nfds > fds.length)
+                return -1;
+            return __sys4 (59, __iarr_data (fds), nfds, timeout_ms, 0);
         }
 
         public static int int_arr_addr (int[] a) {
@@ -546,6 +609,11 @@ namespace Planet {
             return __darr_data (a);
         }
 
+        // Data pointer of a Vala string (without its 16-byte header).
+        public static int str_addr (string s) {
+            return __str_data (s);
+        }
+
         public static int byte_arr_addr (uint8[] a) {
             return __arr_data (a);
         }
@@ -557,9 +625,11 @@ namespace Planet {
         }
 
         public static int set_stdio (int in_fd, int out_fd) {
-            if (in_fd != -1 && (in_fd < 0 || in_fd >= MAX_FDS))
+            // Handles are opaque values (`index | generation << 8`), so the
+            // only local check is the -1 sentinel; the kernel validates them.
+            if (in_fd != -1 && in_fd < 3)
                 return -1;
-            if (out_fd != -1 && (out_fd < 0 || out_fd >= MAX_FDS))
+            if (out_fd != -1 && out_fd < 3)
                 return -1;
             return __sys4 (19, in_fd, out_fd, 0, 0);
         }

@@ -86,8 +86,8 @@ namespace Planet.Kernel {
         public const int SYSCALL_SCRATCH_SIZE = 0x10;
 
         // --- kernel tables -------------------------------------------------
-        public const int FD_TABLE = 0x107000;      // 16 slots x 32 bytes
-        public const int FD_TABLE_SIZE = 0x200;
+        public const int FD_TABLE = 0x107000;      // 64 handles x 32 bytes
+        public const int FD_TABLE_SIZE = 0x800;
         public const int KLOG_RING = 0x108000;     // 128 records x 64 bytes
         public const int KLOG_RING_SIZE = 0x2000;
         public const int PMM_BITMAP = 0x110000;    // 64 MiB / 4 KiB frames: Fibonacci buddy meta + tables

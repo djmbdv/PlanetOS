@@ -29,7 +29,7 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | Futex-like wait/wake on a user word | `SYS_WAIT_ADDR` / `SYS_WAKE_ADDR`, [kernel/syscall.vala](../kernel/syscall.vala) | implemented |
 | Zero-copy shared surface, app <-> compositor | [stdlib/gdk/window.vala](../stdlib/gdk/window.vala) | implemented, built on an unsafe map |
 | Device namespace (`/dev`) | [kernel/vfs.vala](../kernel/vfs.vala) | **missing**: `SYS_OPEN` resolves only XFS/RAMFS |
-| Per-process handles | [kernel/layout.vala](../kernel/layout.vala) | **missing**: one global 16-slot fd table |
+| Handles with ownership, generation and rights | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A1.1/A1.2): 64 slots, `index \| generation << 8`, per-operation rights |
 | Capability grant | `SYS_MAP_USER_AT`, [kernel/syscall.vala](../kernel/syscall.vala) | **missing**: maps any physical frame above 6 MiB |
 | Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | **missing** |
 | Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
@@ -56,22 +56,29 @@ and the grants do not.
 
 A handle is a per-process opaque value. It is never an address.
 
-```vala
-// kernel side, one table per process
-public struct Handle {
-    public uint32 index;
-    public uint32 generation;
-    public uint8  kind;      // FILE, DEVICE_BYTE, RING, FB, DLIB
-    public uint8  rights;    // bit mask
-    public uint32 target;    // kernel id: inode, device, ring
-    public int64  offset;
-}
-```
+Slot layout, as implemented (32 bytes per slot, 64 slots):
 
-The value exposed to userland is the pair packed as `(generation << 32) | index`.
-It is never a pointer: the kernel validates the generation against the caller's
-table on every call. Rights: `READ`, `WRITE`, `SEEK`, `POLL`, `MAP`, `GRANT`,
-`CLOSE`, `ADMIN`.
+| Offset | Field | Width |
+|---|---|---|
+| +0 | `kind` | 8 bits |
+| +0 | `rights` | 8 bits |
+| +0 | `generation` | 16 bits |
+| +0 | `owner` (task id) | 32 bits |
+| +8 | object id (inode or RAMFS slot) | 64 bits |
+| +16 | size | 64 bits |
+| +24 | position | 64 bits |
+
+Rights: `READ`, `WRITE`, `SEEK`, `POLL`, `CLOSE`. `open` grants
+`READ|WRITE|SEEK|POLL|CLOSE`; `create` grants `WRITE|SEEK|POLL|CLOSE`, so a
+write-only handle cannot read.
+
+The value exposed to userland is `index | generation << 8`, never a table
+offset. `fd_check` returns three states: usable, invalid (forged, stale or
+foreign) and missing rights, mapped to `EBADF` and `EACCES` respectively. When a
+slot is released its generation survives, so a stale value cannot be revived by
+the next allocation in the same index. The owner field is the per-process
+namespace: a table per process would be an optimisation, not a correctness
+requirement, until handle counts grow.
 
 Rules:
 
@@ -252,7 +259,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 
 | Phase | Work | Exit criterion |
 |---|---|---|
-| **A1** | Per-process handle table, rights, aliases 0/1/2 | A cross-process handle test returns `E_BAD_HANDLE`; existing suites stay green |
+| **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 19/19 QEMU cases green. A dedicated per-process table remains an optional optimisation |
 | **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | Mapping an unowned frame fails; the compositor still attaches a client surface |
 | **A3** | PML4 validation and recoverable user copies (KR-07) | An invalid user pointer returns an error and the calling task survives |
 | **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
