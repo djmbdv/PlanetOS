@@ -21,6 +21,78 @@ namespace Planc {
         BAD_MAIN
     }
 
+    private sealed class CgFuncResult : Object {
+        public Emitter emitter;
+        public GenericArray<Symbol> symbols;
+        public GenericArray<DebugLineEntry> debug_lines;
+        public GenericArray<DebugFunc> debug_funcs;
+        public Label overflow_panic_label;
+        public Label bounds_panic_label;
+        public Label mem_panic_label;
+        public Label null_panic_label;
+        public Label cast_panic_label;
+        public Label leak_panic_label;
+        public GenericArray<Function> extra_funcs;
+        public bool has_err = false;
+        public string err_file = "";
+        public string err_msg = "";
+
+        public bool need_write_str = false;
+        public bool need_str_eq = false;
+        public bool need_write_int = false;
+        public bool need_write_uint = false;
+        public bool need_bounds_panic = false;
+        public bool need_alloc = false;
+        public bool need_ref = false;
+        public bool need_unref = false;
+        public bool need_str_concat = false;
+        public bool need_str_slice = false;
+        public bool need_int_to_str = false;
+        public bool need_uint_to_str = false;
+        public bool need_is_instance = false;
+        public bool need_mem_panic = false;
+        public bool need_null_panic = false;
+        public bool need_cast_panic = false;
+        public bool need_leak_panic = false;
+        public bool need_overflow_panic = false;
+        public bool need_iface_lookup = false;
+        public bool need_build_args = false;
+        public bool need_str_has_prefix = false;
+        public bool need_str_has_suffix = false;
+        public bool need_utf8_char_count = false;
+        public bool need_utf8_get_char = false;
+        public bool need_lock = false;
+        public bool need_compact_free = false;
+        public bool need_utf8_validate = false;
+        public bool need_str_index_of = false;
+        public bool need_str_last_index_of = false;
+        public bool need_str_index_of_char = false;
+        public bool need_str_last_index_of_char = false;
+        public bool need_async = false;
+        public bool need_signal = false;
+        public bool need_sync = false;
+        public bool need_str_to_int = false;
+        public bool need_double_to_str = false;
+        public bool need_str_to_double = false;
+        public bool need_bytes_to_str = false;
+        public bool need_eprint = false;
+        public bool need_chmod = false;
+        public bool need_read_file = false;
+        public bool need_write_file = false;
+        public bool need_cpu_count = false;
+        public bool need_thread_spawn = false;
+        public bool need_thread_join = false;
+        public bool need_spin_lock = false;
+        public bool need_spin_unlock = false;
+    }
+
+    private static Codegen mt_cg_master;
+    private static CgFuncResult[] mt_cg_results;
+    private static int mt_cg_n = 0;
+    private static int mt_cg_next = 0;
+    private static int mt_cg_rodata_end = 0;
+    private static int[] mt_cg_lock;
+
     public sealed class Codegen : Object {
 
         public Emitter emitter { get; private set; }
@@ -174,6 +246,9 @@ namespace Planc {
         private bool need_spin_unlock = false;
         private bool main_takes_args = false;
         private int lambda_counter = 0;
+        private int cur_func_index = -1;
+        private int local_lambda_idx = 0;
+        private GenericArray<Function>? mt_extra_funcs = null;
         private GenericArray<LambdaExpr> pending_lambdas;
 
         private Label bounds_panic_label;
@@ -284,32 +359,332 @@ namespace Planc {
 
             synthesize_static_field_globals ();
             register_globals ();
-            if (freestanding) {
-                for (int fi = 0; fi < program.functions.length; fi++) {
-                    if (program.functions[fi].name == "_kstart32")
-                        generate_function (program.functions[fi]);
+            emitter.opt_level = opt_level;
+            int n_orig = program.functions.length;
+            int ncpus = Host.cpu_count ();
+            if (n_orig >= 8 && ncpus > 1) {
+                int nw = (ncpus < n_orig) ? ncpus : n_orig;
+                mt_cg_master = this;
+                mt_cg_results = new CgFuncResult[n_orig];
+                mt_cg_n = n_orig;
+                mt_cg_next = 0;
+                mt_cg_rodata_end = emitter.data.length;
+                mt_cg_lock = new int[1];
+                int64[] handles = new int64[nw];
+                for (int wi = 1; wi < nw; wi++)
+                    handles[wi] = Host.thread_spawn (mt_cg_worker, wi);
+                mt_cg_worker (0);
+                for (int wi = 1; wi < nw; wi++)
+                    Host.thread_join (handles[wi]);
+
+                if (freestanding) {
+                    for (int fi = 0; fi < n_orig; fi++) {
+                        if (program.functions[fi].name == "_kstart32")
+                            merge_func_result (program.functions[fi], mt_cg_results[fi]);
+                    }
                 }
-            }
-            for (int fi = 0; fi < program.functions.length; fi++) {
-                if (freestanding && program.functions[fi].name == "_kstart32")
-                    continue;
-                var fn = program.functions[fi];
-                try {
-                    generate_function (fn);
-                } catch (SemanticError e) {
-                    // Keep checking the remaining functions so one compile
-                    // reports every error (the output is discarded anyway).
-                    if (!Diagnostics.recover)
-                        throw new SemanticError.TYPE_MISMATCH (e.message);
-                    Diagnostics.add (fn.file, Diagnostics.pos_line (e.message),
-                                     Diagnostics.pos_column (e.message), "semantic error", e.message);
-                    if (Diagnostics.is_full ())
-                        return;
+                for (int fi = 0; fi < n_orig; fi++) {
+                    if (freestanding && program.functions[fi].name == "_kstart32")
+                        continue;
+                    var res = mt_cg_results[fi];
+                    if (res.has_err) {
+                        if (!Diagnostics.recover) {
+                            current_file = res.err_file;
+                            throw new SemanticError.TYPE_MISMATCH (res.err_msg);
+                        }
+                        Diagnostics.add (res.err_file, Diagnostics.pos_line (res.err_msg),
+                                         Diagnostics.pos_column (res.err_msg), "semantic error", res.err_msg);
+                        if (Diagnostics.is_full ())
+                            return;
+                    } else {
+                        merge_func_result (program.functions[fi], res);
+                    }
+                }
+                // Compile any synthesized lambdas / delegate thunks collected in deterministic order.
+                for (int fi = 0; fi < n_orig; fi++) {
+                    var extras = mt_cg_results[fi].extra_funcs;
+                    if (extras != null) {
+                        for (int ei = 0; ei < extras.length; ei++)
+                            program.functions.add (extras[ei]);
+                    }
+                }
+                for (int fi = n_orig; fi < program.functions.length; fi++) {
+                    var fn = program.functions[fi];
+                    try {
+                        generate_function (fn);
+                    } catch (SemanticError e) {
+                        if (!Diagnostics.recover)
+                            throw new SemanticError.TYPE_MISMATCH (e.message);
+                        Diagnostics.add (fn.file, Diagnostics.pos_line (e.message),
+                                         Diagnostics.pos_column (e.message), "semantic error", e.message);
+                        if (Diagnostics.is_full ())
+                            return;
+                    }
+                }
+            } else {
+                if (freestanding) {
+                    for (int fi = 0; fi < program.functions.length; fi++) {
+                        if (program.functions[fi].name == "_kstart32")
+                            generate_function (program.functions[fi]);
+                    }
+                }
+                for (int fi = 0; fi < program.functions.length; fi++) {
+                    if (freestanding && program.functions[fi].name == "_kstart32")
+                        continue;
+                    var fn = program.functions[fi];
+                    try {
+                        generate_function (fn);
+                    } catch (SemanticError e) {
+                        // Keep checking the remaining functions so one compile
+                        // reports every error (the output is discarded anyway).
+                        if (!Diagnostics.recover)
+                            throw new SemanticError.TYPE_MISMATCH (e.message);
+                        Diagnostics.add (fn.file, Diagnostics.pos_line (e.message),
+                                         Diagnostics.pos_column (e.message), "semantic error", e.message);
+                        if (Diagnostics.is_full ())
+                            return;
+                    }
                 }
             }
 
             emit_start ();
             emit_runtime ();
+        }
+
+        private static void mt_cg_worker (int wid) {
+            var master = mt_cg_master;
+            var w = new Codegen ();
+            w.copy_shared_from (master);
+            int n = mt_cg_n;
+            while (true) {
+                Host.spin_lock (mt_cg_lock);
+                int fi = mt_cg_next++;
+                Host.spin_unlock (mt_cg_lock);
+                if (fi >= n)
+                    break;
+                mt_cg_results[fi] = w.compile_one_mt (fi, master.program.functions[fi]);
+            }
+        }
+
+        private void copy_shared_from (Codegen m) {
+            program = m.program;
+            bounds_check = m.bounds_check;
+            null_check = m.null_check;
+            strict_null = m.strict_null;
+            strict_unused = m.strict_unused;
+            warn_unused = m.warn_unused;
+            allow_asm = m.allow_asm;
+            opt_level = m.opt_level;
+            check_leaks = m.check_leaks;
+            check_overflow = m.check_overflow;
+            freestanding = m.freestanding;
+            target_planetos = m.target_planetos;
+            program_uses_heap = m.program_uses_heap;
+            program_has_string_slots = m.program_has_string_slots;
+            main_takes_args = m.main_takes_args;
+            alloc_bss_offset = m.alloc_bss_offset;
+            async_bss_offset = m.async_bss_offset;
+            sig_bss_offset = m.sig_bss_offset;
+            freestanding_heap_off = m.freestanding_heap_off;
+            lock_bss_offset = m.lock_bss_offset;
+            struct_ret_bss_offset = m.struct_ret_bss_offset;
+            null_delegate_bss_offset = m.null_delegate_bss_offset;
+            weak_used_classes = m.weak_used_classes;
+            global_names = m.global_names;
+            global_types = m.global_types;
+            global_type_names = m.global_type_names;
+            global_offsets = m.global_offsets;
+            global_spaces = m.global_spaces;
+        }
+
+        private CgFuncResult compile_one_mt (int fi, Function fn) {
+            emitter = new Emitter ();
+            emitter.opt_level = opt_level;
+            emitter.rodata_bias = mt_cg_rodata_end;
+            symbols = new GenericArray<Symbol> ();
+            debug_lines = new GenericArray<DebugLineEntry> ();
+            debug_funcs = new GenericArray<DebugFunc> ();
+            overflow_panic_label = new Label ();
+            bounds_panic_label = emitter.new_label ();
+            mem_panic_label = emitter.new_label ();
+            null_panic_label = emitter.new_label ();
+            cast_panic_label = emitter.new_label ();
+            leak_panic_label = emitter.new_label ();
+            del_thunk_keys = new GenericArray<string> ();
+            del_thunk_syms = new GenericArray<string> ();
+            cur_func_index = fi;
+            local_lambda_idx = 0;
+            mt_extra_funcs = new GenericArray<Function> ();
+
+            need_write_str = false; need_str_eq = false; need_write_int = false;
+            need_write_uint = false; need_bounds_panic = false; need_alloc = false;
+            need_ref = false; need_unref = false; need_str_concat = false;
+            need_str_slice = false; need_int_to_str = false; need_uint_to_str = false;
+            need_is_instance = false; need_mem_panic = false; need_null_panic = false;
+            need_cast_panic = false; need_leak_panic = false; need_overflow_panic = false;
+            need_iface_lookup = false; need_build_args = false; need_str_has_prefix = false;
+            need_str_has_suffix = false; need_utf8_char_count = false; need_utf8_get_char = false;
+            need_lock = false; need_compact_free = false; need_utf8_validate = false;
+            need_str_index_of = false; need_str_last_index_of = false;
+            need_str_index_of_char = false; need_str_last_index_of_char = false;
+            need_async = false; need_signal = false; need_sync = false;
+            need_str_to_int = false; need_double_to_str = false; need_str_to_double = false;
+            need_bytes_to_str = false; need_eprint = false; need_chmod = false;
+            need_read_file = false; need_write_file = false; need_cpu_count = false;
+            need_thread_spawn = false; need_thread_join = false; need_spin_lock = false;
+            need_spin_unlock = false;
+
+            var r = new CgFuncResult ();
+            try {
+                generate_function (fn);
+            } catch (SemanticError e) {
+                r.has_err = true;
+                r.err_file = fn.file;
+                r.err_msg = e.message;
+                return r;
+            }
+
+            r.emitter = emitter;
+            r.symbols = symbols;
+            r.debug_lines = debug_lines;
+            r.debug_funcs = debug_funcs;
+            r.overflow_panic_label = overflow_panic_label;
+            r.bounds_panic_label = bounds_panic_label;
+            r.mem_panic_label = mem_panic_label;
+            r.null_panic_label = null_panic_label;
+            r.cast_panic_label = cast_panic_label;
+            r.leak_panic_label = leak_panic_label;
+            r.extra_funcs = mt_extra_funcs;
+
+            r.need_write_str = need_write_str; r.need_str_eq = need_str_eq;
+            r.need_write_int = need_write_int; r.need_write_uint = need_write_uint;
+            r.need_bounds_panic = need_bounds_panic; r.need_alloc = need_alloc;
+            r.need_ref = need_ref; r.need_unref = need_unref;
+            r.need_str_concat = need_str_concat; r.need_str_slice = need_str_slice;
+            r.need_int_to_str = need_int_to_str; r.need_uint_to_str = need_uint_to_str;
+            r.need_is_instance = need_is_instance; r.need_mem_panic = need_mem_panic;
+            r.need_null_panic = need_null_panic; r.need_cast_panic = need_cast_panic;
+            r.need_leak_panic = need_leak_panic; r.need_overflow_panic = need_overflow_panic;
+            r.need_iface_lookup = need_iface_lookup; r.need_build_args = need_build_args;
+            r.need_str_has_prefix = need_str_has_prefix; r.need_str_has_suffix = need_str_has_suffix;
+            r.need_utf8_char_count = need_utf8_char_count; r.need_utf8_get_char = need_utf8_get_char;
+            r.need_lock = need_lock; r.need_compact_free = need_compact_free;
+            r.need_utf8_validate = need_utf8_validate; r.need_str_index_of = need_str_index_of;
+            r.need_str_last_index_of = need_str_last_index_of;
+            r.need_str_index_of_char = need_str_index_of_char;
+            r.need_str_last_index_of_char = need_str_last_index_of_char;
+            r.need_async = need_async; r.need_signal = need_signal; r.need_sync = need_sync;
+            r.need_str_to_int = need_str_to_int; r.need_double_to_str = need_double_to_str;
+            r.need_str_to_double = need_str_to_double; r.need_bytes_to_str = need_bytes_to_str;
+            r.need_eprint = need_eprint; r.need_chmod = need_chmod;
+            r.need_read_file = need_read_file; r.need_write_file = need_write_file;
+            r.need_cpu_count = need_cpu_count; r.need_thread_spawn = need_thread_spawn;
+            r.need_thread_join = need_thread_join; r.need_spin_lock = need_spin_lock;
+            r.need_spin_unlock = need_spin_unlock;
+            return r;
+        }
+
+        private void merge_func_result (Function fn, CgFuncResult r) {
+            int text_delta = emitter.code.length;
+            emitter.code.append_buffer (r.emitter.code);
+
+            int rodata_delta = 0;
+            if (r.emitter.data.length > 0) {
+                rodata_delta = emitter.align_rodata_8 ();
+                emitter.data.append_buffer (r.emitter.data);
+            }
+
+            for (int i = 0; i < r.emitter.patches.length; i++) {
+                var p = r.emitter.patches[i];
+                p.displacement += text_delta;
+                if (p.space == PatchSpace.RODATA && p.target >= mt_cg_rodata_end)
+                    p.target = (p.target - mt_cg_rodata_end) + rodata_delta;
+                emitter.patches.add (p);
+            }
+            for (int i = 0; i < r.emitter.calls.length; i++) {
+                var c = r.emitter.calls[i];
+                c.displacement += text_delta;
+                emitter.calls.add (c);
+            }
+            for (int i = 0; i < r.emitter.branches.length; i++) {
+                var b = r.emitter.branches[i];
+                b.displacement += text_delta;
+                if (b.label == r.overflow_panic_label) b.label = overflow_panic_label;
+                else if (b.label == r.bounds_panic_label) b.label = bounds_panic_label;
+                else if (b.label == r.mem_panic_label) b.label = mem_panic_label;
+                else if (b.label == r.null_panic_label) b.label = null_panic_label;
+                else if (b.label == r.cast_panic_label) b.label = cast_panic_label;
+                else if (b.label == r.leak_panic_label) b.label = leak_panic_label;
+                else if (b.label.target >= 0 && !b.label.adjusted) {
+                    b.label.target += text_delta;
+                    b.label.adjusted = true;
+                }
+                emitter.branches.add (b);
+            }
+            for (int i = 0; i < r.symbols.length; i++) {
+                var s = r.symbols[i];
+                s.offset += text_delta;
+                symbols.add (s);
+            }
+            for (int i = 0; i < r.debug_lines.length; i++) {
+                var dl = r.debug_lines[i];
+                dl.text_offset += text_delta;
+                debug_lines.add (dl);
+            }
+            for (int i = 0; i < r.debug_funcs.length; i++) {
+                var df = r.debug_funcs[i];
+                df.start_offset += text_delta;
+                df.end_offset += text_delta;
+                debug_funcs.add (df);
+            }
+
+            if (r.need_write_str) need_write_str = true;
+            if (r.need_str_eq) need_str_eq = true;
+            if (r.need_write_int) need_write_int = true;
+            if (r.need_write_uint) need_write_uint = true;
+            if (r.need_bounds_panic) need_bounds_panic = true;
+            if (r.need_alloc) need_alloc = true;
+            if (r.need_ref) need_ref = true;
+            if (r.need_unref) need_unref = true;
+            if (r.need_str_concat) need_str_concat = true;
+            if (r.need_str_slice) need_str_slice = true;
+            if (r.need_int_to_str) need_int_to_str = true;
+            if (r.need_uint_to_str) need_uint_to_str = true;
+            if (r.need_is_instance) need_is_instance = true;
+            if (r.need_mem_panic) need_mem_panic = true;
+            if (r.need_null_panic) need_null_panic = true;
+            if (r.need_cast_panic) need_cast_panic = true;
+            if (r.need_leak_panic) need_leak_panic = true;
+            if (r.need_overflow_panic) need_overflow_panic = true;
+            if (r.need_iface_lookup) need_iface_lookup = true;
+            if (r.need_build_args) need_build_args = true;
+            if (r.need_str_has_prefix) need_str_has_prefix = true;
+            if (r.need_str_has_suffix) need_str_has_suffix = true;
+            if (r.need_utf8_char_count) need_utf8_char_count = true;
+            if (r.need_utf8_get_char) need_utf8_get_char = true;
+            if (r.need_lock) need_lock = true;
+            if (r.need_compact_free) need_compact_free = true;
+            if (r.need_utf8_validate) need_utf8_validate = true;
+            if (r.need_str_index_of) need_str_index_of = true;
+            if (r.need_str_last_index_of) need_str_last_index_of = true;
+            if (r.need_str_index_of_char) need_str_index_of_char = true;
+            if (r.need_str_last_index_of_char) need_str_last_index_of_char = true;
+            if (r.need_async) need_async = true;
+            if (r.need_signal) need_signal = true;
+            if (r.need_sync) need_sync = true;
+            if (r.need_str_to_int) need_str_to_int = true;
+            if (r.need_double_to_str) need_double_to_str = true;
+            if (r.need_str_to_double) need_str_to_double = true;
+            if (r.need_bytes_to_str) need_bytes_to_str = true;
+            if (r.need_eprint) need_eprint = true;
+            if (r.need_chmod) need_chmod = true;
+            if (r.need_read_file) need_read_file = true;
+            if (r.need_write_file) need_write_file = true;
+            if (r.need_cpu_count) need_cpu_count = true;
+            if (r.need_thread_spawn) need_thread_spawn = true;
+            if (r.need_thread_join) need_thread_join = true;
+            if (r.need_spin_lock) need_spin_lock = true;
+            if (r.need_spin_unlock) need_spin_unlock = true;
         }
 
         private bool scan_program_heap () {
@@ -2119,12 +2494,12 @@ namespace Planc {
             }
             if (need_thread_spawn) {
                 var start = emitter.here ();
-                emitter.emit_rt_thread_spawn ();
+                emitter.emit_rt_thread_spawn (target_planetos);
                 symbols.add (new Symbol ("__planc_thread_spawn", start, emitter.here () - start));
             }
             if (need_thread_join) {
                 var start = emitter.here ();
-                emitter.emit_rt_thread_join ();
+                emitter.emit_rt_thread_join (target_planetos);
                 symbols.add (new Symbol ("__planc_thread_join", start, emitter.here () - start));
             }
             if (need_spin_lock) {
@@ -3411,7 +3786,9 @@ namespace Planc {
                 if (del_thunk_keys[i] == key)
                     return del_thunk_syms[i];
             }
-            var sym = @"__planc_delthunk_$(lambda_counter++)";
+            var sym = (mt_extra_funcs != null)
+                ? @"__planc_delthunk_$(cur_func_index)_$(local_lambda_idx++)"
+                : @"__planc_delthunk_$(lambda_counter++)";
             del_thunk_keys.add (key);
             del_thunk_syms.add (sym);
 
@@ -3485,7 +3862,10 @@ namespace Planc {
             } else {
                 th.body.add (new ReturnStatement () { value = call_expr, line = fn.line, column = fn.column });
             }
-            program.functions.add (th);
+            if (mt_extra_funcs != null)
+                mt_extra_funcs.add (th);
+            else
+                program.functions.add (th);
             return sym;
         }
 
@@ -4520,7 +4900,9 @@ namespace Planc {
                         lam.captured_type_names.add (val_tnames[vi]);
                     }
 
-                    lam.synth_func_name = @"__planc_lambda_$(lambda_counter++)";
+                    lam.synth_func_name = (mt_extra_funcs != null)
+                        ? @"__planc_lambda_$(cur_func_index)_$(local_lambda_idx++)"
+                        : @"__planc_lambda_$(lambda_counter++)";
                     var synth = new Function () {
                         name = lam.synth_func_name,
                         return_type = dd.return_type,
@@ -4570,7 +4952,10 @@ namespace Planc {
                         foreach (var bs in lam.body)
                             synth.body.add (bs);
                     }
-                    program.functions.add (synth);
+                    if (mt_extra_funcs != null)
+                        mt_extra_funcs.add (synth);
+                    else
+                        program.functions.add (synth);
                 }
                 pending_struct_exprs.add (e);
                 pending_struct_rel_slots.add (struct_temps);

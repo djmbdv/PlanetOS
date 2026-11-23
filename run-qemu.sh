@@ -41,7 +41,7 @@ fi
 
 echo "Building PlanetOS kernel and userland..."
 OPT="${PLANC_OPT:--O2}"
-GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/glib/process.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala")
+GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/glib/process.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/glib/variant.vala" "$ROOT/stdlib/glib/time.vala" "$ROOT/stdlib/glib/thread.vala")
 GEE_SRCS=("$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala")
 GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala")
 CAIRO_SRCS=("$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala")
@@ -73,7 +73,7 @@ COMPOSITOR_SRCS=("$ROOT/user/compositor/apps.vala" "$ROOT/user/compositor/win.va
 "$PLANC" $OPT --target=planetos "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
 "$PLANC" $OPT --target=planetos "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
-    "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
+    "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/ptr_analyzer.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
 "$PLANC" $OPT --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" $OPT --target=planetos --image-base=0xB00000 "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "$ROOT/user/shell.vala" -o "$OUT/vte_sh.elf"
 "$PLANC" $OPT --target=planetos --image-base=0xC00000 \

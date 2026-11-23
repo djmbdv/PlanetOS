@@ -38,6 +38,11 @@ TRANSLATOR_VALA = os.path.join(TOOLS, "c2vala", "build", "c2vala")
 TRANSLATOR_VALA_EXE = TRANSLATOR_VALA + ".exe"
 PLANC_BIN = os.path.join(ROOT, "planc", "build", "planc")
 GLIB_MATH = os.path.join(ROOT, "stdlib", "glib", "math.vala")
+GLIB_CORE = os.path.join(ROOT, "stdlib", "glib", "core.vala")
+GLIB_PROCESS = os.path.join(ROOT, "stdlib", "glib", "process.vala")
+GLIB_TIME = os.path.join(ROOT, "stdlib", "glib", "time.vala")
+GLIB_THREAD = os.path.join(ROOT, "stdlib", "glib", "thread.vala")
+PLANET_SYS = os.path.join(ROOT, "stdlib", "planet_sys.vala")
 
 IS_WINDOWS = os.name == "nt"
 MSYS = os.environ.get("MSYS2_ROOT", r"C:\Users\Lenovo\msys64")
@@ -232,7 +237,7 @@ def main(argv):
         # candidate: planc (when --translator vala) or valac on the translated source + runtime shim
         vala_exe = os.path.join(case_work, "translated.exe")
         if use_planc:
-            build = subprocess.run([PLANC_BIN, GLIB_MATH, vala_out, RUNTIME, "-o", vala_exe],
+            build = subprocess.run([PLANC_BIN, PLANET_SYS, GLIB_CORE, GLIB_MATH, GLIB_PROCESS, GLIB_TIME, GLIB_THREAD, vala_out, RUNTIME, "-o", vala_exe],
                                    capture_output=True, text=True)
         else:
             build = sh('valac --pkg=glib-2.0 "%s" "%s" -o "%s"'

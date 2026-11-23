@@ -414,6 +414,44 @@ public class C2VArena {
     public uint8[] slice (int off) {
         return c_bytes_add (buf, off);
     }
+
+    public C2VPtr alloc_ptr (int bytes, int align = 8) {
+        int off = alloc (bytes, align);
+        return new C2VPtr.from_bytes (buf, off);
+    }
+}
+
+public class C2VPtr : Object {
+    public uint8[]? data = null;
+    public int offset = 0;
+    public Object? obj = null;
+
+    public C2VPtr () {}
+
+    public C2VPtr.from_bytes (uint8[] b, int off = 0) {
+        data = b;
+        offset = off;
+    }
+
+    public C2VPtr.from_obj (Object? o) {
+        obj = o;
+    }
+
+    public C2VPtr add (int delta) {
+        var p = new C2VPtr ();
+        p.data = data;
+        p.offset = offset + delta;
+        p.obj = obj;
+        return p;
+    }
+
+    public uint8[] as_bytes () {
+        if (data == null)
+            return new uint8[0];
+        if (offset <= 0)
+            return (!) data;
+        return c_bytes_add ((!) data, offset);
+    }
 }
 
 public string c_getenv (string name) {
@@ -871,4 +909,336 @@ public int c_remove (string path) {
 
 public int c_rename (string oldpath, string newpath) {
     return c_sys_renameat (-100, oldpath, -100, newpath) < 0 ? -1 : 0;
+}
+
+public uint64 c_u_get_u64 (uint8[] data, int nbytes) {
+    if (nbytes <= 0)
+        return 0;
+    uint64 v = 0;
+    int lim = (nbytes < data.length) ? nbytes : data.length;
+    for (int i = 0; i < lim; i++)
+        v |= ((uint64) data[i]) << (i * 8);
+    return v;
+}
+
+public void c_u_set_u64 (uint8[] data, int nbytes, uint64 val) {
+    if (nbytes <= 0)
+        return;
+    int lim = (nbytes < data.length) ? nbytes : data.length;
+    for (int i = 0; i < lim; i++)
+        data[i] = (uint8) ((val >> (i * 8)) & 0xff);
+}
+
+public uint16 c_u_get_u16 (uint8[] data) {
+    if (data.length < 2)
+        return (uint16) c_u_get_u64 (data, 2);
+    return (uint16) (((uint32) data[0]) | (((uint32) data[1]) << 8));
+}
+
+public void c_u_set_u16 (uint8[] data, uint16 val) {
+    if (data.length < 2) {
+        c_u_set_u64 (data, 2, (uint64) val);
+        return;
+    }
+    data[0] = (uint8) (val & 0xff);
+    data[1] = (uint8) ((val >> 8) & 0xff);
+}
+
+public uint32 c_u_get_u32 (uint8[] data) {
+    if (data.length < 4)
+        return (uint32) c_u_get_u64 (data, 4);
+    return ((uint32) data[0])
+        | (((uint32) data[1]) << 8)
+        | (((uint32) data[2]) << 16)
+        | (((uint32) data[3]) << 24);
+}
+
+public void c_u_set_u32 (uint8[] data, uint32 val) {
+    if (data.length < 4) {
+        c_u_set_u64 (data, 4, (uint64) val);
+        return;
+    }
+    data[0] = (uint8) (val & 0xff);
+    data[1] = (uint8) ((val >> 8) & 0xff);
+    data[2] = (uint8) ((val >> 16) & 0xff);
+    data[3] = (uint8) ((val >> 24) & 0xff);
+}
+
+public uint64 c_u_get_u64_le (uint8[] data) {
+    if (data.length < 8)
+        return c_u_get_u64 (data, 8);
+    return ((uint64) data[0])
+        | (((uint64) data[1]) << 8)
+        | (((uint64) data[2]) << 16)
+        | (((uint64) data[3]) << 24)
+        | (((uint64) data[4]) << 32)
+        | (((uint64) data[5]) << 40)
+        | (((uint64) data[6]) << 48)
+        | (((uint64) data[7]) << 56);
+}
+
+public void c_u_set_u64_le (uint8[] data, uint64 val) {
+    if (data.length < 8) {
+        c_u_set_u64 (data, 8, val);
+        return;
+    }
+    data[0] = (uint8) (val & 0xff);
+    data[1] = (uint8) ((val >> 8) & 0xff);
+    data[2] = (uint8) ((val >> 16) & 0xff);
+    data[3] = (uint8) ((val >> 24) & 0xff);
+    data[4] = (uint8) ((val >> 32) & 0xff);
+    data[5] = (uint8) ((val >> 40) & 0xff);
+    data[6] = (uint8) ((val >> 48) & 0xff);
+    data[7] = (uint8) ((val >> 56) & 0xff);
+}
+
+public void c_u_copy (uint8[] dst, uint8[] src) {
+    int lim = (dst.length < src.length) ? dst.length : src.length;
+    for (int i = 0; i < lim; i++)
+        dst[i] = src[i];
+}
+
+public uint8 c_u_get_u8_at (uint8[] data, int off) {
+    if (off < 0 || off >= data.length)
+        return 0;
+    return data[off];
+}
+
+public void c_u_set_u8_at (uint8[] data, int off, uint8 val) {
+    if (off >= 0 && off < data.length)
+        data[off] = val;
+}
+
+public uint16 c_u_get_u16_at (uint8[] data, int off) {
+    if (off < 0 || off + 2 > data.length)
+        return 0;
+    return (uint16) (((uint32) data[off]) | (((uint32) data[off + 1]) << 8));
+}
+
+public void c_u_set_u16_at (uint8[] data, int off, uint16 val) {
+    if (off < 0 || off + 2 > data.length)
+        return;
+    data[off] = (uint8) (val & 0xff);
+    data[off + 1] = (uint8) ((val >> 8) & 0xff);
+}
+
+public uint32 c_u_get_u32_at (uint8[] data, int off) {
+    if (off < 0 || off + 4 > data.length)
+        return 0;
+    return ((uint32) data[off])
+        | (((uint32) data[off + 1]) << 8)
+        | (((uint32) data[off + 2]) << 16)
+        | (((uint32) data[off + 3]) << 24);
+}
+
+public void c_u_set_u32_at (uint8[] data, int off, uint32 val) {
+    if (off < 0 || off + 4 > data.length)
+        return;
+    data[off] = (uint8) (val & 0xff);
+    data[off + 1] = (uint8) ((val >> 8) & 0xff);
+    data[off + 2] = (uint8) ((val >> 16) & 0xff);
+    data[off + 3] = (uint8) ((val >> 24) & 0xff);
+}
+
+public uint64 c_u_get_u64_at (uint8[] data, int off) {
+    if (off < 0 || off + 8 > data.length)
+        return 0;
+    return ((uint64) data[off])
+        | (((uint64) data[off + 1]) << 8)
+        | (((uint64) data[off + 2]) << 16)
+        | (((uint64) data[off + 3]) << 24)
+        | (((uint64) data[off + 4]) << 32)
+        | (((uint64) data[off + 5]) << 40)
+        | (((uint64) data[off + 6]) << 48)
+        | (((uint64) data[off + 7]) << 56);
+}
+
+public void c_u_set_u64_at (uint8[] data, int off, uint64 val) {
+    if (off < 0 || off + 8 > data.length)
+        return;
+    data[off] = (uint8) (val & 0xff);
+    data[off + 1] = (uint8) ((val >> 8) & 0xff);
+    data[off + 2] = (uint8) ((val >> 16) & 0xff);
+    data[off + 3] = (uint8) ((val >> 24) & 0xff);
+    data[off + 4] = (uint8) ((val >> 32) & 0xff);
+    data[off + 5] = (uint8) ((val >> 40) & 0xff);
+    data[off + 6] = (uint8) ((val >> 48) & 0xff);
+    data[off + 7] = (uint8) ((val >> 56) & 0xff);
+}
+
+public uint32 c_f32_to_u32 (float f) {
+    double d = (double) f;
+    if (d != d)
+        return (uint32) 0x7FC00000;
+    uint32 sign = 0;
+    if (d < 0.0 || (d == 0.0 && (1.0 / d) < 0.0)) {
+        sign = (uint32) 0x80000000;
+        if (d < 0.0)
+            d = -d;
+    }
+    if (d == 0.0)
+        return sign;
+    if (d > 3.4028235e38)
+        return sign | (uint32) 0x7F800000;
+    int exp = 127;
+    while (d >= 2.0 && exp < 255) {
+        d *= 0.5;
+        exp++;
+    }
+    while (d < 1.0 && exp > 0) {
+        d *= 2.0;
+        exp--;
+    }
+    if (exp == 0) {
+        uint32 sub = (uint32) (d * 4194304.0 + 0.5);
+        return sign | (sub & (uint32) 0x7FFFFF);
+    }
+    uint32 mant = (uint32) ((d - 1.0) * 8388608.0 + 0.5);
+    if (mant >= (uint32) 8388608) {
+        mant = 0;
+        exp++;
+    }
+    return sign | (((uint32) exp) << 23) | (mant & (uint32) 0x7FFFFF);
+}
+
+public float c_u32_to_f32 (uint32 bits) {
+    uint32 exp_bits = (bits >> 23) & (uint32) 0xFF;
+    uint32 mant = bits & (uint32) 0x7FFFFF;
+    bool neg = (bits & (uint32) 0x80000000) != 0;
+    if (exp_bits == 255) {
+        if (mant != 0)
+            return (float) (0.0 / 0.0);
+        return neg ? (float) (-1.0 / 0.0) : (float) (1.0 / 0.0);
+    }
+    if (exp_bits == 0 && mant == 0)
+        return neg ? (float) (-0.0) : 0.0f;
+    double val;
+    int e;
+    if (exp_bits == 0) {
+        val = ((double) mant) / 8388608.0;
+        e = -126;
+    } else {
+        val = 1.0 + ((double) mant) / 8388608.0;
+        e = (int) exp_bits - 127;
+    }
+    while (e > 0) { val *= 2.0; e--; }
+    while (e < 0) { val *= 0.5; e++; }
+    return neg ? (float) (-val) : (float) val;
+}
+
+public uint64 c_f64_to_u64 (double d) {
+    if (d != d)
+        return (uint64) 0x7FF8000000000000;
+    uint64 sign = 0;
+    if (d < 0.0 || (d == 0.0 && (1.0 / d) < 0.0)) {
+        sign = ((uint64) 1) << 63;
+        if (d < 0.0)
+            d = -d;
+    }
+    if (d == 0.0)
+        return sign;
+    if (d > 1.7976931348623157e308)
+        return sign | ((uint64) 0x7FF << 52);
+    int exp = 1023;
+    while (d >= 2.0 && exp < 2047) {
+        d *= 0.5;
+        exp++;
+    }
+    while (d < 1.0 && exp > 0) {
+        d *= 2.0;
+        exp--;
+    }
+    if (exp == 0) {
+        uint64 sub = (uint64) (d * 2251799813685248.0 + 0.5);
+        return sign | (sub & (((uint64) 1 << 52) - 1));
+    }
+    uint64 mant = (uint64) ((d - 1.0) * 4503599627370496.0 + 0.5);
+    if (mant >= ((uint64) 1 << 52)) {
+        mant = 0;
+        exp++;
+    }
+    return sign | (((uint64) exp) << 52) | (mant & (((uint64) 1 << 52) - 1));
+}
+
+public double c_u64_to_f64 (uint64 bits) {
+    uint64 exp_bits = (bits >> 52) & (uint64) 0x7FF;
+    uint64 mant = bits & (((uint64) 1 << 52) - 1);
+    bool neg = (bits & (((uint64) 1) << 63)) != 0;
+    if (exp_bits == 2047) {
+        if (mant != 0)
+            return 0.0 / 0.0;
+        return neg ? (-1.0 / 0.0) : (1.0 / 0.0);
+    }
+    if (exp_bits == 0 && mant == 0)
+        return neg ? -0.0 : 0.0;
+    double val;
+    int e;
+    if (exp_bits == 0) {
+        val = ((double) mant) / 4503599627370496.0;
+        e = -1022;
+    } else {
+        val = 1.0 + ((double) mant) / 4503599627370496.0;
+        e = (int) exp_bits - 1023;
+    }
+    while (e > 0) { val *= 2.0; e--; }
+    while (e < 0) { val *= 0.5; e++; }
+    return neg ? -val : val;
+}
+
+public int64 c_time_now () {
+    return get_real_time () / 1000000;
+}
+
+public int64 c_time (int64[] tloc) {
+    int64 t = get_real_time () / 1000000;
+    if (tloc.length > 0)
+        tloc[0] = t;
+    return t;
+}
+
+public int c_pthread_create (out Thread? tid, PthreadFunc fn, uint8[] arg) {
+    tid = new Thread.with_arg (null, fn, arg);
+    return 0;
+}
+
+public int c_pthread_join_null (Thread? tid) {
+    if (tid != null)
+        ((!) tid).join ();
+    return 0;
+}
+
+public int c_pthread_mutex_lock (RecMutex? m) {
+    if (m != null)
+        ((!) m).@lock ();
+    return 0;
+}
+
+public int c_pthread_mutex_trylock (RecMutex? m) {
+    if (m == null)
+        return 0;
+    return ((!) m).trylock () ? 0 : 16;
+}
+
+public int c_pthread_mutex_unlock (RecMutex? m) {
+    if (m != null)
+        ((!) m).unlock ();
+    return 0;
+}
+
+public int c_pthread_cond_wait (Cond? c, RecMutex? m) {
+    if (c != null && m != null)
+        ((!) c).wait ((!) m);
+    return 0;
+}
+
+public int c_pthread_cond_signal (Cond? c) {
+    if (c != null)
+        ((!) c).signal ();
+    return 0;
+}
+
+public int c_pthread_cond_broadcast (Cond? c) {
+    if (c != null)
+        ((!) c).broadcast ();
+    return 0;
 }

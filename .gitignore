@@ -25,3 +25,7 @@ __pycache__/
 # c2vala: third-party corpus fetched on demand
 tools/c2vala_tests/cases/jsmn/jsmn.h
 tools/c2vala/build/
+
+# c2vala test runner generated artifacts
+tools/c2vala_tests/cases/*/*.exe
+tools/c2vala_tests/cases/*/translated.vala
