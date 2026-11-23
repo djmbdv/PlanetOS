@@ -345,6 +345,15 @@ hot paths, without importing the C ABI:
   per-task slots through `SYS_TID` (syscall 62) and a fixed worker pool over
   `AsyncQueue`. `AsyncQueue` now parks on `Cond` instead of spinning on
   `SYS_YIELD`.
+- **`GLib.Thread` is a kernel task on `--target=planetos`** ([planc/src/emitter.vala](../../planc/src/emitter.vala),
+  [stdlib/glib/thread.vala](../../stdlib/glib/thread.vala)): `__planc_thread_spawn`
+  lowers to `SYS_THREAD_SPAWN` (27) and `__planc_thread_join` to `SYS_WAIT` (17).
+  The trampoline ends the task with `SYS_EXIT` because a kernel task has no
+  return address; `ThreadPool` therefore has real workers.
+- **Thread stack lifecycle** ([kernel/sched.vala](../../kernel/sched.vala),
+  [kernel/vmm.vala](../../kernel/vmm.vala)): the stack name is written only
+  after the range is mapped, and a reaped stack is remapped supervisor-RW before
+  `Pmm` writes its free-list metadata into the frames.
 - **`GLib.PathBuf`, `GLib.StrvBuilder`, `GLib.ByteOrder`, `GLib.Aligned`**
   ([stdlib/glib/core.vala](../../stdlib/glib/core.vala)): path joins in
   `Gio.File`, argv construction in `Shell.parse_argv`, byte-order helpers in

@@ -124,7 +124,7 @@ namespace Planet.Kernel {
                 return;
             int va = vaddr & ~0xFFF;
             int pa = paddr & ~0xFFF;
-            int pf = (flags == 0x05) ? 0x05 : 0x07;
+            int pf = (flags == 0x05) ? 0x05 : ((flags == 0x03) ? 0x03 : 0x07);
             int pdpt = mmio_read64 (cr3) & ~0xFFF;
             int pd = mmio_read64 (pdpt) & ~0xFFF;
             int pt_base = 0;
@@ -142,6 +142,18 @@ namespace Planet.Kernel {
 
         public static void map_user_4k_ro (int cr3, int addr) {
             map_user_4k_phys (cr3, addr, addr, 0x05);
+        }
+
+        // Supervisor RW mapping for frames whose user mapping was just removed.
+        // Pmm writes free-list metadata into the frame itself, so releasing it
+        // while the owning CR3 is active needs the frame reachable from ring 0.
+        public static void map_supervisor_range (int cr3, int start, int size) {
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES || size <= 0)
+                return;
+            int first = start & ~0xFFF;
+            int last = (start + size - 1) & ~0xFFF;
+            for (int p = first; p <= last; p += 4096)
+                map_user_4k_phys (cr3, p, p, 0x03);
         }
 
         public static void unmap_user_4k (int cr3, int addr) {

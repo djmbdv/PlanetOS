@@ -13,6 +13,15 @@ private int probe_fd = -1;
 private int probe_rc = -2;
 private int probe_err = 0;
 
+private int thread_seen_tid = -1;
+private int thread_ran = 0;
+
+private uint8[]? demo_thread_body () {
+    thread_seen_tid = Sys.tid ();
+    thread_ran = 1;
+    return null;
+}
+
 [AsmBody(@"
     lea fd_probe_worker(%rip), %rax
     ret
@@ -201,6 +210,19 @@ int main (string[] args) {
     }
     if (gfd >= 3)
         Sys.close (gfd);
+
+    // 12. GLib.Thread runs as a real kernel task on PlanetOS.
+    int main_tid = Sys.tid ();
+    thread_seen_tid = -1;
+    thread_ran = 0;
+    var rt = new Thread ("real-thread", demo_thread_body);
+    rt.join ();
+    if (thread_ran == 1 && thread_seen_tid > 0 && thread_seen_tid != main_tid)
+        print ("thread=ok\n");
+    else {
+        print ("thread=FAIL\n");
+        fails++;
+    }
 
     return fails;
 }

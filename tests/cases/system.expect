@@ -9,4 +9,5 @@
 =rights=ok
 =stale=ok
 =guard=ok
+=thread=ok
 !FAIL

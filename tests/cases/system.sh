@@ -3,5 +3,6 @@
 # a real thread, SYS_POLL reports a file as readable, SYS_SLEEP_MS waits for
 # the timer, a handle opened by one task is denied to another, an operation
 # without its right is refused, a closed handle value is stale, and an
-# unmapped user pointer is refused without killing the task.
+# unmapped user pointer is refused without killing the task, and GLib.Thread
+# runs as a real kernel task.
 sys_demo

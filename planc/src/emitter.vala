@@ -3289,16 +3289,22 @@ namespace Planc {
         // int64 __planc_thread_spawn(delegate_ptr rdi, int64 arg rsi)
         public void emit_rt_thread_spawn (bool target_planetos = false) {
             if (target_planetos) {
+                // A PlanetOS thread is a kernel task: SYS_THREAD_SPAWN(entry in
+                // rdi, arg in rsi) returns the tid. The entry runs in the same
+                // address space, so it must exit instead of returning.
                 var l_ret = new_label ();
                 push_rbp ();
                 mov_rsp_to_rbp ();
                 // test rdi, rdi; je l_ret
                 code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
                 branch (BranchKind.JE, l_ret);
-                // mov rax, [rdi]; mov rdi, [rdi + 8]; call rax (rsi already holds arg)
+                // mov rax, [rdi]; mov rdi, rax
                 code.u8 (0x48); code.u8 (0x8B); code.u8 (0x07);
-                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x7F); code.u8 (0x08);
-                code.u8 (0xFF); code.u8 (0xD0);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7);
+                mov_eax (27);
+                code.u8 (0xCD); code.u8 (0x80);
+                leave ();
+                ret ();
                 bind (l_ret);
                 xor_eax ();
                 leave ();
@@ -3387,6 +3393,9 @@ namespace Planc {
         // void __planc_thread_join(int64 ctrl rdi)
         public void emit_rt_thread_join (bool target_planetos = false) {
             if (target_planetos) {
+                // The spawn result is the tid: SYS_WAIT(tid).
+                mov_eax (17);
+                code.u8 (0xCD); code.u8 (0x80);
                 ret ();
                 return;
             }

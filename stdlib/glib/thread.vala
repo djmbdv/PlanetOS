@@ -4,6 +4,10 @@ using GLib;
 
 private void _c_glib_thread_trampoline (int slot) {
     _ThreadSlots.trampoline (slot);
+#if PLANC
+    // A kernel task has no return address on its stack: the body ends the task.
+    Sys.sys (11, 0, 0, 0);
+#endif
 }
 
 namespace GLib {
@@ -64,6 +68,9 @@ namespace GLib {
 
     private void _glib_thread_trampoline (int slot) {
         _ThreadSlots.trampoline (slot);
+#if PLANC
+        Sys.sys (11, 0, 0, 0);
+#endif
     }
 
     public class Thread : _ThreadBase {

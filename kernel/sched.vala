@@ -311,35 +311,48 @@ namespace Planet.Kernel {
             return -1;
         }
 
+        private static void write_thread_name (int stack_bottom) {
+            mmio_write8 (stack_bottom + 0, 't');
+            mmio_write8 (stack_bottom + 1, 'h');
+            mmio_write8 (stack_bottom + 2, 'r');
+            mmio_write8 (stack_bottom + 3, 'e');
+            mmio_write8 (stack_bottom + 4, 'a');
+            mmio_write8 (stack_bottom + 5, 'd');
+        }
+
         public static int spawn_thread (int entry, int arg) {
             int stack_base = Pmm.alloc_contiguous (16);
             if (stack_base == 0)
                 return -1;
             int arg_sp = stack_base + 16 * 4096 - 16;
-            // Temporarily write "thread" name on stack_base+0..6
-            mmio_write8 (stack_base + 0, 't');
-            mmio_write8 (stack_base + 1, 'h');
-            mmio_write8 (stack_base + 2, 'r');
-            mmio_write8 (stack_base + 3, 'e');
-            mmio_write8 (stack_base + 4, 'a');
-            mmio_write8 (stack_base + 5, 'd');
             int ucr3 = current_cr3 ();
             int tid = -1;
             if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES) {
                 if (Vmm.map_user_range_checked (ucr3, stack_base, 16 * 4096) == 0) {
+                    Vmm.map_supervisor_range (ucr3, stack_base, 16 * 4096);
                     for (int p = 0; p < 16; p++)
                         Pmm.free_frame (stack_base + p * 4096);
+                    Vmm.unmap_user_range (ucr3, stack_base, 16 * 4096);
                     return -1;
                 }
+                // The name goes at the bottom of the stack, which is only
+                // reachable once the range is mapped in this CR3. A frame freed
+                // by an earlier reap is not mapped until this point.
+                write_thread_name (stack_base);
                 tid = spawn_user_ready (entry, arg_sp, stack_base, 16, ucr3, stack_base, 6);
-                if (tid < 0)
+                if (tid < 0) {
                     Vmm.unmap_user_range (ucr3, stack_base, 16 * 4096);
+                    Vmm.map_supervisor_range (ucr3, stack_base, 16 * 4096);
+                }
             } else {
+                write_thread_name (stack_base);
                 tid = spawn_ready (entry, arg_sp, stack_base, stack_base, 6);
             }
             if (tid < 0) {
                 for (int p = 0; p < 16; p++)
                     Pmm.free_frame (stack_base + p * 4096);
+                if (ucr3 != 0 && ucr3 != KernelLayout.PAGE_TABLES)
+                    Vmm.unmap_user_range (ucr3, stack_base, 16 * 4096);
                 return -1;
             }
             // Put `arg` into saved %rdi slot (offset +72 in 15-GPR frame)
@@ -468,12 +481,19 @@ namespace Planet.Kernel {
             if (spages <= 0)
                 spages = 16;
             if (sbase != 0) {
-                if (ucr3 != 0 && ucr3 == current_cr3 ())
+                bool own_cr3 = (ucr3 != 0 && ucr3 == current_cr3 ());
+                if (own_cr3)
                     Vmm.unmap_user_range (ucr3, sbase, spages * 4096);
+                // Pmm writes into the frame it releases, so it must be reachable
+                // from the active CR3 once the user mapping is gone.
+                if (own_cr3)
+                    Vmm.map_supervisor_range (ucr3, sbase, spages * 4096);
                 Vmm.map_4k (sbase);
                 for (int p = 0; p < spages; p++) {
                     Pmm.free_frame (sbase + p * 4096);
                 }
+                if (own_cr3)
+                    Vmm.unmap_user_range (ucr3, sbase, spages * 4096);
             }
             if (kbase != 0) {
                 for (int p = 0; p < 4; p++) {
