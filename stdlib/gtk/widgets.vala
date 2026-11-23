@@ -1,5 +1,6 @@
 // Standard Gtk widgets: Label, Button, Entry.
 using Cairo;
+using GLib;
 
 namespace Gtk {
 
@@ -34,6 +35,14 @@ namespace Gtk {
 
         public string get_label () {
             return label;
+        }
+
+        public void set_markup (string str) {
+            try {
+                set_label (GLib.Markup.strip_tags (str));
+            } catch (MarkupError e) {
+                set_label (str);
+            }
         }
 
         public void set_xalign (float xa) {
@@ -97,6 +106,14 @@ namespace Gtk {
 
         public string get_label () {
             return label;
+        }
+
+        public void set_markup (string str) {
+            try {
+                set_label (GLib.Markup.strip_tags (str));
+            } catch (MarkupError e) {
+                set_label (str);
+            }
         }
 
         public void set_icon_name (string icon) {
@@ -186,7 +203,7 @@ namespace Gtk {
             }
 
             if (child != null) {
-                child.draw (cr);
+                child.render (cr);
                 return;
             }
 
@@ -263,11 +280,42 @@ namespace Gtk {
         public bool editable = true;
         public int max_length = 0;
         public char invisible_char = '*';
+        public int cursor_pos = 0;
+        private bool cursor_on = true;
+        private uint32 blink_id = 0;
         public signal void changed ();
         public signal void activate ();
 
         public Entry (string initial = "") {
             text = initial;
+            cursor_pos = text.length;
+        }
+
+        ~Entry () {
+            stop_blink ();
+        }
+
+        private void stop_blink () {
+            if (blink_id != 0) {
+                GLib.source_remove (blink_id);
+                blink_id = 0;
+            }
+            cursor_on = true;
+        }
+
+        private void start_blink () {
+            stop_blink ();
+            cursor_on = true;
+            blink_id = GLib.timeout_add (500, () => {
+                if (!focused || !visible || !sensitive) {
+                    blink_id = 0;
+                    cursor_on = true;
+                    return false;
+                }
+                cursor_on = !cursor_on;
+                damage_self ();
+                return true;
+            });
         }
 
         public void set_text (string t) {
@@ -275,6 +323,7 @@ namespace Gtk {
             if (nt == text)
                 return;
             text = nt;
+            cursor_pos = text.length;
             damage_self ();
             changed ();
         }
@@ -375,7 +424,20 @@ namespace Gtk {
                 measure_text_cached (placeholder, font_size, out tw, out th);
             }
             int inner_w = width - 20;
-            int scroll_x = (disp.length > 0 && tw > inner_w) ? (tw - inner_w) : 0;
+            if (cursor_pos < 0) cursor_pos = 0;
+            if (cursor_pos > disp.length) cursor_pos = disp.length;
+            int cur_tw = tw;
+            if (cursor_pos < disp.length) {
+                int dummy_h = 0;
+                TextHelper.measure_text (disp.substring (0, cursor_pos), font_size, out cur_tw, out dummy_h);
+            }
+            int scroll_x = 0;
+            if (disp.length > 0 && tw > inner_w) {
+                if (cur_tw > inner_w)
+                    scroll_x = cur_tw - inner_w;
+                if (scroll_x > tw - inner_w)
+                    scroll_x = tw - inner_w;
+            }
             int ty = y + (height - th) / 2;
             cr.save ();
             cr.rectangle ((double) (x + 6), (double) (y + 2), (double) (width - 12), (double) (height - 4));
@@ -384,10 +446,10 @@ namespace Gtk {
                 TextHelper.draw_text (cr, disp, x + 10 - scroll_x, ty, font_size);
             else if (placeholder.length > 0)
                 TextHelper.draw_text (cr, placeholder, x + 10, ty, font_size);
-            if (focused) {
+            if (focused && cursor_on) {
                 // Celestial Cerulean (#3897F0)
                 cr.set_source_rgb (0.220, 0.592, 0.941);
-                cr.rectangle ((double) (x + 11 + tw - scroll_x), (double) (y + 6), 2.0, (double) (height - 12));
+                cr.rectangle ((double) (x + 10 + cur_tw - scroll_x), (double) (y + 6), 2.0, (double) (height - 12));
                 cr.fill ();
             }
             cr.restore ();
@@ -397,24 +459,68 @@ namespace Gtk {
             bool prev = focused;
             if (!visible || !sensitive || !contains (mx, my)) {
                 drop_focus ();
+                stop_blink ();
                 return prev;
             }
             grab_focus ();
+            start_blink ();
             return true;
         }
 
         public override bool on_key_press (int key) {
             if (!focused || !visible || !sensitive)
                 return false;
+            cursor_on = true;
             if (key == '\n' || key == '\r') {
                 activate ();
+                return true;
+            }
+            if (key == 0x83) { // Left
+                if (cursor_pos > 0) {
+                    cursor_pos--;
+                    damage_self ();
+                }
+                return true;
+            }
+            if (key == 0x84) { // Right
+                if (cursor_pos < text.length) {
+                    cursor_pos++;
+                    damage_self ();
+                }
+                return true;
+            }
+            if (key == 0x85) { // Home
+                if (cursor_pos != 0) {
+                    cursor_pos = 0;
+                    damage_self ();
+                }
+                return true;
+            }
+            if (key == 0x86) { // End
+                if (cursor_pos != text.length) {
+                    cursor_pos = text.length;
+                    damage_self ();
+                }
                 return true;
             }
             if (!editable)
                 return false;
             if (key == 8 || key == 127) {
-                if (text.length > 0) {
-                    text = text.substring (0, text.length - 1);
+                if (cursor_pos > 0 && text.length > 0) {
+                    string before = text.substring (0, cursor_pos - 1);
+                    string after = (cursor_pos < text.length) ? text.substring (cursor_pos) : "";
+                    text = before + after;
+                    cursor_pos--;
+                    damage_self ();
+                    changed ();
+                }
+                return true;
+            }
+            if (key == 0xFFFF) { // Delete
+                if (cursor_pos < text.length) {
+                    string before = text.substring (0, cursor_pos);
+                    string after = (cursor_pos + 1 < text.length) ? text.substring (cursor_pos + 1) : "";
+                    text = before + after;
                     damage_self ();
                     changed ();
                 }
@@ -424,7 +530,11 @@ namespace Gtk {
                 if (max_length > 0 && text.length >= max_length)
                     return true;
                 string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
-                text = text + ascii.substring (key - 32, 1);
+                string ch = ascii.substring (key - 32, 1);
+                string before = text.substring (0, cursor_pos);
+                string after = (cursor_pos < text.length) ? text.substring (cursor_pos) : "";
+                text = before + ch + after;
+                cursor_pos++;
                 damage_self ();
                 changed ();
                 return true;
@@ -456,6 +566,14 @@ namespace Gtk {
 
         public string get_label () {
             return label;
+        }
+
+        public void set_markup (string str) {
+            try {
+                set_label (GLib.Markup.strip_tags (str));
+            } catch (MarkupError e) {
+                set_label (str);
+            }
         }
 
         public void set_group (CheckButton? group) {

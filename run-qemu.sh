@@ -41,7 +41,7 @@ fi
 
 echo "Building PlanetOS kernel and userland..."
 OPT="${PLANC_OPT:--O2}"
-GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/glib/process.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/glib/variant.vala" "$ROOT/stdlib/glib/time.vala" "$ROOT/stdlib/glib/thread.vala" "$ROOT/stdlib/glib/uuid.vala" "$ROOT/stdlib/glib/bit.vala" "$ROOT/stdlib/glib/memory.vala" "$ROOT/stdlib/glib/slice.vala" "$ROOT/stdlib/glib/atomic.vala" "$ROOT/stdlib/glib/bytes.vala" "$ROOT/stdlib/glib/codec.vala" "$ROOT/stdlib/glib/hashtable.vala" "$ROOT/stdlib/glib/queue.vala")
+GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/filestream.vala" "$ROOT/stdlib/glib/utils.vala" "$ROOT/stdlib/glib/test_option.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/glib/process.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/glib/variant.vala" "$ROOT/stdlib/glib/time.vala" "$ROOT/stdlib/glib/thread.vala" "$ROOT/stdlib/glib/uuid.vala" "$ROOT/stdlib/glib/bit.vala" "$ROOT/stdlib/glib/memory.vala" "$ROOT/stdlib/glib/slice.vala" "$ROOT/stdlib/glib/atomic.vala" "$ROOT/stdlib/glib/bytes.vala" "$ROOT/stdlib/glib/codec.vala" "$ROOT/stdlib/glib/hashtable.vala" "$ROOT/stdlib/glib/queue.vala")
 GEE_SRCS=("$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/stdlib/gee/trees.vala")
 GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala")
 CAIRO_SRCS=("$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala")
@@ -67,12 +67,18 @@ GLIB_IMP="--import-dlib=$OUT/glib.dlib"
 "$PLANC" --target=spirv "$ROOT/user/frag_pattern.vala" -o "$OUT/frag_pattern.spv"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/spirv_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "$ROOT/user/spv_demo.vala" -o "$OUT/spv_demo.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "${GSK_SRCS[@]}" "$ROOT/user/vk_demo.vala" -o "$OUT/vk_demo.elf"
-"$PLANC" $OPT --target=planetos --image-base=0xE00000 "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/stdlib/pango_compat.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "$ROOT/stdlib/gsk/path.vala" "${GSK_SRCS[@]}" "${GTK_SRCS[@]}" "${COMPOSITOR_SRCS[@]}" -o "$OUT/compositor.elf"
+"$PLANC" $OPT --target=planetos --image-base=0xE00000 "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/stdlib/pango_compat.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "$ROOT/stdlib/gsk/path.vala" "${GSK_SRCS[@]}" "${GTK_SRCS[@]}" "${COMPOSITOR_SRCS[@]}" -o "$OUT/compositor.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${CAIRO_SRCS[@]}" "$ROOT/stdlib/pango_compat.vala" "$ROOT/user/pango_demo.vala" -o "$OUT/pango_demo.elf"
-"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/pcm4.vala" -o "$OUT/pcm4.elf"
+"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "${GSK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/pcm4.vala" -o "$OUT/pcm4.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/pluto.vala" -o "$OUT/pluto.elf"
-"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/saturn.vala" -o "$OUT/saturn.elf"
-"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
+"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "${GSK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/saturn.vala" -o "$OUT/saturn.elf"
+GLIB_JSMN_SRCS=()
+for _gs in "${GLIB_SRCS[@]}"; do
+    if [[ "$_gs" != */filestream.vala ]]; then
+        GLIB_JSMN_SRCS+=("$_gs")
+    fi
+done
+"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_JSMN_SRCS[@]}" "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
     "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/ptr_analyzer.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"

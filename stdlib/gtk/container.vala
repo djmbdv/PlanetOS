@@ -287,7 +287,7 @@ namespace Gtk {
             if (!visible)
                 return;
             for (int i = 0; i < children.length; i++) {
-                children[i].draw (cr);
+                children[i].render (cr);
             }
         }
 
@@ -449,7 +449,7 @@ namespace Gtk {
                 TextHelper.draw_text (cr, label, x + pad, y + 4, 13.0);
             }
             if (child != null)
-                child.draw (cr);
+                child.render (cr);
         }
 
         public override void gather_damage () {
@@ -492,6 +492,68 @@ namespace Gtk {
             if (!visible || !sensitive || child == null)
                 return false;
             return child.on_scroll (mx, my, dx, dy);
+        }
+    }
+
+    /**
+     * Horizontal titlebar container with start/end packing and optional close button.
+     */
+    public class HeaderBar : Box {
+        public string title = "";
+        public string subtitle = "";
+        public bool show_title_buttons = true;
+        private Label title_lbl;
+        private Button? close_btn = null;
+
+        public HeaderBar () : base (Orientation.HORIZONTAL, 8) {
+            title_lbl = new Label ("");
+            title_lbl.font_size = 15.0;
+            pack_start (title_lbl, true, true, 8);
+            set_show_title_buttons (true);
+        }
+
+        public void set_title (string? t) {
+            title = (t != null) ? (!) t : "";
+            title_lbl.set_text (title);
+            damage_self ();
+        }
+
+        public string get_title () { return title; }
+
+        public void set_subtitle (string? s) {
+            subtitle = (s != null) ? (!) s : "";
+            damage_self ();
+        }
+
+        public string get_subtitle () { return subtitle; }
+
+        public void set_show_title_buttons (bool show) {
+            show_title_buttons = show;
+            if (show && close_btn == null) {
+                var btn = new Button ("X");
+                btn.set_size_request (28, 26);
+                btn.clicked.connect ((sender) => {
+                    var p = get_parent ();
+                    if (p != null && p is GtkWindow)
+                        ((GtkWindow) p).close ();
+                });
+                close_btn = btn;
+                pack_start (btn, false, false, 6);
+            } else if (!show && close_btn != null) {
+                remove ((!) close_btn);
+                close_btn = null;
+            }
+        }
+
+        public override void draw (Context cr) {
+            if (!visible || width <= 0 || height <= 0)
+                return;
+            cr.fill_gradient_v ((double) x, (double) y, (double) width, (double) height,
+                                0.129, 0.169, 0.212, 0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.rectangle ((double) x, (double) (y + height - 1), (double) width, 1.0);
+            cr.fill ();
+            base.draw (cr);
         }
     }
 }

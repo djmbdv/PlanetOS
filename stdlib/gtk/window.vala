@@ -2,6 +2,8 @@
 using Planet;
 using Cairo;
 using Gdk;
+using GLib;
+using Gio;
 
 namespace Gtk {
 
@@ -135,6 +137,17 @@ namespace Gtk {
             cr = null;
         }
 
+        private void allocate_children () {
+            int top_y = decorated ? 56 : 16;
+            if (titlebar != null)
+                titlebar.allocate (0, 0, width, 38);
+            if (child != null) {
+                int cw = (width > 40) ? (width - 40) : 0;
+                int ch = (height > top_y + 20) ? (height - top_y - 20) : 0;
+                child.allocate (20, top_y, cw, ch);
+            }
+        }
+
         public bool show_all () {
             if (gdk_win == null) {
                 gdk_win = Display.open_window (width, height);
@@ -147,14 +160,7 @@ namespace Gtk {
                 height = gdk_win.height;
                 cr = gdk_win.create_cairo_context ();
             }
-            int top_y = decorated ? 56 : 16;
-            if (titlebar != null)
-                titlebar.allocate (0, 0, width, 38);
-            if (child != null) {
-                int cw = (width > 40) ? (width - 40) : 0;
-                int ch = (height > top_y + 20) ? (height - top_y - 20) : 0;
-                child.allocate (20, top_y, cw, ch);
-            }
+            allocate_children ();
             redraw ();
             return true;
         }
@@ -227,7 +233,7 @@ namespace Gtk {
 
             if (decorated) {
                 if (titlebar != null) {
-                    titlebar.draw (cr);
+                    titlebar.render (cr);
                 } else {
                     // Minimalist headerbar (Elevated Surface #212B36 -> Slate Atmosphere #182028)
                     cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.129, 0.169, 0.212, 0.094, 0.125, 0.157);
@@ -242,7 +248,7 @@ namespace Gtk {
             }
 
             if (child != null)
-                child.draw (cr);
+                child.render (cr);
 
             if (!gdk_win.composited () && cur_mx >= 0 && cur_my >= 0) {
                 cr.set_source_rgb (0.941, 0.957, 0.973);
@@ -266,11 +272,17 @@ namespace Gtk {
                 }
                 return;
             }
+            var main_ctx = MainContext.default_ ();
             while (gtk_running && gdk_win != null) {
                 bool dirty = false;
                 bool had_motion = false;
                 int mot_x = 0;
                 int mot_y = 0;
+                while (main_ctx.pending ()) {
+                    if (!main_ctx.iteration (false))
+                        break;
+                    dirty = true;
+                }
                 while (true) {
                     var ev = gdk_win.poll_event ();
                     if (ev.type == EventType.NONE)
@@ -284,13 +296,15 @@ namespace Gtk {
                     if (had_motion) {
                         cur_mx = mot_x;
                         cur_my = mot_y;
+                        if (titlebar != null && titlebar.on_pointer_motion (mot_x, mot_y))
+                            dirty = true;
                         if (child != null && child.on_pointer_motion (mot_x, mot_y))
                             dirty = true;
                         had_motion = false;
                     }
                     if (ev.type == EventType.KEY_PRESS) {
                         if (ev.keyval == 27) {
-                            main_quit ();
+                            close ();
                             break;
                         }
                         if (child != null && child.handle_key (ev.keyval))
@@ -298,6 +312,12 @@ namespace Gtk {
                     } else if (ev.type == EventType.BUTTON_PRESS) {
                         cur_mx = ev.x;
                         cur_my = ev.y;
+                        if (titlebar != null) {
+                            if (titlebar.on_pointer_motion (ev.x, ev.y))
+                                dirty = true;
+                            if (titlebar.on_pointer_press (ev.x, ev.y, ev.button))
+                                dirty = true;
+                        }
                         if (child != null) {
                             if (child.on_pointer_motion (ev.x, ev.y))
                                 dirty = true;
@@ -316,6 +336,12 @@ namespace Gtk {
                     } else if (ev.type == EventType.BUTTON_RELEASE) {
                         cur_mx = ev.x;
                         cur_my = ev.y;
+                        if (titlebar != null) {
+                            if (titlebar.on_pointer_motion (ev.x, ev.y))
+                                dirty = true;
+                            if (titlebar.on_pointer_release (ev.x, ev.y, ev.button))
+                                dirty = true;
+                        }
                         if (child != null) {
                             if (child.on_pointer_motion (ev.x, ev.y))
                                 dirty = true;
@@ -327,11 +353,17 @@ namespace Gtk {
                 if (had_motion && gtk_running) {
                     cur_mx = mot_x;
                     cur_my = mot_y;
+                    if (titlebar != null && titlebar.on_pointer_motion (mot_x, mot_y))
+                        dirty = true;
                     if (child != null && child.on_pointer_motion (mot_x, mot_y))
                         dirty = true;
                 }
                 if (!gtk_running)
                     break;
+                if (take_layout_dirty ()) {
+                    allocate_children ();
+                    dirty = true;
+                }
                 gather_damage ();
                 int dn = damage_rect_count ();
                 if (dn > 0)
@@ -357,23 +389,11 @@ namespace Gtk {
         }
     }
 
-    public class GtkApplication : Object {
-        public string application_id;
+    public class GtkApplication : Application {
         private GenericArray<GtkWindow> windows;
 
-        public signal void activate ();
-
-        public GtkApplication (string app_id = "org.planetos.App") {
-            application_id = app_id;
+        public GtkApplication (string app_id = "org.planetos.App") : base (app_id, ApplicationFlags.FLAGS_NONE) {
             windows = new GenericArray<GtkWindow> ();
-        }
-
-        public string get_application_id () {
-            return application_id;
-        }
-
-        public void set_application_id (string app_id) {
-            application_id = app_id;
         }
 
         public void add_window (GtkWindow w) {
@@ -382,12 +402,14 @@ namespace Gtk {
                     return;
             }
             windows.add (w);
+            hold ();
         }
 
         public void remove_window (GtkWindow w) {
             for (int i = 0; i < windows.length; i++) {
                 if (windows[i] == w) {
                     windows.remove_index (i);
+                    release ();
                     return;
                 }
             }
@@ -407,7 +429,7 @@ namespace Gtk {
             main_quit ();
         }
 
-        public int run (string[]? args = null) {
+        public override int run (string[]? args = null) {
             init (args);
             activate ();
             var win = get_active_window ();

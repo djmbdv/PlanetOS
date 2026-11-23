@@ -1,5 +1,6 @@
 // ListBox, ListBoxRow, and ListView widgets for PlanetOS Gtk.
 using Cairo;
+using Gio;
 
 namespace Gtk {
 
@@ -66,7 +67,7 @@ namespace Gtk {
                 cr.fill ();
             }
             if (child != null)
-                child.draw (cr);
+                child.render (cr);
         }
 
         public override void gather_damage () {
@@ -278,7 +279,7 @@ namespace Gtk {
             if (!visible)
                 return;
             for (int i = 0; i < rows.length; i++)
-                rows[i].draw (cr);
+                rows[i].render (cr);
         }
 
         public override bool on_pointer_motion (int mx, int my) {
@@ -334,6 +335,7 @@ namespace Gtk {
     public class ListView : Widget {
         private GenericArray<string> labels;
         private GenericArray<string> icon_names;
+        private Gio.ListStore<string>? bound_model = null;
         public int row_height = 28;
         public bool single_click_activate = false;
         private int selected_index = -1;
@@ -350,6 +352,33 @@ namespace Gtk {
 
         public void set_single_click_activate (bool sca) { single_click_activate = sca; }
         public bool get_single_click_activate () { return single_click_activate; }
+
+        public void set_model (Gio.ListStore<string>? model) {
+            bound_model = model;
+            sync_from_model ();
+            if (model != null) {
+                model.items_changed.connect ((sender, pos, rem, add) => {
+                    if (bound_model != model)
+                        return;
+                    if (rem == 0 && add == 1 && pos == labels.length) {
+                        labels.add (model.get_item (pos));
+                        damage_self ();
+                    } else {
+                        sync_from_model ();
+                    }
+                });
+            }
+        }
+
+        private void sync_from_model () {
+            var next = new GenericArray<string> ();
+            if (bound_model != null) {
+                int n = bound_model.get_n_items ();
+                for (int i = 0; i < n; i++)
+                    next.add (bound_model.get_item (i));
+            }
+            set_items (next, null);
+        }
 
         public void set_items (GenericArray<string> items, GenericArray<string>? icons = null) {
             labels = items;

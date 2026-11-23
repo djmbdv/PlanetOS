@@ -2606,11 +2606,13 @@ namespace Planc {
                 emitter.call_rel32 ("__planc_build_args");
                 // mov r13, rax                49 89 C5
                 emitter.code.u8 (0x49); emitter.code.u8 (0x89); emitter.code.u8 (0xC5);
-                // mov rdi, r13                4C 89 EF
-                emitter.code.u8 (0x4C); emitter.code.u8 (0x89); emitter.code.u8 (0xEF);
             }
             if (has_global_inits)
                 emitter.call_rel32 ("__planc_init_globals");
+            if (main_takes_args) {
+                // mov rdi, r13                4C 89 EF
+                emitter.code.u8 (0x4C); emitter.code.u8 (0x89); emitter.code.u8 (0xEF);
+            }
             emitter.call_rel32 ("main");
 
             if (freestanding) {
@@ -6179,6 +6181,18 @@ namespace Planc {
                 ret_t = ValaType.STRING;
                 return true;
             }
+            if (tt == ValaType.ERROR) {
+                if (mc.method_name == "matches") {
+                    kind = "err_matches";
+                    ret_t = ValaType.BOOL;
+                    return true;
+                }
+                if (mc.method_name == "copy") {
+                    kind = "err_copy";
+                    ret_t = ValaType.ERROR;
+                    return true;
+                }
+            }
             if (tt == ValaType.STRING) {
                 if (mc.method_name == "printf") {
                     kind = "str_printf";
@@ -7204,6 +7218,21 @@ namespace Planc {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"argument $(i + 1) of 'printf' has unsupported type $(type_label (at, an)) at $(mc.args[i].line):$(mc.args[i].column)");
                 }
+            } else if (kind == "err_matches") {
+                if (mc.args.length != 2)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"matches expects 2 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                for (int i = 0; i < 2; i++) {
+                    string an = "";
+                    var at = expr_type_full (mc.args[i], out an);
+                    if (!is_int_like (at))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument $(i + 1) of 'matches' expects int/Quark, got $(type_label (at, an)) at $(mc.args[i].line):$(mc.args[i].column)");
+                }
+            } else if (kind == "err_copy") {
+                if (mc.args.length != 0)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"copy expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
             } else if (kind == "str_has_prefix" || kind == "str_has_suffix") {
                 if (mc.args.length != 1)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -10233,6 +10262,10 @@ namespace Planc {
                 emitter.store_rcx_disp_rax (8);
                 emitter.mov_rax_imm (ed.domain_id);
                 emitter.store_rcx_disp_rax (24);
+                emitter.mov_rax_imm (em.value);
+                emitter.store_rcx_disp_rax (32);
+                emitter.pop_rax ();
+                push_depth--;
                 emitter.store_rcx_disp_rax (16);
                 cleanup_expr_temps (ts.message);
                 emit_error_jump ();
@@ -12087,6 +12120,57 @@ namespace Planc {
                         }
                         return;
                     }
+                } else if (inc.target is MemberAccessExpr) {
+                    var ma = (MemberAccessExpr) inc.target;
+                    string tt_name = "";
+                    var tt = expr_type_full (ma.target, out tt_name);
+                    if (tt == ValaType.CLASS) {
+                        var cname = strip_null (tt_name);
+                        unowned var cd = program.find_class (cname);
+                        unowned ClassField? cf = null;
+                        var slot_off = (cd != null) ? class_field_offset_slots (cd, ma.member, out cf) : -1;
+                        if (slot_off < 0 || cf == null) {
+                            unowned var gm = find_prop_getter (tt, cname, ma.member);
+                            unowned var sm = find_prop_setter (tt, cname, ma.member);
+                            if (gm != null && sm != null && sm.params.length == 2 && sm.params[1].param_type == ValaType.INT) {
+                                gen_expr (ma.target);
+                                emit_null_check_if_nullable (tt, tt_name);
+                                emitter.push_rax ();
+                                push_depth++;
+                                emitter.mov_rdi_rax ();
+                                call_aligned (gm.name);
+                                if (!inc.is_prefix) {
+                                    emitter.push_rax ();
+                                    push_depth++;
+                                }
+                                emitter.add_rax_imm (delta);
+                                emit_int_narrow (sm.params[1].type_name);
+                                emitter.mov_rsi_rax ();
+                                if (inc.is_prefix) {
+                                    emitter.pop_rcx ();
+                                    push_depth--;
+                                    emitter.push_rax ();
+                                    push_depth++;
+                                    emitter.mov_rax_rcx ();
+                                    emitter.mov_rdi_rax ();
+                                    call_aligned (sm.name);
+                                    emitter.pop_rax ();
+                                    push_depth--;
+                                } else {
+                                    emitter.pop_rcx ();
+                                    emitter.pop_rax ();
+                                    emitter.mov_rdi_rax ();
+                                    emitter.mov_rax_rcx ();
+                                    emitter.push_rax ();
+                                    push_depth--;
+                                    call_aligned (sm.name);
+                                    emitter.pop_rax ();
+                                    push_depth--;
+                                }
+                                return;
+                            }
+                        }
+                    }
                 }
                 ValaType lt;
                 string lt_name;
@@ -12480,6 +12564,56 @@ namespace Planc {
                 emitter.pop_reg (Reg.RDI);
                 push_depth--;
                 call_aligned ("__planc_chan_send");
+                return;
+            }
+            if (kind == "err_copy") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'copy()' requires an Error receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.ERROR, tn);
+                emitter.push_rax ();
+                push_depth++;
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_ref");
+                emitter.pop_rax ();
+                push_depth--;
+                return;
+            }
+            if (kind == "err_matches") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'matches()' requires an Error receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.ERROR, tn);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (mc.args[0]);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (mc.args[1]);
+                emitter.mov_rdx_rax ();
+                emitter.pop_reg (Reg.RCX);
+                emitter.pop_reg (Reg.RDI);
+                push_depth -= 2;
+                var l_no = emitter.new_label ();
+                var l_done = emitter.new_label ();
+                emitter.load_rdi_disp_to_rax (24);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JNE, l_no);
+                emitter.mov_rcx_rdx ();
+                emitter.load_rdi_disp_to_rax (32);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JNE, l_no);
+                emitter.mov_rax_imm (1);
+                emitter.branch (BranchKind.JMP, l_done);
+                emitter.bind (l_no);
+                emitter.mov_rax_imm (0);
+                emitter.bind (l_done);
                 return;
             }
             if (kind == "str_has_prefix" || kind == "str_has_suffix") {

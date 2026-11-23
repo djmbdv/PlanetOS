@@ -349,8 +349,12 @@ namespace PlanetShell {
             return 0;
 
         var cmd_args = new GenericArray<string> ();
-        for (int k = arg_off; k < args.length; k++)
-            cmd_args.add (args[k]);
+        for (int k = arg_off; k < args.length; k++) {
+            if (k > arg_off && (args[k].index_of_char ('*') >= 0 || args[k].index_of_char ('?') >= 0))
+                expand_glob (args[k], cmd_args);
+            else
+                cmd_args.add (args[k]);
+        }
 
         // Set up kernel stdio redirection if requested
         int in_fd = -1;
@@ -1027,6 +1031,47 @@ namespace PlanetShell {
             sb.append (toks[i].text);
         }
         return sb.str;
+    }
+
+    private void expand_glob (string pattern, GenericArray<string> out_args) {
+        int slash = pattern.last_index_of_char ('/');
+        string dir_part = (slash >= 0) ? pattern.substring (0, slash) : "";
+        string pat = (slash >= 0) ? pattern.substring (slash + 1) : pattern;
+        if (pat.length == 0) {
+            out_args.add (pattern);
+            return;
+        }
+        string fs_dir = (dir_part.length > 0) ? canonical_path (abs_path (dir_part)) : ((cwd == "/") ? "/" : cwd);
+        if (fs_dir.length == 0)
+            fs_dir = "/";
+        var buf = new uint8[4096];
+        int n = Sys.readdir_path (fs_dir, buf, 4096);
+        if (n <= 0) {
+            out_args.add (pattern);
+            return;
+        }
+        int matched = 0;
+        int start = 0;
+        for (int i = 0; i <= n; i++) {
+            if (i == n || buf[i] == 0 || buf[i] == '\n') {
+                if (i > start) {
+                    var slice = new uint8[i - start];
+                    for (int k = 0; k < i - start; k++)
+                        slice[k] = buf[start + k];
+                    string nm = __planc_host_bytes_to_str (slice, i - start);
+                    if ((!nm.has_prefix (".") || pat.has_prefix (".")) && PatternSpec.match_simple (pat, nm)) {
+                        if (dir_part.length > 0)
+                            out_args.add (dir_part == "/" ? ("/" + nm) : (dir_part + "/" + nm));
+                        else
+                            out_args.add (nm);
+                        matched++;
+                    }
+                }
+                start = i + 1;
+            }
+        }
+        if (matched == 0)
+            out_args.add (pattern);
     }
 
     private int eval_tokens (GenericArray<Tok> toks, out bool should_exit) {

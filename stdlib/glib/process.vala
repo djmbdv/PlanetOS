@@ -96,60 +96,12 @@ namespace GLib {
         }
 
         public static string[] split_command_line (string command_line) throws SpawnError {
-            var parts = new GenericArray<string> ();
-            var cur = new StringBuilder ();
-            bool in_tok = false;
-            bool in_sq = false;
-            bool in_dq = false;
-            int n = command_line.length;
-            for (int i = 0; i < n; i++) {
-                uint8 ch = command_line[i];
-                if (in_sq) {
-                    if (ch == '\'')
-                        in_sq = false;
-                    else
-                        cur.append_c ((char) ch);
-                    in_tok = true;
-                } else if (in_dq) {
-                    if (ch == '"') {
-                        in_dq = false;
-                    } else if (ch == '\\' && i + 1 < n) {
-                        i++;
-                        cur.append_c ((char) command_line[i]);
-                    } else {
-                        cur.append_c ((char) ch);
-                    }
-                    in_tok = true;
-                } else if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
-                    if (in_tok) {
-                        parts.add (cur.str);
-                        cur.truncate (0);
-                        in_tok = false;
-                    }
-                } else if (ch == '\'') {
-                    in_sq = true;
-                    in_tok = true;
-                } else if (ch == '"') {
-                    in_dq = true;
-                    in_tok = true;
-                } else if (ch == '\\' && i + 1 < n) {
-                    i++;
-                    cur.append_c ((char) command_line[i]);
-                    in_tok = true;
-                } else {
-                    cur.append_c ((char) ch);
-                    in_tok = true;
-                }
+            string[] argv;
+            try {
+                Shell.parse_argv (command_line, out argv);
+            } catch (ShellError e) {
+                throw new SpawnError.INVAL (e.message);
             }
-            if (in_sq || in_dq)
-                throw new SpawnError.INVAL ("Unmatched quote in command line");
-            if (in_tok)
-                parts.add (cur.str);
-            if (parts.length == 0)
-                throw new SpawnError.INVAL ("Empty command line");
-            var argv = new string[parts.length];
-            for (int i = 0; i < parts.length; i++)
-                argv[i] = parts[i];
             return argv;
         }
 

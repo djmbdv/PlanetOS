@@ -1,5 +1,6 @@
 // GTK-compatible widget toolkit demo for PlanetOS (Window, Box, Label, Entry, Button + libschrift TTF).
 using Planet;
+using GLib;
 using Gtk;
 
 class GtkDemoState : Object {
@@ -7,11 +8,15 @@ class GtkDemoState : Object {
 }
 
 int main (string[] args) {
-    bool once = false;
-    for (int i = 1; i < args.length; i++) {
-        if (args[i] == "--once")
-            once = true;
+    var opt_ctx = new GLib.OptionContext ();
+    var opt_once = new GLib.OptionEntry ("once", '\0', GLib.OptionFlags.NONE, GLib.OptionArg.NONE, "Render once and exit");
+    opt_ctx.add_entry (opt_once);
+    opt_ctx.set_ignore_unknown_options (true);
+    try {
+        opt_ctx.parse (ref args);
+    } catch (OptionError e) {
     }
+    bool once = opt_once.bool_val;
 
     init (args);
     bool ttf_ok = load_ttf ("LiberationSans-Regular.ttf");
@@ -22,7 +27,8 @@ int main (string[] args) {
     win.set_title ("PlanetOS GTK + TrueType Demo (7)");
 
     var vbox = new Box (Orientation.VERTICAL, 14);
-    var title_lbl = new Label ("PlanetOS GUI Toolkit (GTK + libschrift 7)");
+    var title_lbl = new Label ("");
+    title_lbl.set_markup ("<b>PlanetOS GUI Toolkit (GTK + libschrift 7)</b>");
     title_lbl.font_size = 22.0;
 
     var entry = new Entry ("Hello PlanetOS 7");
@@ -104,6 +110,15 @@ int main (string[] args) {
     icons.add ("text-x-generic");
     icons.add ("application-x-executable");
     lv.set_items (items, icons);
+
+    var store_lv = new ListView ();
+    var model = new Gio.ListStore<string> ();
+    store_lv.set_model (model);
+    model.append ("row-a");
+    model.append ("row-b");
+    status_lbl.set_opacity (0.9);
+    print (@"gtk_demo: model_count=$(store_lv.get_count ())\n");
+
     sc.set_child (lv);
     paned.set_end_child (sc);
     nb.append_page (paned, "Files");

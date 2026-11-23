@@ -759,7 +759,7 @@ namespace GLib {
         }
 
         public void write_at (int pos, uint8[] bytes) {
-            if (pos < 0 || bytes.length == 0)
+            if (pos < 0 || bytes.length == 0 || pos > 2147483647 - bytes.length)
                 return;
             int end_pos = pos + bytes.length;
             if (end_pos > buf.length)

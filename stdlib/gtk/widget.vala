@@ -1,7 +1,21 @@
 // Base Widget class and Orientation enum for PlanetOS Gtk.
 using Cairo;
+using Gsk;
 
 namespace Gtk {
+
+    private class WidgetRenderNode : RenderNode {
+        private weak Widget target;
+
+        public WidgetRenderNode (Widget w) {
+            target = w;
+        }
+
+        public override void draw_cairo (Context cr) {
+            if (target != null)
+                target.draw (cr);
+        }
+    }
 
     public enum Orientation {
         HORIZONTAL,
@@ -50,6 +64,7 @@ namespace Gtk {
         public string? tooltip_text = null;
 
         private weak Widget? parent_widget = null;
+        private bool layout_dirty = false;
 
         // Single focus owner per window. Clicking the editor must take the
         // arrows away from a focused list, and clicking a toolbar button must not
@@ -372,7 +387,21 @@ namespace Gtk {
         public string? get_tooltip_text () { return tooltip_text; }
 
         public void queue_draw () { damage_self (); }
-        public void queue_resize () { damage_self (); }
+        public void queue_resize () {
+            layout_dirty = true;
+            var p = parent_widget;
+            while (p != null) {
+                p.layout_dirty = true;
+                p = p.parent_widget;
+            }
+            damage_self ();
+        }
+
+        public bool take_layout_dirty () {
+            bool d = layout_dirty;
+            layout_dirty = false;
+            return d;
+        }
 
         // GTK4-compatible orientation-based measurement wrapper.
         public void measure_for (Orientation orientation, int for_size,
@@ -404,6 +433,21 @@ namespace Gtk {
         }
 
         public virtual void draw (Context cr) {}
+
+        public void render (Context cr) {
+            if (!visible || opacity <= 0.0)
+                return;
+            if (opacity >= 1.0) {
+                draw (cr);
+                return;
+            }
+            cr.save ();
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
+            cr.clip ();
+            var op_node = new Gsk.OpacityNode (new WidgetRenderNode (this), opacity);
+            op_node.draw_cairo (cr);
+            cr.restore ();
+        }
 
         // Hover is drawn by the widgets that care (Button, CheckButton, Switch,
         // ListView row); a plain widget would repaint itself for nothing.

@@ -171,7 +171,7 @@ namespace Gtk {
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.clip ();
             if (child != null)
-                child.draw (cr);
+                child.render (cr);
             if (content_h > height && height > 8) {
                 int bar_y = 0;
                 int bar_h = 0;
@@ -453,9 +453,9 @@ namespace Gtk {
             if (!visible)
                 return;
             if (start_child != null)
-                start_child.draw (cr);
+                start_child.render (cr);
             if (end_child != null)
-                end_child.draw (cr);
+                end_child.render (cr);
             // Stratosphere Line (#26323F)
             cr.set_source_rgb (0.149, 0.196, 0.247);
             if (orientation == Orientation.HORIZONTAL)
@@ -731,7 +731,7 @@ namespace Gtk {
             cr.rectangle ((double) x, (double) (y + tab_h - 1), (double) width, 1.0);
             cr.fill ();
             if (current_page >= 0 && current_page < pages.length)
-                pages[current_page].draw (cr);
+                pages[current_page].render (cr);
         }
 
         public override void gather_damage () {

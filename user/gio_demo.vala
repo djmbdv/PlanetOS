@@ -263,7 +263,81 @@ namespace GioDemo {
                 check ("move-exists", false);
             } catch (IOError e) {
                 check ("move-exists", true);
+                var ec = e.copy ();
+                check ("error-matches", e.matches (e.domain, e.code) && ec.message == e.message);
             }
+
+            // GLib.FileStream test
+            string fs_path = at ("gio_fstream.tmp");
+            var fsw = GLib.FileStream.open (fs_path, "w");
+            check ("fstream-open-w", fsw != null);
+            if (fsw != null) {
+                fsw.puts ("alpha\nbeta\n");
+                fsw.close ();
+            }
+            var fsr = GLib.FileStream.open (fs_path, "r");
+            check ("fstream-open-r", fsr != null);
+            if (fsr != null) {
+                string? l1 = fsr.read_line ();
+                int c0 = fsr.getc ();
+                fsr.ungetc (c0);
+                string? l2 = fsr.read_line ();
+                fsr.rewind ();
+                fsr.seek (6, GLib.FileSeek.SET);
+                long pos_after = fsr.tell ();
+                fsr.close ();
+                check ("fstream-read", l1 == "alpha" && l2 == "beta" && pos_after == 6);
+            }
+            Sys.unlink (fs_path);
+
+            // GLib.Quark, PatternSpec, Shell, Markup, OptionContext, Test
+            uint32 q1 = GLib.Quark.from_string ("planet-domain");
+            uint32 q2 = GLib.Quark.from_string ("planet-domain");
+            check ("quark", q1 != 0 && q1 == q2 && GLib.Quark.to_string (q1) == "planet-domain" && GLib.Quark.try_string ("missing-q") == 0);
+
+            var ps = new GLib.PatternSpec ("*.vala");
+            check ("pattern", ps.match_string ("gio_demo.vala") && !ps.match_string ("gio_demo.c") && GLib.PatternSpec.match_simple ("a?c*", "abcdef"));
+
+            string[] sh_argv;
+            bool sh_ok = false;
+            try {
+                sh_ok = GLib.Shell.parse_argv ("echo 'hello world' \"a\\\"b\"", out sh_argv);
+            } catch (ShellError se) {
+                sh_ok = false;
+            }
+            check ("shell", sh_ok && sh_argv.length == 3 && sh_argv[1] == "hello world" && sh_argv[2] == "a\"b" && GLib.Shell.quote ("a'b") == "'a'\\''b'");
+
+            string esc = GLib.Markup.escape_text ("<b>a & b</b>");
+            string stripped = "";
+            try {
+                stripped = GLib.Markup.strip_tags ("<b>hi &amp; bye</b>");
+            } catch (MarkupError me) {
+                stripped = "";
+            }
+            check ("markup", esc == "&lt;b&gt;a &amp; b&lt;/b&gt;" && stripped == "hi & bye");
+
+            var opt_ctx = new GLib.OptionContext ("FILE");
+            var e_verb = new GLib.OptionEntry ("verbose", 'v', GLib.OptionFlags.NONE, GLib.OptionArg.NONE, "Verbose");
+            var e_cnt = new GLib.OptionEntry ("count", 'n', GLib.OptionFlags.NONE, GLib.OptionArg.INT, "Count", "N");
+            opt_ctx.add_entry (e_verb);
+            opt_ctx.add_entry (e_cnt);
+            string[] mock_args = { "prog", "-v", "--count=42", "input.txt" };
+            bool opt_ok = false;
+            try {
+                opt_ok = opt_ctx.parse (ref mock_args);
+            } catch (OptionError oe) {
+                opt_ok = false;
+            }
+            check ("options", opt_ok && e_verb.bool_val && e_cnt.int_val == 42 && mock_args.length == 2 && mock_args[1] == "input.txt");
+
+            string[] targs = { "gio_unit" };
+            GLib.Test.init (ref targs);
+            GLib.Test.add_func ("/glib/basic", () => {
+                GLib.Test.assert_true (1 + 1 == 2, "math");
+                GLib.Test.assert_cmpstr ("ok", "==", "ok");
+                GLib.Test.assert_cmpint (42, ">", 10);
+            });
+            check ("glib-test", GLib.Test.run () == 0);
             check ("move-overwrite", moved.move (target, FileCopyFlags.OVERWRITE, null));
             check ("move-overwrite-gone", !moved.query_exists () && target.query_exists ());
 

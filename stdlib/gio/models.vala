@@ -310,7 +310,7 @@ namespace Gio {
             }
         }
 
-        public int run (string[] args) {
+        public virtual int run (string[]? args = null) {
             activate ();
             if (hold_count <= 0)
                 return 0;
