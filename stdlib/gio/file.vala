@@ -4,13 +4,6 @@ using Planet;
 
 namespace Gio {
 
-    [AsmBody(@"
-        add $16, %rdi
-        mov %rdi, %rax
-        ret
-    ")]
-    private extern int __giof_arr_addr (uint8[] a);
-
     public class ContentType : Object {
         public static string guess (string? filename, uint8[]? data, out bool result_uncertain) {
             result_uncertain = false;
@@ -590,7 +583,7 @@ namespace Gio {
                     int r = Sys.read (fd, chunk, rem);
                     if (r <= 0)
                         break;
-                    GLib.Memory.copy (__giof_arr_addr (buf) + got, __giof_arr_addr (chunk), (size_t) r);
+                    GLib.Memory.copy (Sys.byte_arr_addr (buf) + got, Sys.byte_arr_addr (chunk), (size_t) r);
                     got = got + r;
                 }
                 if (got == sz) {
@@ -598,7 +591,7 @@ namespace Gio {
                 } else {
                     var trimmed = new uint8[got];
                     if (got > 0)
-                        GLib.Memory.copy (__giof_arr_addr (trimmed), __giof_arr_addr (buf), (size_t) got);
+                        GLib.Memory.copy (Sys.byte_arr_addr (trimmed), Sys.byte_arr_addr (buf), (size_t) got);
                     contents = trimmed;
                 }
             } finally {

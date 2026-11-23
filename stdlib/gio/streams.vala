@@ -4,13 +4,6 @@ using Planet;
 
 namespace Gio {
 
-    [AsmBody(@"
-        add $16, %rdi
-        mov %rdi, %rax
-        ret
-    ")]
-    private extern int __gio_arr_addr (uint8[] a);
-
     public class InputStream : Object {
         protected bool closed = false;
         protected bool pending = false;
@@ -517,43 +510,20 @@ namespace Gio {
     }
 
     public class MemoryInputStream : InputStream, Seekable {
-        private uint8[] data;
-        private int used = 0;
+        private GLib.ByteArray data;
         private int pos = 0;
 
         public MemoryInputStream () {
-            data = new uint8[64];
+            data = new GLib.ByteArray ();
         }
 
-        [AsmBody(@"
-            add $16, %rdi
-            mov %rdi, %rax
-            ret
-        ")]
-        private static extern int __mis_arr_addr (uint8[] a);
-
         public MemoryInputStream.from_data (uint8[] buf) {
-            int cap = (buf.length > 64) ? buf.length : 64;
-            data = new uint8[cap];
-            if (buf.length > 0)
-                Memory.copy (__mis_arr_addr (data), __mis_arr_addr (buf), (size_t) buf.length);
-            used = buf.length;
+            data = new GLib.ByteArray.sized (buf.length);
+            data.append (buf);
         }
 
         public void add_data (uint8[] buf) {
-            if (buf.length == 0)
-                return;
-            if (used + buf.length > data.length) {
-                int ncap = (data.length > 0) ? data.length * 2 : 64;
-                while (ncap < used + buf.length)
-                    ncap = ncap * 2;
-                var ndata = new uint8[ncap];
-                if (used > 0)
-                    Memory.copy (__mis_arr_addr (ndata), __mis_arr_addr (data), (size_t) used);
-                data = ndata;
-            }
-            Memory.copy (__mis_arr_addr (data) + used, __mis_arr_addr (buf), (size_t) buf.length);
-            used = used + buf.length;
+            data.append (buf);
         }
 
         public override int read (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
@@ -561,12 +531,10 @@ namespace Gio {
                 throw new IOError.CANCELLED ("Operation was cancelled");
             if (closed)
                 throw new IOError.CLOSED ("Stream is closed");
-            int avail = used - pos;
+            int avail = data.len - pos;
             if (avail <= 0 || buffer.length == 0)
                 return 0;
-            int n = (buffer.length < avail) ? buffer.length : avail;
-            if (n > 0)
-                Memory.copy (__mis_arr_addr (buffer), __mis_arr_addr (data) + pos, (size_t) n);
+            int n = data.copy_to (pos, buffer, 0, buffer.length);
             pos = pos + n;
             return n;
         }
@@ -596,21 +564,20 @@ namespace Gio {
             if (type == SeekType.CUR)
                 target = pos + offset;
             else if (type == SeekType.END)
-                target = used + offset;
+                target = data.len + offset;
             if (target < 0)
                 throw new IOError.INVALID_ARGUMENT ("Negative seek offset");
-            pos = (target <= used) ? target : used;
+            pos = (target <= data.len) ? target : data.len;
             return true;
         }
     }
 
     public class MemoryOutputStream : OutputStream, Seekable {
-        private uint8[] data;
-        private int used = 0;
+        private GLib.ByteArray data;
         private int pos = 0;
 
         public MemoryOutputStream () {
-            data = new uint8[64];
+            data = new GLib.ByteArray ();
         }
 
         public override int write (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
@@ -620,52 +587,31 @@ namespace Gio {
                 throw new IOError.CLOSED ("Stream is closed");
             if (buffer.length == 0)
                 return 0;
-            int end_pos = pos + buffer.length;
-            if (end_pos > data.length) {
-                int ncap = (data.length > 0) ? data.length * 2 : 64;
-                while (ncap < end_pos)
-                    ncap = ncap * 2;
-                var ndata = new uint8[ncap];
-                if (used > 0)
-                    Memory.copy (__gio_arr_addr (ndata), __gio_arr_addr (data), (size_t) used);
-                data = ndata;
-            }
-            Memory.copy (__gio_arr_addr (data) + pos, __gio_arr_addr (buffer), (size_t) buffer.length);
-            pos = end_pos;
-            if (pos > used)
-                used = pos;
+            data.write_at (pos, buffer);
+            pos = pos + buffer.length;
             return buffer.length;
         }
 
         public uint8[] get_data () {
-            var res = new uint8[used];
-            if (used > 0)
-                Memory.copy (__gio_arr_addr (res), __gio_arr_addr (data), (size_t) used);
-            return res;
+            return data.data;
         }
 
         public GLib.Bytes steal_as_bytes () {
-            var res = get_data ();
-            data = new uint8[64];
-            used = 0;
             pos = 0;
-            return new GLib.Bytes.take (res);
+            return new GLib.Bytes.take (data.steal ());
         }
 
         public uint8[] steal_data () {
-            var res = get_data ();
-            data = new uint8[64];
-            used = 0;
             pos = 0;
-            return res;
+            return data.steal ();
         }
 
         public int get_size () {
-            return used;
+            return data.len;
         }
 
         public int get_data_size () {
-            return used;
+            return data.len;
         }
 
         public int tell () {
@@ -685,10 +631,10 @@ namespace Gio {
             if (type == SeekType.CUR)
                 target = pos + offset;
             else if (type == SeekType.END)
-                target = used + offset;
+                target = data.len + offset;
             if (target < 0)
                 throw new IOError.INVALID_ARGUMENT ("Negative seek offset");
-            pos = (target <= used) ? target : used;
+            pos = (target <= data.len) ? target : data.len;
             return true;
         }
 
@@ -703,9 +649,10 @@ namespace Gio {
                 throw new IOError.CLOSED ("Stream is closed");
             if (offset < 0)
                 throw new IOError.INVALID_ARGUMENT ("Negative truncate offset");
-            used = (offset < used) ? offset : used;
-            if (pos > used)
-                pos = used;
+            if (offset < data.len)
+                data.set_size (offset);
+            if (pos > data.len)
+                pos = data.len;
             return true;
         }
     }
@@ -903,7 +850,7 @@ namespace Gio {
                     }
                 }
             }
-            Memory.copy (__gio_arr_addr (wbuf) + wpos, __gio_arr_addr (buffer), (size_t) buffer.length);
+            Memory.copy (Sys.byte_arr_addr (wbuf) + wpos, Sys.byte_arr_addr (buffer), (size_t) buffer.length);
             wpos = wpos + buffer.length;
             return buffer.length;
         }
@@ -1009,12 +956,10 @@ namespace Gio {
             if (closed)
                 throw new IOError.CLOSED ("Stream is closed");
             int slen = (stop_chars_len < 0) ? stop_chars.length : stop_chars_len;
-            var buf = new uint8[256];
-            int cap = 256;
-            int used = 0;
+            var buf = new GLib.ByteArray.sized (256);
             while (true) {
                 if (refill (cancellable) <= 0) {
-                    if (used == 0)
+                    if (buf.len == 0)
                         return null;
                     break;
                 }
@@ -1029,21 +974,12 @@ namespace Gio {
                 if (stop)
                     break;
                 rpos = rpos + 1;
-                if (used >= cap) {
-                    if (cap >= 16777216)
-                        throw new IOError.FAILED ("Line or token exceeds maximum buffer size");
-                    int ncap = cap * 2;
-                    var nbuf = new uint8[ncap];
-                    if (used > 0)
-                        Memory.copy (__gio_arr_addr (nbuf), __gio_arr_addr (buf), (size_t) used);
-                    buf = nbuf;
-                    cap = ncap;
-                }
-                buf[used] = ch;
-                used = used + 1;
+                if (buf.len >= 16777216)
+                    throw new IOError.FAILED ("Line or token exceeds maximum buffer size");
+                buf.append_byte (ch);
             }
-            length = used;
-            return __planc_host_bytes_to_str (buf, used);
+            length = buf.len;
+            return buf.to_string ();
         }
 
         public string? read_until (string stop_chars, out int length, Cancellable? cancellable = null) throws IOError {
@@ -1059,12 +995,10 @@ namespace Gio {
                 throw new IOError.CANCELLED ("Operation was cancelled");
             if (closed)
                 throw new IOError.CLOSED ("Stream is closed");
-            var buf = new uint8[256];
-            int cap = 256;
-            int used = 0;
+            var buf = new GLib.ByteArray.sized (256);
             while (true) {
                 if (refill (cancellable) <= 0) {
-                    if (used == 0)
+                    if (buf.len == 0)
                         return null;
                     break;
                 }
@@ -1086,21 +1020,12 @@ namespace Gio {
                     }
                     continue;
                 }
-                if (used >= cap) {
-                    if (cap >= 16777216)
-                        throw new IOError.FAILED ("Line or token exceeds maximum buffer size");
-                    int ncap = cap * 2;
-                    var nbuf = new uint8[ncap];
-                    if (used > 0)
-                        Memory.copy (__gio_arr_addr (nbuf), __gio_arr_addr (buf), (size_t) used);
-                    buf = nbuf;
-                    cap = ncap;
-                }
-                buf[used] = ch;
-                used = used + 1;
+                if (buf.len >= 16777216)
+                    throw new IOError.FAILED ("Line or token exceeds maximum buffer size");
+                buf.append_byte (ch);
             }
-            length = used;
-            return __planc_host_bytes_to_str (buf, used);
+            length = buf.len;
+            return buf.to_string ();
         }
     }
 

@@ -3,13 +3,6 @@ using Planet;
 
 namespace GLib {
 
-    [AsmBody(@"
-        add $16, %rdi
-        mov %rdi, %rax
-        ret
-    ")]
-    private extern int __slice_arr_addr (uint8[] a);
-
     /**
      * Lock-free magazine/slab allocator for fixed-size blocks (GLib.Slice).
      */
@@ -46,7 +39,7 @@ namespace GLib {
             if (cls < 0)
                 return Memory.malloc (block_size);
             var fl = ensure_freelists ();
-            int slot_addr = __slice_arr_addr (fl) + cls * 8;
+            int slot_addr = Sys.byte_arr_addr (fl) + cls * 8;
             while (true) {
                 int head = AtomicPointer.get (slot_addr);
                 if (head == 0) {
@@ -96,7 +89,7 @@ namespace GLib {
             if (mem_block < 0x100000 || (mem_block & 0xF) != 0)
                 return;
             var fl = ensure_freelists ();
-            int slot_addr = __slice_arr_addr (fl) + cls * 8;
+            int slot_addr = Sys.byte_arr_addr (fl) + cls * 8;
             while (true) {
                 int head = AtomicPointer.get (slot_addr);
                 if (head == mem_block)

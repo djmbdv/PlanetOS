@@ -449,7 +449,7 @@ namespace Planet.Kernel {
                     return -1;
                 int ucr3_52 = Sched.current_cr3 ();
                 if (ucr3_52 != 0)
-                    Vmm.map_user_range_ro (ucr3_52, a0, a1);
+                    Vmm.protect_user_range_ro (ucr3_52, a0, a1);
                 return 0;
             case 53: // SYS_MAP_USER_RO_AT(vaddr, size) -> 0 or -1 (shared read-only .dlib mapping)
                 if (a0 < KernelLayout.RESERVED_END || a1 <= 0 || a1 > 0x800000 || a0 + a1 > 0x40000000)

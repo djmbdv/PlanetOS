@@ -159,8 +159,8 @@ namespace Planet.Kernel {
                 int priv = Pmm.alloc_contiguous (dpages);
                 if (priv == 0)
                     return;
-                for (int b = 0; b < dpages * 4096; b++)
-                    mmio_write8 (priv + b, 0);
+                for (int i = 0; i < dpages; i++)
+                    zero_page_4k (priv + i * 4096);
                 int off_in_page = shared_glib_data_vaddr & 0xFFF;
                 for (int b = 0; b < shared_glib_data_fsz; b++)
                     mmio_write8 (priv + off_in_page + b, read_u8 (shared_glib_data_tmpl + b));

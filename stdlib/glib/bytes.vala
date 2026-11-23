@@ -1,10 +1,7 @@
 // Pure-Vala GLib.Bytes immutable zero-copy byte slice for PlanetOS.
+using Planet;
 
 namespace GLib {
-
-    private int __bytes_arr_addr (uint8[] a) {
-        return (int) (uintptr.from_pointer ((void*) a) + (uintptr) 16);
-    }
 
     /**
      * Immutable reference-counted byte array with zero-copy sub-slicing (GLib.Bytes).
@@ -22,7 +19,7 @@ namespace GLib {
                 return;
             }
             var copy = new uint8[data.length];
-            Memory.copy (__bytes_arr_addr (copy), __bytes_arr_addr (data), (size_t) data.length);
+            Memory.copy (Sys.byte_arr_addr (copy), Sys.byte_arr_addr (data), (size_t) data.length);
             buf = copy;
             off = 0;
             len = (size_t) data.length;
@@ -32,6 +29,10 @@ namespace GLib {
             buf = data;
             off = 0;
             len = (size_t) data.length;
+        }
+
+        public static Bytes from_byte_array (owned ByteArray array) {
+            return new Bytes.take (array.steal ());
         }
 
         private Bytes.slice_raw (uint8[] backing, size_t slice_off, size_t slice_len) {
@@ -67,15 +68,15 @@ namespace GLib {
         public uint8[] to_array () {
             var out_arr = new uint8[(int) len];
             if (len > 0)
-                Memory.copy (__bytes_arr_addr (out_arr), __bytes_arr_addr (buf) + (int) off, len);
+                Memory.copy (Sys.byte_arr_addr (out_arr), Sys.byte_arr_addr (buf) + (int) off, len);
             return out_arr;
         }
 
         public int compare (Bytes other) {
             size_t min_len = (len < other.len) ? len : other.len;
             if (min_len > 0) {
-                int c = Memory.cmp (__bytes_arr_addr (buf) + (int) off,
-                                    __bytes_arr_addr (other.buf) + (int) other.off,
+                int c = Memory.cmp (Sys.byte_arr_addr (buf) + (int) off,
+                                    Sys.byte_arr_addr (other.buf) + (int) other.off,
                                     min_len);
                 if (c != 0)
                     return (c < 0) ? -1 : 1;

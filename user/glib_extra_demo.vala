@@ -50,13 +50,37 @@ int main (string[] args) {
     }
     rwl.writer_unlock ();
 
-    // 3. GLib.Bytes
+    // 3. GLib.Bytes & GLib.ByteArray
     uint8[] raw = { 'P', 'l', 'a', 'n', 'e', 't', 'O', 'S' };
     var b1 = new Bytes (raw);
     var b2 = b1.new_from_bytes (6, 2);
     checks++;
     if (b1.get_size () != 8 || b2.get_size () != 2 || b2.get_byte (0) != 'O' || b2.get_byte (1) != 'S') {
         print ("glib_extra: FAIL Bytes slice\n");
+        fails++;
+    }
+
+    var ba = new ByteArray ();
+    ba.append (raw);
+    ba.append_byte ((uint8) '!');
+    var dst = new uint8[3];
+    int copied = ba.copy_to (6, dst, 0, 3);
+    checks++;
+    if (ba.len != 9 || ba.get_byte (8) != (uint8) '!' || copied != 3 || dst[0] != 'O' || dst[1] != 'S' || dst[2] != '!') {
+        print ("glib_extra: FAIL ByteArray append_byte/copy_to\n");
+        fails++;
+    }
+    uint8[] patch = { (uint8) '2', (uint8) '6' };
+    ba.write_at (6, patch);
+    checks++;
+    if (ba.to_string () != "Planet26!") {
+        print ("glib_extra: FAIL ByteArray write_at/to_string\n");
+        fails++;
+    }
+    var stolen = ba.steal ();
+    checks++;
+    if (ba.len != 0 || stolen.length != 9 || stolen[8] != (uint8) '!') {
+        print ("glib_extra: FAIL ByteArray steal\n");
         fails++;
     }
 

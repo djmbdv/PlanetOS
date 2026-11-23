@@ -179,6 +179,37 @@ namespace Planet.Kernel {
             }
         }
 
+        // Downgrades already-mapped user pages to read-only without ever
+        // granting USER access to unmapped or supervisor-only pages.
+        public static void protect_user_range_ro (int cr3, int start, int size) {
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES || size <= 0)
+                return;
+            int pdpt = mmio_read64 (cr3) & ~0xFFF;
+            if (pdpt == 0)
+                return;
+            int pd = mmio_read64 (pdpt) & ~0xFFF;
+            if (pd == 0)
+                return;
+            int cur = vmm_read_cr3 ();
+            int first = start & ~0xFFF;
+            int last = (start + size - 1) & ~0xFFF;
+            for (int p = first; p <= last; p += 4096) {
+                if (p < 0 || p >= MAX_SPLIT_ADDR)
+                    continue;
+                int pde = mmio_read64 (pd + (p >> 21) * 8);
+                if ((pde & 0x05) != 0x05 || (pde & 0x80) != 0)
+                    continue;
+                int pt = pde & ~0xFFF;
+                int idx = (p >> 12) & 0x1FF;
+                int pte = mmio_read64 (pt + idx * 8);
+                if ((pte & 0x05) == 0x05 && (pte & 0x02) != 0) {
+                    mmio_write64 (pt + idx * 8, pte & ~0x02);
+                    if (cur == cr3)
+                        vmm_invlpg (p);
+                }
+            }
+        }
+
         public static void unmap_user_range (int cr3, int start, int size) {
             if (size <= 0)
                 return;

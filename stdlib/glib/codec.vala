@@ -1,10 +1,7 @@
 // Pure-Vala GLib.Checksum (CRC32, SHA-256) and GLib.Base64 for PlanetOS.
+using Planet;
 
 namespace GLib {
-
-    private int __codec_arr_addr (uint8[] a) {
-        return (int) (uintptr.from_pointer ((void*) a) + (uintptr) 16);
-    }
 
     [AsmBody(@"
         # __crc32c_hw(crc in rdi, buf in rsi, n in rdx) -> eax (SSE4.2 crc32q + crc32b)
@@ -64,7 +61,7 @@ namespace GLib {
             } else {
                 cell = oc;
             }
-            if (Once.init_enter (__codec_arr_addr (cell))) {
+            if (Once.init_enter (Sys.byte_arr_addr (cell))) {
                 var t = new uint32[256];
                 for (uint32 i = 0; i < 256; i++) {
                     uint32 c = i;
@@ -73,7 +70,7 @@ namespace GLib {
                     t[i] = c;
                 }
                 crc_tab = t;
-                Once.init_leave (__codec_arr_addr (cell), 2);
+                Once.init_leave (Sys.byte_arr_addr (cell), 2);
             }
             var cur = crc_tab;
             return (cur != null) ? cur : new uint32[256];
@@ -88,7 +85,7 @@ namespace GLib {
             } else {
                 cell = os;
             }
-            if (Once.init_enter (__codec_arr_addr (cell))) {
+            if (Once.init_enter (Sys.byte_arr_addr (cell))) {
                 uint32[] k = {
                     0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u,
                     0x3956c25bu, 0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u,
@@ -108,7 +105,7 @@ namespace GLib {
                     0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
                 };
                 sha_k = k;
-                Once.init_leave (__codec_arr_addr (cell), 2);
+                Once.init_leave (Sys.byte_arr_addr (cell), 2);
             }
             var cur = sha_k;
             return (cur != null) ? cur : new uint32[64];
@@ -125,7 +122,7 @@ namespace GLib {
             crc = 0xFFFFFFFFu;
             sha_len = 0;
             sha_bits = 0;
-            Memory.set (__codec_arr_addr (sha_blk), 0, 64);
+            Memory.set (Sys.byte_arr_addr (sha_blk), 0, 64);
             sha_h[0] = 0x6a09e667u; sha_h[1] = 0xbb67ae85u;
             sha_h[2] = 0x3c6ef372u; sha_h[3] = 0xa54ff53au;
             sha_h[4] = 0x510e527fu; sha_h[5] = 0x9b05688cu;
@@ -172,7 +169,7 @@ namespace GLib {
             if (n <= 0)
                 return;
             if (kind == ChecksumType.CRC32C) {
-                crc = __crc32c_hw (crc, __codec_arr_addr (data), (size_t) n);
+                crc = __crc32c_hw (crc, Sys.byte_arr_addr (data), (size_t) n);
                 return;
             }
             if (kind == ChecksumType.CRC32) {
@@ -306,7 +303,7 @@ namespace GLib {
             }
             var res = new uint8[out_len];
             if (out_len > 0)
-                Memory.copy (__codec_arr_addr (res), __codec_arr_addr (tmp), (size_t) out_len);
+                Memory.copy (Sys.byte_arr_addr (res), Sys.byte_arr_addr (tmp), (size_t) out_len);
             return res;
         }
     }

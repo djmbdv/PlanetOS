@@ -25,14 +25,6 @@ namespace GLib {
     private extern uint64 __uuid_wyrand_mix (uint64 s);
 
     [AsmBody(@"
-        # __uuid_arr_addr(a in rdi) -> rax
-        add $16, %rdi
-        mov %rdi, %rax
-        ret
-    ")]
-    private extern int __uuid_arr_addr (uint8[] a);
-
-    [AsmBody(@"
         # __uuid_avx2_hex(dst32 in rdi, hi in rsi, lo in rdx, lut32 in rcx)
         # Converts 16 UUID bytes (lo:hi) into 32 lowercase hex ASCII bytes via AVX2.
         add $16, %rdi
@@ -102,7 +94,7 @@ namespace GLib {
         public static string string_random () {
             var st = ensure_seed ();
             var lut = ensure_lut ();
-            int sa = __uuid_arr_addr (st);
+            int sa = Sys.byte_arr_addr (st);
             uint64 step = 0xa0761d6478bd642fUL;
             uint64 s1 = (uint64) AtomicPointer.add (sa, (int) step) + step;
             uint64 s2 = (uint64) AtomicPointer.add (sa, (int) step) + step;

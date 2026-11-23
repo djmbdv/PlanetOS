@@ -5288,6 +5288,11 @@ namespace C2Vala {
                                && b.left is ExprInt && ((ExprInt) b.left).val == 0) {
                         ls = "null";
                     }
+                } else if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=")
+                           && lt != null && rt != null
+                           && (lt.kind == CTypeKind.PTR || lt.kind == CTypeKind.ARRAY)
+                           && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY)) {
+                    return @"(uintptr.from_pointer ((void*) ($ls)) $(b.op) uintptr.from_pointer ((void*) ($rs)))";
                 }
                 if (lt != null && rt != null && lt.kind == CTypeKind.SCALAR && rt.kind == CTypeKind.SCALAR) {
                     if (lt.name != rt.name && lt.name != "bool" && rt.name != "bool") {
@@ -5943,20 +5948,37 @@ namespace C2Vala {
                         if (sd != null && sd.fields.length > 0) {
                             bool all_scalar = true;
                             for (int fi = 0; fi < sd.fields.length; fi++) {
-                                var fk = sd.fields[fi].ctype.kind;
-                                if (fk != CTypeKind.SCALAR && fk != CTypeKind.ENUM) {
-                                    all_scalar = false;
-                                    break;
-                                }
+                                var ft = sd.fields[fi].ctype;
+                                var fk = ft.kind;
+                                if (fk == CTypeKind.SCALAR || fk == CTypeKind.ENUM)
+                                    continue;
+                                if (fk == CTypeKind.ARRAY && ft.array_len is ExprInt
+                                    && ((ExprInt) ft.array_len).val > 0 && ((ExprInt) ft.array_len).val <= 16
+                                    && ft.inner != null && (ft.inner.kind == CTypeKind.SCALAR || ft.inner.kind == CTypeKind.ENUM))
+                                    continue;
+                                all_scalar = false;
+                                break;
                             }
                             if (all_scalar) {
                                 string lhs = emit_struct_arg_val (ma0, mt0);
                                 string rhs = emit_struct_arg_val (ma1, mt1);
                                 var csb = new StrBuilder ("((");
+                                bool first_cmp = true;
                                 for (int fi = 0; fi < sd.fields.length; fi++) {
-                                    if (fi > 0) csb.append (" && ");
+                                    var ft = sd.fields[fi].ctype;
                                     string fnm = esc_ident (sd.fields[fi].name);
-                                    csb.append (@"$lhs.$fnm == $rhs.$fnm");
+                                    if (ft.kind == CTypeKind.ARRAY && ft.array_len is ExprInt) {
+                                        int alen = (int) ((ExprInt) ft.array_len).val;
+                                        for (int ai = 0; ai < alen; ai++) {
+                                            if (!first_cmp) csb.append (" && ");
+                                            first_cmp = false;
+                                            csb.append (@"$lhs.$fnm[$ai] == $rhs.$fnm[$ai]");
+                                        }
+                                    } else {
+                                        if (!first_cmp) csb.append (" && ");
+                                        first_cmp = false;
+                                        csb.append (@"$lhs.$fnm == $rhs.$fnm");
+                                    }
                                 }
                                 csb.append (") ? 0 : 1)");
                                 return csb.str;
@@ -5972,7 +5994,20 @@ namespace C2Vala {
                 var sb = new StrBuilder (@"c_$fn (");
                 for (int i = 0; i < c.args.length; i++) {
                     if (i > 0) sb.append (", ");
-                    sb.append (emit_expr (c.args[i]));
+                    string a_s = emit_expr (c.args[i]);
+                    if ((i == 0 && (fn == "memcpy" || fn == "memmove" || fn == "memset" || fn == "memcmp"))
+                        || (i == 1 && (fn == "memcpy" || fn == "memmove" || fn == "memcmp"))) {
+                        if (c.args[i] is ExprStr) {
+                            a_s = (i == 0 && fn != "memcmp") ? @"c_str_to_bytes ($a_s)" : @"$(wrap_operand (a_s)).data";
+                        } else {
+                            var at = infer_type (c.args[i]);
+                            if (at != null && at.kind == CTypeKind.PTR && ptr_view (c.args[i], at) == 1
+                                && !a_s.has_prefix ("_c2v_slice_")) {
+                                a_s = (i == 0 && fn != "memcmp") ? @"c_str_to_bytes ($a_s)" : @"$(wrap_operand (a_s)).data";
+                            }
+                        }
+                    }
+                    sb.append (a_s);
                 }
                 sb.append (")");
                 return sb.str;

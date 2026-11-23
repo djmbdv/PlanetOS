@@ -305,3 +305,9 @@ Permanent instrumentation in the kernel:
 - slab `reservas`/`liberaciones` counters, dumpable from the shell;
 - canary at the end of each thread stack, checked on every context switch;
 - interrupt counter per vector, exposed at `/info/irq`.
+
+## 12. Shared `.dlib` read-only mapping (`glib.dlib`)
+
+- **VMM read-only helpers** ([kernel/vmm.vala](../../kernel/vmm.vala)): `map_user_4k_phys (cr3, vaddr, paddr, flags)`, `map_user_4k_ro` (`0x05`: `PRESENT | USER`), `map_user_range_ro`, and `protect_user_range_ro` (downgrades only existing `USER`-accessible 4 KiB PTEs by clearing the `RW` bit and invalidating the TLB).
+- **Syscalls** ([kernel/syscall.vala](../../kernel/syscall.vala)): `52` (`SYS_PROTECT_USER_RO`, backed by `Vmm.protect_user_range_ro`) and `53` (`SYS_MAP_USER_RO_AT`), used by `open_dlib` in [stdlib/gmodule_compat.vala](../../stdlib/gmodule_compat.vala) to protect `.text` and `.rodata` sections read-only.
+- **ELF loader & PMM** ([kernel/elf_loader.vala](../../kernel/elf_loader.vala), [kernel/pmm.vala](../../kernel/pmm.vala)): `Pmm.init` reserves `0x1800000..0x1900000` for shared `.dlib` modules; `ElfLoader.ensure_shared_glib` loads `glib.dlib` from XFS once (also invoked from `load_and_run` for `shell.elf`), and `map_shared_glib_into` maps `.text+.rodata` as `0x05` shared read-only while allocating a zeroed per-process `0x07` RW copy of `.data+.bss` via `zero_page_4k`.

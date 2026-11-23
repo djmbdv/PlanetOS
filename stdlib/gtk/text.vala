@@ -37,13 +37,6 @@ namespace Gtk {
     private FontSlot? gtk_sans_slot;
     private FontSlot? gtk_mono_slot;
 
-    [AsmBody(@"
-        add $16, %rdi
-        mov %rdi, %rax
-        ret
-    ")]
-    private extern int __txt_arr_addr (uint8[] a);
-
     public class TextHelper : Object {
         private const int MAX_FONT_BYTES = 16 * 1024 * 1024;
 
@@ -70,7 +63,7 @@ namespace Gtk {
                     int r = Sys.read (fd, chunk, want);
                     if (r <= 0)
                         break;
-                    GLib.Memory.copy (__txt_arr_addr (buf) + got, __txt_arr_addr (chunk), (size_t) r);
+                    GLib.Memory.copy (Sys.byte_arr_addr (buf) + got, Sys.byte_arr_addr (chunk), (size_t) r);
                     got += r;
                 }
             }

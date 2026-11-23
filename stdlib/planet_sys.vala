@@ -408,6 +408,10 @@ namespace Planet {
             return __darr_data (a);
         }
 
+        public static int byte_arr_addr (uint8[] a) {
+            return __arr_data (a);
+        }
+
         public static int list_tasks (uint8[] buf, int max_bytes) {
             if (!range_ok (buf, max_bytes))
                 return -1;

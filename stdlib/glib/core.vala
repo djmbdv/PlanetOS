@@ -3,10 +3,6 @@ using Planet;
 
 namespace GLib {
 
-    private int __core_arr_addr (uint8[] a) {
-        return (int) (uintptr.from_pointer ((void*) a) + (uintptr) 16);
-    }
-
     public void printerr (string s) {
         print (s);
     }
@@ -55,7 +51,7 @@ namespace GLib {
                 ncap = ncap * 2;
             var nbuf = new uint8[ncap];
             if (used > 0)
-                Memory.copy (__core_arr_addr (nbuf), __core_arr_addr (buf), (size_t) used);
+                Memory.copy (Sys.byte_arr_addr (nbuf), Sys.byte_arr_addr (buf), (size_t) used);
             buf = nbuf;
         }
 
@@ -269,7 +265,7 @@ namespace GLib {
             if (n <= 0)
                 return store_new ("");
             var copy = new uint8[n];
-            Memory.copy (__core_arr_addr (copy), (int) (uintptr.from_pointer ((void*) str) + (uintptr) 16), (size_t) n);
+            Memory.copy (Sys.byte_arr_addr (copy), (int) (uintptr.from_pointer ((void*) str) + (uintptr) 16), (size_t) n);
             return store_new ((string) copy);
         }
 
@@ -691,7 +687,7 @@ namespace GLib {
             get {
                 var res = new uint8[used];
                 if (used > 0)
-                    Memory.copy (__core_arr_addr (res), __core_arr_addr (buf), (size_t) used);
+                    Memory.copy (Sys.byte_arr_addr (res), Sys.byte_arr_addr (buf), (size_t) used);
                 return res;
             }
         }
@@ -705,15 +701,27 @@ namespace GLib {
             buf = new uint8[cap];
         }
 
+        public ByteArray.take (owned uint8[]? data) {
+            if (data == null) {
+                buf = new uint8[64];
+                used = 0;
+                return;
+            }
+            buf = data;
+            used = data.length;
+        }
+
         private void ensure (int extra) {
-            if (extra <= 0 || used + extra <= buf.length)
+            if (extra <= 0 || used + extra < 0 || used + extra <= buf.length)
                 return;
             int ncap = (buf.length > 0) ? (buf.length * 2) : 64;
-            while (ncap < used + extra)
+            while (ncap > 0 && ncap < used + extra)
                 ncap = ncap * 2;
+            if (ncap <= 0)
+                ncap = used + extra;
             var nbuf = new uint8[ncap];
             if (used > 0)
-                Memory.copy (__core_arr_addr (nbuf), __core_arr_addr (buf), (size_t) used);
+                Memory.copy (Sys.byte_arr_addr (nbuf), Sys.byte_arr_addr (buf), (size_t) used);
             buf = nbuf;
         }
 
@@ -721,18 +729,62 @@ namespace GLib {
             if (bytes.length == 0)
                 return;
             ensure (bytes.length);
-            Memory.copy (__core_arr_addr (buf) + used, __core_arr_addr (bytes), (size_t) bytes.length);
+            Memory.copy (Sys.byte_arr_addr (buf) + used, Sys.byte_arr_addr (bytes), (size_t) bytes.length);
             used = used + bytes.length;
+        }
+
+        public void append_byte (uint8 b) {
+            ensure (1);
+            buf[used] = b;
+            used = used + 1;
+        }
+
+        public uint8 get_byte (int index) {
+            if (index < 0 || index >= used)
+                return 0;
+            return buf[index];
+        }
+
+        public int copy_to (int offset, uint8[] dst, int dst_offset, int count) {
+            if (offset < 0 || offset >= used || dst_offset < 0 || dst_offset >= dst.length || count <= 0)
+                return 0;
+            int avail = used - offset;
+            int dst_avail = dst.length - dst_offset;
+            int n = (count < avail) ? count : avail;
+            if (dst_avail < n)
+                n = dst_avail;
+            if (n > 0)
+                Memory.copy (Sys.byte_arr_addr (dst) + dst_offset, Sys.byte_arr_addr (buf) + offset, (size_t) n);
+            return n;
+        }
+
+        public void write_at (int pos, uint8[] bytes) {
+            if (pos < 0 || bytes.length == 0)
+                return;
+            int end_pos = pos + bytes.length;
+            if (end_pos > buf.length)
+                ensure (end_pos - used);
+            if (pos > used)
+                Memory.set (Sys.byte_arr_addr (buf) + used, 0, (size_t) (pos - used));
+            Memory.copy (Sys.byte_arr_addr (buf) + pos, Sys.byte_arr_addr (bytes), (size_t) bytes.length);
+            if (end_pos > used)
+                used = end_pos;
+        }
+
+        public string to_string () {
+            if (used == 0)
+                return "";
+            return __planc_host_bytes_to_str (buf, used);
         }
 
         public void prepend (uint8[] bytes) {
             if (bytes.length == 0)
                 return;
             ensure (bytes.length);
-            int ba = __core_arr_addr (buf);
+            int ba = Sys.byte_arr_addr (buf);
             if (used > 0)
                 Memory.move (ba + bytes.length, ba, (size_t) used);
-            Memory.copy (ba, __core_arr_addr (bytes), (size_t) bytes.length);
+            Memory.copy (ba, Sys.byte_arr_addr (bytes), (size_t) bytes.length);
             used = used + bytes.length;
         }
 
@@ -741,7 +793,7 @@ namespace GLib {
                 return;
             int rem = used - 1 - index;
             if (rem > 0) {
-                int ba = __core_arr_addr (buf);
+                int ba = Sys.byte_arr_addr (buf);
                 Memory.move (ba + index, ba + index + 1, (size_t) rem);
             }
             used = used - 1;
@@ -753,7 +805,7 @@ namespace GLib {
             int n = (index + length > used) ? (used - index) : length;
             int rem = used - n - index;
             if (rem > 0) {
-                int ba = __core_arr_addr (buf);
+                int ba = Sys.byte_arr_addr (buf);
                 Memory.move (ba + index, ba + index + n, (size_t) rem);
             }
             used = used - n;
@@ -765,12 +817,26 @@ namespace GLib {
             if (length > buf.length)
                 ensure (length - used);
             if (length > used)
-                Memory.set (__core_arr_addr (buf) + used, 0, (size_t) (length - used));
+                Memory.set (Sys.byte_arr_addr (buf) + used, 0, (size_t) (length - used));
             used = length;
         }
 
+        public void remove_index_fast (int index) {
+            if (index < 0 || index >= used)
+                return;
+            if (index < used - 1)
+                buf[index] = buf[used - 1];
+            used = used - 1;
+        }
+
         public uint8[] steal () {
-            var res = data;
+            uint8[] res;
+            if (used == buf.length) {
+                res = buf;
+            } else {
+                res = data;
+            }
+            buf = new uint8[64];
             used = 0;
             return res;
         }

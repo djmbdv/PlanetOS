@@ -136,6 +136,21 @@ namespace GioDemo {
                 var b = din.read_byte ();
                 check ("memory-byte", b == (uint8) 'X');
             }
+
+            var mos2 = new MemoryOutputStream ();
+            uint8[] init_bytes = { (uint8) 'm', (uint8) 'e', (uint8) 'm', (uint8) 'o', (uint8) 'r', (uint8) 'y', (uint8) ':', (uint8) '1', (uint8) '2', (uint8) '3', (uint8) '4', (uint8) '5', (uint8) '6' };
+            mos2.write (init_bytes);
+            mos2.seek (7, SeekType.SET);
+            uint8[] repl = { (uint8) 's', (uint8) 'e', (uint8) 'c', (uint8) 'n', (uint8) 'd' };
+            mos2.write (repl);
+            mos2.truncate (12);
+            var stolen_bytes = mos2.steal_as_bytes ();
+            check ("memory-steal", stolen_bytes.get_size () == 12 && mos2.get_data_size () == 0);
+            var mis2 = new MemoryInputStream.from_data (stolen_bytes.get_data ());
+            var din2 = new DataInputStream (mis2);
+            int tok_len = 0;
+            string? tok = din2.read_upto (":", 1, out tok_len);
+            check ("memory-upto", tok == "memory" && tok_len == 6);
         } catch (IOError e) {
             report ("memory", e);
         }
