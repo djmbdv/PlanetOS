@@ -165,6 +165,7 @@ The tests for allocator, containers, strings, signals, coroutines, errors and fo
 | Kernel in QEMU | `tests/kernel/` | KR-01 … KR-09 |
 | Guest | `tests/guest/` | US-01 … US-07 |
 | Shell | `tests/shell/` | US-04 |
+| I/O data path | `tests/io/` | IO-01 to IO-06, KR-07 |
 
 ### 5.1 Language conformance
 
@@ -256,6 +257,7 @@ This use of `valac` is for **verification**, not for building: it does not appea
 | `bootstrap` | `tests/bootstrap.sh` | I4, TC-09, VE-03 |
 | `boot` | `tests/qemu.sh iso/planetos.iso` | KR-01, VE-04 |
 | `guest` | `tests/qemu.sh iso/planetos-tests.iso` | US-*, VE-05 |
+| `io` | `planc test --suite=io` plus the QEMU cases of [08 §9](08-io-data-path.md#9-verification) | IO-01 to IO-06, KR-07 |
 | `reproducible` | two builds, compare `sha256` | TC-05 |
 | `fuzz` | `planc fuzz --semilla=<n>` | §7 |
 
@@ -272,6 +274,7 @@ Milestones are defined by what the system **can do**, not by when. Each one is r
 | **M5** | A user process in Vala runs without libc | US-01, US-02, US-06, I2 |
 | **M6** | Interactive shell with pipelines and redirection | US-03, US-04, US-07 |
 | **M7** | Persistent file system and SDK usable by third parties | US-05, coherence of `pfs` |
+| **M8** | A process cannot name another's handle; `/dev/serial0` works through a `Gio` filter chain; one block ring completes by IRQ | IO-01 to IO-06, KR-07 |
 
 M5 is the milestone that validates the whole thesis: **a process written in Vala, compiled by a compiler written in Vala, running without libc on a kernel written in Vala**.
 
@@ -283,6 +286,6 @@ Honesty about the limits:
 |---|---|
 | Behavior on physical hardware other than the emulated one | A driver failure may not show up in CI |
 | Concurrency under sustained real load | Stress tests are bounded |
-| Security against malicious code | There is no multi-user threat model |
+| Security against malicious code | There is no multi-user threat model. Process isolation (IO-01 to IO-03) is required even with a single user; a process that was granted a ring is trusted to speak its protocol |
 | Compatibility with existing Vala programs | It is not a requirement (I3) |
 | Formal correctness of the compiler | It is verified by conformance and oracle, not by proof |

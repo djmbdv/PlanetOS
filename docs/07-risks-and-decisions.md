@@ -50,6 +50,11 @@ Impact scale:
 | **R-26** | The local oracle diverges from the `valac` that another developer uses | Medium | 1 | Two people obtain different diagnostics from the same source | The oracle version is pinned in [experiments/oracle/install.sh](../experiments/oracle/install.sh) and it is recorded with each measurement |
 | **R-27** | An IR operation has no SPIR-V equivalent and the shader backend diverges from the native one | Medium | 2 | A shader compiles to x86_64 and fails to lower to SPIR-V (or the reverse) | The restriction table of [02 §10.4](02-compiler.md) is enforced by the frontend (TC-12), not by the backend; differential suite: every shader case must lower cleanly and pass `spirv-val` |
 | **R-28** | The Vulkan host bindings leak into a target-system binary | Medium | 3 | A symbol of the graphics profile appears in a kernel or userland build | GX-03 keeps them in the `host` profile directory only; symbol audit per build (VE-02) |
+| **R-29** | The current I/O substrate is not a capability system: one global fd table and `SYS_MAP_USER_AT` accept arbitrary physical addresses | High | 3 | A second process reads or closes another's fd, or maps a frame it does not own; `SharedSurface` already depends on it | Phase A1-A2 of [08](08-io-data-path.md): per-process handles with rights and `SYS_GRANT`; cross-process denial test before any driver work |
+| **R-30** | A userland driver programs DMA and overwrites memory it does not own | High if attempted | 4 | A driver bug corrupts the kernel or another process; QEMU has no IOMMU | The kernel owns the doorbell and validates every descriptor (IO-05). Userland MMIO is gated on D-15 and an IOMMU |
+| **R-31** | A userland protocol stack blocks the main loop or copies per stage | High | 2 | One blocked `read` stalls every source; throughput collapses on packet paths | Coroutines for stream stages (VL-08), buffered byte streams, rings for framed devices |
+| **R-32** | `SYS_POLL` does not report real readiness and its capacity is too low | High | 2 | The loop spins on an open file, or watches past 8 sources are dropped | IO-06: handle-scoped readiness, dynamic watch array, no busy-poll |
+| **R-33** | Scanout stays a copy even when app/compositor is zero-copy | Medium | 1 | Frame time is dominated by `SYS_FB_BLIT_RECT` | Grant the framebuffer to the compositor and double-buffer; measured separately from the ring work |
 
 ## 4. Open decisions
 
@@ -70,6 +75,8 @@ Each one is closed with a technical criterion, not with a date.
 | **D-11** | Package format | Own / reuse an existing one | Own as long as the manifest is the only database needed |
 | **D-12** | Dialect name and version | — | It is fixed together with the first stable version of the ABI; from then on, changes with a major version |
 | **D-13** | How Vulkan reaches the system: host-profile bindings only / own Vulkan ICD inside `planetos` (own driver stack: kernel driver + ICD loader + layers) | The toolchain side is the same either way: SPIR-V from the same IR (TC-11). It closes when the system has a GPU driver with command submission working in QEMU/virtio-gpu or on real hardware; until then, GX-03 (host bindings) is the only commitment |
+| **D-14** | I/O data path: **two contracts**, byte streams and validated descriptor rings, adopted in [08](08-io-data-path.md). The physical driver and the doorbell stay in ring 0; protocol logic runs in userland | One `Gio` stream for every device / kernel-side STREAMS framework with `M_*` messages | It closes when IO-01 to IO-06 are green and the phase exit criteria of 08 §8 are met |
+| **D-15** | Userland drivers: kernel doorbell with descriptor validation now; userland MMIO and DMA only under an IOMMU later | Userland MMIO without an IOMMU / never allow userland drivers | It closes only with a userland driver that crashes or misbehaves and leaves the kernel and other processes intact, plus a DMA containment test. Until then, no BAR is mapped to userland |
 
 ## 5. Reformulation conditions
 
@@ -93,8 +100,11 @@ They are not dates or budgets: they are technical states that force the plan to 
 | Using an external assembler and linker | It breaks I1 and ties the project to binutils |
 | Interpreter or virtual machine instead of native code | The requirement is to compile to native (TC-01) |
 | Cycle collector | It changes the memory model of the language; it is not a requirement |
-| Microkernel with intensive IPC | It unblocks no requirement; it multiplies the cost of every call |
+| Microkernel with intensive IPC | It unblocks no requirement; it multiplies the cost of every call. Note: protocol stacks in userland over kernel-validated rings are **not** this alternative; the physical driver and the doorbell stay in ring 0 ([08](08-io-data-path.md)) |
 | Shared libraries and `dlopen` | There is no requirement; it adds a dynamic loader and its error surface |
+| GObject instances, vtables or signals crossing kernel/user | A kernel vtable in userland is a ring-0 call primitive, not an abstraction boundary |
+| Userland MMIO or DMA programming without an IOMMU | It turns any driver bug into arbitrary physical writes; gated on D-15 |
+| Kernel-side STREAMS framework with `M_DATA`/`M_PROTO` messages | It puts protocol logic and message allocation back in ring 0, which is what [08](08-io-data-path.md) removes |
 
 ## 7. Note on licenses
 

@@ -197,7 +197,7 @@ Vala uses reference counting. `planc` makes it explicit:
 | `unowned T` | no refcount; the programmer guarantees the lifetime |
 | `[Compact] T` | no refcount at all: the block is released by an explicit `free ()`, which also releases its reference-typed fields ([slice-52](planc/slice-52-object-and-compact.md)) |
 
-**Cycles are not collected** (non-requirement, see [00 §7](00-requirements.md#7-non-requirements)). It is a property of the language, not a defect of the compiler, and it is documented in the standard library.
+**Cycles are not collected** (non-requirement, see [00 §9](00-requirements.md#9-non-requirements)). It is a property of the language, not a defect of the compiler, and it is documented in the standard library.
 
 **Atomic counting by default** (RT-03). In the `host` and `user` profiles, `ref`/`unref` use `lock inc`/`lock dec`. In the `kernel` profile, likewise, except for types marked `[NoAtomico]` and used exclusively under a lock — an explicit annotation, not an inference.
 

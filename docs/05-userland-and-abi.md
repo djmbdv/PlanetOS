@@ -50,7 +50,31 @@ public extern int64 sys_llamar_v(uint64 numero, ArgsSys* args);
 | Time | `time_mono`, `time_real`, `timer_sleep` |
 | Debugging | `sys_info`, `sys_debug_write` |
 
-There is no `socket`, `poll`, `select`, `signal` or `fork`. I/O waiting is resolved with `chan_recv` over multiple channels, which is what the runtime event loop consumes.
+There is no `socket`, `select`, BSD `signal` or `fork`. Readiness is reported per
+handle by `SYS_POLL` (IO-06); blocking is `SYS_WAIT_ADDR` on a futex-like word or
+`chan_recv` over channels, which is what the runtime event loop consumes.
+
+The device calls of [08](08-io-data-path.md) (`handle_*`, `grant`, `ring_kick`)
+are **planned**. The numeric catalog implemented today is the `switch` in
+[kernel/syscall.vala](../kernel/syscall.vala); it is frozen per version by
+`SYS_ABI_VERSION`.
+
+### 2.2 Implemented integration calls (`int 0x80`)
+
+The running kernel dispatches through `SYS_*` numbers in [kernel/syscall.vala](../kernel/syscall.vala); 1–53 are the original console/memory/file/GPU calls and these are the ones added for the GLib layer:
+
+| Number | Call | Purpose |
+|---|---|---|
+| 54 | `SYS_ERRNO()` | errno of the calling task, set by the last failing syscall |
+| 55 | `SYS_STAT_EX(path, len, out16)` | kind (1 file, 2 dir) and byte size; `SYS_STAT` keeps `0 = absent` |
+| 56 | `SYS_KLOG_WRITE(cat, level, ptr, len)` | userland record into the kernel ring (category 7 = user) |
+| 57 | `SYS_WAIT_ADDR(addr, expected, timeout_ms)` | futex-style park: returns when the word changes, `-1`/`ETIMEDOUT` on deadline |
+| 58 | `SYS_WAKE_ADDR(addr, count)` | wakes blocked tasks parked on the same address |
+| 59 | `SYS_POLL(fds, nfds, timeout_ms)` | ready bitmask for up to 15 descriptors (`0` = stdin console, `1/2` = console out) |
+| 60 | `SYS_SLEEP_MS(ms)` | tick-accurate sleep (10 ms granularity) |
+| 61 | `SYS_ABI_VERSION()` | integer the `.dlib` consumers compare at load |
+
+Failures still return `-1` (the existing `== -1` checks keep working); the cause is read with `SYS_ERRNO` and mirrors Linux numbering (`ENOENT = 2`, `EACCES = 13`, `EISDIR = 21`, `ETIMEDOUT = 110`, …). `Planet.Sys` exposes them as `Sys.ENOENT`, `Sys.errno_code ()` and `Sys.strerror ()`.
 
 ## 3. Userland `_start`
 
@@ -231,6 +255,24 @@ Own layout, without FHS:
 ```
 
 `/info` replaces `/proc` and `/sys` together, with a single stable format (`key: value`) consumable by `Planet.Config` (US-07).
+
+### 9.1 `/dev` and device handles (planned)
+
+`/dev` is a devfs view generated on enumeration, never a stored tree. Opening
+`/dev/<name>` returns a **per-process handle with rights**, not a global integer
+([08](08-io-data-path.md)). The handle is the only way to reach the device: a
+process that was not granted it cannot name it.
+
+- Byte devices (`/dev/serial0`, `/dev/console`, raw keyboard) are `Gio.InputStream`
+  and `OutputStream` subclasses. Filter chains and line discipline run in the
+  library, not in ring 0.
+- Framed devices (block, network, GPU) are a descriptor ring plus a doorbell.
+  The kernel validates every descriptor; userland owns buffers and protocol.
+
+Current state: `SYS_OPEN` resolves only XFS and RAMFS
+([kernel/vfs.vala](../kernel/vfs.vala)), the fd table is global
+([kernel/layout.vala](../kernel/layout.vala)), and there is no devfs. Phase A and
+B1 of [08](08-io-data-path.md) close this.
 
 ## 10. SDK
 

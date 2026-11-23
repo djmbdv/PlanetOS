@@ -172,7 +172,7 @@ Rules:
 | Wall clock | CMOS at boot + monotonic offset | avoids reading CMOS on every call |
 | Monotonic | invariant TSC | nanosecond resolution |
 
-The kernel's main loop (`Planet.Eventos`) is the same code the userland uses, with the `kernel` profile. A driver registers a `Fuente` backed by an IRQ; the scheduler runs the loop and decides the next thread:
+The **target** is that the kernel's main loop (`Planet.Eventos`) is the same code the userland uses, with the `kernel` profile, and that a driver registers a `Fuente` backed by an IRQ. The **current state** is narrower: no kernel file instantiates `MainContext`; only the timer, keyboard and mouse have IRQ stubs, while ATA completes by PIO polling and virtio-gpu completes by bounded spin. The migration is Phase C of [08](08-io-data-path.md), and it keeps the scheduler from D-10:
 
 ```vala
 while (true) {
@@ -181,7 +181,7 @@ while (true) {
 }
 ```
 
-This is the project's reason for being: the same event abstraction governs drivers and applications.
+The kernel keeps the scheduler; the loop runs on top of it. Drivers that need to wait use the internal equivalent of `SYS_WAIT_ADDR`/`SYS_WAKE_ADDR`: the IRQ handler publishes a sequence and wakes the word, and the calling task is suspended instead of spinning.
 
 ## 6. Scheduler
 
@@ -231,6 +231,8 @@ Rules:
 - Stable numbers, documented in `docs/abi.md` and frozen per version.
 - `sys_llamar_v` carries `abi_version` in the argument structure in order to evolve without breaking binaries.
 - If a handler returns a pointer, the dispatcher checks that it lies in user space.
+- Every resource is named by a **per-process handle with rights**, never by a global slot index ([08](08-io-data-path.md)). The current global `FD_TABLE` and `SYS_MAP_USER_AT` are transitional and must not be extended.
+- Pointer validation is against the caller's page table and is recoverable (KR-07). Today `user_ok` only bounds the address against `USER_LIMIT`.
 
 ## 8. VFS
 
@@ -260,17 +262,22 @@ Requirement of `pfs`: to survive a power cut without losing the consistency of t
 
 ## 9. Drivers
 
-| Driver | Need | Interface |
-|---|---|---|
-| UART 1650 | kernel log | write `Fuente` |
-| Framebuffer + 8×16 font | text console | same interface as UART |
-| PS/2 keyboard | shell input | `Fuente` over IRQ 1 |
-| PCI enumeration | discover virtio | config space |
-| virtio-blk | disk | *split* queues |
-| RTC | wall time | CMOS read |
-| virtio-net | network | outside the current scope |
+The two I/O contracts of [08](08-io-data-path.md) decide the interface. Byte devices become `Gio` streams over a handle; framed devices become a validated descriptor ring. The physical driver and the doorbell stay in ring 0 in both cases.
 
-All of them expose the same shape: an `Object` with configuration properties and an event `Fuente`. None of them knows the scheduler.
+| Driver | Need | Contract | State |
+|---|---|---|---|
+| UART 1650 | kernel log, later `/dev/serial0` | A: byte stream | ring-0 log exists; user handle pending B1 |
+| Framebuffer + 8×16 font | text console | kernel-only | implemented |
+| PS/2 keyboard | shell input | A: raw scancodes after B2, ASCII via `SYS_READ_KEY` meanwhile | implemented |
+| PCI enumeration | discover virtio | kernel | implemented |
+| ATA PIO | disk (legacy) | B: validated ring, PIO fallback | implemented, polled |
+| virtio-blk | disk | B: validated ring | planned |
+| RTC | wall time | syscall today, byte device later | implemented |
+| virtio-gpu | display and 3D | B: validated ring plus scanout grant | implemented, controlq polled |
+| virtio-net | network | B: validated ring | planned, no driver |
+| audio | sound | B: data ring | planned |
+
+None of them knows the scheduler. None of them exposes a vtable to userland: the boundary is a handle plus a ring, and the protocol stack runs in the LibOS. Line discipline and terminal echo move to userland last, keeping `SYS_READ_KEY` for the boot and panic console.
 
 ## 10. Vala pitfalls in the kernel
 
@@ -308,6 +315,9 @@ Permanent instrumentation in the kernel:
 
 ## 12. Shared `.dlib` read-only mapping (`glib.dlib`)
 
-- **VMM read-only helpers** ([kernel/vmm.vala](../../kernel/vmm.vala)): `map_user_4k_phys (cr3, vaddr, paddr, flags)`, `map_user_4k_ro` (`0x05`: `PRESENT | USER`), `map_user_range_ro`, and `protect_user_range_ro` (downgrades only existing `USER`-accessible 4 KiB PTEs by clearing the `RW` bit and invalidating the TLB).
-- **Syscalls** ([kernel/syscall.vala](../../kernel/syscall.vala)): `52` (`SYS_PROTECT_USER_RO`, backed by `Vmm.protect_user_range_ro`) and `53` (`SYS_MAP_USER_RO_AT`), used by `open_dlib` in [stdlib/gmodule_compat.vala](../../stdlib/gmodule_compat.vala) to protect `.text` and `.rodata` sections read-only.
-- **ELF loader & PMM** ([kernel/elf_loader.vala](../../kernel/elf_loader.vala), [kernel/pmm.vala](../../kernel/pmm.vala)): `Pmm.init` reserves `0x1800000..0x1900000` for shared `.dlib` modules; `ElfLoader.ensure_shared_glib` loads `glib.dlib` from XFS once (also invoked from `load_and_run` for `shell.elf`), and `map_shared_glib_into` maps `.text+.rodata` as `0x05` shared read-only while allocating a zeroed per-process `0x07` RW copy of `.data+.bss` via `zero_page_4k`.
+- **VMM read-only helpers** ([kernel/vmm.vala](../kernel/vmm.vala)): `map_user_4k_phys (cr3, vaddr, paddr, flags)`, `map_user_4k_ro` (`0x05`: `PRESENT | USER`), `map_user_range_ro`, and `protect_user_range_ro` (downgrades only existing `USER`-accessible 4 KiB PTEs by clearing the `RW` bit and invalidating the TLB).
+- **Syscalls** ([kernel/syscall.vala](../kernel/syscall.vala)): `52` (`SYS_PROTECT_USER_RO`, backed by `Vmm.protect_user_range_ro`) and `53` (`SYS_MAP_USER_RO_AT`), used by `open_dlib` in [stdlib/gmodule_compat.vala](../stdlib/gmodule_compat.vala) to protect `.text` and `.rodata` sections read-only.
+- **ELF loader & PMM** ([kernel/elf_loader.vala](../kernel/elf_loader.vala), [kernel/pmm.vala](../kernel/pmm.vala)): `Pmm.init` reserves `0x1800000..0x1900000` for shared `.dlib` modules; `ElfLoader.ensure_shared_glib` loads `glib.dlib` from XFS once (also invoked from `load_and_run` for `shell.elf`), and `map_shared_glib_into` maps `.text+.rodata` as `0x05` shared read-only while allocating a zeroed per-process `0x07` RW copy of `.data+.bss` via `zero_page_4k`. The header is validated before use: magic, `is_dlib`, `.plan` version and a `.text` base inside the reserved window, with a `Klog` error instead of a silent misload.
+- **Blocking, errno and readiness** ([kernel/sched.vala](../kernel/sched.vala), [kernel/syscall.vala](../kernel/syscall.vala), [kernel/klog.vala](../kernel/klog.vala)): `TASK_BLOCKED` plus per-task errno and futex bookkeeping (kept in scheduler arrays, since the 128-byte TCB is full). `sched_tick` resumes blocked tasks whose deadline expired and `SYS_WAKE_ADDR` resumes the ones parked on a matching address; `SYS_WAIT_ADDR` uses both, `SYS_POLL`/`SYS_SLEEP_MS` wait on the tick. `Klog` gained the `user` category (7) and `write_bytes`, so `SYS_KLOG_WRITE` copies the record straight from user memory.
+- **User stack is 1 MiB** ([kernel/elf_loader.vala](../kernel/elf_loader.vala)): `USER_STACK_PAGES = 257` (1 bottom guard + 256 usable) replaces the old 16 usable pages. `planc.elf` is expected to build programs on-target, and compiling the concatenated SDK prelude (~120 KB) recursed deep enough in `Codegen.expr_type_full` to fault in the guard page at `cr2 = stack_base + 4096`.
+- **Transitional mapping**: `SYS_MAP_USER_AT` (50) and `SYS_MAP_USER_RO_AT` (53) take a physical address and check only a range. [08](08-io-data-path.md) replaces both with `SYS_GRANT` over a handle, so a `.dlib` or a shared surface is backed by owned frames instead of an address the caller guessed.

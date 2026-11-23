@@ -104,7 +104,21 @@ The toolchain plans two output targets: native code for the system and SPIR-V fo
 | **GX-04** | The shader dialect restrictions (TC-12) MUST be enforced by `planc`, not by discipline: a construct that SPIR-V cannot express never reaches the backend | Negative cases |
 | **GX-05** | Whether the target system ships its own Vulkan ICD (driver inside `planetos`) or only consumes SPIR-V through the host profile is an open decision (**D-13**). Nothing in the toolchain design may assume either answer | Decision closed in [07](07-risks-and-decisions.md) |
 
-## 8. Non-requirements
+## 8. Device I/O requirements (IO)
+
+The data path is specified in [08](08-io-data-path.md). `KR-07` and `US-02`
+are its prerequisites, not its consequences.
+
+| ID | Requirement | Verification |
+|---|---|---|
+| **IO-01** | Handles MUST be per-process opaque values with a rights mask. No process may name another process's handle, and no syscall may accept a global slot index as a capability | Cross-process handle test; a forged value returns `E_BAD_HANDLE` |
+| **IO-02** | Physical frames MUST be granted only through a handle that owns them. No syscall may map an arbitrary physical address into a process | Mapping an unowned frame fails; the compositor `SharedSurface` works through the grant |
+| **IO-03** | User pointers MUST be validated against the caller's page table and MUST be recoverable on fault (`KR-07`), including descriptors read by the kernel | Invalid pointer returns an error and the calling task survives |
+| **IO-04** | Byte devices MUST be reachable as `Gio` streams over a handle. Line discipline, framing transforms and protocol logic MUST run in userland, not in ring 0 | `/dev` case: open, filter chain and line-discipline test |
+| **IO-05** | Framed devices MUST use a descriptor ring whose entries the kernel validates before the doorbell. While there is no IOMMU, userland MUST NOT program MMIO or DMA | A malformed descriptor is rejected without touching the device; no BAR is mapped to userland |
+| **IO-06** | Readiness MUST be reported per handle by `SYS_POLL`; the event loop MUST NOT busy-poll, and no driver completion may depend on a bounded spin | Poll test with timeout; no spin loop in the block path |
+
+## 9. Non-requirements
 
 Explicit, so that they do not slip in as implicit goals:
 
@@ -118,4 +132,8 @@ Explicit, so that they do not slip in as implicit goals:
 | Multiple architectures | x86_64 is the only one that defines the backend. SPIR-V is a shader target of the same IR (TC-11), not a second CPU architecture |
 | GLSL, HLSL or any second shader language | The dialect is Vala; a shader is Vala restricted by the execution model (GX-01) |
 | Multiple object formats or dynamic linking | One format, one linker, static |
+| GObject instances, vtables or signals crossing the kernel/user boundary | The boundary is handles and rings; a kernel vtable in userland is a ring-0 call primitive |
+| Userland MMIO or DMA programming without an IOMMU | A driver bug becomes an arbitrary physical write; deferred to D-15 |
+| A kernel-side STREAMS framework with `M_DATA`/`M_PROTO` messages | Protocol logic belongs to the LibOS; the kernel keeps bytes and descriptor rings |
+| Compiler-proved exclusive ownership of I/O buffers | `planc` is ARC, not a linear type system; buffer leases are enforced at run time |
 | Cycle collection | Vala's model is reference counting; cycles are the responsibility of the code |

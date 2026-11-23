@@ -111,6 +111,7 @@ problems** and **creates six**:
 | [docs/05-userland-and-abi.md](docs/05-userland-and-abi.md) | Syscall ABI, ELF loader, processes, shell, SDK, filesystem layout, packages |
 | [docs/06-verification.md](docs/06-verification.md) | Conformance suites, bootstrap fixed point, differential oracle, QEMU harness, validation experiments |
 | [docs/07-risks-and-decisions.md](docs/07-risks-and-decisions.md) | Technical risks with signal and mitigation, open decisions with closing criterion |
+| [docs/08-io-data-path.md](docs/08-io-data-path.md) | **I/O data path**: per-process handles, grants, `Gio` byte streams and validated descriptor rings; the driver-layer roadmap and its exit criteria |
 | [docs/experiments/](docs/experiments/README.md) | **Measurements made**, with the reproducible harness that produces them |
 | [docs/planc/slice-0.md](docs/planc/slice-0.md) | **Implemented slice 0**: what `planc` compiles today, which bytes it emits, what it deliberately does not do |
 | [docs/planc/slice-1.md](docs/planc/slice-1.md) | **Implemented slice 1**: variables, stack frame, the calling convention, `if`/`while`, semantic analysis |
@@ -363,7 +364,7 @@ serial log when a case fails.
 
 | Track | Next Milestones | Target Outcome |
 |---|---|---|
-| **Compositor & Wayland-lite** | Bidirectional pointer/keyboard event forwarding to `Kind.EXT` windows through a shared input ring (done), zero-copy shared window surfaces with up to four damage rectangles per frame (done, attached with `SYS_MAP_USER_AT`), dynamic window resize, and Virgl/Vulkan ICD acceleration. | External pure-Vala GUI apps run interactively inside compositor windows with zero copies. |
+| **Compositor & Wayland-lite** | Bidirectional pointer/keyboard event forwarding to `Kind.EXT` windows through a shared input ring (done), zero-copy shared window surfaces with up to four damage rectangles per frame (done, attached with `SYS_MAP_USER_AT` today and with `SYS_GRANT` after Phase A2), dynamic window resize, and Virgl/Vulkan ICD acceleration. | External pure-Vala GUI apps run interactively inside compositor windows with zero copies. |
 | **`pcm4` & Desktop Apps** | Port `volume-manager` & `connect-server-dialog`, add multi-tab file browsing, image/code previews, and a built-in graphical terminal + text editor. | Full daily-driver file manager and desktop workflow inside PlanetOS. |
-| **Kernel & IPC** | Kernel in-memory `SYS_PIPE`, shared memory regions, `virtio-net` NIC driver + pure-Vala TCP/IP stack, and audio (`virtio-snd` / AC97). | Real inter-process pipelines, networking, and multimedia. |
+| **I/O data path & IPC** | Phase A of [docs/08](docs/08-io-data-path.md): per-process handles with rights, `SYS_GRANT`, recoverable user copies; then `devfs` + `Gio` streams for byte devices (STREAMS-style filter chains in userland), validated descriptor rings for block/GPU, `virtio-net` + a LibOS TCP/IP stack, and audio. | Cross-process-safe handles, userland pipelines, networking and multimedia without moving physical drivers out of ring 0. |
 | **Self-Hosted SDK** | Compile GUI apps (`gtk_demo.elf`, `pcm4.elf`) directly inside PlanetOS using `planc.elf` with pre-indexed modular `stdlib/` packages. | Self-sufficient Vala OS capable of building its own desktop software on-target. |

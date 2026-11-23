@@ -169,6 +169,12 @@ No `GType`, no `GValue`, no dynamic reflection. What is needed:
 
 The compiler computes the **RTTI closure**: it emits descriptors only for types that appear in `is`, `as`, `typeof`, `switch` by type or signals with dynamic connection. A kernel without those constructs carries no type tables.
 
+Object identity stops at the process boundary. An object is never shared across
+CR3 or across the ring boundary: the kernel and userland exchange **handles and
+rings**, and the `Gio` object that the application uses is a local proxy
+([08](08-io-data-path.md)). Sharing a kernel vtable would be a ring-0 call
+primitive, not an abstraction.
+
 ## 7. Repository structure
 
 ```
