@@ -12122,9 +12122,14 @@ namespace Planc {
                     }
                 } else if (inc.target is MemberAccessExpr) {
                     var ma = (MemberAccessExpr) inc.target;
+                    // A type name (`Klass.field++`) is not an expression; skip
+                    // the instance-field/property paths and let gen_lvalue_addr
+                    // resolve the static global. is_type_name guards against
+                    // locals, globals, fields and consts shadowing the type.
+                    bool is_type_ref = ma.target is VarRef && is_type_name (((VarRef) ma.target).name);
                     string tt_name = "";
-                    var tt = expr_type_full (ma.target, out tt_name);
-                    if (tt == ValaType.CLASS) {
+                    var tt = is_type_ref ? ValaType.INT : expr_type_full (ma.target, out tt_name);
+                    if (!is_type_ref && tt == ValaType.CLASS) {
                         var cname = strip_null (tt_name);
                         unowned var cd = program.find_class (cname);
                         unowned ClassField? cf = null;

@@ -4,9 +4,13 @@
 For every case directory:
 
   * compile the C sources with gcc and run them   -> reference output
-  * translate them to Vala with tools/c2vala.py, compile that with valac and
-    run it                                       -> candidate output
+  * translate them to Vala with the chosen translator, compile the result and
+    run it                                        -> candidate output
   * both outputs must match byte for byte
+
+The default `--translator vala` builds the candidate with `planc` (linking
+`c2vala_rt.vala` + `c2vala_rt_posix.vala`); `--translator py` uses
+`valac --pkg=glib-2.0` with `c2vala_rt.vala` only.
 
 A case can instead declare that it must be *refused* (`refuse.txt`): the
 translator has to exit with status 2 and print a diagnostic.
@@ -33,12 +37,14 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 TOOLS = os.path.join(ROOT, "tools")
 CASES = os.path.join(HERE, "cases")
 RUNTIME = os.path.join(TOOLS, "c2vala_rt.vala")
+RUNTIME_POSIX = os.path.join(TOOLS, "c2vala_rt_posix.vala")
 TRANSLATOR_PY = os.path.join(TOOLS, "c2vala.py")
 TRANSLATOR_VALA = os.path.join(TOOLS, "c2vala", "build", "c2vala")
 TRANSLATOR_VALA_EXE = TRANSLATOR_VALA + ".exe"
 PLANC_BIN = os.path.join(ROOT, "planc", "build", "planc")
 GLIB_MATH = os.path.join(ROOT, "stdlib", "glib", "math.vala")
 GLIB_CORE = os.path.join(ROOT, "stdlib", "glib", "core.vala")
+GLIB_UTILS = os.path.join(ROOT, "stdlib", "glib", "utils.vala")
 GLIB_PROCESS = os.path.join(ROOT, "stdlib", "glib", "process.vala")
 GLIB_TIME = os.path.join(ROOT, "stdlib", "glib", "time.vala")
 GLIB_THREAD = os.path.join(ROOT, "stdlib", "glib", "thread.vala")
@@ -238,7 +244,7 @@ def main(argv):
         # candidate: planc (when --translator vala) or valac on the translated source + runtime shim
         vala_exe = os.path.join(case_work, "translated.exe")
         if use_planc:
-            build = subprocess.run([PLANC_BIN, PLANET_SYS, GLIB_CORE, GLIB_MATH, GLIB_PROCESS, GLIB_TIME, GLIB_THREAD, GLIB_MEMORY, vala_out, RUNTIME, "-o", vala_exe],
+            build = subprocess.run([PLANC_BIN, PLANET_SYS, GLIB_CORE, GLIB_UTILS, GLIB_MATH, GLIB_PROCESS, GLIB_TIME, GLIB_THREAD, GLIB_MEMORY, vala_out, RUNTIME, RUNTIME_POSIX, "-o", vala_exe],
                                    capture_output=True, text=True)
         else:
             build = sh('valac --pkg=glib-2.0 "%s" "%s" -o "%s"'

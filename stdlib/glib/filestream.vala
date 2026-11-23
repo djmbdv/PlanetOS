@@ -88,6 +88,10 @@ namespace GLib {
             return (r < 0) ? -1 : 0;
         }
 
+        public int close_now () {
+            return close ();
+        }
+
         public int fileno () {
             return fd;
         }

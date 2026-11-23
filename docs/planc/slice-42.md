@@ -50,9 +50,12 @@ global variables, unknown functions.
 ## Differential harness (`tools/c2vala_tests/run.py`)
 
 For each case directory: `gcc -std=c99` the sources and run them, translate to
-Vala, `valac --pkg=glib-2.0` the result plus the runtime shim, run it, and
-compare stdout byte for byte. A case with `refuse.txt` must be refused with that
-message instead.
+Vala, compile the result plus the runtime shim, run it, and compare stdout byte
+for byte. With `--translator vala` on Linux the candidate is built by `planc`
+from `planet_sys.vala`, the `GLib` subset, `tools/c2vala_rt.vala` and
+`tools/c2vala_rt_posix.vala` (the host syscall/`FileStream` shim); `--translator
+py` uses `valac --pkg=glib-2.0` and only `c2vala_rt.vala`. A case with
+`refuse.txt` must be refused with that message instead.
 
 ```
 == case arith

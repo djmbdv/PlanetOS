@@ -72,13 +72,7 @@ GLIB_IMP="--import-dlib=$OUT/glib.dlib"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "${GSK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/pcm4.vala" -o "$OUT/pcm4.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/pluto.vala" -o "$OUT/pluto.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "${GSK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/saturn.vala" -o "$OUT/saturn.elf"
-GLIB_JSMN_SRCS=()
-for _gs in "${GLIB_SRCS[@]}"; do
-    if [[ "$_gs" != */filestream.vala ]]; then
-        GLIB_JSMN_SRCS+=("$_gs")
-    fi
-done
-"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_JSMN_SRCS[@]}" "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
+"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
     "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/ptr_analyzer.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"

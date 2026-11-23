@@ -15,7 +15,7 @@ void main () {
     rc = sqlite3_exec (db, c_str_to_bytes ("CREATE TABLE t(id INTEGER, name TEXT); INSERT INTO t VALUES(1, 'PlanetOS'); INSERT INTO t VALUES(2, 'Vala');"), null, new uint8[0], errmsg);
     print (@"exec CREATE+INSERT rc=$(rc)\n");
 
-    sqlite3_stmt?[] stmt_out = new sqlite3_stmt?[1];
+    Vdbe?[] stmt_out = new Vdbe?[1];
     rc = sqlite3_prepare_v2 (db, c_str_to_bytes ("SELECT id, name FROM t ORDER BY id;"), -1, stmt_out, new string[0]);
     print (@"prepare SELECT rc=$(rc)\n");
     if (rc == 0 && stmt_out[0] != null) {

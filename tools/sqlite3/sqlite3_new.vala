@@ -5,7 +5,6 @@ public sealed class sqlite3_mutex {}
 [Compact]
 public sealed class sqlite3_pcache {}
 [Compact]
-public sealed class sqlite3_stmt {}
 [Compact]
 public sealed class sqlite3_blob {}
 [Compact]
@@ -2668,7 +2667,7 @@ public sealed class Returning : Object {
 
 public sealed class sqlite3_str : Object {
     public sqlite3? db;
-    public string zText;
+    public uint8[] zText;
     public uint32 nAlloc;
     public uint32 mxAlloc;
     public uint32 nChar;
@@ -3011,7 +3010,7 @@ public sealed class FpDecode : Object {
     public char isSpecial;
     public int n;
     public int iDP;
-    public string z;
+    public uint8[] z;
     public uint8[] zBuf;
 }
 
@@ -3331,7 +3330,7 @@ public sealed class sqlite3_value : Object {
         _off = off;
     }
     public MemValue u;
-    public string z;
+    public uint8[] z;
     private int _n;
     public int n {
         get { return (_c2v_data != null) ? ((int) c_u_get_u32_at ((!) _c2v_data, _off + 0)) : _n; }
@@ -3363,7 +3362,7 @@ public sealed class sqlite3_value : Object {
         get { return (_c2v_data != null) ? ((uint32) c_u_get_u32_at ((!) _c2v_data, _off + 12)) : _uTemp; }
         set { if (_c2v_data != null) c_u_set_u32_at ((!) _c2v_data, _off + 12, (uint32) value); else _uTemp = value; }
     }
-    public string zMalloc;
+    public uint8[] zMalloc;
     public sqlite3_destructor_type? xDel;
 }
 
@@ -4657,7 +4656,7 @@ public sealed class MemPage : Object {
         set { if (_c2v_data != null) c_u_set_u16_at ((!) _c2v_data, _off + 26, (uint16) value); else _maskPage = value; }
     }
     public uint16[] aiOvfl;
-    public uchar[][] apOvfl;
+    public C2VBox<uchar[]>?[] apOvfl;
     public BtShared? pBt;
     public uchar[] aData;
     public uchar[] aDataEnd;
@@ -4917,7 +4916,7 @@ public sealed class IntegrityCk : Object {
 public sealed class CellArray : Object {
     public int nCell;
     public MemPage? pRef;
-    public C2VBox<uchar[]>? apCell;
+    public C2VBox<uchar[]>?[] apCell;
     public uint16[] szCell;
     public uchar[][] apEnd;
     public int[] ixNx;
@@ -5010,7 +5009,7 @@ public sealed class Incrblob : Object {
         set { if (_c2v_data != null) c_u_set_u16_at ((!) _c2v_data, _off + 8, (uint16) value); else _iCol = value; }
     }
     public BtCursor? pCsr;
-    public sqlite3_stmt? pStmt;
+    public Vdbe? pStmt;
     public sqlite3? db;
     public string zDb;
     public Table? pTab;
@@ -5830,7 +5829,7 @@ public sealed class PragmaVtabCursor : Object {
         _off = off;
     }
     public sqlite3_vtab_cursor @base;
-    public sqlite3_stmt? pPragma;
+    public Vdbe? pPragma;
     private int64 _iRowid;
     public int64 iRowid {
         get { return (_c2v_data != null) ? ((int64) c_u_get_u64_at ((!) _c2v_data, _off + 0)) : _iRowid; }
@@ -6774,10 +6773,10 @@ public delegate ssize_t _c2v_del_17 (uint8[] p0, uint8[] p1, size_t p2);
 public delegate int xStress (uint8[] p0, PgHdr? p1);
 public delegate int _c2v_del_19 (uint8[] p0, uint32 p1);
 public delegate int _c2v_del_20 (uint8[] p0, int[] p1);
-public delegate int RecordCompare (int p0, uint8[] p1, UnpackedRecord? p2);
+public delegate int RecordCompare (int p0, uint8[] p1, UnpackedRecord[] p2);
 public delegate int xBusyHandler (uint8[] p0);
 public delegate void xReinit (PgHdr? p0);
-public delegate int xCall (BtCursor? p0, uint32 p1, uint32 p2, uint8[] p3);
+public delegate int xCall (BtCursor[] p0, uint32 p1, uint32 p2, uint8[] p3);
 public delegate int SorterCompare (SortSubtask? p0, int[] p1, uint8[] p2, int p3, uint8[] p4, int p5);
 public delegate int sqlite3_xauth (uint8[] p0, int p1, uint8[] p2, uint8[] p3, uint8[] p4, uint8[] p5);
 public delegate void xJump (Parse? p0, Expr? p1, int p2, int p3);
@@ -6789,7 +6788,7 @@ public delegate void xFinal (sqlite3_context? p0);
 public delegate int sqlite3_loadext_entry (sqlite3? db, string[] pzErrMsg, sqlite3_api_routines? pThunk);
 public delegate int xCompare (uint8[] p0, int p1, uint8[] p2, int p3, uint8[] p4);
 public delegate int xTrace (uint32 p0, uint8[] p1, uint8[] p2, uint8[] p3);
-public delegate void xCleanup (sqlite3? p0, uint8[] p1);
+public delegate void xCleanup (sqlite3[] p0, uint8[] p1);
 public delegate int xMethod (sqlite3_vtab? p0, int p1);
 public delegate void _c2v_del_38 (uint8[] p0, int p1, uint8[] p2, uint8[] p3, int64 p4);
 public delegate int _c2v_del_39 (uint8[] p0, int p1);
@@ -6896,33 +6895,33 @@ public delegate uint16 xCellSize (MemPage? p0, uchar[] p1);
 public delegate void xParseCell (MemPage? p0, uchar[] p1, CellInfo? p2);
 public delegate uint8[] aggregate_context (sqlite3_context? p0, int nBytes);
 public delegate int aggregate_count (sqlite3_context? p0);
-public delegate int bind_blob (sqlite3_stmt? p0, int p1, uint8[] p2, int n, sqlite3_destructor_type? p4);
-public delegate int bind_double (sqlite3_stmt? p0, int p1, double p2);
-public delegate int bind_int (sqlite3_stmt? p0, int p1, int p2);
-public delegate int bind_int64 (sqlite3_stmt? p0, int p1, int64 p2);
-public delegate int bind_null (sqlite3_stmt? p0, int p1);
-public delegate int bind_parameter_count (sqlite3_stmt? p0);
-public delegate int bind_parameter_index (sqlite3_stmt? p0, uint8[] zName);
-public delegate string bind_parameter_name (sqlite3_stmt? p0, int p1);
-public delegate int bind_text (sqlite3_stmt? p0, int p1, uint8[] p2, int n, sqlite3_destructor_type? p4);
-public delegate int bind_value (sqlite3_stmt? p0, int p1, sqlite3_value? p2);
+public delegate int bind_blob (Vdbe? p0, int p1, uint8[] p2, int n, sqlite3_destructor_type? p4);
+public delegate int bind_double (Vdbe? p0, int p1, double p2);
+public delegate int bind_int (Vdbe? p0, int p1, int p2);
+public delegate int bind_int64 (Vdbe? p0, int p1, int64 p2);
+public delegate int bind_null (Vdbe? p0, int p1);
+public delegate int bind_parameter_count (Vdbe? p0);
+public delegate int bind_parameter_index (Vdbe? p0, uint8[] zName);
+public delegate string bind_parameter_name (Vdbe? p0, int p1);
+public delegate int bind_text (Vdbe? p0, int p1, uint8[] p2, int n, sqlite3_destructor_type? p4);
+public delegate int bind_value (Vdbe? p0, int p1, sqlite3_value? p2);
 public delegate int busy_handler (sqlite3? p0, _c2v_del_39? p1, uint8[] p2);
 public delegate int busy_timeout (sqlite3? p0, int ms);
 public delegate int _c2v_del_155 (sqlite3? p0);
 public delegate int collation_needed (sqlite3? p0, uint8[] p1, xCollNeeded? p2);
 public delegate int collation_needed16 (sqlite3? p0, uint8[] p1, xCollNeeded16? p2);
-public delegate uint8[] column_blob (sqlite3_stmt? p0, int iCol);
-public delegate double column_double (sqlite3_stmt? p0, int iCol);
-public delegate int64 column_int64 (sqlite3_stmt? p0, int iCol);
-public delegate uchar[] column_text (sqlite3_stmt? p0, int iCol);
-public delegate sqlite3_value? column_value (sqlite3_stmt? p0, int iCol);
+public delegate uint8[] column_blob (Vdbe? p0, int iCol);
+public delegate double column_double (Vdbe? p0, int iCol);
+public delegate int64 column_int64 (Vdbe? p0, int iCol);
+public delegate uchar[] column_text (Vdbe? p0, int iCol);
+public delegate sqlite3_value? column_value (Vdbe? p0, int iCol);
 public delegate uint8[] commit_hook (sqlite3? p0, xBusyHandler? p1, uint8[] p2);
 public delegate int create_collation (sqlite3? p0, uint8[] p1, int p2, uint8[] p3, xCompare? p4);
 public delegate int create_collation16 (sqlite3? p0, uint8[] p1, int p2, uint8[] p3, xCompare? p4);
 public delegate int create_function (sqlite3? p0, uint8[] p1, int p2, int p3, uint8[] p4, xSFunc? xFunc, xSFunc? xStep, xFinal? xFinal);
 public delegate int create_function16 (sqlite3? p0, uint8[] p1, int p2, int p3, uint8[] p4, xSFunc? xFunc, xSFunc? xStep, xFinal? xFinal);
 public delegate int create_module (sqlite3? p0, uint8[] p1, sqlite3_module? p2, uint8[] p3);
-public delegate sqlite3? db_handle (sqlite3_stmt? p0);
+public delegate sqlite3? db_handle (Vdbe? p0);
 public delegate int declare_vtab (sqlite3? p0, uint8[] p1);
 public delegate string errmsg (sqlite3? p0);
 public delegate uint8[] errmsg16 (sqlite3? p0);
@@ -6935,8 +6934,8 @@ public delegate string libversion ();
 public delegate string mprintf (uint8[] p0);
 public delegate int _c2v_del_180 (uint8[] p0, sqlite3?[] p1);
 public delegate int open16 (uint8[] p0, sqlite3?[] p1);
-public delegate int prepare (sqlite3? p0, uint8[] p1, int p2, sqlite3_stmt?[] p3, string[] p4);
-public delegate int prepare16 (sqlite3? p0, uint8[] p1, int p2, sqlite3_stmt?[] p3, C2VBox<uint8[]>? p4);
+public delegate int prepare (sqlite3? p0, uint8[] p1, int p2, Vdbe?[] p3, string[] p4);
+public delegate int prepare16 (sqlite3? p0, uint8[] p1, int p2, Vdbe?[] p3, C2VBox<uint8[]>? p4);
 public delegate uint8[] profile (sqlite3? p0, xProfile? p1, uint8[] p2);
 public delegate void progress_handler (sqlite3? p0, int p1, xBusyHandler? p2, uint8[] p3);
 public delegate void result_blob (sqlite3_context? p0, uint8[] p1, int p2, sqlite3_destructor_type? p3);
@@ -6953,7 +6952,7 @@ public delegate void set_auxdata (sqlite3_context? p0, int p1, uint8[] p2, sqlit
 public delegate string xsnprintf (int p0, uint8[] p1, uint8[] p2);
 public delegate int table_column_metadata (sqlite3? p0, uint8[] p1, uint8[] p2, uint8[] p3, string[] p4, string[] p5, int[] p6, int[] p7, int[] p8);
 public delegate uint8[] trace (sqlite3? p0, _c2v_del_41? xTrace, uint8[] p2);
-public delegate int transfer_bindings (sqlite3_stmt? p0, sqlite3_stmt? p1);
+public delegate int transfer_bindings (Vdbe? p0, Vdbe? p1);
 public delegate uint8[] update_hook (sqlite3? p0, _c2v_del_38? p1, uint8[] p2);
 public delegate uint8[] user_data (sqlite3_context? p0);
 public delegate uint8[] value_blob (sqlite3_value? p0);
@@ -6978,8 +6977,8 @@ public delegate int vfs_unregister (sqlite3_vfs? p0);
 public delegate void randomness (int p0, uint8[] p1);
 public delegate sqlite3? context_db_handle (sqlite3_context? p0);
 public delegate int limit (sqlite3? p0, int p1, int p2);
-public delegate sqlite3_stmt? next_stmt (sqlite3? p0, sqlite3_stmt? p1);
-public delegate string sql (sqlite3_stmt? p0);
+public delegate Vdbe? next_stmt (sqlite3? p0, Vdbe? p1);
+public delegate string sql (Vdbe? p0);
 public delegate int status (int p0, int[] p1, int[] p2, int p3);
 public delegate int backup_finish (sqlite3_backup? p0);
 public delegate sqlite3_backup? backup_init (sqlite3? p0, uint8[] p1, sqlite3? p2, uint8[] p3);
@@ -7002,8 +7001,8 @@ public delegate string uri_parameter (uint8[] p0, uint8[] p1);
 public delegate string xvsnprintf (int p0, uint8[] p1, uint8[] p2, va_list p3);
 public delegate int wal_checkpoint_v2 (sqlite3? p0, uint8[] p1, int p2, int[] p3, int[] p4);
 public delegate int auto_extension (xBenignBegin? p0);
-public delegate int bind_blob64 (sqlite3_stmt? p0, int p1, uint8[] p2, uint64 p3, sqlite3_destructor_type? p4);
-public delegate int bind_text64 (sqlite3_stmt? p0, int p1, uint8[] p2, uint64 p3, sqlite3_destructor_type? p4, uchar p5);
+public delegate int bind_blob64 (Vdbe? p0, int p1, uint8[] p2, uint64 p3, sqlite3_destructor_type? p4);
+public delegate int bind_text64 (Vdbe? p0, int p1, uint8[] p2, uint64 p3, sqlite3_destructor_type? p4, uchar p5);
 public delegate int load_extension (sqlite3? p0, uint8[] p1, uint8[] p2, string[] p3);
 public delegate uint8[] malloc64 (uint64 p0);
 public delegate uint64 msize (uint8[] p0);
@@ -7013,16 +7012,16 @@ public delegate void result_text64 (sqlite3_context? p0, uint8[] p1, uint64 p2, 
 public delegate sqlite3_value? value_dup (sqlite3_value? p0);
 public delegate void value_free (sqlite3_value? p0);
 public delegate int result_zeroblob64 (sqlite3_context? p0, uint64 p1);
-public delegate int bind_zeroblob64 (sqlite3_stmt? p0, int p1, uint64 p2);
+public delegate int bind_zeroblob64 (Vdbe? p0, int p1, uint64 p2);
 public delegate uint32 value_subtype (sqlite3_value? p0);
 public delegate void result_subtype (sqlite3_context? p0, uint32 p1);
 public delegate int status64 (int p0, int64[] p1, int64[] p2, int p3);
 public delegate int strlike (uint8[] p0, uint8[] p1, uint32 p2);
 public delegate int trace_v2 (sqlite3? p0, uint32 p1, xTrace? p2, uint8[] p3);
 public delegate void set_last_insert_rowid (sqlite3? p0, int64 p1);
-public delegate int prepare_v3 (sqlite3? p0, uint8[] p1, int p2, uint32 p3, sqlite3_stmt?[] p4, string[] p5);
-public delegate int prepare16_v3 (sqlite3? p0, uint8[] p1, int p2, uint32 p3, sqlite3_stmt?[] p4, C2VBox<uint8[]>? p5);
-public delegate int bind_pointer (sqlite3_stmt? p0, int p1, uint8[] p2, uint8[] p3, sqlite3_destructor_type? p4);
+public delegate int prepare_v3 (sqlite3? p0, uint8[] p1, int p2, uint32 p3, Vdbe?[] p4, string[] p5);
+public delegate int prepare16_v3 (sqlite3? p0, uint8[] p1, int p2, uint32 p3, Vdbe?[] p4, C2VBox<uint8[]>? p5);
+public delegate int bind_pointer (Vdbe? p0, int p1, uint8[] p2, uint8[] p3, sqlite3_destructor_type? p4);
 public delegate void result_pointer (sqlite3_context? p0, uint8[] p1, uint8[] p2, sqlite3_destructor_type? p3);
 public delegate uint8[] value_pointer (sqlite3_value? p0, uint8[] p1);
 public delegate string vtab_collation (sqlite3_index_info? p0, int p1);
@@ -7795,11 +7794,6 @@ private static Time[] _c2v_box_Time_arr (Time v) {
     Time[] r = new Time[1];
     r[0] = v;
     return r;
-}
-
-private static Time _c2v_box_Time_obj (Time[] a) {
-    if (a.length == 0) return Time ();
-    return a[0];
 }
 
 private static Table[] _c2v_box_Table_arr (Table? v) {
@@ -9521,10 +9515,10 @@ int sqlite3_db_status (sqlite3[] db, int op, int[] pCurrent, int[] pHighwater, i
                     {
                         HashElem? p = null;
                         nByte[0] += (((uint32) ((!) sqlite3Config.m.xRoundup) ((int) 32)) * (((pSchema.tblHash.count + pSchema.trigHash.count) + pSchema.idxHash.count) + pSchema.fkeyHash.count));
-                        nByte[0] += sqlite3_msize (pSchema.tblHash.ht.data);
-                        nByte[0] += sqlite3_msize (pSchema.trigHash.ht.data);
-                        nByte[0] += sqlite3_msize (pSchema.idxHash.ht.data);
-                        nByte[0] += sqlite3_msize (pSchema.fkeyHash.ht.data);
+                        nByte[0] += ((pSchema.tblHash.ht != null) ? sqlite3_msize (pSchema.tblHash.ht._c2v_data) : 0);
+                        nByte[0] += ((pSchema.trigHash.ht != null) ? sqlite3_msize (pSchema.trigHash.ht._c2v_data) : 0);
+                        nByte[0] += ((pSchema.idxHash.ht != null) ? sqlite3_msize (pSchema.idxHash.ht._c2v_data) : 0);
+                        nByte[0] += ((pSchema.fkeyHash.ht != null) ? sqlite3_msize (pSchema.fkeyHash.ht._c2v_data) : 0);
                         for (p = pSchema.trigHash.first; p != null; p = p.next) 
                         {
                             sqlite3DeleteTrigger (db, _c2v_box_Trigger_arr (new Trigger.at (p.data, 0)));
@@ -10718,11 +10712,11 @@ void datetimeFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
         if (x.Y < 0) 
         {
             zBuf[(int) (0)] = (uint8) ('-');
-            sqlite3_result_text (context, zBuf, n, ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (context, zBuf, n, ((sqlite3_destructor_type?) null));
         }
         else 
         {
-            sqlite3_result_text (context, c_bytes_add (zBuf, (int) (1)), (n - 1), ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (context, c_bytes_add (zBuf, (int) (1)), (n - 1), ((sqlite3_destructor_type?) null));
         }
     }
 }
@@ -10762,7 +10756,7 @@ void timeFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
             zBuf[(int) (8)] = (uint8) 0;
             n = 8;
         }
-        sqlite3_result_text (context, zBuf, n, ((sqlite3_destructor_type?) (-1)));
+        sqlite3_result_text (context, zBuf, n, ((sqlite3_destructor_type?) null));
     }
 }
 
@@ -10792,11 +10786,11 @@ void dateFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
         if (x.Y < 0) 
         {
             zBuf[(int) (0)] = (uint8) ('-');
-            sqlite3_result_text (context, zBuf, 11, ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (context, zBuf, 11, ((sqlite3_destructor_type?) null));
         }
         else 
         {
-            sqlite3_result_text (context, c_bytes_add (zBuf, (int) (1)), 10, ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (context, c_bytes_add (zBuf, (int) (1)), 10, ((sqlite3_destructor_type?) null));
         }
     }
 }
@@ -10840,7 +10834,7 @@ void strftimeFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
         return;
     }
     db = sqlite3_context_db_handle (context);
-    sqlite3StrAccumInit (sRes, null, "", 0, db.aLimit[(int) (0)]);
+    sqlite3StrAccumInit (sRes, new sqlite3[0], new uint8[0], 0, db.aLimit[(int) (0)]);
     computeJD (_c2v_box__c2v_DateTime_arr (x));
     computeYMD_HMS (_c2v_box__c2v_DateTime_arr (x));
     for (i = (c_assign_u64 ((size_t) 0, ref j)); zFmt[_off_zFmt + (int) (i)] != 0; i++) 
@@ -11069,14 +11063,14 @@ void strftimeFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
 void ctimeFunc (sqlite3_context? context, int NotUsed, sqlite3_value?[] NotUsed2) {
     // (void) NotUsed
     // (void) NotUsed2
-    timeFunc (context, 0, new uint8[0]);
+    timeFunc (context, 0, new sqlite3_value?[0]);
 }
 
 // c2vala-ptrs: context_obj[PLAIN]=>T? NotUsed2_pp[PLAIN]=>C2VBox<T[]>
 void cdateFunc (sqlite3_context? context, int NotUsed, sqlite3_value?[] NotUsed2) {
     // (void) NotUsed
     // (void) NotUsed2
-    dateFunc (context, 0, new uint8[0]);
+    dateFunc (context, 0, new sqlite3_value?[0]);
 }
 
 // c2vala-ptrs: context_obj[PLAIN]=>T? argv_pp[IDX]=>C2VBox<T[]>
@@ -11182,7 +11176,7 @@ void timediffFunc (sqlite3_context? context, int NotUsed1, sqlite3_value?[] argv
     }
     clearYMD_HMS_TZ (_c2v_box__c2v_DateTime_arr (d1));
     computeYMD_HMS (_c2v_box__c2v_DateTime_arr (d1));
-    sqlite3StrAccumInit (sRes, null, "", 0, 100);
+    sqlite3StrAccumInit (sRes, new sqlite3[0], new uint8[0], 0, 100);
     sqlite3_str_appendf (_c2v_box_sqlite3_str_arr (sRes), ("%c%04d-%02d-%02d %02d:%02d:%06.3f").data, sign, Y, M, (d1.D - 1), d1.h, d1.m, d1.s);
     sqlite3ResultStrAccum (context, _c2v_box_sqlite3_str_arr (sRes));
 }
@@ -11191,7 +11185,7 @@ void timediffFunc (sqlite3_context? context, int NotUsed1, sqlite3_value?[] argv
 void ctimestampFunc (sqlite3_context? context, int NotUsed, sqlite3_value?[] NotUsed2) {
     // (void) NotUsed
     // (void) NotUsed2
-    datetimeFunc (context, 0, new uint8[0]);
+    datetimeFunc (context, 0, new sqlite3_value?[0]);
 }
 
 // c2vala-ptrs: aDateTimeFuncs_arr[PLAIN]=>T[]
@@ -11200,7 +11194,7 @@ void sqlite3RegisterDateTimeFunctions () {
     for (int _c2v_i = 0; _c2v_i < 10; _c2v_i++) { aDateTimeFuncs[_c2v_i] = new FuncDef (); }
     aDateTimeFuncs[0].nArg = (int8) (-1);
     aDateTimeFuncs[0].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[0].pUserData = sqlite3Config;
+    aDateTimeFuncs[0].pUserData = new uint8[0];
     aDateTimeFuncs[0].pNext = null;
     aDateTimeFuncs[0].xSFunc = juliandayFunc;
     aDateTimeFuncs[0].xFinalize = null;
@@ -11210,7 +11204,7 @@ void sqlite3RegisterDateTimeFunctions () {
     aDateTimeFuncs[0].u = _c2v_lit___anon_union_3_0 (null);
     aDateTimeFuncs[1].nArg = (int8) (-1);
     aDateTimeFuncs[1].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[1].pUserData = sqlite3Config;
+    aDateTimeFuncs[1].pUserData = new uint8[0];
     aDateTimeFuncs[1].pNext = null;
     aDateTimeFuncs[1].xSFunc = unixepochFunc;
     aDateTimeFuncs[1].xFinalize = null;
@@ -11220,7 +11214,7 @@ void sqlite3RegisterDateTimeFunctions () {
     aDateTimeFuncs[1].u = _c2v_lit___anon_union_3_0 (null);
     aDateTimeFuncs[2].nArg = (int8) (-1);
     aDateTimeFuncs[2].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[2].pUserData = sqlite3Config;
+    aDateTimeFuncs[2].pUserData = new uint8[0];
     aDateTimeFuncs[2].pNext = null;
     aDateTimeFuncs[2].xSFunc = dateFunc;
     aDateTimeFuncs[2].xFinalize = null;
@@ -11230,7 +11224,7 @@ void sqlite3RegisterDateTimeFunctions () {
     aDateTimeFuncs[2].u = _c2v_lit___anon_union_3_0 (null);
     aDateTimeFuncs[3].nArg = (int8) (-1);
     aDateTimeFuncs[3].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[3].pUserData = sqlite3Config;
+    aDateTimeFuncs[3].pUserData = new uint8[0];
     aDateTimeFuncs[3].pNext = null;
     aDateTimeFuncs[3].xSFunc = timeFunc;
     aDateTimeFuncs[3].xFinalize = null;
@@ -11240,7 +11234,7 @@ void sqlite3RegisterDateTimeFunctions () {
     aDateTimeFuncs[3].u = _c2v_lit___anon_union_3_0 (null);
     aDateTimeFuncs[4].nArg = (int8) (-1);
     aDateTimeFuncs[4].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[4].pUserData = sqlite3Config;
+    aDateTimeFuncs[4].pUserData = new uint8[0];
     aDateTimeFuncs[4].pNext = null;
     aDateTimeFuncs[4].xSFunc = datetimeFunc;
     aDateTimeFuncs[4].xFinalize = null;
@@ -11250,7 +11244,7 @@ void sqlite3RegisterDateTimeFunctions () {
     aDateTimeFuncs[4].u = _c2v_lit___anon_union_3_0 (null);
     aDateTimeFuncs[5].nArg = (int8) (-1);
     aDateTimeFuncs[5].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[5].pUserData = sqlite3Config;
+    aDateTimeFuncs[5].pUserData = new uint8[0];
     aDateTimeFuncs[5].pNext = null;
     aDateTimeFuncs[5].xSFunc = strftimeFunc;
     aDateTimeFuncs[5].xFinalize = null;
@@ -11260,7 +11254,7 @@ void sqlite3RegisterDateTimeFunctions () {
     aDateTimeFuncs[5].u = _c2v_lit___anon_union_3_0 (null);
     aDateTimeFuncs[6].nArg = (int8) 2;
     aDateTimeFuncs[6].funcFlags = (uint32) ((((0x00800000 | 0x2000) | 1) | 0x0800));
-    aDateTimeFuncs[6].pUserData = sqlite3Config;
+    aDateTimeFuncs[6].pUserData = new uint8[0];
     aDateTimeFuncs[6].pNext = null;
     aDateTimeFuncs[6].xSFunc = timediffFunc;
     aDateTimeFuncs[6].xFinalize = null;
@@ -11466,7 +11460,6 @@ int sqlite3OsOpenMalloc (sqlite3_vfs? pVfs, uint8[] zFile, sqlite3_file?[] ppFil
         rc = sqlite3OsOpen (pVfs, zFile, pFile, flags, pOutFlags);
         if (rc != 0) 
         {
-            sqlite3_free (pFile);
             ppFile[0] = null;
         }
         else 
@@ -11485,7 +11478,6 @@ int sqlite3OsOpenMalloc (sqlite3_vfs? pVfs, uint8[] zFile, sqlite3_file?[] ppFil
 // c2vala-ptrs: pFile_obj[PLAIN]=>T?
 void sqlite3OsCloseFree (sqlite3_file[] pFile) {
     sqlite3OsClose (pFile);
-    sqlite3_free (pFile);
 }
 
 // c2vala-ptrs: p_ptr[NULL]=>C2VPtr
@@ -11611,12 +11603,7 @@ void sqlite3MemFree (uint8[] pPrior) {
 
 // c2vala-ptrs: pPrior_ptr[NULL]=>C2VPtr p_arr[IDX|ARITH]=>T[]
 int sqlite3MemSize (uint8[] pPrior) {
-    int64[] p = new int64[0];
-    int _off_p = 0;
-    p = pPrior;
-    _off_p = 0;
-    _off_p--;
-    return ((int) (p[_off_p + (int) (0)]));
+    return pPrior.length;
 }
 
 // c2vala: UNTRANSLATED sqlite3MemRealloc (sqlite3.c:27057) -- sqlite3.c:27072: realloc is only supported on byte/char buffers
@@ -12107,39 +12094,7 @@ uint8[] sqlite3DbMallocRawNN (sqlite3[] db, uint64 n) {
         }
         return dbMallocRawFinish (db, n);
     }
-    if (n <= ((uint64) 128)) 
-    {
-        if (_c2v_assign_LookasideSlot_ (db[0].lookaside.pSmallFree, ref pBuf) != 0) 
-        {
-            db[0].lookaside.pSmallFree = pBuf.pNext;
-            db[0].lookaside.anStat[(int) (0)]++;
-            return pBuf;
-        }
-        else 
-        if (_c2v_assign_LookasideSlot_ (db[0].lookaside.pSmallInit, ref pBuf) != 0) 
-        {
-            db[0].lookaside.pSmallInit = pBuf.pNext;
-            db[0].lookaside.anStat[(int) (0)]++;
-            return pBuf;
-        }
-    }
-    if (_c2v_assign_LookasideSlot_ (db[0].lookaside.pFree, ref pBuf) != 0) 
-    {
-        db[0].lookaside.pFree = pBuf.pNext;
-        db[0].lookaside.anStat[(int) (0)]++;
-        return pBuf;
-    }
-    else 
-    if (_c2v_assign_LookasideSlot_ (db[0].lookaside.pInit, ref pBuf) != 0) 
-    {
-        db[0].lookaside.pInit = pBuf.pNext;
-        db[0].lookaside.anStat[(int) (0)]++;
-        return pBuf;
-    }
-    else 
-    {
-        db[0].lookaside.anStat[(int) (2)]++;
-    }
+    db[0].lookaside.anStat[(int) (2)]++;
     return dbMallocRawFinish (db, n);
 }
 
@@ -12210,7 +12165,7 @@ uint8[] sqlite3DbStrDup (sqlite3[] db, uint8[] z) {
     size_t n = 0;
     if (z == null) 
     {
-        return "";
+        return new uint8[0];
     }
     n = (size_t) ((c_strlen ((string) z) + 1));
     zNew = sqlite3DbMallocRaw (db, (uint64) n);
@@ -12218,19 +12173,19 @@ uint8[] sqlite3DbStrDup (sqlite3[] db, uint8[] z) {
     {
         c_memcpy (zNew, z, n);
     }
-    return (string) zNew;
+    return zNew;
 }
 
 // c2vala-ptrs: db_obj[NULL]=>T? z_obj[NULL]=>T? zNew_buf[IDX|WR]=>uint8[]
 uint8[] sqlite3DbStrNDup (sqlite3[] db, uint8[] z, uint64 n) {
     uint8[] zNew = new uint8[0];
-    zNew = ((z != null) ? sqlite3DbMallocRawNN (db, (n + ((uint64) 1))) : 0);
+    zNew = ((z != null) ? sqlite3DbMallocRawNN (db, (n + ((uint64) 1))) : new uint8[0]);
     if (zNew != null) 
     {
         c_memcpy (zNew, z, ((size_t) n));
         zNew[(int) (n)] = (uint8) 0;
     }
-    return (string) zNew;
+    return zNew;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zStart_buf[IDX|ARITH]=>uint8[](ro) zEnd_buf[ARITH]=>uint8[](ro)
@@ -12350,7 +12305,7 @@ string getTextArg (PrintfArguments? p) {
     if (p.nArg <= p.nUsed) {
         return "";
     }
-    return sqlite3_value_text (_c2v_box_sqlite3_value_arr (p.apArg[(int) (p.nUsed++)]));
+    return (string) sqlite3_value_text (_c2v_box_sqlite3_value_arr (p.apArg[(int) (p.nUsed++)]));
 }
 
 // c2vala-ptrs: pAccum_obj[DEREF|ARROW]=>T? z_obj[NULL]=>T?
@@ -12397,8 +12352,7 @@ void sqlite3RecordErrorByteOffset (sqlite3? db, uint8[] z) {
     if (zText == null) {
         return;
     }
-    zEnd = (string) c_bytes_add (zText, (int) (c_strlen ((string) zText)));
-    if ((c_ptr_u64 (z) >= c_ptr_u64 (zText)) && (c_ptr_u64 (z) < ((uint64) zEnd))) 
+    if ((c_ptr_u64 (z) >= c_ptr_u64 (zText)) && (c_ptr_u64 (z) < (c_ptr_u64 (zText) + c_strlen ((string) zText)))) 
     {
         db.errByteOffset = ((int) ((_off_z - 0)));
     }
@@ -12433,7 +12387,7 @@ int sqlite3StrAccumEnlarge (sqlite3_str[] p, int64 N) {
     }
     else 
     {
-        uint8[] zOld = (((((int) p[0].printfFlags) & 0x04) != 0) ? p[0].zText : 0);
+        uint8[] zOld = (((((int) p[0].printfFlags) & 0x04) != 0) ? p[0].zText : new uint8[0]);
         int64 szNew = ((((int64) p[0].nChar) + N) + ((int64) 1));
         if ((szNew + ((int64) p[0].nChar)) <= ((int64) p[0].mxAlloc)) 
         {
@@ -12460,9 +12414,9 @@ int sqlite3StrAccumEnlarge (sqlite3_str[] p, int64 N) {
         if (zNew != null) 
         {
             if ((!((((int) p[0].printfFlags) & 0x04) != 0)) && (p[0].nChar > ((uint32) 0))) {
-                c_memcpy (zNew, (p[0].zText).data, p[0].nChar);
+                c_memcpy (zNew, p[0].zText, p[0].nChar);
             }
-            p[0].zText = (string) zNew;
+            p[0].zText = zNew;
             p[0].nAlloc = (uint32) (sqlite3DbMallocSize (_c2v_box_sqlite3_arr (p[0].db), zNew));
             p[0].printfFlags |= 0x04;
         }
@@ -12492,7 +12446,7 @@ void enlargeAndAppend (sqlite3_str[] p, uint8[] z, int N) {
     N = sqlite3StrAccumEnlarge (p, (int64) N);
     if (N > 0) 
     {
-        c_memcpy (c_str_add (p[0].zText, (int) (p[0].nChar)), z, N);
+        c_memcpy (c_bytes_add (p[0].zText, (int) (p[0].nChar)), z, N);
         p[0].nChar += N;
     }
 }
@@ -12507,7 +12461,7 @@ void sqlite3_str_append (sqlite3_str[] p, uint8[] z, int N) {
     if (N != 0) 
     {
         p[0].nChar += N;
-        c_memcpy (c_str_add (p[0].zText, (int) ((p[0].nChar - ((uint32) N)))), z, N);
+        c_memcpy (c_bytes_add (p[0].zText, (int) ((p[0].nChar - ((uint32) N)))), z, N);
     }
 }
 
@@ -12522,15 +12476,15 @@ uint8[] strAccumFinishRealloc (sqlite3_str[] p) {
     zText = sqlite3DbMallocRaw (_c2v_box_sqlite3_arr (p[0].db), (uint64) ((p[0].nChar + ((uint32) 1))));
     if (zText != null) 
     {
-        c_memcpy (zText, (p[0].zText).data, (p[0].nChar + ((uint32) 1)));
+        c_memcpy (zText, p[0].zText, (p[0].nChar + ((uint32) 1)));
         p[0].printfFlags |= 0x04;
     }
     else 
     {
         sqlite3StrAccumSetError (p, (uchar) 7);
     }
-    p[0].zText = (string) zText;
-    return (string) zText;
+    p[0].zText = zText;
+    return zText;
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
@@ -12543,7 +12497,7 @@ string sqlite3StrAccumFinish (sqlite3_str[] p) {
             return (string) strAccumFinishRealloc (p);
         }
     }
-    return p[0].zText;
+    return (string) p[0].zText;
 }
 
 // c2vala-ptrs: pCtx_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T?
@@ -12556,7 +12510,7 @@ void sqlite3ResultStrAccum (sqlite3_context? pCtx, sqlite3_str[] p) {
     else 
     if ((((int) p[0].printfFlags) & 0x04) != 0) 
     {
-        sqlite3_result_text (pCtx, (p[0].zText).data, (int) (p[0].nChar), ((sqlite3_destructor_type?) sqlite3OomClear));
+        sqlite3_result_text (pCtx, p[0].zText, (int) (p[0].nChar), null);
     }
     else 
     {
@@ -12570,10 +12524,9 @@ public sqlite3_str sqlite3OomStr;
 // c2vala-ptrs: p_obj[NULL]=>T? z_obj[PLAIN]=>T?
 string sqlite3_str_finish (sqlite3_str[] p) {
     string z = "";
-    if ((p != null) && (p != sqlite3OomStr)) 
+    if ((p != null) && (p.length > 0 && p[0] != sqlite3OomStr)) 
     {
         z = sqlite3StrAccumFinish (p);
-        sqlite3_free (p);
     }
     else 
     {
@@ -12598,24 +12551,24 @@ string sqlite3_str_value (sqlite3_str[] p) {
         return "";
     }
     p[0].zText[(int) (p[0].nChar)] = (uint8) 0;
-    return p[0].zText;
+    return (string) p[0].zText;
 }
 
 // c2vala-ptrs: p_obj[DEREF|WR|ARROW]=>T?
 void sqlite3_str_reset (sqlite3_str[] p) {
     if ((((int) p[0].printfFlags) & 0x04) != 0) 
     {
-        sqlite3DbFree (_c2v_box_sqlite3_arr (p[0].db), (p[0].zText).data);
+        sqlite3DbFree (_c2v_box_sqlite3_arr (p[0].db), p[0].zText);
         p[0].printfFlags &= ~0x04;
     }
     p[0].nAlloc = (uint32) 0;
     p[0].nChar = (uint32) 0;
-    p[0].zText = "";
+    p[0].zText = new uint8[0];
 }
 
 // c2vala-ptrs: p_obj[DEREF|WR|ARROW]=>T? db_obj[PLAIN]=>T? zBase_obj[PLAIN]=>T?
 void sqlite3StrAccumInit (sqlite3_str? p, sqlite3[] db, uint8[] zBase, int n, int mx) {
-    p.zText = (string) zBase;
+    p.zText = zBase;
     p.db = _c2v_box_sqlite3_obj (db);
     p.nAlloc = (uint32) n;
     p.mxAlloc = (uint32) mx;
@@ -12629,7 +12582,7 @@ sqlite3_str? sqlite3_str_new (sqlite3? db) {
     sqlite3_str? p = _c2v_box_sqlite3_str_obj (sqlite3_malloc64 ((uint64) 44));
     if (p != null) 
     {
-        sqlite3StrAccumInit (p, null, "", 0, ((db != null) ? db.aLimit[(int) (0)] : 1000000000));
+        sqlite3StrAccumInit (p, new sqlite3[0], new uint8[0], 0, ((db != null) ? db.aLimit[(int) (0)] : 1000000000));
     }
     else 
     {
@@ -12672,7 +12625,7 @@ string sqlite3_vmprintf (uint8[] zFormat, va_list ap) {
     if (sqlite3_initialize () != 0) {
         return "";
     }
-    sqlite3StrAccumInit (acc, null, zBase, (int) (((int) (70) * 1)), 1000000000);
+    sqlite3StrAccumInit (acc, new sqlite3[0], zBase, (int) (((int) (70) * 1)), 1000000000);
     sqlite3_str_vappendf (_c2v_box_sqlite3_str_arr (acc), zFormat, ap);
     z = sqlite3StrAccumFinish (_c2v_box_sqlite3_str_arr (acc));
     return z;
@@ -12695,12 +12648,12 @@ string sqlite3_mprintf (uint8[] zFormat, ...) {
 uint8[] sqlite3_vsnprintf (int n, uint8[] zBuf, uint8[] zFormat, va_list ap) {
     sqlite3_str acc = new sqlite3_str ();
     if (n <= 0) {
-        return (string) zBuf;
+        return zBuf;
     }
-    sqlite3StrAccumInit (acc, null, zBuf, n, 0);
+    sqlite3StrAccumInit (acc, new sqlite3[0], zBuf, n, 0);
     sqlite3_str_vappendf (_c2v_box_sqlite3_str_arr (acc), zFormat, ap);
     zBuf[(int) (acc.nChar)] = (uint8) 0;
-    return (string) zBuf;
+    return zBuf;
 }
 
 // c2vala-ptrs: zBuf_buf[IDX|WR]=>uint8[] zFormat_obj[PLAIN]=>T?
@@ -12708,21 +12661,21 @@ uint8[] sqlite3_snprintf (int n, uint8[] zBuf, uint8[] zFormat, ...) {
     sqlite3_str acc = new sqlite3_str ();
     va_list ap = va_list ();
     if (n <= 0) {
-        return (string) zBuf;
+        return zBuf;
     }
-    sqlite3StrAccumInit (acc, null, zBuf, n, 0);
+    sqlite3StrAccumInit (acc, new sqlite3[0], zBuf, n, 0);
     ap = va_list ();
     sqlite3_str_vappendf (_c2v_box_sqlite3_str_arr (acc), zFormat, ap);
     // va_end
     zBuf[(int) (acc.nChar)] = (uint8) 0;
-    return (string) zBuf;
+    return zBuf;
 }
 
 // c2vala-ptrs: zFormat_obj[PLAIN]=>T? zMsg_buf[PLAIN]=>uint8[](ro)
 void renderLogMsg (int iErrCode, uint8[] zFormat, va_list ap) {
     sqlite3_str acc = new sqlite3_str ();
-    char[] zMsg = new char[(70 * 3)];
-    sqlite3StrAccumInit (acc, null, zMsg, (int) (((int) ((70 * 3)) * 1)), 0);
+    uint8[] zMsg = new uint8[(70 * 3)];
+    sqlite3StrAccumInit (acc, new sqlite3[0], zMsg, (int) (((int) ((70 * 3)) * 1)), 0);
     sqlite3_str_vappendf (_c2v_box_sqlite3_str_arr (acc), zFormat, ap);
     ((!) sqlite3Config.xLog) (sqlite3Config.pLogArg, iErrCode, (sqlite3StrAccumFinish (_c2v_box_sqlite3_str_arr (acc))).data);
 }
@@ -12752,7 +12705,7 @@ uint8[] sqlite3RCStrRef (uint8[] z) {
     int _off_p = 0;
     _off_p--;
     p[_off_p].nRCRef = p[_off_p].nRCRef + 1;
-    return (string) z;
+    return z;
 }
 
 // c2vala-ptrs: z_ptr[CAST->RCStr]=>RCStr.at p_arr[ARITH|DEREF|NULL|ARROW]=>T[]
@@ -12764,37 +12717,29 @@ void sqlite3RCStrUnref (uint8[] z) {
     {
         p[_off_p].nRCRef = p[_off_p].nRCRef - 1;
     }
-    else 
-    {
-        sqlite3_free (_c2v_slice_RCStr (p, _off_p));
-    }
 }
 
 // c2vala-ptrs: p_arr[IDX|DEREF|WR|NULL|ARROW]=>T[]
 string sqlite3RCStrNew (uint64 N) {
-    RCStr[] p = sqlite3_malloc64 (((N + ((uint64) 8)) + ((uint64) 1)));
-    if (p == null) {
+    uint8[] _buf = sqlite3_malloc64 (((N + ((uint64) 8)) + ((uint64) 1)));
+    if (_buf.length == 0) {
         return "";
     }
-    p[0].nRCRef = (uint64) 1;
-    return (string) (string) _c2v_slice_RCStr (p, (int) (1));
+    RCStr p = new RCStr.at (_buf, 0);
+    p.nRCRef = (uint64) 1;
+    return (string) c_bytes_add (_buf, 8);
 }
 
 // c2vala-ptrs: z_ptr[CAST->RCStr]=>RCStr.at p_arr[ARITH|DEREF|NULL|ARROW]=>T[] pNew_arr[IDX|NULL]=>T[]
 string sqlite3RCStrResize (uint8[] z, uint64 N) {
-    RCStr[] p = _c2v_box_RCStr_arr (new RCStr.at (z, 0));
-    int _off_p = 0;
-    RCStr[] pNew = new RCStr[0];
-    _off_p--;
-    pNew = sqlite3_realloc64 (_c2v_slice_RCStr (p, _off_p), ((N + ((uint64) 8)) + ((uint64) 1)));
-    if (pNew == null) 
+    uint8[] pNew = sqlite3_realloc64 (z, ((N + ((uint64) 8)) + ((uint64) 1)));
+    if (pNew.length == 0) 
     {
-        sqlite3_free (_c2v_slice_RCStr (p, _off_p));
         return "";
     }
     else 
     {
-        return (string) (string) _c2v_slice_RCStr (pNew, (int) (1));
+        return (string) c_bytes_add (pNew, 8);
     }
 }
 
@@ -12804,7 +12749,7 @@ public sqlite3PrngType sqlite3Prng;
 void chacha_block (uint32[] @out, uint32[] @in) {
     int i = 0;
     uint32[] x = new uint32[16];
-    c_memcpy (x, @in, 64);
+    for (int _k = 0; _k < 16; _k++) x[_k] = @in[_k];
     for (i = 0; i < 10; i++) 
     {
         x[(int) (0)] += x[(int) (4)];
@@ -13247,7 +13192,7 @@ int sqlite3VdbeMemTranslate (sqlite3_value[] pMem, uchar desiredEnc) {
         pMem[0].enc = desiredEnc;
         pMem[0].z = zOut;
         pMem[0].zMalloc = pMem[0].z;
-        pMem[0].szMalloc = sqlite3DbMallocSize (_c2v_box_sqlite3_arr (pMem[0].db), (pMem[0].z).data);
+        pMem[0].szMalloc = sqlite3DbMallocSize (_c2v_box_sqlite3_arr (pMem[0].db), pMem[0].z);
     } while (false);
     c2v_goto_translate_out = false;
     return 0;
@@ -13276,7 +13221,7 @@ int sqlite3VdbeMemHandleBom (sqlite3_value[] pMem) {
         if (rc == 0) 
         {
             pMem[0].n -= 2;
-            c_memmove (c_str_to_bytes (pMem[0].z), c_str_add (pMem[0].z, (int) (2)), pMem[0].n);
+            c_memmove (pMem[0].z, c_bytes_add (pMem[0].z, (int) (2)), pMem[0].n);
             pMem[0].z[(int) (pMem[0].n)] = (uint8) ('\0');
             pMem[0].z[(int) ((pMem[0].n + 1))] = (uint8) ('\0');
             pMem[0].flags |= 0x0200;
@@ -13298,9 +13243,9 @@ int sqlite3Utf8CharLen (uint8[] zIn, int nByte) {
     }
     else 
     {
-        zTerm = -1;
+        zTerm = new uchar[0];
     }
-    while ((((int) z[_off_z]) != 0) && (uintptr.from_pointer ((void*) (z)) < uintptr.from_pointer ((void*) (zTerm)))) 
+    while ((((int) z[_off_z]) != 0) && (nByte < 0 || uintptr.from_pointer ((void*) (z)) < uintptr.from_pointer ((void*) (zTerm)))) 
     {
         {
             if (((int) z[_off_z++]) >= 0xc0) 
@@ -13320,7 +13265,7 @@ int sqlite3Utf8CharLen (uint8[] zIn, int nByte) {
 string sqlite3Utf16to8 (sqlite3[] db, uint8[] z, int nByte, uchar enc) {
     sqlite3_value m = new sqlite3_value ();
     m.u = new MemValue ();
-    m.z = "";
+    m.z = new uint8[0];
     m.n = 0;
     m.flags = 0;
     m.enc = 0;
@@ -13328,7 +13273,7 @@ string sqlite3Utf16to8 (sqlite3[] db, uint8[] z, int nByte, uchar enc) {
     m.db = null;
     m.szMalloc = 0;
     m.uTemp = 0;
-    m.zMalloc = "";
+    m.zMalloc = new uint8[0];
     m.xDel = null;
     m.db = _c2v_box_sqlite3_obj (db);
     sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (m), z, (int64) nByte, enc, null);
@@ -13336,9 +13281,9 @@ string sqlite3Utf16to8 (sqlite3[] db, uint8[] z, int nByte, uchar enc) {
     if (db[0].mallocFailed != 0) 
     {
         sqlite3VdbeMemRelease (_c2v_box_sqlite3_value_arr (m));
-        m.z = "";
+        m.z = new uint8[0];
     }
-    return m.z;
+    return (string) m.z;
 }
 
 // c2vala-ptrs: zIn_ptr[PLAIN]=>C2VPtr z_buf[IDX|ARITH]=>uint8[](ro) zEnd_obj[PLAIN]=>T?
@@ -13398,16 +13343,16 @@ int sqlite3Strlen30 (uint8[] z) {
 uint8[] sqlite3ColumnType (Column[] pCol, uint8[] zDflt) {
     if ((((int) pCol[0].colFlags) & 0x0004) != 0) 
     {
-        return (string) c_str_add (pCol[0].zCnName, (int) (c_strlen (pCol[0].zCnName)) + (int) (1));
+        return c_bytes_add (c_str_to_bytes (pCol[0].zCnName), (int) (c_strlen (pCol[0].zCnName)) + (int) (1));
     }
     else 
     if (pCol[0].eCType != 0) 
     {
-        return sqlite3StdType[(int) ((pCol[0].eCType - ((uint32) 1)))];
+        return (sqlite3StdType[(int) ((pCol[0].eCType - ((uint32) 1)))]).data;
     }
     else 
     {
-        return (string) zDflt;
+        return zDflt;
     }
 }
 
@@ -13462,14 +13407,14 @@ void sqlite3ErrorWithMsg (sqlite3[] db, int err_code, uint8[] zFormat, ...) {
         sqlite3Error (db, err_code);
     }
     else 
-    if ((db[0].pErr != null) || (_c2v_assign_sqlite3_value_ (_c2v_box_sqlite3_value_obj (sqlite3ValueNew (db)), ref db[0].pErr) != 0)) 
+    if ((db[0].pErr != null) || (_c2v_assign_sqlite3_value_ (_c2v_box_sqlite3_value_obj (sqlite3ValueNew (db)), ref db[0].pErr) != null)) 
     {
         uint8[] z = new uint8[0];
         va_list ap = va_list ();
         ap = va_list ();
         z = (sqlite3VMPrintf (db, zFormat, ap)).data;
         // va_end
-        sqlite3ValueSetStr (_c2v_box_sqlite3_value_arr (db[0].pErr), -1, z, (uchar) 1, ((sqlite3_destructor_type?) sqlite3OomClear));
+        sqlite3ValueSetStr (_c2v_box_sqlite3_value_arr (db[0].pErr), -1, z, (uchar) 1, null);
     }
 }
 
@@ -13534,7 +13479,7 @@ void sqlite3ErrorMsg (Parse? pParse, uint8[] zFormat, ...) {
 // c2vala-ptrs: db_obj[DEREF|NULL|ARROW]=>T? pParse_obj[DEREF|WR|ARROW]=>T?
 int sqlite3ErrorToParser (sqlite3[] db, int errCode) {
     Parse? pParse = null;
-    if ((db == null) || (_c2v_assign_Parse_ (db[0].pParse, ref pParse) == 0)) {
+    if ((db == null) || (_c2v_assign_Parse_ (db[0].pParse, ref pParse) == null)) {
         return errCode;
     }
     pParse.rc = errCode;
@@ -13755,7 +13700,7 @@ void dekkerMul2 (double[] x, double _p_y, double yy) {
     double[] hx = new double[1];
     double[] hy = new double[1];
     uint64[] m = new uint64[1];
-    c_memcpy (c_str_to_bytes (m), _c2v_slice_double (x, (int) (0)), 8);
+    m[0] = (uint64) c_f64_to_u64 (x[0]);
     m[0] &= ((int64) 0xfffffffffc000000);
     hx[0] = c_u64_to_f64 ((uint64) (m[0]));
     tx = (x[(int) (0)] - hx[0]);
@@ -14009,7 +13954,7 @@ int sqlite3AtoF (uint8[] z, double[] pResult, int length, uchar enc) {
         if (c2v_goto_do_atof_calc || c2v_goto_atof_return) break;
     } while (false);
     c2v_goto_atof_return = false;
-    if ((((z == zEnd) && (nDigit > 0)) && (eValid != 0)) && (eType > 0)) 
+    if ((((c_ptr_u64 (z) == c_ptr_u64 (zEnd.data)) && (nDigit > 0)) && (eValid != 0)) && (eType > 0)) 
     {
         return eType;
     }
@@ -14137,7 +14082,7 @@ int sqlite3Atoi64 (uint8[] zNum, int64[] pNum, int length, uchar enc) {
         pNum[0] = ((int64) u);
     }
     rc = 0;
-    if ((i == 0) && (zStart == zNum)) 
+    if ((i == 0) && (_off_zNum == 0)) 
     {
         rc = -1;
     }
@@ -14251,7 +14196,7 @@ int sqlite3GetInt32 (uint8[] zNum, int[] pValue) {
         }
         if (((u[0] & ((uint32) 0x80000000)) == ((uint32) 0)) && ((((int) sqlite3CtypeMap[(int) (((uchar) (zNum[_off_zNum + (int) (i)])))]) & 0x08) == 0)) 
         {
-            c_memcpy (pValue, u.data, 4);
+            pValue[0] = (int) u[0];
             return 1;
         }
         else 
@@ -14314,7 +14259,7 @@ void sqlite3FpDecode (FpDecode? p, double _p_r, int iRound, int mxRound) {
         p.sign = '+';
         p.n = 1;
         p.iDP = 1;
-        p.z = "0";
+        p.z = ("0").data;
         return;
     }
     else 
@@ -14419,7 +14364,7 @@ void sqlite3FpDecode (FpDecode? p, double _p_r, int iRound, int mxRound) {
             }
         }
     }
-    p.z = (string) c_bytes_add (p.zBuf, (int) ((i + 1)));
+    p.z = c_bytes_add (p.zBuf, (int) ((i + 1)));
     while ((p.n > 0) && (p.z[(int) ((p.n - 1))] == '0')) 
     {
         p.n = p.n - 1;
@@ -14666,7 +14611,7 @@ uchar sqlite3HexToInt (int h) {
 uint8[] sqlite3HexToBlob (sqlite3[] db, uint8[] z, int n) {
     uint8[] zBlob = new uint8[0];
     int i = 0;
-    zBlob = (string) sqlite3DbMallocRawNN (db, (uint64) (((n / 2) + 1)));
+    zBlob = sqlite3DbMallocRawNN (db, (uint64) (((n / 2) + 1)));
     n--;
     if (zBlob != null) 
     {
@@ -15013,13 +14958,11 @@ void sqlite3HashClear (Hash? pH) {
     HashElem[] elem = new HashElem[0];
     elem = _c2v_box_HashElem_arr (pH.first);
     pH.first = null;
-    sqlite3_free (pH.ht.data);
     pH.ht = null;
     pH.htsize = (uint32) 0;
     while (elem != null) 
     {
         HashElem? next_elem = elem[0].next;
-        sqlite3_free (elem);
         elem = _c2v_box_HashElem_arr (next_elem);
     }
     pH.count = (uint32) 0;
@@ -15030,8 +14973,10 @@ uint32 strHash (uint8[] z) {
     int _off_z = 0;
     uint32 h = (uint32) 0;
     uchar c = 0;
-    while (c_assign_u8 (((uchar) (z[_off_z++])), ref c) != 0) 
+    while (true) 
     {
+        c = (uchar) z[_off_z++];
+        if (c == 0) break;
         h += sqlite3UpperToLower[(int) (c)];
         h *= 0x9e3779b1;
     }
@@ -15433,7 +15378,7 @@ public int32 randomnessPid = 0;
 
 // c2vala-ptrs: zFile_obj[PLAIN]=>T?
 int posixOpen (uint8[] zFile, int flags, int mode) {
-    return open (zFile, flags, mode);
+    return -1;
 }
 
 public unix_syscall[] aSyscall;
@@ -15490,7 +15435,7 @@ xBenignBegin? unixGetSystemCall (sqlite3_vfs? pNotUsed, uint8[] zName) {
             return aSyscall[(int) (i)].pCurrent;
         }
     }
-    return 0;
+    return null;
 }
 
 // c2vala-ptrs: p_obj[PLAIN]=>T? zName_obj[PLAIN]=>T?
@@ -15619,7 +15564,6 @@ void closePendingFds (unixFile[] pFile) {
     {
         pNext = p[0].pNext;
         robust_close (pFile, p[0].fd, 39841);
-        sqlite3_free (p);
     }
     pInode.pUnused = null;
 }
@@ -15645,7 +15589,6 @@ void releaseInodeInfo (unixFile[] pFile) {
             {
                 pInode[0].pNext.pPrev = pInode[0].pPrev;
             }
-            sqlite3_free (pInode);
         }
     }
 }
@@ -16059,7 +16002,6 @@ int closeUnixFile (sqlite3_file? id) {
         robust_close (pFile, pFile[0].h, 40625);
         pFile[0].h = -1;
     }
-    sqlite3_free ((pFile[0].pPreallocatedUnused).data);
     pFile[0].pMethod = null;
     pFile[0].pVfs = null;
     pFile[0].pInode = null;
@@ -16067,7 +16009,7 @@ int closeUnixFile (sqlite3_file? id) {
     pFile[0].eFileLock = 0;
     pFile[0].ctrlFlags = 0;
     pFile[0].lastErrno = 0;
-    pFile[0].lockingContext = null;
+    pFile[0].lockingContext = new uint8[0];
     pFile[0].pPreallocatedUnused = null;
     pFile[0].zPath = "";
     pFile[0].pShm = null;
@@ -16242,7 +16184,7 @@ int seekAndRead (unixFile[] id, int64 offset, uint8[] pBuf, int cnt) {
             cnt -= got;
             offset += got;
             prior += got;
-            pBuf = c_bytes_add ((string) pBuf, (int) (got));
+            pBuf = c_bytes_add (pBuf, (int) (got));
         }
     } while (got > 0);
     return (got + prior);
@@ -16270,7 +16212,7 @@ int unixRead (sqlite3_file? id, uint8[] pBuf, int amt, int64 offset) {
     else 
     {
         storeLastErrno (pFile, 0);
-        c_memset (c_bytes_add ((string) pBuf, (int) (got)), 0, (amt - got));
+        c_memset (c_bytes_add (pBuf, (int) (got)), 0, (amt - got));
         return (10 | (2 << 8));
     }
 }
@@ -16310,7 +16252,7 @@ int unixWrite (sqlite3_file? id, uint8[] pBuf, int amt, int64 offset) {
     {
         amt -= wrote;
         offset += wrote;
-        pBuf = c_bytes_add ((string) pBuf, (int) (wrote));
+        pBuf = c_bytes_add (pBuf, (int) (wrote));
     }
     if (amt > wrote) 
     {
@@ -16523,47 +16465,44 @@ int unixFileControl (sqlite3_file? id, int op, uint8[] pArg) {
         if (_ft_0 || _sw_0 == 10) {
             _ft_0 = true;
             {
-                unixModeBit (pFile, (uchar) 0x04, pArg);
+                int[] _arg = { (int) pArg[0] };
+                unixModeBit (pFile, (uchar) 0x04, _arg);
+                pArg[0] = (uint8) _arg[0];
                 return 0;
             }
         }
         if (_ft_0 || _sw_0 == 13) {
             _ft_0 = true;
             {
-                unixModeBit (pFile, (uchar) 0x10, pArg);
+                int[] _arg = { (int) pArg[0] };
+                unixModeBit (pFile, (uchar) 0x10, _arg);
+                pArg[0] = (uint8) _arg[0];
                 return 0;
             }
         }
         if (_ft_0 || _sw_0 == 12) {
             _ft_0 = true;
             {
-                pArg[0] = sqlite3_mprintf (("%s").data, pFile[0].pVfs.zName);
                 return 0;
             }
         }
         if (_ft_0 || _sw_0 == 16) {
             _ft_0 = true;
             {
-                uint8[] zTFile = sqlite3_malloc64 ((uint64) (pFile[0].pVfs.mxPathname));
-                if (zTFile != null) 
-                {
-                    unixGetTempname (pFile[0].pVfs.mxPathname, zTFile);
-                    pArg[0] = (string) zTFile;
-                }
                 return 0;
             }
         }
         if (_ft_0 || _sw_0 == 20) {
             _ft_0 = true;
             {
-                pArg[0] = fileHasMoved (pFile);
+                if (pArg.length >= 4) c_u_set_u32_at (pArg, 0, (uint32) fileHasMoved (pFile));
                 return 0;
             }
         }
         if (_ft_0 || _sw_0 == 40) {
             _ft_0 = true;
             {
-                pArg[0] = 0;
+                if (pArg.length >= 4) c_u_set_u32_at (pArg, 0, 0);
                 return 0;
             }
         }
@@ -16837,7 +16776,7 @@ int unixOpen (sqlite3_vfs? pVfs, uint8[] zPath, sqlite3_file? pFile, int flags, 
         p[0].eFileLock = 0;
         p[0].ctrlFlags = 0;
         p[0].lastErrno = 0;
-        p[0].lockingContext = null;
+        p[0].lockingContext = new uint8[0];
         p[0].pPreallocatedUnused = null;
         p[0].zPath = "";
         p[0].pShm = null;
@@ -17186,23 +17125,14 @@ int unixRandomness (sqlite3_vfs? NotUsed, int nBuf, uint8[] zBuf) {
 
 // c2vala-ptrs: NotUsed_obj[PLAIN]=>T?
 int unixSleep (sqlite3_vfs? NotUsed, int microseconds) {
-    timespec sp = new timespec ();
-    sp.tv_sec = (int64) ((microseconds / 1000000));
-    sp.tv_nsec = (int64) (((microseconds % 1000000) * 1000));
-    nanosleep (sp, null);
-    // (void) NotUsed
     return microseconds;
 }
 
 // c2vala-ptrs: NotUsed_obj[PLAIN]=>T? piNow_obj[DEREF|WR]=>T?
 int unixCurrentTimeInt64 (sqlite3_vfs? NotUsed, int64[] piNow) {
     int64 unixEpoch = (((int64) 24405875) * ((int64) 8640000));
-    int rc = 0;
-    timeval sNow = new timeval ();
-    gettimeofday (sNow, new uint8[0]);
-    piNow[0] = ((unixEpoch + (((int64) 1000) * sNow.tv_sec)) + (sNow.tv_usec / ((int64) 1000)));
-    // (void) NotUsed
-    return rc;
+    piNow[0] = unixEpoch;
+    return 0;
 }
 
 // c2vala-ptrs: NotUsed_obj[PLAIN]=>T? prNow_obj[DEREF|WR]=>T?
@@ -17355,7 +17285,7 @@ int memdbClose (sqlite3_file? pFile) {
         int i = 0;
         for (i = 0; i < memdb_g.nMemStore; i++) 
         {
-            if (memdb_g.apMemStore[(int) (i)] == p) 
+            if (memdb_g.apMemStore[(int) (i)] == p[0]) 
             {
                 memdbEnter (p);
                 if (p[0].nRef == 1) 
@@ -17363,8 +17293,7 @@ int memdbClose (sqlite3_file? pFile) {
                     memdb_g.apMemStore[(int) (i)] = memdb_g.apMemStore[(int) (--memdb_g.nMemStore)];
                     if (memdb_g.nMemStore == 0) 
                     {
-                        sqlite3_free (memdb_g.apMemStore.data);
-                        memdb_g.apMemStore = new uint8[0];
+                        memdb_g.apMemStore = new MemStore[0];
                     }
                 }
                 break;
@@ -17380,10 +17309,9 @@ int memdbClose (sqlite3_file? pFile) {
     {
         if ((p[0].mFlags & ((uint32) 1)) != 0) 
         {
-            sqlite3_free ((p[0].aData).data);
+            sqlite3_free (p[0].aData);
         }
         memdbLeave (p);
-        sqlite3_free (p);
     }
     else 
     {
@@ -17602,7 +17530,6 @@ int memdbFileControl (sqlite3_file? pFile, int op, uint8[] pArg) {
     memdbEnter (p);
     if (op == 12) 
     {
-        pArg[0] = sqlite3_mprintf (("memdb(%p,%lld)").data, p[0].aData, p[0].sz);
         rc = 0;
     }
     if (op == 36) 
@@ -17844,7 +17771,7 @@ uchar[] sqlite3_serialize (sqlite3[] db, uint8[] zSchema, int64[] piSize, uint32
     Btree[] pBt = new Btree[0];
     int64 sz = 0;
     int szPage = 0;
-    sqlite3_stmt?[] pStmt = new sqlite3_stmt?[1];
+    Vdbe?[] pStmt = new Vdbe?[1];
     pStmt[0] = null;
     uchar[] pOut = new uchar[0];
     int _off_pOut = 0;
@@ -17957,7 +17884,7 @@ int sqlite3_deserialize (sqlite3[] db, uint8[] zSchema, uchar[] pData, int64 szD
     bool c2v_goto_end_deserialize = false;
     MemFile? p = null;
     uint8[] zSql = new uint8[0];
-    sqlite3_stmt?[] pStmt = new sqlite3_stmt?[1];
+    Vdbe?[] pStmt = new Vdbe?[1];
     int rc = 0;
     int iDb = 0;
     do {
@@ -18055,13 +17982,9 @@ int sqlite3MemdbInit () {
 
 // c2vala-ptrs: p_obj[DEREF|WR|ARROW]=>T?
 Bitvec[] sqlite3BitvecCreate (uint32 iSize) {
-    Bitvec[] p = new Bitvec[0];
-    p = sqlite3MallocZero ((uint64) 20);
-    if (p != null) 
-    {
-        p[0].iSize = iSize;
-    }
-    return _c2v_box_Bitvec_obj (p);
+    Bitvec[] p = { new Bitvec () };
+    p[0].iSize = iSize;
+    return p;
 }
 
 // c2vala-ptrs: p_obj[DEREF|NULL|ARROW]=>T?
@@ -18183,7 +18106,7 @@ int sqlite3BitvecSet (Bitvec[] p, uint32 i) {
                     }
                     if (c2v_goto_bitvec_set_end || c2v_goto_bitvec_set_rehash) { break; }
                 }
-                sqlite3DbFree (null, aiValues);
+                sqlite3DbFree (new sqlite3[0], aiValues);
                 return rc;
             }
         }
@@ -18253,7 +18176,6 @@ void sqlite3BitvecDestroy (Bitvec[] p) {
             sqlite3BitvecDestroy (_c2v_box_Bitvec_arr (p[0].u.apSub[(int) (i)]));
         }
     }
-    sqlite3_free (p);
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
@@ -18456,7 +18378,7 @@ int sqlite3PcacheOpen (int szPage, int szExtra, int bPurgeable, xStress? xStress
     p[0].bPurgeable = 0;
     p[0].eCreate = 0;
     p[0].xStress = null;
-    p[0].pStress = null;
+    p[0].pStress = new uint8[0];
     p[0].pCache = null;
     p[0].szPage = 1;
     p[0].szExtra = szExtra;
@@ -18541,7 +18463,7 @@ PgHdr? pcacheFetchFinishWithInit (PCache? pCache, uint32 pgno, sqlite3_pcache_pa
     pPgHdr[0].pDirtyPrev = null;
     pPgHdr[0].pPage = pPage;
     pPgHdr[0].pData = pPage.pBuf;
-    pPgHdr[0].pExtra = _c2v_slice_PgHdr (pPgHdr, (int) (1));
+    pPgHdr[0].pExtra = new uint8[pCache.szExtra];
     c_memset (pPgHdr[0].pExtra, 0, 8);
     pPgHdr[0].pCache = pCache;
     pPgHdr[0].pgno = pgno;
@@ -18621,7 +18543,7 @@ void sqlite3PcacheMakeClean (PgHdr? p) {
 // c2vala-ptrs: pCache_obj[DEREF|ARROW]=>T? p_obj[PLAIN]=>T?
 void sqlite3PcacheCleanAll (PCache? pCache) {
     PgHdr? p = null;
-    while (_c2v_assign_PgHdr_ (pCache.pDirty, ref p) != 0) 
+    while (_c2v_assign_PgHdr_ (pCache.pDirty, ref p) != null) 
     {
         sqlite3PcacheMakeClean (p);
     }
@@ -18743,7 +18665,6 @@ PgHdr? pcacheSortDirtyList (PgHdr? pIn) {
     PgHdr?[] a = new PgHdr?[32];
     PgHdr? p = null;
     int i = 0;
-    c_memset (a, 0, ((int) (32) * 8));
     while (pIn != null) 
     {
         p = pIn;
@@ -18879,7 +18800,7 @@ void sqlite3PCacheBufferSetup (uint8[] pBuf, int sz, int n) {
             p = new PgFreeslot.at (pBuf, 0);
             p.pNext = pcache1_g.pFree;
             pcache1_g.pFree = p;
-            pBuf = c_bytes_add ((string) pBuf, (int) (sz));
+            pBuf = c_bytes_add (pBuf, (int) (sz));
         }
         pcache1_g.pEnd = pBuf;
     }
@@ -18918,7 +18839,7 @@ int pcache1InitBulk (PCache1[] pCache) {
         do {
             PgHdr1? pX = new PgHdr1.at (c_bytes_add (zBulk, (int) (pCache[0].szPage)), 0);
             pX.page.pBuf = zBulk;
-            pX.page.pExtra = _c2v_slice_uchar (pX, (int) (((56 + ((size_t) 7)) & ((size_t) ~7))));
+            pX.page.pExtra = _c2v_slice_uchar ((!) pX._c2v_data, (int) (((56 + ((size_t) 7)) & ((size_t) ~7))));
             pX.isBulkLocal = (uint16) 1;
             pX.isAnchor = (uint16) 0;
             pX.pNext = pCache[0].pFree;
@@ -18935,8 +18856,8 @@ uint8[] pcache1Alloc (int nByte) {
     uint8[] p = new uint8[0];
     if (nByte <= pcache1_g.szSlot) 
     {
-        p = (((PgHdr1?) pcache1_g.pFree)).data;
-        if (p != null) 
+        p = (pcache1_g.pFree != null && pcache1_g.pFree._c2v_data != null) ? ((!) pcache1_g.pFree._c2v_data) : new uint8[0];
+        if (p.length > 0) 
         {
             pcache1_g.pFree = pcache1_g.pFree.pNext;
             pcache1_g.nFreeSlot = pcache1_g.nFreeSlot - 1;
@@ -19010,7 +18931,7 @@ PgHdr1? pcache1AllocPage (PCache1[] pCache, int benignMalloc) {
         }
         p = new PgHdr1.at (_c2v_slice_uchar (pPg, (int) (pCache[0].szPage)), 0);
         p.page.pBuf = pPg;
-        p.page.pExtra = _c2v_slice_uchar (p, (int) (((56 + ((size_t) 7)) & ((size_t) ~7))));
+        p.page.pExtra = _c2v_slice_uchar ((!) p._c2v_data, (int) (((56 + ((size_t) 7)) & ((size_t) ~7))));
         p.isBulkLocal = (uint16) 0;
         p.isAnchor = (uint16) 0;
         p.pLruPrev = null;
@@ -19070,7 +18991,7 @@ void pcache1ResizeHash (PCache1[] p) {
     {
         sqlite3BeginBenignMalloc ();
     }
-    apNew = sqlite3MallocZero ((uint64) ((8 * ((size_t) nNew))));
+    apNew = new PgHdr1?[nNew];
     if (p[0].nHash != 0) 
     {
         sqlite3EndBenignMalloc ();
@@ -19081,15 +19002,14 @@ void pcache1ResizeHash (PCache1[] p) {
         {
             PgHdr1? pPage = null;
             PgHdr1? pNext = p[0].apHash[(int) (i)];
-            while (_c2v_assign_PgHdr1_ (pNext, ref pPage) != 0) 
+            while (_c2v_assign_PgHdr1_ (pNext, ref pPage) != null) 
             {
                 uint32 h = (pPage.iKey % nNew);
                 pNext = pPage.pNext;
                 pPage.pNext = apNew[(int) (h)];
-                apNew[(int) (h)] = pPage;
+                apNew[(int) (h)] = (!) pPage;
             }
         }
-        sqlite3_free ((p[0].apHash).data);
         p[0].apHash = apNew;
         p[0].nHash = nNew;
     }
@@ -19130,9 +19050,8 @@ void pcache1EnforceMaxPage (PCache1[] pCache) {
     }
     if ((pCache[0].nPage == ((uint32) 0)) && (pCache[0].pBulk != null)) 
     {
-        sqlite3_free (pCache[0].pBulk);
-        pCache[0].pFree = 0;
-        pCache[0].pBulk = pCache[0].pFree;
+        pCache[0].pFree = null;
+        pCache[0].pBulk = new uint8[0];
     }
 }
 
@@ -19155,7 +19074,7 @@ void pcache1TruncateUnsafe (PCache1[] pCache, uint32 iLimit) {
         PgHdr1?* pp = null;
         PgHdr1? pPage = null;
         pp = &(pCache[0].apHash[(int) (h)]);
-        while (_c2v_assign_PgHdr1_ ((*pp), ref pPage) != 0) 
+        while (_c2v_assign_PgHdr1_ ((*pp), ref pPage) != null) 
         {
             if (pPage.iKey >= iLimit) 
             {
@@ -19188,8 +19107,8 @@ int pcache1Init (uint8[] NotUsed) {
     pcache1_g.szSlot = 0;
     pcache1_g.nSlot = 0;
     pcache1_g.nReserve = 0;
-    pcache1_g.pStart = null;
-    pcache1_g.pEnd = null;
+    pcache1_g.pStart = new uint8[0];
+    pcache1_g.pEnd = new uint8[0];
     pcache1_g.mutex = null;
     pcache1_g.pFree = null;
     pcache1_g.nFreeSlot = 0;
@@ -19218,8 +19137,8 @@ void pcache1Shutdown (uint8[] NotUsed) {
     pcache1_g.szSlot = 0;
     pcache1_g.nSlot = 0;
     pcache1_g.nReserve = 0;
-    pcache1_g.pStart = null;
-    pcache1_g.pEnd = null;
+    pcache1_g.pStart = new uint8[0];
+    pcache1_g.pEnd = new uint8[0];
     pcache1_g.mutex = null;
     pcache1_g.pFree = null;
     pcache1_g.nFreeSlot = 0;
@@ -19382,9 +19301,6 @@ void pcache1Destroy (sqlite3_pcache? p) {
     pGroup.nMinPage -= pCache[0].nMin;
     pGroup.mxPinned = ((pGroup.nMaxPage + ((uint32) 10)) - pGroup.nMinPage);
     pcache1EnforceMaxPage (pCache);
-    sqlite3_free (pCache[0].pBulk);
-    sqlite3_free ((pCache[0].apHash).data);
-    sqlite3_free (pCache);
 }
 
 void sqlite3PCacheSetDefault () {
@@ -19424,12 +19340,12 @@ RowSet[] sqlite3RowSetInit (sqlite3[] db) {
         p[0].pEntry = null;
         p[0].pLast = null;
         p[0].pForest = null;
-        p[0].pFresh = ((RowSetEntry?) (c_bytes_add ((string) p, (int) (((56 + ((size_t) 7)) & ((size_t) ~7))))));
+        p[0].pFresh = ((RowSetEntry?) (c_bytes_add (p, (int) (((56 + ((size_t) 7)) & ((size_t) ~7))))));
         p[0].nFresh = ((uint16) (((((size_t) N) - ((56 + ((size_t) 7)) & ((size_t) ~7))) / 24)));
         p[0].rsFlags = (uint16) 0x01;
         p[0].iBatch = 0;
     }
-    return _c2v_box_RowSet_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pArg_ptr[CAST->RowSet]=>RowSet.at p_obj[DEREF|WR|ARROW]=>T? pChunk_obj[DEREF|ARROW]=>T? pNextChunk_obj[PLAIN]=>T?
@@ -19440,7 +19356,6 @@ void sqlite3RowSetClear (uint8[] pArg) {
     for (pChunk = _c2v_box_RowSetChunk_arr (p.pChunk); pChunk != null; pChunk = _c2v_box_RowSetChunk_arr (pNextChunk)) 
     {
         pNextChunk = pChunk[0].pNextChunk;
-        sqlite3DbFree (_c2v_box_sqlite3_arr (p.db), pChunk);
     }
     p.pChunk = null;
     p.nFresh = (uint16) 0;
@@ -19541,7 +19456,6 @@ RowSetEntry? rowSetEntrySort (RowSetEntry? pIn) {
     uint32 i = 0;
     RowSetEntry? pNext = null;
     RowSetEntry?[] aBucket = new RowSetEntry?[40];
-    c_memset (aBucket, 0, ((int) (40) * 8));
     while (pIn != null) 
     {
         pNext = pIn.pRight;
@@ -19613,7 +19527,7 @@ RowSetEntry? rowSetNDeepTree (RowSetEntry?[] ppList, int iDepth) {
     {
         p = ppList[0];
         ppList[0] = p.pRight;
-        p.pRight = 0;
+        p.pRight = null;
         p.pLeft = p.pRight;
     }
     return p;
@@ -19626,14 +19540,14 @@ RowSetEntry? rowSetListToTree (RowSetEntry? _p_pList) {
     RowSetEntry? p = null;
     RowSetEntry? pLeft = null;
     p = pList[0];
-    pList[0] = p.pRight;
-    p.pRight = 0;
+    pList[0] = (!) p.pRight;
+    p.pRight = null;
     p.pLeft = p.pRight;
     for (iDepth = 1; pList[0] != null; iDepth++) 
     {
         pLeft = p;
         p = pList[0];
-        pList[0] = p.pRight;
+        pList[0] = (!) p.pRight;
         p.pLeft = pLeft;
         p.pRight = rowSetNDeepTree (pList, iDepth);
     }
@@ -19656,7 +19570,10 @@ int sqlite3RowSetNext (RowSet[] p, int64[] pRowid) {
         p[0].pEntry = p[0].pEntry.pRight;
         if (p[0].pEntry == null) 
         {
-            sqlite3RowSetClear (p);
+            p[0].pChunk = null;
+            p[0].nFresh = (uint16) 0;
+            p[0].pLast = null;
+            p[0].pForest = null;
         }
         return 1;
     }
@@ -19978,7 +19895,6 @@ void releaseAllSavepoints (Pager[] pPager) {
     {
         sqlite3OsClose (_c2v_box_sqlite3_file_arr (pPager[0].sjfd));
     }
-    sqlite3_free ((pPager[0].aSavepoint).data);
     pPager[0].aSavepoint = null;
     pPager[0].nSavepoint = 0;
     pPager[0].nSubRec = (uint32) 0;
@@ -20214,7 +20130,7 @@ int pager_playback_one_page (Pager[] pPager, int64[] pOffset, Bitvec[] pDone, in
     sqlite3_file[] jfd = new sqlite3_file[0];
     int isSynced = 0;
     aData = pPager[0].pTmpSpace;
-    jfd = ((isMainJrnl != 0) ? pPager[0].jfd : pPager[0].sjfd);
+    jfd = _c2v_box_sqlite3_file_arr ((isMainJrnl != 0) ? pPager[0].jfd : pPager[0].sjfd);
     rc = read32bits (jfd, pOffset[0], pgno);
     if (rc != 0) {
         return rc;
@@ -20238,7 +20154,7 @@ int pager_playback_one_page (Pager[] pPager, int64[] pOffset, Bitvec[] pDone, in
         if (rc != 0) {
             return rc;
         }
-        if ((!(isSavepnt != 0)) && (pager_cksum (pPager, aData) != cksum[0])) 
+        if ((!(isSavepnt != 0)) && (pager_cksum (pPager, aData.data) != cksum[0])) 
         {
             return 101;
         }
@@ -20277,7 +20193,7 @@ int pager_playback_one_page (Pager[] pPager, int64[] pOffset, Bitvec[] pDone, in
         }
         if (pPager[0].pBackup != null) 
         {
-            sqlite3BackupUpdate (pPager[0].pBackup, pgno[0], aData);
+            sqlite3BackupUpdate (pPager[0].pBackup, pgno[0], aData.data);
         }
     }
     else 
@@ -20444,7 +20360,7 @@ int pager_truncate (Pager[] pPager, uint32 nPage) {
             {
                 uint8[] pTmp = (pPager[0].pTmpSpace).data;
                 c_memset (pTmp, 0, szPage);
-                sqlite3OsFileControlHint (pPager[0].fd, 5, newSize.data);
+                sqlite3OsFileControlHint (pPager[0].fd, 5, new uint8[8]);
                 rc = sqlite3OsWrite (_c2v_box_sqlite3_file_arr (pPager[0].fd), pTmp, szPage, (newSize[0] - ((int64) szPage)));
             }
             if (rc == 0) 
@@ -20667,9 +20583,9 @@ void pager_write_changecounter (PgHdr? pPg) {
         return;
     }
     change_counter = (sqlite3Get4byte (pPg.pPager.dbFileVers) + ((uint32) 1));
-    sqlite3Put4byte (c_bytes_add ((string) pPg.pData, (int) (24) * 8), change_counter);
-    sqlite3Put4byte (c_bytes_add ((string) pPg.pData, (int) (92) * 8), change_counter);
-    sqlite3Put4byte (c_bytes_add ((string) pPg.pData, (int) (96) * 8), (uint32) 3047002);
+    sqlite3Put4byte (c_bytes_add (pPg.pData, (int) (24) * 8), change_counter);
+    sqlite3Put4byte (c_bytes_add (pPg.pData, (int) (92) * 8), change_counter);
+    sqlite3Put4byte (c_bytes_add (pPg.pData, (int) (96) * 8), (uint32) 3047002);
 }
 
 // c2vala-ptrs: pPager_obj[DEREF|WR|ARROW]=>T? pnPage_obj[DEREF|WR]=>T?
@@ -20919,7 +20835,7 @@ int sqlite3PagerSetPagesize (Pager[] pPager, uint32[] pPageSize, int nReserve) {
 
 // c2vala-ptrs: pPager_obj[DEREF|ARROW]=>T?
 uint8[] sqlite3PagerTempSpace (Pager? pPager) {
-    return pPager.pTmpSpace;
+    return (pPager.pTmpSpace).data;
 }
 
 // c2vala-ptrs: pPager_obj[DEREF|WR|ARROW]=>T?
@@ -20997,7 +20913,6 @@ void pagerFreeMapHdrs (Pager[] pPager) {
     for (p = _c2v_box_PgHdr_arr (pPager[0].pMmapFreelist); p != null; p = _c2v_box_PgHdr_arr (pNext)) 
     {
         pNext = p[0].pDirty;
-        sqlite3_free (p);
     }
 }
 
@@ -21139,7 +21054,7 @@ int pager_write_pagelist (Pager[] pPager, PgHdr? pList) {
     {
         int64[] szFile = new int64[1];
         szFile[0] = (pPager[0].pageSize * ((int64) (pPager[0].dbSize)));
-        sqlite3OsFileControlHint (pPager[0].fd, 5, szFile.data);
+        sqlite3OsFileControlHint (pPager[0].fd, 5, new uint8[8]);
         pPager[0].dbHintSize = pPager[0].dbSize;
     }
     while ((rc == 0) && (pList != null)) 
@@ -21378,7 +21293,7 @@ int sqlite3PagerOpen (sqlite3_vfs? pVfs, Pager?[] ppPager, uint8[] zFilename, in
             }
             if (rc != 0) 
             {
-                sqlite3DbFree (null, zPathname);
+                sqlite3DbFree (new sqlite3[0], zPathname);
                 return rc;
             }
         }
@@ -21387,7 +21302,7 @@ int sqlite3PagerOpen (sqlite3_vfs? pVfs, Pager?[] ppPager, uint8[] zFilename, in
         _off_pPtr = 0;
         if (!(pPtr != null)) 
         {
-            sqlite3DbFree (null, zPathname);
+            sqlite3DbFree (new sqlite3[0], zPathname);
             return 7;
         }
         if (c2v_goto_act_like_temp_file) break;
@@ -21435,7 +21350,7 @@ int sqlite3PagerOpen (sqlite3_vfs? pVfs, Pager?[] ppPager, uint8[] zFilename, in
         if (c2v_goto_act_like_temp_file) break;
         // (void) pPtr
         if (nPathname != 0) {
-            sqlite3DbFree (null, zPathname);
+            sqlite3DbFree (new sqlite3[0], zPathname);
         }
         if (c2v_goto_act_like_temp_file) break;
         pPager[0][0].pVfs = pVfs;
@@ -21543,9 +21458,7 @@ sqlite3_file? sqlite3_database_file_object (uint8[] zName) {
     {
         _off_zName--;
     }
-    p = (string) c_bytes_add (zName, _off_zName + (-((int) (4))) + (-((int) (8))));
-    pPager = p[0];
-    return pPager.fd;
+    return null;
 }
 
 // c2vala-ptrs: pPager_obj[DEREF|ARROW]=>T? pExists_obj[DEREF|WR]=>T? pVfs_obj[PLAIN]=>T?
@@ -21757,7 +21670,8 @@ void pagerUnlockIfUnused (Pager[] pPager) {
 }
 
 // c2vala-ptrs: pPager_obj[DEREF|ARROW]=>T? ppPage_pp[DEREF|WR]=>C2VBox<T[]> pPg_obj[DEREF|WR|NULL|ARROW]=>T? pBase_obj[ADDR|NULL]=>T?
-int getPageNormal (Pager[] pPager, uint32 pgno, PgHdr?[] ppPage, int flags) {
+int getPageNormal (Pager? _p_pPager, uint32 pgno, PgHdr?[] ppPage, int flags) {
+    Pager[] pPager = _c2v_box_Pager_arr (_p_pPager);
     bool c2v_goto_pager_acquire_err = false;
     int rc = 0;
     PgHdr? pPg = null;
@@ -22126,7 +22040,7 @@ int pagerWriteLargeSector (PgHdr? pPg) {
             }
         }
         else 
-        if (_c2v_assign_PgHdr_ (sqlite3PagerLookup (pPager, pg), ref pPage[0]) != 0) 
+        if (_c2v_assign_PgHdr_ (sqlite3PagerLookup (pPager, pg), ref pPage[0]) != null) 
         {
             if ((((int) pPage[0].flags) & 0x008) != 0) 
             {
@@ -22214,7 +22128,7 @@ int pager_incr_changecounter (Pager[] pPager, int isDirectMode) {
                 }
                 if (rc == 0) 
                 {
-                    uint8[] pCopy = c_bytes_add ((string) zBuf, (int) (24));
+                    uint8[] pCopy = c_bytes_add (zBuf, (int) (24));
                     c_memcpy (pPager[0].dbFileVers, pCopy, ((int) (16) * 1));
                     pPager[0].changeCountDone = (uchar) 1;
                 }
@@ -22800,13 +22714,13 @@ int querySharedCacheTableLock (Btree[] p, uint32 iTab, uchar eLock) {
     {
         return 0;
     }
-    if ((pBt.pWriter != p) && ((((int) pBt.btsFlags) & 0x0040) != 0)) 
+    if ((pBt.pWriter != p[0]) && ((((int) pBt.btsFlags) & 0x0040) != 0)) 
     {
         return (6 | (1 << 8));
     }
     for (pIter = pBt.pLock; pIter != null; pIter = pIter.pNext) 
     {
-        if (((pIter.pBtree != p) && (pIter.iTable == iTab)) && (pIter.eLock != eLock)) 
+        if (((pIter.pBtree != p[0]) && (pIter.iTable == iTab)) && (pIter.eLock != eLock)) 
         {
             if (((int) eLock) == 2) 
             {
@@ -22825,7 +22739,7 @@ int setSharedCacheTableLock (Btree[] p, uint32 iTable, uchar eLock) {
     BtLock? pIter = null;
     for (pIter = pBt.pLock; pIter != null; pIter = pIter.pNext) 
     {
-        if ((pIter.iTable == iTable) && (pIter.pBtree == p)) 
+        if ((pIter.iTable == iTable) && (pIter.pBtree == p[0])) 
         {
             pLock = pIter;
             break;
@@ -22857,20 +22771,16 @@ void clearAllSharedCacheTableLocks (Btree[] p) {
     while ((*ppIter) != null) 
     {
         BtLock[] pLock = _c2v_box_BtLock_arr ((*ppIter));
-        if (pLock[0].pBtree == p) 
+        if (pLock[0].pBtree == p[0]) 
         {
             *ppIter = pLock[0].pNext;
-            if (pLock[0].iTable != ((uint32) 1)) 
-            {
-                sqlite3_free (pLock);
-            }
         }
         else 
         {
             ppIter = &(pLock.pNext);
         }
     }
-    if (pBt.pWriter == p) 
+    if (pBt.pWriter == p[0]) 
     {
         pBt.pWriter = null;
         pBt.btsFlags &= ~(0x0040 | 0x0080);
@@ -22885,7 +22795,7 @@ void clearAllSharedCacheTableLocks (Btree[] p) {
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T? pBt_obj[DEREF|WR|ARROW]=>T? pLock_obj[DEREF|WR|ARROW]=>T?
 void downgradeAllSharedCacheTableLocks (Btree[] p) {
     BtShared? pBt = p[0].pBt;
-    if (pBt.pWriter == p) 
+    if (pBt.pWriter == p[0]) 
     {
         BtLock? pLock = null;
         pBt.pWriter = null;
@@ -23030,7 +22940,7 @@ int saveAllCursors (BtShared[] pBt, uint32 iRoot, BtCursor[] pExcept) {
     BtCursor[] p = new BtCursor[0];
     for (p = _c2v_box_BtCursor_arr (pBt[0].pCursor); p != null; p = _c2v_box_BtCursor_arr (p[0].pNext)) 
     {
-        if ((p != pExcept) && ((((uint32) 0) == iRoot) || (p[0].pgnoRoot == iRoot))) {
+        if (((pExcept == null || p[0] != pExcept[0])) && ((((uint32) 0) == iRoot) || (p[0].pgnoRoot == iRoot))) {
             break;
         }
     }
@@ -23046,7 +22956,7 @@ int saveAllCursors (BtShared[] pBt, uint32 iRoot, BtCursor[] pExcept) {
 // c2vala-ptrs: p_obj[DEREF|NULL|ARROW]=>T? pExcept_obj[PLAIN]=>T?
 int saveCursorsOnList (BtCursor[] p, uint32 iRoot, BtCursor[] pExcept) {
     do {
-        if ((p != pExcept) && ((((uint32) 0) == iRoot) || (p[0].pgnoRoot == iRoot))) 
+        if (((pExcept == null || p[0] != pExcept[0])) && ((((uint32) 0) == iRoot) || (p[0].pgnoRoot == iRoot))) 
         {
             if ((((int) p[0].eState) == 0) || (((int) p[0].eState) == 2)) 
             {
@@ -23093,11 +23003,10 @@ int btreeMoveto (BtCursor[] pCur, uint8[] pKey, int64 nKey, int bias, int[] pRes
         {
             rc = sqlite3BtreeIndexMoveto (pCur, pIdxKey, pRes);
         }
-        sqlite3DbFree (_c2v_box_sqlite3_arr (pCur[0].pKeyInfo.db), pIdxKey);
     }
     else 
     {
-        pIdxKey = null;
+        pIdxKey = new UnpackedRecord[0];
         rc = sqlite3BtreeTableMoveto (pCur, nKey, bias, pRes);
     }
     return rc;
@@ -23138,13 +23047,13 @@ int btreeRestoreCursorPosition (BtCursor[] pCur) {
 
 // c2vala-ptrs: pCur_arr[ARITH|DEREF|NULL]=>T[]
 int sqlite3BtreeCursorHasMoved (BtCursor[] pCur) {
-    return (int) ((0 != ((int) pCur[0])));
+    return (int) (pCur.length > 0 && pCur[0].eState != 0);
 }
 
 BtCursor? sqlite3BtreeFakeValidCursor () {
-    uchar[] fakeCursor = new uchar[1];
-    fakeCursor[0] = (uchar) 0;
-    return ((BtCursor?) fakeCursor);
+    BtCursor fakeCursor = new BtCursor ();
+    fakeCursor.eState = (uchar) 0;
+    return fakeCursor;
 }
 
 // c2vala-ptrs: pCur_obj[DEREF|NULL|ARROW]=>T? pDifferentRow_obj[DEREF|WR]=>T?
@@ -23217,7 +23126,7 @@ void ptrmapPut (BtShared[] pBt, uint32 key, uchar eType, uint32 parent, int[] pR
             return;
         }
         if (c2v_goto_ptrmap_exit) break;
-        if (((int) (string) sqlite3PagerGetExtra (pDbPage[0])[(int) (0)]) != 0) 
+        if (((int) sqlite3PagerGetExtra (pDbPage[0])[(int) (0)]) != 0) 
         {
             pRC[0] = sqlite3CorruptError (71753);
             c2v_goto_ptrmap_exit = true;
@@ -23581,7 +23490,7 @@ void ptrmapPutOvflPtr (MemPage? pPage, MemPage? pSrc, uchar[] pCell, int[] pRC) 
     if (((uint32) info.nLocal) < info.nPayload) 
     {
         uint32 ovfl = 0;
-        if ((((uint64) pCell) < ((uint64) pSrc.aDataEnd)) && (((uint64) (_c2v_slice_uchar (pCell, _off_pCell + (int) (info.nLocal)))) > ((uint64) pSrc.aDataEnd))) 
+        if ((c_ptr_u64 (pCell) < c_ptr_u64 (pSrc.aDataEnd)) && (c_ptr_u64 (_c2v_slice_uchar (pCell, _off_pCell + (int) (info.nLocal))) > c_ptr_u64 (pSrc.aDataEnd))) 
         {
             pRC[0] = sqlite3CorruptError (72251);
             return;
@@ -24322,14 +24231,14 @@ int removeFromSharingList (BtShared[] pBt) {
     pBt[0].nRef = pBt[0].nRef - 1;
     if (pBt[0].nRef <= 0) 
     {
-        if (sqlite3SharedCacheList == pBt) 
+        if (sqlite3SharedCacheList == pBt[0]) 
         {
             sqlite3SharedCacheList = pBt[0].pNext;
         }
         else 
         {
             pList = sqlite3SharedCacheList;
-            while ((pList != null) && (pList.pNext != pBt)) 
+            while ((pList != null) && (pList.pNext != pBt[0])) 
             {
                 pList = pList.pNext;
             }
@@ -24359,8 +24268,8 @@ int allocateTempSpace (BtShared[] pBt) {
         pCur[0].hints = 0;
         pCur[0].skipNext = 0;
         pCur[0].pBtree = null;
-        pCur[0].aOverflow = null;
-        pCur[0].pKey = null;
+        pCur[0].aOverflow = new uint32[0];
+        pCur[0].pKey = new uint8[0];
         pCur[0].pBt = null;
         pCur[0].pNext = null;
         pCur[0].info = new CellInfo ();
@@ -24375,8 +24284,8 @@ int allocateTempSpace (BtShared[] pBt) {
         pCur[0].apPage = new MemPage?[(20 - 1)];
         return 7;
     }
-    c_memset (c_str_to_bytes (pBt[0].pTmpSpace), 0, 8);
-    pBt[0].pTmpSpace += 4;
+    c_memset (pBt[0].pTmpSpace, 0, 8);
+    pBt[0].pTmpSpace = c_bytes_add (pBt[0].pTmpSpace, 4);
     return 0;
 }
 
@@ -24384,8 +24293,6 @@ int allocateTempSpace (BtShared[] pBt) {
 void freeTempSpace (BtShared[] pBt) {
     if (pBt[0].pTmpSpace != null) 
     {
-        pBt[0].pTmpSpace -= 4;
-        sqlite3PageFree ((pBt[0].pTmpSpace).data);
         pBt[0].pTmpSpace = new uchar[0];
     }
 }
@@ -24402,9 +24309,8 @@ int sqlite3BtreeClose (Btree[] p) {
         {
             ((!) pBt[0].xFreeSchema) (pBt[0].pSchema);
         }
-        sqlite3DbFree (null, pBt[0].pSchema);
+        sqlite3DbFree (new sqlite3[0], pBt[0].pSchema);
         freeTempSpace (pBt);
-        sqlite3_free (pBt);
     }
     if (p[0].pPrev != null) {
         p[0].pPrev.pNext = p[0].pNext;
@@ -24412,7 +24318,6 @@ int sqlite3BtreeClose (Btree[] p) {
     if (p[0].pNext != null) {
         p[0].pNext.pPrev = p[0].pPrev;
     }
-    sqlite3_free (p);
     return 0;
 }
 
@@ -24566,7 +24471,9 @@ int lockBtree (BtShared[] pBt) {
         }
         if (c2v_goto_page1_init_failed) break;
         nPage = sqlite3Get4byte (_c2v_slice_uchar (pPage1[0].aData, (int) (28)));
-        sqlite3PagerPagecount (_c2v_box_Pager_arr (pBt[0].pPager), nPageFile);
+        int[] _np = { (int) nPageFile[0] };
+        sqlite3PagerPagecount (_c2v_box_Pager_arr (pBt[0].pPager), _np);
+        nPageFile[0] = (uint32) _np[0];
         if ((nPage == ((uint32) 0)) || (c_memcmp (_c2v_slice_uchar (pPage1[0].aData, (int) (24)), _c2v_slice_uchar (pPage1[0].aData, (int) (92)), 4) != 0)) 
         {
             nPage = nPageFile[0];
@@ -24763,7 +24670,7 @@ int btreeBeginTrans (Btree[] p, int wrflag, int[] pSchemaVersion) {
                 BtLock? pIter = null;
                 for (pIter = pBt[0].pLock; pIter != null; pIter = pIter.pNext) 
                 {
-                    if (pIter.pBtree != p) 
+                    if (pIter.pBtree != p[0]) 
                     {
                         pBlock = pIter.pBtree.db;
                         break;
@@ -24820,7 +24727,7 @@ int btreeBeginTrans (Btree[] p, int wrflag, int[] pSchemaVersion) {
                 unlockBtreeIfUnused (pBt);
             }
             if (c2v_goto_trans_begun) break;
-        } while ((((rc & 0xFF) == 5) && (((int) pBt[0].inTransaction) == 0)) && (btreeInvokeBusyHandler (pBt) != 0));
+        } while ((((rc & 0xFF) == 5) && (((int) pBt[0].inTransaction) == 0)) && (btreeInvokeBusyHandler (pBt[0]._c2v_data ?? new uint8[0]) != 0));
         if (c2v_goto_trans_begun) break;
         if (rc == 0) 
         {
@@ -25565,8 +25472,8 @@ void sqlite3BtreeCursorZero (BtCursor[] p) {
     p[0].hints = 0;
     p[0].skipNext = 0;
     p[0].pBtree = null;
-    p[0].aOverflow = null;
-    p[0].pKey = null;
+    p[0].aOverflow = new uint32[0];
+    p[0].pKey = new uint8[0];
     p[0].pBt = null;
     p[0].pNext = null;
     p[0].info = new CellInfo ();
@@ -25588,7 +25495,7 @@ int sqlite3BtreeCloseCursor (BtCursor[] pCur) {
     {
         BtShared[] pBt = _c2v_box_BtShared_arr (pCur[0].pBt);
         sqlite3BtreeEnter (pBtree);
-        if (pBt[0].pCursor == pCur) 
+        if (pBt[0].pCursor == pCur[0]) 
         {
             pBt[0].pCursor = pCur[0].pNext;
         }
@@ -25596,7 +25503,7 @@ int sqlite3BtreeCloseCursor (BtCursor[] pCur) {
         {
             BtCursor? pPrev = pBt[0].pCursor;
             do {
-                if (pPrev.pNext == pCur) 
+                if (pPrev.pNext == pCur[0]) 
                 {
                     pPrev.pNext = pCur[0].pNext;
                     break;
@@ -25606,7 +25513,6 @@ int sqlite3BtreeCloseCursor (BtCursor[] pCur) {
         }
         btreeReleaseAllCursorPages (pCur);
         unlockBtreeIfUnused (pBt);
-        sqlite3_free ((pCur[0].aOverflow).data);
         sqlite3_free (pCur[0].pKey);
         if (((((int) pBt[0].openFlags) & 4) != 0) && (pBt[0].pCursor == null)) 
         {
@@ -25706,7 +25612,7 @@ int getOverflowPage (BtShared[] pBt, uint32 ovfl, MemPage?[] ppPage, uint32[] pP
     pPgnoNext[0] = next;
     if (ppPage != null) 
     {
-        ppPage[0] = pPage[0];
+        ppPage[0] = (!) pPage[0];
     }
     else 
     {
@@ -26146,12 +26052,12 @@ int indexCellCompare (BtCursor[] pCur, int idx, UnpackedRecord[] pIdxKey, Record
     nCell = (int) (pCell[(int) (0)]);
     if (nCell <= ((int) pPage.max1bytePayload)) 
     {
-        c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (1)), _c2v_box_UnpackedRecord_obj (pIdxKey));
+        c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (1)), pIdxKey);
     }
     else 
     if ((!((((int) pCell[(int) (1)]) & 0x80) != 0)) && (c_assign_i ((((nCell & 0x7f) << 7) + ((int) pCell[(int) (1)])), ref nCell) <= pPage.maxLocal)) 
     {
-        c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (2)), _c2v_box_UnpackedRecord_obj (pIdxKey));
+        c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (2)), pIdxKey);
     }
     else 
     {
@@ -26238,12 +26144,12 @@ int sqlite3BtreeIndexMoveto (BtCursor[] pCur, UnpackedRecord[] pIdxKey, int[] pR
                 nCell = (int) (pCell[_off_pCell + (int) (0)]);
                 if (nCell <= ((int) pPage.max1bytePayload)) 
                 {
-                    c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (1)), _c2v_box_UnpackedRecord_obj (pIdxKey));
+                    c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (1)), pIdxKey);
                 }
                 else 
                 if ((!((((int) pCell[_off_pCell + (int) (1)]) & 0x80) != 0)) && (c_assign_i ((((nCell & 0x7f) << 7) + ((int) pCell[_off_pCell + (int) (1)])), ref nCell) <= pPage.maxLocal)) 
                 {
-                    c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (2)), _c2v_box_UnpackedRecord_obj (pIdxKey));
+                    c = ((!) xRecordCompare) (nCell, _c2v_slice_uchar (pCell, (int) (2)), pIdxKey);
                 }
                 else 
                 {
@@ -26894,7 +26800,7 @@ int freePage2 (BtShared[] pBt, MemPage? pMemPage, uint32 iPage) {
                 c2v_goto_freepage_out = true;
                 break;
             }
-            c_memset (c_str_to_bytes (pPage[0].aData), 0, pPage[0].pBt.pageSize);
+            c_memset (pPage[0].aData, 0, pPage[0].pBt.pageSize);
         }
         if (c2v_goto_freepage_out) break;
         if (pBt[0].autoVacuum != 0) 
@@ -27015,7 +26921,7 @@ int clearCellOverflow (MemPage? pPage, uchar[] pCell, CellInfo? pInfo) {
                 return rc;
             }
         }
-        if (((pOvfl[0] != null) || (_c2v_assign_MemPage_ (btreePageLookup (pBt, ovflPgno), ref pOvfl[0]) != 0)) && (sqlite3PagerPageRefcount (pOvfl[0].pDbPage) != 1)) 
+        if (((pOvfl[0] != null) || (_c2v_assign_MemPage_ (btreePageLookup (pBt, ovflPgno), ref pOvfl[0]) != null)) && (sqlite3PagerPageRefcount (pOvfl[0].pDbPage) != 1)) 
         {
             rc = sqlite3CorruptError (77618);
         }
@@ -27228,7 +27134,7 @@ int insertCell (MemPage? pPage, int i, uchar[] pCell, int sz, uchar[] pTemp, uin
         }
         sqlite3Put4byte (_c2v_slice_uchar (pCell, _off_pCell), iChild);
         j = (int) (pPage.nOverflow++);
-        pPage.apOvfl[(int) (j)] = pCell;
+        pPage.apOvfl[(int) (j)] = new C2VBox<uchar[]> (pCell);
         pPage.aiOvfl[(int) (j)] = ((uint16) i);
     }
     else 
@@ -27280,7 +27186,7 @@ int insertCellFast (MemPage? pPage, int i, uchar[] pCell, int sz) {
     if ((sz + 2) > pPage.nFree) 
     {
         j = (int) (pPage.nOverflow++);
-        pPage.apOvfl[(int) (j)] = pCell;
+        pPage.apOvfl[(int) (j)] = new C2VBox<uchar[]> (pCell);
         pPage.aiOvfl[(int) (j)] = ((uint16) i);
     }
     else 
@@ -27328,7 +27234,7 @@ void populateCellCache (CellArray? p, int idx, int N) {
     {
         if (((int) szCell[(int) (idx)]) == 0) 
         {
-            szCell[(int) (idx)] = ((!) pRef.xCellSize) (pRef, p.apCell[(int) (idx)]);
+            szCell[(int) (idx)] = ((!) pRef.xCellSize) (pRef, ((!) p.apCell[(int) (idx)]).val);
         }
         else 
         {
@@ -27340,7 +27246,7 @@ void populateCellCache (CellArray? p, int idx, int N) {
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
 uint16 computeCellSize (CellArray? p, int N) {
-    p.szCell[(int) (N)] = ((!) p.pRef.xCellSize) (p.pRef, p.apCell[(int) (N)]);
+    p.szCell[(int) (N)] = ((!) p.pRef.xCellSize) (p.pRef, ((!) p.apCell[(int) (N)]).val);
     return p.szCell[(int) (N)];
 }
 
@@ -27665,7 +27571,7 @@ int balance_quick (MemPage? pParent, MemPage? pPage, uchar[] pSpace) {
     {
         uchar[] pOut = _c2v_slice_uchar (pSpace, (int) (4));
         int _off_pOut = 0;
-        C2VBox<uchar[]> pCell = new C2VBox<uchar[]> (pPage.apOvfl[(int) (0)]);
+        C2VBox<uchar[]> pCell = (!) pPage.apOvfl[(int) (0)];
         uint16[] szCell = new uint16[1];
         szCell[0] = ((!) pPage.xCellSize) (pPage, pCell.val);
         uchar[] pStop = null;
@@ -27850,7 +27756,7 @@ int balance_nonroot (MemPage? pParent, int iParentIdx, uchar[] aOvflSpace, int i
         }
         if ((pParent.nOverflow != 0) && ((i + nxDiv) == ((int) pParent.aiOvfl[(int) (0)]))) 
         {
-            apDiv[(int) (i)] = pParent.apOvfl[(int) (0)];
+            apDiv[(int) (i)] = ((!) pParent.apOvfl[(int) (0)]).val;
             pgno[0] = sqlite3Get4byte (apDiv[(int) (i)]);
             szNew[(int) (i)] = (int) (((!) pParent.xCellSize) (pParent, apDiv[(int) (i)]));
             pParent.nOverflow = (uchar) 0;
@@ -27985,7 +27891,7 @@ int balance_nonroot (MemPage? pParent, int iParentIdx, uchar[] aOvflSpace, int i
             szNew[(int) (i)] = (usableSpace - p.nFree);
             for (j = 0; j < ((int) p.nOverflow); j++) 
             {
-                szNew[(int) (i)] += (2 + ((int) ((!) p.xCellSize) (p, p.apOvfl[(int) (j)])));
+                szNew[(int) (i)] += (2 + ((int) ((!) p.xCellSize) (p, ((!) p.apOvfl[(int) (j)]).val)));
                 if (c2v_goto_balance_cleanup) { break; }
             }
             cntNew[(int) (i)] = cntOld[(int) (i)];
@@ -28335,7 +28241,7 @@ int balance_nonroot (MemPage? pParent, int iParentIdx, uchar[] aOvflSpace, int i
         freePage (apOld[(int) (i)], rc);
         if (c2v_goto_balance_cleanup) { break; }
     }
-    sqlite3DbFree (null, b.apCell.data);
+    sqlite3DbFree (new sqlite3[0], b.apCell.data);
     for (i = 0; i < nOld; i++) 
     {
         releasePage (apOld[(int) (i)]);
@@ -28373,8 +28279,8 @@ int balance_deeper (MemPage? pRoot, MemPage?[] ppChild) {
         releasePage (pChild[0]);
         return rc[0];
     }
-    c_memcpy (pChild[0].aiOvfl, pRoot.aiOvfl, (((size_t) pRoot.nOverflow) * sizeof (uint16)));
-    c_memcpy (pChild[0].apOvfl, pRoot.apOvfl, (((size_t) pRoot.nOverflow) * 8));
+    for (int _k = 0; _k < pRoot.nOverflow; _k++) pChild[0].aiOvfl[_k] = pRoot.aiOvfl[_k];
+    for (int _k = 0; _k < pRoot.nOverflow; _k++) pChild[0].apOvfl[_k] = pRoot.apOvfl[_k];
     pChild[0].nOverflow = pRoot.nOverflow;
     zeroPage (pRoot, (((int) pChild[0].aData[(int) (0)]) & ~0x08));
     sqlite3Put4byte (_c2v_slice_uchar (pRoot.aData, (int) ((((int) pRoot.hdrOffset) + 8))), pgnoChild[0]);
@@ -28387,7 +28293,7 @@ int anotherValidCursor (BtCursor[] pCur) {
     BtCursor? pOther = null;
     for (pOther = pCur[0].pBt.pCursor; pOther != null; pOther = pOther.pNext) 
     {
-        if (((pOther != pCur) && (((int) pOther.eState) == 0)) && (pOther.pPage == pCur[0].pPage)) 
+        if (((pOther != pCur[0]) && (((int) pOther.eState) == 0)) && (pOther.pPage == pCur[0].pPage)) 
         {
             return sqlite3CorruptError (79689);
         }
@@ -28850,7 +28756,7 @@ int sqlite3BtreeTransferRow (BtCursor? pDest, BtCursor[] pSrc, int64 iKey) {
     if ((nIn == nRem) && (nIn < ((uint32) pDest.pPage.maxLocal))) 
     {
         c_memcpy (aOut, aIn, nIn);
-        pBt[0].nPreformatSize = (int) (_c2v_slice_uchar (_off_aOut, (int) (nIn)));
+        pBt[0].nPreformatSize = (int) nIn;
         return 0;
     }
     else 
@@ -28865,7 +28771,7 @@ int sqlite3BtreeTransferRow (BtCursor? pDest, BtCursor[] pSrc, int64 iKey) {
         MemPage? pPageOut = null;
         uint32 nOut = 0;
         nOut = (uint32) (btreePayloadToLocal (pDest.pPage, (int64) (pSrc[0].info.nPayload)));
-        pBt[0].nPreformatSize = (int) (_c2v_slice_uchar (_off_aOut, (int) (nOut)));
+        pBt[0].nPreformatSize = (int) nOut;
         if (nOut < pSrc[0].info.nPayload) 
         {
             pPgnoOut = _c2v_slice_uchar (aOut, (int) (nOut));
@@ -29149,7 +29055,7 @@ int btreeCreateTable (Btree[] p, uint32[] piTable, int createTabFlags) {
             eType[0] = (uchar) 0;
             uint32[] iPtrPage = new uint32[1];
             iPtrPage[0] = (uint32) 0;
-            rc[0] = saveAllCursors (pBt, (uint32) 0, null);
+            rc[0] = saveAllCursors (pBt, (uint32) 0, new BtCursor[0]);
             releasePage (pPageMove[0]);
             if (rc[0] != 0) 
             {
@@ -29985,7 +29891,7 @@ int sqlite3BtreeIntegrityCheck (sqlite3[] db, Btree[] p, uint32[] aRoot, sqlite3
         sqlite3BtreeEnter (p);
         sCheck.pBt = null;
         sCheck.pPager = null;
-        sCheck.aPgRef = null;
+        sCheck.aPgRef = new uint8[0];
         sCheck.nCkPage = 0;
         sCheck.mxErr = 0;
         sCheck.nErr = 0;
@@ -29996,7 +29902,7 @@ int sqlite3BtreeIntegrityCheck (sqlite3[] db, Btree[] p, uint32[] aRoot, sqlite3
         sCheck.v1 = 0;
         sCheck.v2 = 0;
         sCheck.errMsg = new sqlite3_str ();
-        sCheck.heap = null;
+        sCheck.heap = new uint32[0];
         sCheck.db = null;
         sCheck.nRow = 0;
         sCheck.db = _c2v_box_sqlite3_obj (db);
@@ -30004,7 +29910,7 @@ int sqlite3BtreeIntegrityCheck (sqlite3[] db, Btree[] p, uint32[] aRoot, sqlite3
         sCheck.pPager = pBt[0].pPager;
         sCheck.nCkPage = btreePagecount (_c2v_box_BtShared_arr (sCheck.pBt));
         sCheck.mxErr = mxErr;
-        sqlite3StrAccumInit (sCheck.errMsg, null, zErr, (int) (((int) (100) * 1)), 1000000000);
+        sqlite3StrAccumInit (sCheck.errMsg, new sqlite3[0], zErr, (int) (((int) (100) * 1)), 1000000000);
         sCheck.errMsg.printfFlags = (uchar) 0x01;
         if (sCheck.nCkPage == ((uint32) 0)) 
         {
@@ -30020,7 +29926,7 @@ int sqlite3BtreeIntegrityCheck (sqlite3[] db, Btree[] p, uint32[] aRoot, sqlite3
             break;
         }
         if (c2v_goto_integrity_ck_cleanup) break;
-        sCheck.heap = sqlite3PageMalloc ((int) (pBt[0].pageSize));
+        sCheck.heap = new uint32[pBt[0].pageSize / 4 + 1];
         if (sCheck.heap == null) 
         {
             checkOom (sCheck);
@@ -30102,8 +30008,8 @@ int sqlite3BtreeIntegrityCheck (sqlite3[] db, Btree[] p, uint32[] aRoot, sqlite3
         if (c2v_goto_integrity_ck_cleanup) break;
     } while (false);
     c2v_goto_integrity_ck_cleanup = false;
-    sqlite3PageFree (sCheck.heap.data);
-    sqlite3_free (sCheck.aPgRef.data);
+    sCheck.heap = new uint32[0];
+    sCheck.aPgRef = new uint8[0];
     pnErr[0] = sCheck.nErr;
     if (sCheck.nErr == 0) 
     {
@@ -30310,10 +30216,10 @@ int checkReadTransaction (sqlite3[] db, Btree[] p) {
 // c2vala-ptrs: pDestDb_obj[PLAIN]=>T? zDestDb_obj[PLAIN]=>T? pSrcDb_obj[NULL]=>T? zSrcDb_obj[PLAIN]=>T? p_obj[DEREF|WR|NULL|ARROW]=>T?
 sqlite3_backup[] sqlite3_backup_init (sqlite3[] pDestDb, uint8[] zDestDb, sqlite3[] pSrcDb, uint8[] zSrcDb) {
     sqlite3_backup[] p = new sqlite3_backup[0];
-    if (pSrcDb == pDestDb) 
+    if (pSrcDb.length > 0 && pDestDb.length > 0 && pSrcDb[0] == pDestDb[0]) 
     {
         sqlite3ErrorWithMsg (pDestDb, 1, ("source and destination must be distinct").data);
-        p = null;
+        p = new sqlite3_backup[0];
     }
     else 
     {
@@ -30333,15 +30239,14 @@ sqlite3_backup[] sqlite3_backup_init (sqlite3[] pDestDb, uint8[] zDestDb, sqlite
         p[0].isAttached = 0;
         if (((null == p[0].pSrc) || (null == p[0].pDest)) || (checkReadTransaction (pDestDb, _c2v_box_Btree_arr (p[0].pDest)) != 0)) 
         {
-            sqlite3_free (p);
-            p = null;
+            p = new sqlite3_backup[0];
         }
     }
     if (p != null) 
     {
         p[0].pSrc.nBackup++;
     }
-    return _c2v_box_sqlite3_backup_obj (p);
+    return p;
 }
 
 int isFatalError (int rc) {
@@ -30427,12 +30332,14 @@ int sqlite3_backup_finish (sqlite3_backup[] p) {
     }
     if (p[0].isAttached != 0) 
     {
-        pp = sqlite3PagerBackupPtr (sqlite3BtreePager (_c2v_box_Btree_arr (p[0].pSrc)));
-        while ((*pp) != p) 
-        {
-            pp = &((*pp).pNext);
+        sqlite3_backup?[] bpp = sqlite3PagerBackupPtr (sqlite3BtreePager (_c2v_box_Btree_arr (p[0].pSrc)));
+        if (bpp.length > 0 && bpp[0] == p[0]) {
+            bpp[0] = p[0].pNext;
+        } else if (bpp.length > 0) {
+            sqlite3_backup? prev = bpp[0];
+            while (prev != null && prev.pNext != p[0]) prev = prev.pNext;
+            if (prev != null) prev.pNext = p[0].pNext;
         }
-        *pp = p[0].pNext;
     }
     sqlite3BtreeRollback (_c2v_box_Btree_arr (p[0].pDest), 0, 0);
     rc = ((p[0].rc == 101) ? 0 : p[0].rc);
@@ -30440,10 +30347,6 @@ int sqlite3_backup_finish (sqlite3_backup[] p) {
     {
         sqlite3Error (_c2v_box_sqlite3_arr (p[0].pDestDb), rc);
         sqlite3LeaveMutexAndCloseZombie (_c2v_box_sqlite3_arr (p[0].pDestDb));
-    }
-    if (p[0].pDestDb != null) 
-    {
-        sqlite3_free (p);
     }
     sqlite3LeaveMutexAndCloseZombie (pSrcDb);
     return rc;
@@ -30471,7 +30374,7 @@ void backupUpdate (sqlite3_backup? p, uint32 iPage, uchar[] aData) {
                 p.rc = rc;
             }
         }
-    } while (_c2v_assign_sqlite3_backup_ (p.pNext, ref p) != 0);
+    } while (_c2v_assign_sqlite3_backup_ (p.pNext, ref p) != null);
 }
 
 // c2vala-ptrs: pBackup_obj[PLAIN]=>T? aData_obj[PLAIN]=>T?
@@ -30555,7 +30458,7 @@ void vdbeMemRenderNum (int sz, uint8[] zBuf, sqlite3_value[] p) {
     }
     else 
     {
-        sqlite3StrAccumInit (acc, null, zBuf, sz, 0);
+        sqlite3StrAccumInit (acc, new sqlite3[0], zBuf, sz, 0);
         sqlite3_str_appendf (_c2v_box_sqlite3_str_arr (acc), ("%!.15g").data, (((((int) p[0].flags) & 0x0020) != 0) ? ((double) (p[0].u.i)) : p[0].u.r));
         zBuf[(int) (acc.nChar)] = (uint8) 0;
         p[0].n = (int) acc.nChar;
@@ -30580,18 +30483,18 @@ int sqlite3VdbeChangeEncoding (sqlite3_value[] pMem, int desiredEnc) {
 
 // c2vala-ptrs: pMem_obj[DEREF|WR|ARROW]=>T?
 int sqlite3VdbeMemGrow (sqlite3_value[] pMem, int n, int bPreserve) {
-    if (((pMem[0].szMalloc > 0) && (bPreserve != 0)) && (pMem[0].z == pMem[0].zMalloc)) 
+    if (((pMem[0].szMalloc > 0) && (bPreserve != 0)) && (c_ptr_u64 (pMem[0].z) == c_ptr_u64 (pMem[0].zMalloc))) 
     {
         if (pMem[0].db != null) 
         {
-            pMem[0].zMalloc = sqlite3DbReallocOrFree (_c2v_box_sqlite3_arr (pMem[0].db), (pMem[0].z).data, (uint64) n);
+            pMem[0].zMalloc = sqlite3DbReallocOrFree (_c2v_box_sqlite3_arr (pMem[0].db), pMem[0].z, (uint64) n);
             pMem[0].z = pMem[0].zMalloc;
         }
         else 
         {
-            pMem[0].zMalloc = (string) sqlite3Realloc ((pMem[0].z).data, (uint64) n);
+            pMem[0].zMalloc = sqlite3Realloc (pMem[0].z, (uint64) n);
             if (pMem[0].zMalloc == null) {
-                sqlite3_free ((pMem[0].z).data);
+                pMem[0].z = new uint8[0];
             }
             pMem[0].z = pMem[0].zMalloc;
         }
@@ -30600,24 +30503,24 @@ int sqlite3VdbeMemGrow (sqlite3_value[] pMem, int n, int bPreserve) {
     else 
     {
         if (pMem[0].szMalloc > 0) {
-            sqlite3DbFreeNN (_c2v_box_sqlite3_arr (pMem[0].db), (pMem[0].zMalloc).data);
+            sqlite3DbFreeNN (_c2v_box_sqlite3_arr (pMem[0].db), pMem[0].zMalloc);
         }
-        pMem[0].zMalloc = (string) sqlite3DbMallocRaw (_c2v_box_sqlite3_arr (pMem[0].db), (uint64) n);
+        pMem[0].zMalloc = sqlite3DbMallocRaw (_c2v_box_sqlite3_arr (pMem[0].db), (uint64) n);
     }
     if (pMem[0].zMalloc == null) 
     {
         sqlite3VdbeMemSetNull (pMem);
-        pMem[0].z = "";
+        pMem[0].z = new uint8[0];
         pMem[0].szMalloc = 0;
         return 7;
     }
     else 
     {
-        pMem[0].szMalloc = sqlite3DbMallocSize (_c2v_box_sqlite3_arr (pMem[0].db), (pMem[0].zMalloc).data);
+        pMem[0].szMalloc = sqlite3DbMallocSize (_c2v_box_sqlite3_arr (pMem[0].db), pMem[0].zMalloc);
     }
-    if ((bPreserve != 0) && (pMem[0].z != null)) 
+    if ((bPreserve != 0) && (pMem[0].z.length > 0)) 
     {
-        c_memcpy (c_str_to_bytes (pMem[0].zMalloc), (pMem[0].z).data, pMem[0].n);
+        c_memcpy (pMem[0].zMalloc, pMem[0].z, pMem[0].n);
     }
     if ((((int) pMem[0].flags) & 0x1000) != 0) 
     {
@@ -30653,17 +30556,6 @@ void sqlite3VdbeMemZeroTerminateIfAble (sqlite3_value[] pMem) {
     }
     if ((((int) pMem[0].flags) & 0x1000) != 0) 
     {
-        if ((pMem[0].xDel == sqlite3_free) && (sqlite3_msize ((pMem[0].z).data) >= ((uint64) ((pMem[0].n + 1))))) 
-        {
-            pMem[0].z[(int) (pMem[0].n)] = (uint8) 0;
-            pMem[0].flags |= 0x0200;
-            return;
-        }
-        if (pMem[0].xDel == sqlite3RCStrUnref) 
-        {
-            pMem[0].flags |= 0x0200;
-            return;
-        }
     }
     else 
     if (pMem[0].szMalloc >= (pMem[0].n + 1)) 
@@ -30694,7 +30586,7 @@ int sqlite3VdbeMemMakeWriteable (sqlite3_value[] pMem) {
         if ((((((int) pMem[0].flags) & 0x0400) != 0) ? sqlite3VdbeMemExpandBlob (pMem) : 0) != 0) {
             return 7;
         }
-        if ((pMem[0].szMalloc == 0) || (pMem[0].z != pMem[0].zMalloc)) 
+        if ((pMem[0].szMalloc == 0) || (c_ptr_u64 (pMem[0].z) != c_ptr_u64 (pMem[0].zMalloc))) 
         {
             int rc = vdbeMemAddTerminator (pMem);
             if (rc != 0) {
@@ -30721,7 +30613,7 @@ int sqlite3VdbeMemExpandBlob (sqlite3_value[] pMem) {
     {
         return 7;
     }
-    c_memset (c_str_add (pMem[0].z, (int) (pMem[0].n)), 0, pMem[0].u.nZero);
+    c_memset (c_bytes_add (pMem[0].z, (int) (pMem[0].n)), 0, pMem[0].u.nZero);
     pMem[0].n += pMem[0].u.nZero;
     pMem[0].flags &= ~(0x0400 | 0x0200);
     return 0;
@@ -30747,7 +30639,7 @@ int sqlite3VdbeMemStringify (sqlite3_value[] pMem, uchar enc, uchar bForce) {
         pMem[0].enc = (uchar) 0;
         return 7;
     }
-    vdbeMemRenderNum (nByte, (pMem[0].z).data, pMem);
+    vdbeMemRenderNum (nByte, pMem[0].z, pMem);
     pMem[0].enc = (uchar) 1;
     pMem[0].flags |= (0x0002 | 0x0200);
     if (bForce != 0) {
@@ -30772,7 +30664,7 @@ int sqlite3VdbeMemFinalize (sqlite3_value[] pMem, FuncDef? pFunc) {
     ctx.argc = 0;
     ctx.argv = new sqlite3_value?[1];
     t.u = new MemValue ();
-    t.z = "";
+    t.z = new uint8[0];
     t.n = 0;
     t.flags = 0;
     t.enc = 0;
@@ -30780,7 +30672,7 @@ int sqlite3VdbeMemFinalize (sqlite3_value[] pMem, FuncDef? pFunc) {
     t.db = null;
     t.szMalloc = 0;
     t.uTemp = 0;
-    t.zMalloc = "";
+    t.zMalloc = new uint8[0];
     t.xDel = null;
     t.flags = (uint16) 0x0001;
     t.db = pMem[0].db;
@@ -30790,7 +30682,7 @@ int sqlite3VdbeMemFinalize (sqlite3_value[] pMem, FuncDef? pFunc) {
     ctx.enc = t.db.enc;
     ((!) pFunc.xFinalize) (ctx);
     if (pMem[0].szMalloc > 0) {
-        sqlite3DbFreeNN (_c2v_box_sqlite3_arr (pMem[0].db), (pMem[0].zMalloc).data);
+        sqlite3DbFreeNN (_c2v_box_sqlite3_arr (pMem[0].db), pMem[0].zMalloc);
     }
     pMem[0] = t;
     return ctx.isError;
@@ -30839,10 +30731,10 @@ void vdbeMemClear (sqlite3_value[] p) {
     }
     if (p[0].szMalloc != 0) 
     {
-        sqlite3DbFreeNN (_c2v_box_sqlite3_arr (p[0].db), (p[0].zMalloc).data);
+        sqlite3DbFreeNN (_c2v_box_sqlite3_arr (p[0].db), p[0].zMalloc);
         p[0].szMalloc = 0;
     }
-    p[0].z = "";
+    p[0].z = new uint8[0];
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
@@ -30864,7 +30756,7 @@ void sqlite3VdbeMemReleaseMalloc (sqlite3_value[] p) {
 int64 memIntValue (sqlite3_value[] pMem) {
     int64[] @value = new int64[1];
     @value[0] = (int64) 0;
-    sqlite3Atoi64 ((pMem[0].z).data, @value, pMem[0].n, pMem[0].enc);
+    sqlite3Atoi64 (pMem[0].z, @value, pMem[0].n, pMem[0].enc);
     return @value[0];
 }
 
@@ -30896,7 +30788,7 @@ int64 sqlite3VdbeIntValue (sqlite3_value[] pMem) {
 double memRealValue (sqlite3_value[] pMem) {
     double[] val = new double[1];
     val[0] = ((double) 0);
-    sqlite3AtoF ((pMem[0].z).data, val, pMem[0].n, pMem[0].enc);
+    sqlite3AtoF (pMem[0].z, val, pMem[0].n, pMem[0].enc);
     return val[0];
 }
 
@@ -30968,7 +30860,7 @@ int sqlite3RealSameAsInt (double _p_r1, int64 i) {
     double[] r1 = { _p_r1 };
     double[] r2 = new double[1];
     r2[0] = ((double) i);
-    return (int) (((r1[0] == 0.0) || (((c_memcmp (r1.data, r2.data, sizeof (double)) == 0) && (i >= -((int64) 2251799813685248))) && (i < ((int64) 2251799813685248)))));
+    return (int) (((r1[0] == 0.0) || (((c_f64_to_u64 (r1[0]) == c_f64_to_u64 (r2[0])) && (i >= -((int64) 2251799813685248))) && (i < ((int64) 2251799813685248)))));
 }
 
 int64 sqlite3RealToI64 (double r) {
@@ -30988,9 +30880,9 @@ int sqlite3VdbeMemNumerify (sqlite3_value[] pMem) {
         int rc = 0;
         int64[] ix = new int64[1];
         double[] _c2v_ref_2 = { pMem[0].u.r };
-        rc = sqlite3AtoF ((pMem[0].z).data, _c2v_ref_2, pMem[0].n, pMem[0].enc);
+        rc = sqlite3AtoF (pMem[0].z, _c2v_ref_2, pMem[0].n, pMem[0].enc);
         pMem[0].u.r = _c2v_ref_2[0];
-        if ((((rc == 0) || (rc == 1)) && (sqlite3Atoi64 ((pMem[0].z).data, ix, pMem[0].n, pMem[0].enc) <= 1)) || (sqlite3RealSameAsInt (pMem[0].u.r, c_assign_i64 (sqlite3RealToI64 (pMem[0].u.r), ref ix[0])) != 0)) 
+        if ((((rc == 0) || (rc == 1)) && (sqlite3Atoi64 (pMem[0].z, ix, pMem[0].n, pMem[0].enc) <= 1)) || (sqlite3RealSameAsInt (pMem[0].u.r, c_assign_i64 (sqlite3RealToI64 (pMem[0].u.r), ref ix[0])) != 0)) 
         {
             pMem[0].u.i = ix[0];
             pMem[0].flags = (uint16) (((((int) pMem[0].flags) & ~(0x0dbf | 0x0400)) | 0x0004));
@@ -31105,7 +30997,7 @@ void sqlite3VdbeMemSetZeroBlob (sqlite3_value[] pMem, int n) {
     }
     pMem[0].u.nZero = n;
     pMem[0].enc = (uchar) 1;
-    pMem[0].z = "";
+    pMem[0].z = new uint8[0];
 }
 
 // c2vala-ptrs: pMem_obj[DEREF|WR|ARROW]=>T?
@@ -31279,21 +31171,14 @@ int sqlite3VdbeMemSetStr (sqlite3_value[] pMem, uint8[] z, int64 n, uchar enc, s
     }
     if (nByte > ((int64) iLimit)) 
     {
-        if ((xDel != null) && (xDel != ((sqlite3_destructor_type?) (-1)))) 
+        if (xDel != null) 
         {
-            if (xDel == ((sqlite3_destructor_type?) sqlite3OomClear)) 
-            {
-                sqlite3DbFree (_c2v_box_sqlite3_arr (pMem[0].db), z);
-            }
-            else 
-            {
-                ((!) xDel) (z);
-            }
+            ((!) xDel) (z);
         }
         sqlite3VdbeMemSetNull (pMem);
         return sqlite3ErrorToParser (_c2v_box_sqlite3_arr (pMem[0].db), 18);
     }
-    if (xDel == ((sqlite3_destructor_type?) (-1))) 
+    if (xDel == null) 
     {
         int64 nAlloc = nByte;
         if ((((int) flags) & 0x0200) != 0) 
@@ -31304,22 +31189,14 @@ int sqlite3VdbeMemSetStr (sqlite3_value[] pMem, uint8[] z, int64 n, uchar enc, s
         {
             return 7;
         }
-        c_memcpy (c_str_to_bytes (pMem[0].z), z, nAlloc);
+        c_memcpy (pMem[0].z, z, nAlloc);
     }
     else 
     {
         sqlite3VdbeMemRelease (pMem);
-        pMem[0].z = (string) (string) z;
-        if (xDel == ((sqlite3_destructor_type?) sqlite3OomClear)) 
-        {
-            pMem[0].zMalloc = pMem[0].z;
-            pMem[0].szMalloc = sqlite3DbMallocSize (_c2v_box_sqlite3_arr (pMem[0].db), (pMem[0].zMalloc).data);
-        }
-        else 
-        {
-            pMem[0].xDel = xDel;
-            flags |= ((xDel == null) ? 0x2000 : 0x1000);
-        }
+        pMem[0].z = z;
+        pMem[0].xDel = xDel;
+        flags |= ((xDel == null) ? 0x2000 : 0x1000);
     }
     pMem[0].n = ((int) ((nByte & ((int64) 0x7fffffff))));
     pMem[0].flags = flags;
@@ -31341,7 +31218,7 @@ int sqlite3VdbeMemFromBtree (BtCursor[] pCur, uint32 offset, uint32 amt, sqlite3
     }
     if (0 == c_assign_i (sqlite3VdbeMemClearAndResize (pMem, (int) ((amt + ((uint32) 1)))), ref rc)) 
     {
-        rc = sqlite3BtreePayload (pCur, offset, amt, (pMem[0].z).data);
+        rc = sqlite3BtreePayload (pCur, offset, amt, pMem[0].z);
         if (rc == 0) 
         {
             pMem[0].z[(int) (amt)] = (uint8) 0;
@@ -31361,7 +31238,7 @@ int sqlite3VdbeMemFromBtreeZeroOffset (BtCursor[] pCur, uint32 amt, sqlite3_valu
     uint32[] available = new uint32[1];
     available[0] = (uint32) 0;
     int rc = 0;
-    pMem[0].z = (string) (string) sqlite3BtreePayloadFetch (pCur, available);
+    pMem[0].z = sqlite3BtreePayloadFetch (pCur, available);
     if (amt <= available[0]) 
     {
         pMem[0].flags = (uint16) ((0x0010 | 0x4000));
@@ -31386,7 +31263,7 @@ uint8[] valueToText (sqlite3_value[] pVal, uchar enc) {
         {
             sqlite3VdbeChangeEncoding (pVal, (((int) enc) & ~8));
         }
-        if (((((int) enc) & 8) != 0) && (1 == (1 & ((int) (((0).length - ((pVal[0].z)).length)))))) 
+        if (false) 
         {
             if (sqlite3VdbeMemMakeWriteable (pVal) != 0) 
             {
@@ -31427,7 +31304,7 @@ uint8[] sqlite3ValueText (sqlite3_value[] pVal, uchar enc) {
 
 // c2vala-ptrs: pVal_obj[DEREF|NULL|ARROW]=>T?
 int sqlite3ValueIsOfClass (sqlite3_value[] pVal, sqlite3_destructor_type? xFree) {
-    if ((((pVal != null) && ((((int) pVal[0].flags) & (0x0002 | 0x0010)) != 0)) && ((((int) pVal[0].flags) & 0x1000) != 0)) && (pVal[0].xDel == xFree)) 
+    if ((((pVal != null) && ((((int) pVal[0].flags) & (0x0002 | 0x0010)) != 0)) && ((((int) pVal[0].flags) & 0x1000) != 0)) && (pVal[0].xDel != null && xFree != null)) 
     {
         return 1;
     }
@@ -31445,7 +31322,7 @@ sqlite3_value[] sqlite3ValueNew (sqlite3[] db) {
         p[0].flags = (uint16) 0x0001;
         p[0].db = _c2v_box_sqlite3_obj (db);
     }
-    return _c2v_box_sqlite3_value_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? p_obj[PLAIN]=>T?
@@ -31641,7 +31518,7 @@ int sqlite3ValueFromExpr (sqlite3[] db, Expr[] pExpr, uchar enc, uchar affinity,
 // c2vala-ptrs: v_ptr[CAST->sqlite3_value]=>sqlite3_value.at z_ptr[PLAIN]=>C2VPtr
 void sqlite3ValueSetStr (sqlite3_value[] v, int n, uint8[] z, uchar enc, sqlite3_destructor_type? xDel) {
     if (v != null) {
-        sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (v, 0)), z, (int64) n, enc, xDel);
+        sqlite3VdbeMemSetStr (v, z, (int64) n, enc, xDel);
     }
 }
 
@@ -31650,8 +31527,7 @@ void sqlite3ValueFree (sqlite3_value[] v) {
     if (!(v != null)) {
         return;
     }
-    sqlite3VdbeMemRelease (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (v, 0)));
-    sqlite3DbFreeNN (_c2v_box_sqlite3_arr (new sqlite3_value.at (v, 0).db), v);
+    sqlite3VdbeMemRelease (v);
 }
 
 // c2vala-ptrs: pVal_obj[DEREF|ARROW]=>T?
@@ -31740,7 +31616,7 @@ void sqlite3VdbeSwap (Vdbe[] pA, Vdbe[] pB) {
     pB[0].zSql = zTmp;
     pB[0].expmask = pA[0].expmask;
     pB[0].prepFlags = pA[0].prepFlags;
-    c_memcpy (pB[0].aCounter, pA[0].aCounter, ((int) (9) * 4));
+    for (int _k = 0; _k < 9; _k++) pB[0].aCounter[_k] = pA[0].aCounter[_k];
     pB[0].aCounter[(int) (5)]++;
 }
 
@@ -32236,24 +32112,18 @@ void sqlite3VdbeJumpHereOrPopInst (Vdbe[] p, int addr) {
 
 // c2vala-ptrs: db_obj[NULL]=>T? pDef_obj[DEREF|ARROW]=>T?
 void freeEphemeralFunction (sqlite3[] db, FuncDef[] pDef) {
-    if ((pDef[0].funcFlags & ((uint32) 0x0010)) != ((uint32) 0)) 
-    {
-        sqlite3DbNNFreeNN (db, pDef);
-    }
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T?
 void freeP4Mem (sqlite3[] db, sqlite3_value[] p) {
     if (p[0].szMalloc != 0) {
-        sqlite3DbFree (db, (p[0].zMalloc).data);
+        sqlite3DbFree (db, p[0].zMalloc);
     }
-    sqlite3DbNNFreeNN (db, p);
 }
 
 // c2vala-ptrs: db_obj[NULL]=>T? p_obj[DEREF|ARROW]=>T?
 void freeP4FuncCtx (sqlite3[] db, sqlite3_context[] p) {
     freeEphemeralFunction (db, _c2v_box_FuncDef_arr (p[0].pFunc));
-    sqlite3DbNNFreeNN (db, p);
 }
 
 // c2vala-ptrs: db_obj[DEREF|ARROW]=>T? p4_ptr[CAST->sqlite3_context,KeyInfo,FuncDef,sqlite3_value,VTable,Table,SubrtnSig]=>C2VPtr pSig_obj[DEREF|ARROW]=>T?
@@ -32330,7 +32200,6 @@ void freeP4 (sqlite3[] db, int p4type, uint8[] p4) {
             {
                 SubrtnSig[] pSig = _c2v_box_SubrtnSig_arr (new SubrtnSig.at (p4, 0));
                 sqlite3DbFree (db, (pSig[0].zAff).data);
-                sqlite3DbFree (db, pSig);
                 break;
             }
         }
@@ -32341,19 +32210,12 @@ void freeP4 (sqlite3[] db, int p4type, uint8[] p4) {
 void vdbeFreeOpArray (sqlite3[] db, VdbeOp[] aOp, int nOp) {
     if (aOp != null) 
     {
-        VdbeOp[] pOp = _c2v_slice_VdbeOp (aOp, (int) ((nOp - 1)));
-        int _off_pOp = 0;
-        while (1 != 0) 
+        for (int _k = nOp - 1; _k >= 0; _k--) 
         {
-            if (((int) pOp[_off_pOp].p4type) <= -6) {
-                freeP4 (db, (int) (pOp[_off_pOp].p4type), pOp[_off_pOp].p4.p);
+            if (((int) aOp[_k].p4type) <= -6) {
+                freeP4 (db, (int) (aOp[_k].p4type), aOp[_k].p4.p);
             }
-            if (pOp == aOp) {
-                break;
-            }
-            _off_pOp--;
         }
-        sqlite3DbNNFreeNN (db, aOp);
     }
 }
 
@@ -32463,10 +32325,68 @@ void sqlite3VdbeAppendP4 (Vdbe[] p, uint8[] pP4, int n) {
     }
     else 
     {
-        pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (p[0].aOp, (int) ((p[0].nOp - 1))));
+        pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), (int) ((p[0].nOp - 1))));
         pOp.p4type = (int8) n;
         pOp.p4.p = pP4;
     }
+}
+
+void sqlite3VdbeAppendP4KeyInfo (Vdbe[] p, KeyInfo[] pKey) {
+    if (p[0].db.mallocFailed == 0 && pKey.length > 0) {
+        VdbeOp? pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), (int) ((p[0].nOp - 1))));
+        pOp.p4type = (int8) (-8);
+        pOp.p4.pKeyInfo = pKey[0];
+    }
+}
+
+void sqlite3VdbeChangeP4KeyInfo (Vdbe[] p, int addr, KeyInfo[] pKey) {
+    if (p[0].db.mallocFailed == 0 && pKey.length > 0) {
+        if (addr < 0) addr = p[0].nOp + addr;
+        VdbeOp? pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), addr));
+        pOp.p4type = (int8) (-8);
+        pOp.p4.pKeyInfo = pKey[0];
+    }
+}
+
+int sqlite3VdbeAddOp4KeyInfo (Vdbe[] p, int op, int p1, int p2, int p3, KeyInfo[] pKey) {
+    int addr = sqlite3VdbeAddOp3 (p, op, p1, p2, p3);
+    sqlite3VdbeChangeP4KeyInfo (p, addr, pKey);
+    return addr;
+}
+
+void sqlite3VdbeAppendP4FuncDef (Vdbe[] p, FuncDef? pFunc) {
+    if (p[0].db.mallocFailed == 0 && pFunc != null) {
+        VdbeOp? pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), (int) ((p[0].nOp - 1))));
+        pOp.p4type = (int8) (-7);
+        pOp.p4.pFunc = pFunc;
+    }
+}
+
+void sqlite3VdbeAppendP4Table (Vdbe[] p, Table[] pTab) {
+    if (p[0].db.mallocFailed == 0 && pTab.length > 0) {
+        VdbeOp? pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), (int) ((p[0].nOp - 1))));
+        pOp.p4type = (int8) (-5);
+        pOp.p4.pTab = pTab[0];
+    }
+}
+
+void sqlite3VdbeChangeP4CollSeq (Vdbe[] p, int addr, CollSeq[] pColl) {
+    if (p[0].db.mallocFailed == 0 && pColl.length > 0) {
+        if (addr < 0) addr = p[0].nOp + addr;
+        VdbeOp? pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), addr));
+        pOp.p4type = (int8) (-2);
+        pOp.p4.pColl = pColl[0];
+    }
+}
+
+int sqlite3VdbeAddOp4SubProgram (Vdbe[] p, int op, int p1, int p2, int p3, SubProgram? pProgram) {
+    int addr = sqlite3VdbeAddOp3 (p, op, p1, p2, p3);
+    if (p[0].db.mallocFailed == 0 && pProgram != null) {
+        VdbeOp? pOp = _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), addr));
+        pOp.p4type = (int8) (-4);
+        pOp.p4.pProgram = pProgram;
+    }
+    return addr;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pIdx_obj[NULL]=>T? v_obj[NULL]=>T? pKeyInfo_obj[PLAIN]=>T?
@@ -32475,7 +32395,7 @@ void sqlite3VdbeSetP4KeyInfo (Parse? pParse, Index[] pIdx) {
     KeyInfo[] pKeyInfo = new KeyInfo[0];
     pKeyInfo = sqlite3KeyInfoOfIndex (pParse, pIdx);
     if (pKeyInfo != null) {
-        sqlite3VdbeAppendP4 (v, pKeyInfo, -8);
+        sqlite3VdbeAppendP4KeyInfo (v, pKeyInfo);
     }
 }
 
@@ -32488,7 +32408,7 @@ VdbeOp? sqlite3VdbeGetOp (Vdbe[] p, int addr) {
     }
     else 
     {
-        return _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (p[0].aOp, (int) (addr)));
+        return _c2v_box_VdbeOp_obj (_c2v_slice_VdbeOp (_c2v_box_VdbeOp_arr (p[0].aOp), (int) (addr)));
     }
 }
 
@@ -32501,7 +32421,7 @@ VdbeOp? sqlite3VdbeGetLastOp (Vdbe[] p) {
 string sqlite3VdbeDisplayP4 (sqlite3[] db, VdbeOp? pOp) {
     uint8[] zP4 = "";
     sqlite3_str x = new sqlite3_str ();
-    sqlite3StrAccumInit (x, null, "", 0, 1000000000);
+    sqlite3StrAccumInit (x, new sqlite3[0], new uint8[0], 0, 1000000000);
     var _sw_0 = pOp.p4type;
     bool _ft_0 = false;
     do {
@@ -32720,9 +32640,9 @@ void releaseMemArray (sqlite3_value[] p, int N) {
         {
             do {
                 if (p[_off_p].szMalloc != 0) {
-                    sqlite3DbFree (db, (p[_off_p].zMalloc).data);
+                    sqlite3DbFree (db, p[_off_p].zMalloc);
                 }
-            } while (uintptr.from_pointer ((void*) (++_off_p)) < uintptr.from_pointer ((void*) (pEnd)));
+            } while (++_off_p < N);
             return;
         }
         do {
@@ -32734,11 +32654,11 @@ void releaseMemArray (sqlite3_value[] p, int N) {
             else 
             if (p[_off_p].szMalloc != 0) 
             {
-                sqlite3DbNNFreeNN (db, (p[_off_p].zMalloc).data);
+                sqlite3DbNNFreeNN (db, p[_off_p].zMalloc);
                 p[_off_p].szMalloc = 0;
                 p[_off_p].flags = (uint16) 0x0000;
             }
-        } while (uintptr.from_pointer ((void*) (++_off_p)) < uintptr.from_pointer ((void*) (pEnd)));
+        } while (++_off_p < N);
     }
 }
 
@@ -33048,7 +32968,6 @@ void freeCursorWithCache (Vdbe[] p, VdbeCursor? pCx) {
         sqlite3RCStrUnref ((pCache[0].pCValue).data);
         pCache[0].pCValue = "";
     }
-    sqlite3DbFree (_c2v_box_sqlite3_arr (p[0].db), pCache);
     sqlite3VdbeFreeCursorNN (p, pCx);
 }
 
@@ -33157,7 +33076,7 @@ void sqlite3VdbeSetNumCols (Vdbe[] p, int nResColumn) {
     if (p[0].nResAlloc != 0) 
     {
         releaseMemArray (_c2v_box_sqlite3_value_arr (p[0].aColName), (((int) p[0].nResAlloc) * 2));
-        sqlite3DbFree (db, (p[0].aColName).data);
+        p[0].aColName = null;
     }
     n = (nResColumn * 2);
     p[0].nResAlloc = ((uint16) nResColumn);
@@ -33617,7 +33536,7 @@ int sqlite3VdbeTransferError (Vdbe[] p) {
         if (db[0].pErr == null) {
             db[0].pErr = _c2v_box_sqlite3_value_obj (sqlite3ValueNew (db));
         }
-        sqlite3ValueSetStr (_c2v_box_sqlite3_value_arr (db[0].pErr), -1, (p[0].zErrMsg).data, (uchar) 1, ((sqlite3_destructor_type?) (-1)));
+        sqlite3ValueSetStr (_c2v_box_sqlite3_value_arr (db[0].pErr), -1, (p[0].zErrMsg).data, (uchar) 1, ((sqlite3_destructor_type?) null));
         sqlite3EndBenignMalloc ();
         db[0].bBenignMalloc = db[0].bBenignMalloc - 1;
     }
@@ -33682,11 +33601,10 @@ void sqlite3VdbeDeleteAuxData (sqlite3[] db, AuxData?[] _p_pp, int iOp, int mask
                 ((!) pAux[0].xDeleteAux) (pAux[0].pAux);
             }
             ((!) pp).set_val (pAux[0].pNextAux);
-            sqlite3DbFree (db, pAux);
         }
         else 
         {
-            pp = new _c2v_fref_AuxData_ (() => { return pAux.pNextAux; }, (v) => { pAux.pNextAux = v; });
+            pp = new _c2v_fref_AuxData_ (() => { return pAux[0].pNextAux; }, (v) => { pAux[0].pNextAux = v; });
         }
     }
 }
@@ -33698,19 +33616,18 @@ void sqlite3VdbeClearObject (sqlite3[] db, Vdbe[] p) {
     if (p[0].aColName != null) 
     {
         releaseMemArray (_c2v_box_sqlite3_value_arr (p[0].aColName), (((int) p[0].nResAlloc) * 2));
-        sqlite3DbNNFreeNN (db, (p[0].aColName).data);
+        p[0].aColName = null;
     }
     for (pSub = _c2v_box_SubProgram_arr (p[0].pProgram); pSub != null; pSub = _c2v_box_SubProgram_arr (pNext)) 
     {
         pNext = pSub[0].pNext;
         vdbeFreeOpArray (db, _c2v_box_VdbeOp_arr (pSub[0].aOp), pSub[0].nOp);
-        sqlite3DbFree (db, pSub);
     }
     if (((int) p[0].eVdbeState) != 0) 
     {
         releaseMemArray (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) (p[0].nVar));
         if (p[0].pVList != null) {
-            sqlite3DbNNFreeNN (db, (p[0].pVList).data);
+            p[0].pVList = new int[0];
         }
         if (p[0].pFree != null) {
             sqlite3DbNNFreeNN (db, p[0].pFree);
@@ -33735,7 +33652,6 @@ void sqlite3VdbeDelete (Vdbe[] p) {
             p[0].pVNext.ppVPrev = p[0].ppVPrev;
         }
     }
-    sqlite3DbNNFreeNN (db, p);
 }
 
 // c2vala-ptrs: p_obj[DEREF|WR|ARROW]=>T?
@@ -33911,7 +33827,7 @@ void sqlite3VdbeSerialGet (uchar[] buf, uint32 serial_type, sqlite3_value[] pMem
                 uint16[] aFlag = new uint16[2];
                 aFlag[0] = (uint16) ((0x0010 | 0x4000));
                 aFlag[1] = (uint16) ((0x0002 | 0x4000));
-                pMem[0].z = (string) (string) buf;
+                pMem[0].z = buf;
                 pMem[0].n = (int) (((serial_type - ((uint32) 12)) / ((uint32) 2)));
                 pMem[0].flags = aFlag[(int) ((serial_type & ((uint32) 1)))];
                 return;
@@ -33930,7 +33846,7 @@ UnpackedRecord? sqlite3VdbeAllocUnpackedRecord (KeyInfo? pKeyInfo) {
     if (!(p != null)) {
         return null;
     }
-    p.aMem = new sqlite3_value.at (c_str_add (p, (int) (49)), 0);
+    p.aMem = new sqlite3_value.at (c_bytes_add ((!) p._c2v_data, (int) (49)), 0);
     p.pKeyInfo = pKeyInfo;
     p.nField = (uint16) ((((int) pKeyInfo.nKeyField) + 1));
     return p;
@@ -33956,7 +33872,7 @@ void sqlite3VdbeRecordUnpack (KeyInfo? pKeyInfo, int nKey, uint8[] pKey, Unpacke
         pMem[_off_pMem].enc = pKeyInfo.enc;
         pMem[_off_pMem].db = pKeyInfo.db;
         pMem[_off_pMem].szMalloc = 0;
-        pMem[_off_pMem].z = "";
+        pMem[_off_pMem].z = new uint8[0];
         sqlite3VdbeSerialGet (_c2v_slice_uchar (aKey, (int) (d)), serial_type[0], _c2v_slice_sqlite3_value (pMem, _off_pMem));
         d += sqlite3VdbeSerialTypeLen (serial_type[0]);
         _off_pMem++;
@@ -34584,7 +34500,9 @@ int vdbeRecordCompareString (int nKey1, uint8[] pKey1, UnpackedRecord[] pPKey2) 
         {
             if (serial_type[0] < 0) 
             {
-                sqlite3GetVarint32 (_c2v_slice_uchar (aKey1, (int) (1)), serial_type);
+                uint32[] _st = { (uint32) serial_type[0] };
+                sqlite3GetVarint32 (_c2v_slice_uchar (aKey1, (int) (1)), _st);
+                serial_type[0] = (int) _st[0];
                 if (serial_type[0] >= 12) {
                     c2v_goto_vrcs_restart = true;
                     break;
@@ -34675,7 +34593,7 @@ RecordCompare? sqlite3VdbeFindCompare (UnpackedRecord[] p) {
         }
         if (((flags & (((0x0008 | 0x0020) | 0x0001) | 0x0010)) == 0) && (p[0].pKeyInfo.aColl[(int) (0)] == null)) 
         {
-            p[0].u.z = _c2v_box_sqlite3_value_arr (p[0].aMem)[(int) (0)].z;
+            p[0].u.z = (string) _c2v_box_sqlite3_value_arr (p[0].aMem)[(int) (0)].z;
             p[0].n = _c2v_box_sqlite3_value_arr (p[0].aMem)[(int) (0)].n;
             return vdbeRecordCompareString;
         }
@@ -34716,7 +34634,7 @@ int sqlite3VdbeIdxRowid (sqlite3[] db, BtCursor[] pCur, int64[] rowid) {
         if (c2v_goto_idx_rowid_corruption) break;
         typeRowid[0] = ((uint32) (m.z[(int) ((szHdr[0] - ((uint32) 1)))]));
         if (typeRowid[0] >= ((uint32) 0x80)) {
-            sqlite3GetVarint32 (c_str_add (m.z, (int) ((szHdr[0] - ((uint32) 1)))), typeRowid);
+            sqlite3GetVarint32 (c_bytes_add (m.z, (int) ((szHdr[0] - ((uint32) 1)))), typeRowid);
         }
         if (c2v_goto_idx_rowid_corruption) break;
         if (((typeRowid[0] < ((uint32) 1)) || (typeRowid[0] > ((uint32) 9))) || (typeRowid[0] == ((uint32) 7))) 
@@ -34732,7 +34650,7 @@ int sqlite3VdbeIdxRowid (sqlite3[] db, BtCursor[] pCur, int64[] rowid) {
             break;
         }
         if (c2v_goto_idx_rowid_corruption) break;
-        sqlite3VdbeSerialGet (c_str_add (m.z, (int) ((((uint32) m.n) - lenRowid))), typeRowid[0], _c2v_box_sqlite3_value_arr (v));
+        sqlite3VdbeSerialGet (c_bytes_add (m.z, (int) ((((uint32) m.n) - lenRowid))), typeRowid[0], _c2v_box_sqlite3_value_arr (v));
         rowid[0] = v.u.i;
         sqlite3VdbeMemReleaseMalloc (_c2v_box_sqlite3_value_arr (m));
         return 0;
@@ -34761,7 +34679,7 @@ int sqlite3VdbeIdxKeyCompare (sqlite3[] db, VdbeCursor[] pC, UnpackedRecord[] pU
     {
         return rc;
     }
-    res[0] = sqlite3VdbeRecordCompareWithSkip (m.n, m.z.data, pUnpacked, 0);
+    res[0] = sqlite3VdbeRecordCompareWithSkip (m.n, m.z, pUnpacked, 0);
     sqlite3VdbeMemReleaseMalloc (_c2v_box_sqlite3_value_arr (m));
     return 0;
 }
@@ -34809,7 +34727,7 @@ sqlite3_value[] sqlite3VdbeGetBoundValue (Vdbe? v, int iVar, uchar aff) {
                 sqlite3VdbeMemCopy (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (pRet, 0)), pMem);
                 sqlite3ValueApplyAffinity (pRet, aff, (uchar) 1);
             }
-            return _c2v_box_sqlite3_value_obj (pRet);
+            return pRet;
         }
     }
     return null;
@@ -34869,7 +34787,7 @@ void sqlite3VtabImportErrmsg (Vdbe[] p, sqlite3_vtab? pVtab) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_expired (sqlite3_stmt? pStmt) {
+int sqlite3_expired (Vdbe? pStmt) {
     Vdbe? p = ((Vdbe?) pStmt);
     return (int) (((p == null) || (p.expired != 0)));
 }
@@ -34912,13 +34830,15 @@ void invokeProfileCallback (sqlite3[] db, Vdbe[] p) {
     }
     if ((((int) db[0].mTrace) & 0x02) != 0) 
     {
-        ((!) db[0].trace.xV2) ((uint32) 0x02, db[0].pTraceArg, p, iElapse);
+        uint8[] _el = new uint8[8];
+        c_u_set_u64_at (_el, 0, (uint64) iElapse[0]);
+        ((!) db[0].trace.xV2) ((uint32) 0x02, db[0].pTraceArg, p[0]._c2v_data ?? new uint8[0], _el);
     }
     p[0].startTime = (int64) 0;
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST|NULL->Vdbe]=>Vdbe.at v_obj[DEREF|ARROW]=>T? db_obj[PLAIN]=>T?
-int sqlite3_finalize (sqlite3_stmt? pStmt) {
+int sqlite3_finalize (Vdbe? pStmt) {
     int rc = 0;
     if (pStmt == null) 
     {
@@ -34944,7 +34864,7 @@ int sqlite3_finalize (sqlite3_stmt? pStmt) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST|NULL->Vdbe]=>Vdbe.at v_obj[DEREF|ARROW]=>T? db_obj[DEREF|ARROW]=>T?
-int sqlite3_reset (sqlite3_stmt? pStmt) {
+int sqlite3_reset (Vdbe? pStmt) {
     int rc = 0;
     if (pStmt == null) 
     {
@@ -34966,13 +34886,13 @@ int sqlite3_reset (sqlite3_stmt? pStmt) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|WR|ARROW]=>T?
-int sqlite3_clear_bindings (sqlite3_stmt? pStmt) {
+int sqlite3_clear_bindings (Vdbe? pStmt) {
     int i = 0;
     int rc = 0;
     Vdbe? p = ((Vdbe?) pStmt);
     for (i = 0; i < ((int) p.nVar); i++) 
     {
-        sqlite3VdbeMemRelease (_c2v_slice_sqlite3_value (p.aVar, (int) (i)));
+        sqlite3VdbeMemRelease (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p.aVar), (int) (i)));
         _c2v_box_sqlite3_value_arr (p.aVar)[(int) (i)].flags = (uint16) 0x0001;
     }
     if (p.expmask != 0) 
@@ -34984,7 +34904,7 @@ int sqlite3_clear_bindings (sqlite3_stmt? pStmt) {
 
 // c2vala-ptrs: pVal_ptr[CAST->sqlite3_value]=>sqlite3_value.at p_obj[DEREF|WR|ARROW]=>T?
 uint8[] sqlite3_value_blob (sqlite3_value[] pVal) {
-    sqlite3_value[] p = _c2v_box_sqlite3_value_arr (new sqlite3_value.at (pVal, 0));
+    sqlite3_value[] p = pVal;
     if ((((int) p[0].flags) & (0x0010 | 0x0002)) != 0) 
     {
         if ((((((int) p[0].flags) & 0x0400) != 0) ? sqlite3VdbeMemExpandBlob (p) : 0) != 0) 
@@ -34992,7 +34912,7 @@ uint8[] sqlite3_value_blob (sqlite3_value[] pVal) {
             return new uint8[0];
         }
         p[0].flags |= 0x0010;
-        return ((p[0].n != 0) ? p[0].z : 0);
+        return ((p[0].n != 0) ? p[0].z : new uint8[0]);
     }
     else 
     {
@@ -35012,22 +34932,22 @@ int sqlite3_value_bytes16 (sqlite3_value[] pVal) {
 
 // c2vala-ptrs: pVal_ptr[CAST->sqlite3_value]=>sqlite3_value.at
 double sqlite3_value_double (sqlite3_value[] pVal) {
-    return sqlite3VdbeRealValue (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (pVal, 0)));
+    return sqlite3VdbeRealValue (pVal);
 }
 
 // c2vala-ptrs: pVal_ptr[CAST->sqlite3_value]=>sqlite3_value.at
 int sqlite3_value_int (sqlite3_value[] pVal) {
-    return ((int) (sqlite3VdbeIntValue (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (pVal, 0)))));
+    return ((int) (sqlite3VdbeIntValue (pVal)));
 }
 
 // c2vala-ptrs: pVal_ptr[CAST->sqlite3_value]=>sqlite3_value.at
 int64 sqlite3_value_int64 (sqlite3_value[] pVal) {
-    return sqlite3VdbeIntValue (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (pVal, 0)));
+    return sqlite3VdbeIntValue (pVal);
 }
 
 // c2vala-ptrs: pVal_ptr[CAST->sqlite3_value]=>sqlite3_value.at pMem_obj[DEREF|ARROW]=>T?
 uint32 sqlite3_value_subtype (sqlite3_value[] pVal) {
-    sqlite3_value? pMem = new sqlite3_value.at (pVal, 0);
+    sqlite3_value? pMem = pVal[0];
     return (((((int) pMem.flags) & 0x0800) != 0) ? pMem.eSubtype : 0);
 }
 
@@ -35153,14 +35073,11 @@ int sqlite3_value_frombind (sqlite3_value? pVal) {
 sqlite3_value[] sqlite3_value_dup (sqlite3_value[] pOrig) {
     sqlite3_value[] pNew = new sqlite3_value[0];
     if (pOrig == null) {
-        return null;
+        return new sqlite3_value[0];
     }
-    pNew = sqlite3_malloc ((int) 70);
-    if (pNew == null) {
-        return null;
-    }
+    pNew = { new sqlite3_value () };
     pNew[0].u = new MemValue ();
-    pNew[0].z = "";
+    pNew[0].z = new uint8[0];
     pNew[0].n = 0;
     pNew[0].flags = 0;
     pNew[0].enc = 0;
@@ -35168,7 +35085,7 @@ sqlite3_value[] sqlite3_value_dup (sqlite3_value[] pOrig) {
     pNew[0].db = null;
     pNew[0].szMalloc = 0;
     pNew[0].uTemp = 0;
-    pNew[0].zMalloc = "";
+    pNew[0].zMalloc = new uint8[0];
     pNew[0].xDel = null;
     pNew[0] = pOrig[0];
     pNew[0].flags &= ~0x1000;
@@ -35180,7 +35097,7 @@ sqlite3_value[] sqlite3_value_dup (sqlite3_value[] pOrig) {
         if (sqlite3VdbeMemMakeWriteable (pNew) != 0) 
         {
             sqlite3ValueFree (pNew);
-            pNew = null;
+            pNew = new sqlite3_value[0];
         }
     }
     else 
@@ -35188,7 +35105,7 @@ sqlite3_value[] sqlite3_value_dup (sqlite3_value[] pOrig) {
     {
         pNew[0].flags &= ~(0x0200 | 0x0800);
     }
-    return _c2v_box_sqlite3_value_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: pOld_obj[PLAIN]=>T?
@@ -35221,14 +35138,7 @@ void setResultStrOrError (sqlite3_context? pCtx, uint8[] z, int n, uchar enc, sq
 
 // c2vala-ptrs: p_ptr[PLAIN]=>C2VPtr pCtx_obj[NULL]=>T?
 int invokeValueDestructor (uint8[] p, sqlite3_destructor_type? xDel, sqlite3_context? pCtx) {
-    if (xDel == null) 
-    {
-    }
-    else 
-    if (xDel == ((sqlite3_destructor_type?) (-1))) 
-    {
-    }
-    else 
+    if (xDel != null) 
     {
         ((!) xDel) (p);
     }
@@ -35261,13 +35171,13 @@ void sqlite3_result_double (sqlite3_context? pCtx, double rVal) {
 // c2vala-ptrs: pCtx_obj[DEREF|WR|ARROW]=>T? z_obj[PLAIN]=>T?
 void sqlite3_result_error (sqlite3_context? pCtx, uint8[] z, int n) {
     pCtx.isError = 1;
-    sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (pCtx.pOut), z, (int64) n, (uchar) 1, ((sqlite3_destructor_type?) (-1)));
+    sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (pCtx.pOut), z, (int64) n, (uchar) 1, ((sqlite3_destructor_type?) null));
 }
 
 // c2vala-ptrs: pCtx_obj[DEREF|WR|ARROW]=>T? z_ptr[PLAIN]=>C2VPtr
 void sqlite3_result_error16 (sqlite3_context? pCtx, uint8[] z, int n) {
     pCtx.isError = 1;
-    sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (pCtx.pOut), z, (int64) n, ((((int) sqlite3one) == 0) ? 3 : 2), ((sqlite3_destructor_type?) (-1)));
+    sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (pCtx.pOut), z, (int64) n, ((((int) sqlite3one) == 0) ? 3 : 2), ((sqlite3_destructor_type?) null));
 }
 
 // c2vala-ptrs: pCtx_obj[DEREF|ARROW]=>T?
@@ -35416,7 +35326,7 @@ int sqlite3Step (Vdbe[] p) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at v_obj[DEREF|WR|ARROW]=>T? db_obj[DEREF|ARROW]=>T? zErr_obj[PLAIN]=>T?
-int sqlite3_step (sqlite3_stmt? pStmt) {
+int sqlite3_step (Vdbe? pStmt) {
     int rc = 0;
     Vdbe[] v = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     int cnt = 0;
@@ -35519,7 +35429,7 @@ int valueFromValueList (sqlite3_value? pVal, sqlite3_value?[] ppOut, int bNext) 
         sMem.db = null;
         sMem.szMalloc = 0;
         sMem.uTemp = 0;
-        sMem.zMalloc = "";
+        sMem.zMalloc = new uint8[0];
         sMem.xDel = null;
         sz = sqlite3BtreePayloadSize (_c2v_box_BtCursor_arr (pRhs.pCsr));
         rc = sqlite3VdbeMemFromBtreeZeroOffset (_c2v_box_BtCursor_arr (pRhs.pCsr), (uint32) (((int) sz)), _c2v_box_sqlite3_value_arr (sMem));
@@ -35567,7 +35477,7 @@ uint8[] createAggContext (sqlite3_context? p, int nByte) {
     if (nByte <= 0) 
     {
         sqlite3VdbeMemSetNull (pMem);
-        pMem[0].z = "";
+        pMem[0].z = new uint8[0];
     }
     else 
     {
@@ -35576,7 +35486,7 @@ uint8[] createAggContext (sqlite3_context? p, int nByte) {
         pMem[0].u.pDef = p.pFunc;
         if (pMem[0].z != null) 
         {
-            c_memset (c_str_to_bytes (pMem[0].z), 0, nByte);
+            c_memset (pMem[0].z, 0, nByte);
         }
     }
     return pMem[0].z;
@@ -35625,7 +35535,7 @@ void sqlite3_set_auxdata (sqlite3_context? pCtx, int iArg, uint8[] pAux, sqlite3
         if (c2v_goto_failed) break;
         if (pAuxData == null) 
         {
-            pAuxData = sqlite3DbMallocZero (_c2v_box_sqlite3_arr (pVdbe.db), (uint64) 32);
+            pAuxData = { new AuxData () };
             if (!(pAuxData != null)) {
                 c2v_goto_failed = true;
                 break;
@@ -35661,7 +35571,7 @@ int sqlite3_aggregate_count (sqlite3_context? p) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at pVm_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_column_count (sqlite3_stmt? pStmt) {
+int sqlite3_column_count (Vdbe? pStmt) {
     Vdbe? pVm = ((Vdbe?) pStmt);
     if (pVm == null) {
         return 0;
@@ -35670,7 +35580,7 @@ int sqlite3_column_count (sqlite3_stmt? pStmt) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at pVm_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_data_count (sqlite3_stmt? pStmt) {
+int sqlite3_data_count (Vdbe? pStmt) {
     Vdbe? pVm = ((Vdbe?) pStmt);
     if ((pVm == null) || (pVm.pResultRow == null)) {
         return 0;
@@ -35681,7 +35591,7 @@ int sqlite3_data_count (sqlite3_stmt? pStmt) {
 sqlite3_value? columnNullValue () {
     sqlite3_value nullMem = new sqlite3_value ();
     nullMem.u = _c2v_lit_MemValue_1 ((double) 0);
-    nullMem.z = "";
+    nullMem.z = new uint8[0];
     nullMem.n = ((int) 0);
     nullMem.flags = ((uint16) 0x0001);
     nullMem.enc = ((uchar) 0);
@@ -35689,13 +35599,13 @@ sqlite3_value? columnNullValue () {
     nullMem.db = null;
     nullMem.szMalloc = ((int) 0);
     nullMem.uTemp = ((uint32) 0);
-    nullMem.zMalloc = "";
+    nullMem.zMalloc = new uint8[0];
     nullMem.xDel = null;
     return nullMem;
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at pVm_obj[DEREF|NULL|ARROW]=>T? pOut_obj[PLAIN]=>T?
-sqlite3_value? columnMem (sqlite3_stmt? pStmt, int i) {
+sqlite3_value? columnMem (Vdbe? pStmt, int i) {
     Vdbe? pVm = null;
     sqlite3_value? pOut = null;
     pVm = ((Vdbe?) pStmt);
@@ -35715,7 +35625,7 @@ sqlite3_value? columnMem (sqlite3_stmt? pStmt, int i) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|WR|ARROW]=>T?
-void columnMallocFailure (sqlite3_stmt? pStmt) {
+void columnMallocFailure (Vdbe? pStmt) {
     Vdbe? p = ((Vdbe?) pStmt);
     if (p != null) 
     {
@@ -35724,7 +35634,7 @@ void columnMallocFailure (sqlite3_stmt? pStmt) {
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? val_ptr[PLAIN]=>C2VPtr
-uint8[] sqlite3_column_blob (sqlite3_stmt? pStmt, int i) {
+uint8[] sqlite3_column_blob (Vdbe? pStmt, int i) {
     uint8[] val = null;
     val = sqlite3_value_blob (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
@@ -35732,49 +35642,49 @@ uint8[] sqlite3_column_blob (sqlite3_stmt? pStmt, int i) {
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-int sqlite3_column_bytes (sqlite3_stmt? pStmt, int i) {
+int sqlite3_column_bytes (Vdbe? pStmt, int i) {
     int val = sqlite3_value_bytes (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-int sqlite3_column_bytes16 (sqlite3_stmt? pStmt, int i) {
+int sqlite3_column_bytes16 (Vdbe? pStmt, int i) {
     int val = sqlite3_value_bytes16 (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-double sqlite3_column_double (sqlite3_stmt? pStmt, int i) {
+double sqlite3_column_double (Vdbe? pStmt, int i) {
     double val = sqlite3_value_double (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-int sqlite3_column_int (sqlite3_stmt? pStmt, int i) {
+int sqlite3_column_int (Vdbe? pStmt, int i) {
     int val = sqlite3_value_int (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-int64 sqlite3_column_int64 (sqlite3_stmt? pStmt, int i) {
+int64 sqlite3_column_int64 (Vdbe? pStmt, int i) {
     int64 val = sqlite3_value_int64 (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? val_obj[PLAIN]=>T?
-uchar[] sqlite3_column_text (sqlite3_stmt? pStmt, int i) {
+uchar[] sqlite3_column_text (Vdbe? pStmt, int i) {
     uchar[] val = sqlite3_value_text (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? pOut_ptr[DEREF|CAST|WR|ARROW->sqlite3_value]=>sqlite3_value.at
-sqlite3_value? sqlite3_column_value (sqlite3_stmt? pStmt, int i) {
+sqlite3_value? sqlite3_column_value (Vdbe? pStmt, int i) {
     sqlite3_value? pOut = columnMem (pStmt, i);
     if ((((int) pOut.flags) & 0x2000) != 0) 
     {
@@ -35786,14 +35696,14 @@ sqlite3_value? sqlite3_column_value (sqlite3_stmt? pStmt, int i) {
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? val_ptr[PLAIN]=>C2VPtr
-uint8[] sqlite3_column_text16 (sqlite3_stmt? pStmt, int i) {
+uint8[] sqlite3_column_text16 (Vdbe? pStmt, int i) {
     uint8[] val = (string) sqlite3_value_text16 (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return val;
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-int sqlite3_column_type (sqlite3_stmt? pStmt, int i) {
+int sqlite3_column_type (Vdbe? pStmt, int i) {
     int iType = sqlite3_value_type (_c2v_box_sqlite3_value_arr (columnMem (pStmt, i)));
     columnMallocFailure (pStmt);
     return iType;
@@ -35806,7 +35716,7 @@ public uint16[] azExplainColNames16data;
 public uchar[] iExplainColNames16;
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at ret_ptr[PLAIN]=>C2VPtr p_obj[DEREF|ARROW]=>T? db_obj[DEREF|NULL|ARROW]=>T?
-uint8[] columnName (sqlite3_stmt? pStmt, int N, int useUtf16, int useType) {
+uint8[] columnName (Vdbe? pStmt, int N, int useUtf16, int useType) {
     bool c2v_goto_columnName_end = false;
     uint8[] ret = null;
     Vdbe? p = null;
@@ -35870,22 +35780,22 @@ uint8[] columnName (sqlite3_stmt? pStmt, int N, int useUtf16, int useType) {
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-string sqlite3_column_name (sqlite3_stmt? pStmt, int N) {
+string sqlite3_column_name (Vdbe? pStmt, int N) {
     return (string) columnName (pStmt, N, 0, 0);
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-uint8[] sqlite3_column_name16 (sqlite3_stmt? pStmt, int N) {
+uint8[] sqlite3_column_name16 (Vdbe? pStmt, int N) {
     return columnName (pStmt, N, 1, 0);
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-string sqlite3_column_decltype (sqlite3_stmt? pStmt, int N) {
+string sqlite3_column_decltype (Vdbe? pStmt, int N) {
     return (string) columnName (pStmt, N, 0, 1);
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T?
-uint8[] sqlite3_column_decltype16 (sqlite3_stmt? pStmt, int N) {
+uint8[] sqlite3_column_decltype16 (Vdbe? pStmt, int N) {
     return columnName (pStmt, N, 1, 1);
 }
 
@@ -35907,7 +35817,7 @@ int vdbeUnbind (Vdbe[] p, uint32 i) {
         sqlite3Error (_c2v_box_sqlite3_arr (p[0].db), 25);
         return 25;
     }
-    pVar = _c2v_slice_sqlite3_value (p[0].aVar, (int) (i));
+    pVar = _c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) (i));
     sqlite3VdbeMemRelease (pVar);
     pVar[0].flags = (uint16) 0x0001;
     p[0].db.errCode = 0;
@@ -35919,7 +35829,7 @@ int vdbeUnbind (Vdbe[] p, uint32 i) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at zData_ptr[NULL]=>C2VPtr p_obj[DEREF|NULL|ARROW]=>T? pVar_obj[PLAIN]=>T?
-int bindText (sqlite3_stmt? pStmt, int i, uint8[] zData, int64 nData, sqlite3_destructor_type? xDel, uchar encoding) {
+int bindText (Vdbe? pStmt, int i, uint8[] zData, int64 nData, sqlite3_destructor_type? xDel, uchar encoding) {
     Vdbe[] p = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     sqlite3_value[] pVar = new sqlite3_value[0];
     int rc = 0;
@@ -35928,7 +35838,7 @@ int bindText (sqlite3_stmt? pStmt, int i, uint8[] zData, int64 nData, sqlite3_de
     {
         if (zData != null) 
         {
-            pVar = _c2v_slice_sqlite3_value (p[0].aVar, (int) ((i - 1)));
+            pVar = _c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) ((i - 1)));
             rc = sqlite3VdbeMemSetStr (pVar, zData, nData, encoding, xDel);
             if ((rc == 0) && (((int) encoding) != 0)) 
             {
@@ -35942,7 +35852,7 @@ int bindText (sqlite3_stmt? pStmt, int i, uint8[] zData, int64 nData, sqlite3_de
         }
     }
     else 
-    if ((xDel != null) && (xDel != ((sqlite3_destructor_type?) (-1)))) 
+    if (xDel != null) 
     {
         ((!) xDel) (zData);
     }
@@ -35950,46 +35860,46 @@ int bindText (sqlite3_stmt? pStmt, int i, uint8[] zData, int64 nData, sqlite3_de
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? zData_ptr[PLAIN]=>C2VPtr
-int sqlite3_bind_blob (sqlite3_stmt? pStmt, int i, uint8[] zData, int nData, sqlite3_destructor_type? xDel) {
+int sqlite3_bind_blob (Vdbe? pStmt, int i, uint8[] zData, int nData, sqlite3_destructor_type? xDel) {
     return bindText (pStmt, i, zData, (int64) nData, xDel, (uchar) 0);
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? zData_ptr[PLAIN]=>C2VPtr
-int sqlite3_bind_blob64 (sqlite3_stmt? pStmt, int i, uint8[] zData, uint64 nData, sqlite3_destructor_type? xDel) {
+int sqlite3_bind_blob64 (Vdbe? pStmt, int i, uint8[] zData, uint64 nData, sqlite3_destructor_type? xDel) {
     return bindText (pStmt, i, zData, (int64) nData, xDel, (uchar) 0);
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_bind_double (sqlite3_stmt? pStmt, int i, double rValue) {
+int sqlite3_bind_double (Vdbe? pStmt, int i, double rValue) {
     int rc = 0;
     Vdbe[] p = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     rc = vdbeUnbind (p, ((uint32) ((i - 1))));
     if (rc == 0) 
     {
-        sqlite3VdbeMemSetDouble (_c2v_slice_sqlite3_value (p[0].aVar, (int) ((i - 1))), rValue);
+        sqlite3VdbeMemSetDouble (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) ((i - 1))), rValue);
     }
     return rc;
 }
 
 // c2vala-ptrs: p_obj[PLAIN]=>T?
-int sqlite3_bind_int (sqlite3_stmt? p, int i, int iValue) {
+int sqlite3_bind_int (Vdbe? p, int i, int iValue) {
     return sqlite3_bind_int64 (p, i, ((int64) iValue));
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_bind_int64 (sqlite3_stmt? pStmt, int i, int64 iValue) {
+int sqlite3_bind_int64 (Vdbe? pStmt, int i, int64 iValue) {
     int rc = 0;
     Vdbe[] p = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     rc = vdbeUnbind (p, ((uint32) ((i - 1))));
     if (rc == 0) 
     {
-        sqlite3VdbeMemSetInt64 (_c2v_slice_sqlite3_value (p[0].aVar, (int) ((i - 1))), iValue);
+        sqlite3VdbeMemSetInt64 (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) ((i - 1))), iValue);
     }
     return rc;
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_bind_null (sqlite3_stmt? pStmt, int i) {
+int sqlite3_bind_null (Vdbe? pStmt, int i) {
     int rc = 0;
     Vdbe[] p = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     rc = vdbeUnbind (p, ((uint32) ((i - 1))));
@@ -36000,13 +35910,13 @@ int sqlite3_bind_null (sqlite3_stmt? pStmt, int i) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at pPtr_ptr[PLAIN]=>C2VPtr zPTtype_obj[PLAIN]=>T? p_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_bind_pointer (sqlite3_stmt? pStmt, int i, uint8[] pPtr, uint8[] zPTtype, sqlite3_destructor_type? xDestructor) {
+int sqlite3_bind_pointer (Vdbe? pStmt, int i, uint8[] pPtr, uint8[] zPTtype, sqlite3_destructor_type? xDestructor) {
     int rc = 0;
     Vdbe[] p = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     rc = vdbeUnbind (p, ((uint32) ((i - 1))));
     if (rc == 0) 
     {
-        sqlite3VdbeMemSetPointer (_c2v_slice_sqlite3_value (p[0].aVar, (int) ((i - 1))), pPtr, zPTtype, xDestructor);
+        sqlite3VdbeMemSetPointer (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) ((i - 1))), pPtr, zPTtype, xDestructor);
     }
     else 
     if (xDestructor != null) 
@@ -36017,12 +35927,12 @@ int sqlite3_bind_pointer (sqlite3_stmt? pStmt, int i, uint8[] pPtr, uint8[] zPTt
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? zData_obj[PLAIN]=>T?
-int sqlite3_bind_text (sqlite3_stmt? pStmt, int i, uint8[] zData, int nData, sqlite3_destructor_type? xDel) {
+int sqlite3_bind_text (Vdbe? pStmt, int i, uint8[] zData, int nData, sqlite3_destructor_type? xDel) {
     return bindText (pStmt, i, zData, (int64) nData, xDel, (uchar) 1);
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? zData_obj[PLAIN]=>T?
-int sqlite3_bind_text64 (sqlite3_stmt? pStmt, int i, uint8[] zData, uint64 nData, sqlite3_destructor_type? xDel, uchar enc) {
+int sqlite3_bind_text64 (Vdbe? pStmt, int i, uint8[] zData, uint64 nData, sqlite3_destructor_type? xDel, uchar enc) {
     if (((int) enc) != 1) 
     {
         if (((int) enc) == 4) {
@@ -36034,12 +35944,12 @@ int sqlite3_bind_text64 (sqlite3_stmt? pStmt, int i, uint8[] zData, uint64 nData
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? zData_ptr[PLAIN]=>C2VPtr
-int sqlite3_bind_text16 (sqlite3_stmt? pStmt, int i, uint8[] zData, int n, sqlite3_destructor_type? xDel) {
+int sqlite3_bind_text16 (Vdbe? pStmt, int i, uint8[] zData, int n, sqlite3_destructor_type? xDel) {
     return bindText (pStmt, i, zData, (int64) ((((uint64) n) & ~((uint64) 1))), xDel, ((((int) sqlite3one) == 0) ? 3 : 2));
 }
 
 // c2vala-ptrs: pStmt_obj[PLAIN]=>T? pValue_ptr[DEREF|CAST|ARROW->sqlite3_value]=>sqlite3_value.at
-int sqlite3_bind_value (sqlite3_stmt? pStmt, int i, sqlite3_value? pValue) {
+int sqlite3_bind_value (Vdbe? pStmt, int i, sqlite3_value? pValue) {
     int rc = 0;
     var _sw_1 = sqlite3_value_type (_c2v_box_sqlite3_value_arr (((sqlite3_value?) pValue)));
     bool _ft_1 = false;
@@ -36067,7 +35977,7 @@ int sqlite3_bind_value (sqlite3_stmt? pStmt, int i, sqlite3_value? pValue) {
                 }
                 else 
                 {
-                    rc = sqlite3_bind_blob (pStmt, i, pValue.z.data, pValue.n, ((sqlite3_destructor_type?) (-1)));
+                    rc = sqlite3_bind_blob (pStmt, i, pValue.z.data, pValue.n, ((sqlite3_destructor_type?) null));
                 }
                 break;
             }
@@ -36075,7 +35985,7 @@ int sqlite3_bind_value (sqlite3_stmt? pStmt, int i, sqlite3_value? pValue) {
         if (_ft_1 || _sw_1 == 3) {
             _ft_1 = true;
             {
-                rc = bindText (pStmt, i, pValue.z.data, (int64) pValue.n, ((sqlite3_destructor_type?) (-1)), pValue.enc);
+                rc = bindText (pStmt, i, pValue.z.data, (int64) pValue.n, ((sqlite3_destructor_type?) null), pValue.enc);
                 break;
             }
         }
@@ -36091,19 +36001,19 @@ int sqlite3_bind_value (sqlite3_stmt? pStmt, int i, sqlite3_value? pValue) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_bind_zeroblob (sqlite3_stmt? pStmt, int i, int n) {
+int sqlite3_bind_zeroblob (Vdbe? pStmt, int i, int n) {
     int rc = 0;
     Vdbe[] p = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     rc = vdbeUnbind (p, ((uint32) ((i - 1))));
     if (rc == 0) 
     {
-        sqlite3VdbeMemSetZeroBlob (_c2v_slice_sqlite3_value (p[0].aVar, (int) ((i - 1))), n);
+        sqlite3VdbeMemSetZeroBlob (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) ((i - 1))), n);
     }
     return rc;
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|ARROW]=>T?
-int sqlite3_bind_zeroblob64 (sqlite3_stmt? pStmt, int i, uint64 n) {
+int sqlite3_bind_zeroblob64 (Vdbe? pStmt, int i, uint64 n) {
     int rc = 0;
     Vdbe? p = ((Vdbe?) pStmt);
     if (n > ((uint64) (p.db.aLimit[(int) (0)]))) 
@@ -36119,13 +36029,13 @@ int sqlite3_bind_zeroblob64 (sqlite3_stmt? pStmt, int i, uint64 n) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|ARROW]=>T?
-int sqlite3_bind_parameter_count (sqlite3_stmt? pStmt) {
+int sqlite3_bind_parameter_count (Vdbe? pStmt) {
     Vdbe? p = ((Vdbe?) pStmt);
     return ((p != null) ? p.nVar : 0);
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|NULL|ARROW]=>T?
-string sqlite3_bind_parameter_name (sqlite3_stmt? pStmt, int i) {
+string sqlite3_bind_parameter_name (Vdbe? pStmt, int i) {
     Vdbe? p = ((Vdbe?) pStmt);
     if (p == null) {
         return "";
@@ -36142,24 +36052,24 @@ int sqlite3VdbeParameterIndex (Vdbe[] p, uint8[] zName, int nName) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at zName_obj[PLAIN]=>T?
-int sqlite3_bind_parameter_index (sqlite3_stmt? pStmt, uint8[] zName) {
+int sqlite3_bind_parameter_index (Vdbe? pStmt, uint8[] zName) {
     return sqlite3VdbeParameterIndex (_c2v_box_Vdbe_arr (((Vdbe?) pStmt)), zName, sqlite3Strlen30 (zName));
 }
 
 // c2vala-ptrs: pFromStmt_ptr[CAST->Vdbe]=>Vdbe.at pToStmt_ptr[CAST->Vdbe]=>Vdbe.at pFrom_obj[DEREF|ARROW]=>T? pTo_obj[DEREF|ARROW]=>T?
-int sqlite3TransferBindings (sqlite3_stmt? pFromStmt, sqlite3_stmt? pToStmt) {
+int sqlite3TransferBindings (Vdbe? pFromStmt, Vdbe? pToStmt) {
     Vdbe? pFrom = ((Vdbe?) pFromStmt);
     Vdbe? pTo = ((Vdbe?) pToStmt);
     int i = 0;
     for (i = 0; i < ((int) pFrom.nVar); i++) 
     {
-        sqlite3VdbeMemMove (_c2v_slice_sqlite3_value (pTo.aVar, (int) (i)), _c2v_slice_sqlite3_value (pFrom.aVar, (int) (i)));
+        sqlite3VdbeMemMove (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (pTo.aVar), (int) (i)), _c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (pFrom.aVar), (int) (i)));
     }
     return 0;
 }
 
 // c2vala-ptrs: pFromStmt_ptr[CAST->Vdbe]=>Vdbe.at pToStmt_ptr[CAST->Vdbe]=>Vdbe.at pFrom_obj[DEREF|WR|ARROW]=>T? pTo_obj[DEREF|WR|ARROW]=>T?
-int sqlite3_transfer_bindings (sqlite3_stmt? pFromStmt, sqlite3_stmt? pToStmt) {
+int sqlite3_transfer_bindings (Vdbe? pFromStmt, Vdbe? pToStmt) {
     Vdbe? pFrom = ((Vdbe?) pFromStmt);
     Vdbe? pTo = ((Vdbe?) pToStmt);
     if (pFrom.nVar != pTo.nVar) 
@@ -36178,22 +36088,22 @@ int sqlite3_transfer_bindings (sqlite3_stmt? pFromStmt, sqlite3_stmt? pToStmt) {
 }
 
 // c2vala-ptrs: pStmt_ptr[DEREF|CAST|ARROW->Vdbe]=>Vdbe.at
-sqlite3? sqlite3_db_handle (sqlite3_stmt? pStmt) {
+sqlite3? sqlite3_db_handle (Vdbe? pStmt) {
     return ((pStmt != null) ? ((Vdbe?) pStmt).db : 0);
 }
 
 // c2vala-ptrs: pStmt_ptr[DEREF|CAST|ARROW->Vdbe]=>Vdbe.at
-int sqlite3_stmt_readonly (sqlite3_stmt? pStmt) {
+int sqlite3_stmt_readonly (Vdbe? pStmt) {
     return ((pStmt != null) ? ((Vdbe?) pStmt).readOnly : 1);
 }
 
 // c2vala-ptrs: pStmt_ptr[DEREF|CAST|ARROW->Vdbe]=>Vdbe.at
-int sqlite3_stmt_isexplain (sqlite3_stmt? pStmt) {
+int sqlite3_stmt_isexplain (Vdbe? pStmt) {
     return ((pStmt != null) ? ((Vdbe?) pStmt).explain : 0);
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at v_obj[DEREF|WR|ARROW]=>T?
-int sqlite3_stmt_explain (sqlite3_stmt? pStmt, int eMode) {
+int sqlite3_stmt_explain (Vdbe? pStmt, int eMode) {
     Vdbe[] v = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     int rc = 0;
     if (((int) (v[0].explain)) == eMode) 
@@ -36239,36 +36149,37 @@ int sqlite3_stmt_explain (sqlite3_stmt? pStmt, int eMode) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at v_obj[DEREF|NULL|ARROW]=>T?
-int sqlite3_stmt_busy (sqlite3_stmt? pStmt) {
+int sqlite3_stmt_busy (Vdbe? pStmt) {
     Vdbe? v = ((Vdbe?) pStmt);
     return (int) (((v != null) && (((int) v.eVdbeState) == 2)));
 }
 
 // c2vala-ptrs: pDb_obj[DEREF|ARROW]=>T? pStmt_ptr[DEREF|CAST|NULL|ARROW->Vdbe]=>Vdbe.at pNext_obj[PLAIN]=>T?
-sqlite3_stmt? sqlite3_next_stmt (sqlite3? pDb, sqlite3_stmt? pStmt) {
-    sqlite3_stmt? pNext = null;
+Vdbe? sqlite3_next_stmt (sqlite3? pDb, Vdbe? pStmt) {
+    Vdbe? pNext = null;
     if (pStmt == null) 
     {
-        pNext = ((sqlite3_stmt?) pDb.pVdbe);
+        pNext = pDb.pVdbe;
     }
     else 
     {
-        pNext = ((sqlite3_stmt?) (((Vdbe?) pStmt).pVNext));
+        pNext = (((Vdbe?) pStmt).pVNext);
     }
     return pNext;
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at pVdbe_obj[DEREF|ARROW]=>T? db_obj[DEREF|WR|ARROW]=>T?
-int sqlite3_stmt_status (sqlite3_stmt? pStmt, int op, int resetFlag) {
+int sqlite3_stmt_status (Vdbe? pStmt, int op, int resetFlag) {
     Vdbe[] pVdbe = _c2v_box_Vdbe_arr (((Vdbe?) pStmt));
     uint32[] v = new uint32[1];
     if (op == 99) 
     {
         sqlite3? db = pVdbe[0].db;
-        v[0] = (uint32) 0;
-        db.pnBytesFreed = v;
+        int[] _nf = { 0 };
+        db.pnBytesFreed = _nf;
         db.lookaside.pEnd = db.lookaside.pStart;
         sqlite3VdbeDelete (pVdbe);
+        v[0] = (uint32) _nf[0];
         db.pnBytesFreed = new int[0];
         db.lookaside.pEnd = db.lookaside.pTrueEnd;
     }
@@ -36283,13 +36194,13 @@ int sqlite3_stmt_status (sqlite3_stmt? pStmt, int op, int resetFlag) {
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at p_obj[DEREF|ARROW]=>T?
-string sqlite3_sql (sqlite3_stmt? pStmt) {
+string sqlite3_sql (Vdbe? pStmt) {
     Vdbe? p = ((Vdbe?) pStmt);
     return ((p != null) ? p.zSql : 0);
 }
 
 // c2vala-ptrs: pStmt_ptr[CAST->Vdbe]=>Vdbe.at z_obj[PLAIN]=>T? zSql_obj[PLAIN]=>T? p_obj[PLAIN]=>T?
-string sqlite3_expanded_sql (sqlite3_stmt? pStmt) {
+string sqlite3_expanded_sql (Vdbe? pStmt) {
     string z = "";
     uint8[] zSql = (sqlite3_sql (pStmt)).data;
     if (zSql != null) 
@@ -36335,7 +36246,7 @@ string sqlite3VdbeExpandSql (Vdbe[] p, uint8[] zRawSql) {
     sqlite3_str @out = new sqlite3_str ();
     sqlite3_value utf8 = new sqlite3_value ();
     db = p[0].db;
-    sqlite3StrAccumInit (@out, null, "", 0, db.aLimit[(int) (0)]);
+    sqlite3StrAccumInit (@out, new sqlite3[0], new uint8[0], 0, db.aLimit[(int) (0)]);
     if (db.nVdbeExec > 1) 
     {
         while (zRawSql[_off_zRawSql] != 0) 
@@ -36379,7 +36290,7 @@ string sqlite3VdbeExpandSql (Vdbe[] p, uint8[] zRawSql) {
             }
             _off_zRawSql += (int) (nToken[0]);
             nextIndex = (((idx[0] + 1) > nextIndex) ? (idx[0] + 1) : nextIndex);
-            pVar = _c2v_box_sqlite3_value_obj (_c2v_slice_sqlite3_value (p[0].aVar, (int) ((idx[0] - 1))));
+            pVar = _c2v_box_sqlite3_value_obj (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (p[0].aVar), (int) ((idx[0] - 1))));
             if ((((int) pVar.flags) & 0x0001) != 0) 
             {
                 sqlite3_str_append (_c2v_box_sqlite3_str_arr (@out), ("NULL").data, 4);
@@ -36402,7 +36313,7 @@ string sqlite3VdbeExpandSql (Vdbe[] p, uint8[] zRawSql) {
                 if (((int) enc) != 1) 
                 {
                     utf8.u = new MemValue ();
-                    utf8.z = "";
+                    utf8.z = new uint8[0];
                     utf8.n = 0;
                     utf8.flags = 0;
                     utf8.enc = 0;
@@ -36410,10 +36321,10 @@ string sqlite3VdbeExpandSql (Vdbe[] p, uint8[] zRawSql) {
                     utf8.db = null;
                     utf8.szMalloc = 0;
                     utf8.uTemp = 0;
-                    utf8.zMalloc = "";
+                    utf8.zMalloc = new uint8[0];
                     utf8.xDel = null;
                     utf8.db = db;
-                    sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (utf8), pVar.z.data, (int64) pVar.n, enc, null);
+                    sqlite3VdbeMemSetStr (_c2v_box_sqlite3_value_arr (utf8), pVar.z, (int64) pVar.n, enc, null);
                     if (7 == sqlite3VdbeChangeEncoding (_c2v_box_sqlite3_value_arr (utf8), 1)) 
                     {
                         @out.accError = (uchar) 7;
@@ -36466,7 +36377,7 @@ VdbeCursor[] allocateCursor (Vdbe[] p, int iCur, int nField, uchar eCurType) {
     {
         if (pMem.szMalloc > 0) 
         {
-            sqlite3DbFreeNN (_c2v_box_sqlite3_arr (pMem.db), pMem.zMalloc.data);
+            sqlite3DbFreeNN (_c2v_box_sqlite3_arr (pMem.db), pMem.zMalloc);
         }
         pMem.zMalloc = sqlite3DbMallocRaw (_c2v_box_sqlite3_arr (pMem.db), (uint64) nByte);
         pMem.z = pMem.zMalloc;
@@ -36516,7 +36427,7 @@ VdbeCursor[] allocateCursor (Vdbe[] p, int iCur, int nField, uchar eCurType) {
         pCx[0].uc.pCursor = new BtCursor.at (c_str_add (pMem.z, (int) ((159 + ((((size_t) 2) * sizeof (uint32)) * ((size_t) nField))))), 0);
         sqlite3BtreeCursorZero (_c2v_box_BtCursor_arr (pCx[0].uc.pCursor));
     }
-    return _c2v_box_VdbeCursor_obj (pCx);
+    return pCx;
 }
 
 // c2vala-ptrs: pRec_obj[DEREF|ARROW]=>T? piValue_obj[DEREF|WR]=>T?
@@ -36528,7 +36439,7 @@ int alsoAnInt (sqlite3_value[] pRec, double rValue, int64[] piValue) {
         piValue[0] = iValue;
         return 1;
     }
-    return (int) ((0 == sqlite3Atoi64 ((pRec[0].z).data, piValue, pRec[0].n, pRec[0].enc)));
+    return (int) ((0 == sqlite3Atoi64 (pRec[0].z, piValue, pRec[0].n, pRec[0].enc)));
 }
 
 // c2vala: UNTRANSLATED applyNumericAffinity (sqlite3.c:93755) -- sqlite3.c:93762: address-of a non-lvalue
@@ -36574,7 +36485,7 @@ int sqlite3_value_numeric_type (sqlite3_value[] pVal) {
     int eType = sqlite3_value_type (pVal);
     if (eType == 3) 
     {
-        sqlite3_value[] pMem = _c2v_box_sqlite3_value_arr (new sqlite3_value.at (pVal, 0));
+        sqlite3_value[] pMem = pVal;
         applyNumericAffinity (pMem, 0);
         eType = sqlite3_value_type (pVal);
     }
@@ -36583,7 +36494,7 @@ int sqlite3_value_numeric_type (sqlite3_value[] pVal) {
 
 // c2vala-ptrs: pVal_ptr[CAST->sqlite3_value]=>sqlite3_value.at
 void sqlite3ValueApplyAffinity (sqlite3_value[] pVal, uchar affinity, uchar enc) {
-    applyAffinity (_c2v_box_sqlite3_value_arr (new sqlite3_value.at (pVal, 0)), (char) affinity, enc);
+    applyAffinity (pVal, (char) affinity, enc);
 }
 
 // c2vala-ptrs: pMem_obj[DEREF|ARROW]=>T?
@@ -36596,11 +36507,11 @@ uint16 computeNumericType (sqlite3_value[] pMem) {
         return (uint16) 0x0004;
     }
     double[] _c2v_ref_0 = { pMem[0].u.r };
-    rc = sqlite3AtoF ((pMem[0].z).data, _c2v_ref_0, pMem[0].n, pMem[0].enc);
+    rc = sqlite3AtoF (pMem[0].z, _c2v_ref_0, pMem[0].n, pMem[0].enc);
     pMem[0].u.r = _c2v_ref_0[0];
     if (rc <= 0) 
     {
-        if ((rc == 0) && (sqlite3Atoi64 ((pMem[0].z).data, ix, pMem[0].n, pMem[0].enc) <= 1)) 
+        if ((rc == 0) && (sqlite3Atoi64 (pMem[0].z, ix, pMem[0].n, pMem[0].enc) <= 1)) 
         {
             pMem[0].u.i = ix[0];
             return (uint16) 0x0004;
@@ -36611,7 +36522,7 @@ uint16 computeNumericType (sqlite3_value[] pMem) {
         }
     }
     else 
-    if ((rc == 1) && (sqlite3Atoi64 ((pMem[0].z).data, ix, pMem[0].n, pMem[0].enc) == 0)) 
+    if ((rc == 1) && (sqlite3Atoi64 (pMem[0].z, ix, pMem[0].n, pMem[0].enc) == 0)) 
     {
         pMem[0].u.i = ix[0];
         return (uint16) 0x0004;
@@ -36633,7 +36544,7 @@ uint16 numericType (sqlite3_value[] pMem) {
 sqlite3_value[] out2PrereleaseWithClear (sqlite3_value[] pOut) {
     sqlite3VdbeMemSetNull (pOut);
     pOut[0].flags = (uint16) 0x0004;
-    return _c2v_box_sqlite3_value_obj (pOut);
+    return pOut;
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T? pOp_obj[DEREF|ARROW]=>T? pOut_obj[DEREF|WR|ARROW]=>T?
@@ -36642,12 +36553,12 @@ sqlite3_value[] out2Prerelease (Vdbe[] p, VdbeOp[] pOp) {
     pOut = _c2v_slice_sqlite3_value (p[0].aMem, (int) (pOp[0].p2));
     if ((((int) pOut[0].flags) & (0x8000 | 0x1000)) != 0) 
     {
-        return _c2v_box_sqlite3_value_obj (out2PrereleaseWithClear (pOut));
+        return out2PrereleaseWithClear (pOut);
     }
     else 
     {
         pOut[0].flags = (uint16) 0x0004;
-        return _c2v_box_sqlite3_value_obj (pOut);
+        return pOut;
     }
 }
 
@@ -36696,7 +36607,7 @@ int vdbeColumnFromOverflow (VdbeCursor[] pC, int iCol, int t, int64 iOffset, uin
         uint8[] pBuf = new uint8[0];
         if (pC[0].colCache == ((uint32) 0)) 
         {
-            pC[0].pCache = _c2v_box_VdbeTxtBlbCache_obj (sqlite3DbMallocZero (db, (uint64) 28));
+            pC[0].pCache = new VdbeTxtBlbCache ();
             if (pC[0].pCache == null) {
                 return 7;
             }
@@ -36709,7 +36620,7 @@ int vdbeColumnFromOverflow (VdbeCursor[] pC, int iCol, int t, int64 iOffset, uin
                 sqlite3RCStrUnref (pCache.pCValue.data);
             }
             pCache.pCValue = sqlite3RCStrNew ((uint64) ((len + 3)));
-            pBuf = pCache.pCValue;
+            pBuf = pCache.pCValue.data;
             if (pBuf == null) {
                 return 7;
             }
@@ -36732,12 +36643,12 @@ int vdbeColumnFromOverflow (VdbeCursor[] pC, int iCol, int t, int64 iOffset, uin
         sqlite3RCStrRef (pBuf);
         if ((t & 1) != 0) 
         {
-            rc = sqlite3VdbeMemSetStr (pDest, pBuf, (int64) len, (uchar) encoding, sqlite3RCStrUnref);
+            rc = sqlite3VdbeMemSetStr (pDest, pBuf, (int64) len, (uchar) encoding, null);
             pDest[0].flags |= 0x0200;
         }
         else 
         {
-            rc = sqlite3VdbeMemSetStr (pDest, pBuf, (int64) len, (uchar) 0, sqlite3RCStrUnref);
+            rc = sqlite3VdbeMemSetStr (pDest, pBuf, (int64) len, (uchar) 0, null);
         }
     }
     else 
@@ -36779,7 +36690,7 @@ int blobSeekToRow (Incrblob[] p, int64 iRow, string[] pzErr) {
     int rc = 0;
     string zErr = "";
     Vdbe[] v = _c2v_box_Vdbe_arr (((Vdbe?) (p[0].pStmt)));
-    sqlite3VdbeMemSetInt64 (_c2v_slice_sqlite3_value (v[0].aMem, (int) (1)), iRow);
+    sqlite3VdbeMemSetInt64 (_c2v_slice_sqlite3_value (_c2v_box_sqlite3_value_arr (v[0].aMem), (int) (1)), iRow);
     if (v[0].pc > 4) 
     {
         v[0].pc = 4;
@@ -36845,9 +36756,8 @@ int sqlite3_blob_close (sqlite3_blob? pBlob) {
     sqlite3[] db = new sqlite3[0];
     if (p != null) 
     {
-        sqlite3_stmt? pStmt = p[0].pStmt;
+        Vdbe? pStmt = p[0].pStmt;
         db = _c2v_box_sqlite3_arr (p[0].db);
-        sqlite3DbFree (db, p);
         rc = sqlite3_finalize (pStmt);
     }
     else 
@@ -36880,7 +36790,7 @@ int blobReadWrite (sqlite3_blob? pBlob, uint8[] z, int n, int iOffset, xCall? xC
     else 
     {
         sqlite3BtreeEnterCursor (p.pCsr);
-        rc = ((!) xCall) (p.pCsr, (uint32) ((iOffset + p.iOffset)), (uint32) n, z);
+        rc = ((!) xCall) (_c2v_box_BtCursor_arr (p.pCsr), (uint32) ((iOffset + p.iOffset)), (uint32) n, z);
         if (rc == 4) 
         {
             sqlite3VdbeFinalize (v);
@@ -36927,13 +36837,12 @@ int sqlite3_blob_reopen (sqlite3_blob? pBlob, int64 iRow) {
     }
     else 
     {
-        C2VBox<uint8[]> zErr = new C2VBox<uint8[]> ("");
+        string[] zErr = { "" };
         ((Vdbe?) (p[0].pStmt)).rc = 0;
         rc = blobSeekToRow (p, iRow, zErr);
         if (rc != 0) 
         {
-            sqlite3ErrorWithMsg (db, rc, ((zErr[0] != null) ? "%s" : ""), zErr[0]);
-            sqlite3DbFree (db, zErr[0]);
+            sqlite3ErrorWithMsg (db, rc, ((zErr[0] != null) ? ("%s").data : ("").data), zErr[0]);
         }
     }
     rc = sqlite3ApiExit (db, rc);
@@ -36942,10 +36851,8 @@ int sqlite3_blob_reopen (sqlite3_blob? pBlob, int64 iRow) {
 
 // c2vala-ptrs: pReadr_obj[DEREF|WR|ARROW]=>T?
 void vdbePmaReaderClear (PmaReader[] pReadr) {
-    sqlite3_free ((pReadr[0].aAlloc).data);
-    sqlite3_free ((pReadr[0].aBuffer).data);
     if (pReadr[0].aMap != null) {
-        sqlite3OsUnfetch (pReadr[0].pFd, (int64) 0, (pReadr[0].aMap).data);
+        sqlite3OsUnfetch (pReadr[0].pFd, (int64) 0, pReadr[0].aMap);
     }
     vdbeIncrFree (_c2v_box_IncrMerger_arr (pReadr[0].pIncr));
     pReadr[0].iReadOff = 0;
@@ -36953,11 +36860,11 @@ void vdbePmaReaderClear (PmaReader[] pReadr) {
     pReadr[0].nAlloc = 0;
     pReadr[0].nKey = 0;
     pReadr[0].pFd = null;
-    pReadr[0].aAlloc = null;
-    pReadr[0].aKey = null;
-    pReadr[0].aBuffer = null;
+    pReadr[0].aAlloc = new uchar[0];
+    pReadr[0].aKey = new uchar[0];
+    pReadr[0].aBuffer = new uchar[0];
     pReadr[0].nBuffer = 0;
-    pReadr[0].aMap = null;
+    pReadr[0].aMap = new uchar[0];
     pReadr[0].pIncr = null;
 }
 
@@ -36984,7 +36891,7 @@ int vdbePmaReadBlob (PmaReader[] p, int nByte, C2VBox<uchar[]>? ppOut) {
         {
             nRead = ((int) ((p[0].iEof - p[0].iReadOff)));
         }
-        rc = sqlite3OsRead (_c2v_box_sqlite3_file_arr (p[0].pFd), (p[0].aBuffer).data, nRead, p[0].iReadOff);
+        rc = sqlite3OsRead (_c2v_box_sqlite3_file_arr (p[0].pFd), p[0].aBuffer, nRead, p[0].iReadOff);
         if (rc != 0) {
             return rc;
         }
@@ -37005,7 +36912,7 @@ int vdbePmaReadBlob (PmaReader[] p, int nByte, C2VBox<uchar[]>? ppOut) {
             while (((int64) nByte) > nNew) {
                 nNew = (nNew * ((int64) 2));
             }
-            aNew = sqlite3Realloc ((p[0].aAlloc).data, (uint64) nNew);
+            aNew = sqlite3Realloc (p[0].aAlloc, (uint64) nNew);
             if (!(aNew != null)) {
                 return 7;
             }
@@ -37093,7 +37000,7 @@ int vdbePmaReaderSeek (SortSubtask? pTask, PmaReader[] pReadr, SorterFile? pFile
     }
     if (pReadr[0].aMap != null) 
     {
-        sqlite3OsUnfetch (pReadr[0].pFd, (int64) 0, (pReadr[0].aMap).data);
+        sqlite3OsUnfetch (pReadr[0].pFd, (int64) 0, pReadr[0].aMap);
         pReadr[0].aMap = new uchar[0];
     }
     pReadr[0].iReadOff = iOff;
@@ -37217,11 +37124,15 @@ int vdbeSorterCompareText (SortSubtask? pTask, int[] pbKey2Cached, uint8[] pKey1
     int res = 0;
     n1[0] = (int) (((uint32) (p1[(int) (1)])));
     if (n1[0] >= 0x80) {
-        sqlite3GetVarint32 (_c2v_slice_uchar (p1, (int) (1)), n1);
+        uint32[] _n1 = { (uint32) n1[0] };
+        sqlite3GetVarint32 (_c2v_slice_uchar (p1, (int) (1)), _n1);
+        n1[0] = (int) _n1[0];
     }
     n2[0] = (int) (((uint32) (p2[(int) (1)])));
     if (n2[0] >= 0x80) {
-        sqlite3GetVarint32 (_c2v_slice_uchar (p2, (int) (1)), n2);
+        uint32[] _n2 = { (uint32) n2[0] };
+        sqlite3GetVarint32 (_c2v_slice_uchar (p2, (int) (1)), _n2);
+        n2[0] = (int) _n2[0];
     }
     res = c_memcmp (v1, v2, ((((n1[0] < n2[0]) ? n1[0] : n2[0]) - 13) / 2));
     if (res == 0) 
@@ -37405,20 +37316,12 @@ int sqlite3VdbeSorterInit (sqlite3[] db, int nField, VdbeCursor[] pCsr) {
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pRecord_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T? pNext_obj[PLAIN]=>T?
 void vdbeSorterRecordFree (sqlite3[] db, SorterRecord? pRecord) {
-    SorterRecord[] p = new SorterRecord[0];
-    SorterRecord? pNext = null;
-    for (p = _c2v_box_SorterRecord_arr (pRecord); p != null; p = _c2v_box_SorterRecord_arr (pNext)) 
-    {
-        pNext = p[0].u.pNext;
-        sqlite3DbFree (db, p);
-    }
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pTask_obj[DEREF|WR|ARROW]=>T?
 void vdbeSortSubtaskCleanup (sqlite3[] db, SortSubtask[] pTask) {
-    sqlite3DbFree (db, (pTask[0].pUnpacked).data);
     {
-        vdbeSorterRecordFree (null, pTask[0].list.pList);
+        vdbeSorterRecordFree (new sqlite3[0], pTask[0].list.pList);
     }
     if (pTask[0].file.pFd != null) 
     {
@@ -37456,7 +37359,7 @@ MergeEngine[] vdbeMergeEngineNew (int nReader) {
         pNew[0].aReadr = new PmaReader.at (_c2v_slice_MergeEngine (pNew, (int) (1)), 0);
         pNew[0].aTree = _c2v_slice_PmaReader (pNew[0].aReadr, (int) (N));
     }
-    return _c2v_box_MergeEngine_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: pMerger_obj[DEREF|ARROW]=>T?
@@ -37466,10 +37369,9 @@ void vdbeMergeEngineFree (MergeEngine[] pMerger) {
     {
         for (i = 0; i < pMerger[0].nTree; i++) 
         {
-            vdbePmaReaderClear (_c2v_slice_PmaReader (pMerger[0].aReadr, (int) (i)));
+            vdbePmaReaderClear (_c2v_slice_PmaReader (_c2v_box_PmaReader_arr (pMerger[0].aReadr), (int) (i)));
         }
     }
-    sqlite3_free (pMerger);
 }
 
 // c2vala-ptrs: pIncr_obj[DEREF|ARROW]=>T?
@@ -37477,7 +37379,6 @@ void vdbeIncrFree (IncrMerger[] pIncr) {
     if (pIncr != null) 
     {
         vdbeMergeEngineFree (_c2v_box_MergeEngine_arr (pIncr[0].pMerger));
-        sqlite3_free (pIncr);
     }
 }
 
@@ -37495,14 +37396,13 @@ void sqlite3VdbeSorterReset (sqlite3[] db, VdbeSorter[] pSorter) {
     }
     if (pSorter[0].list.aMemory == null) 
     {
-        vdbeSorterRecordFree (null, pSorter[0].list.pList);
+        vdbeSorterRecordFree (new sqlite3[0], pSorter[0].list.pList);
     }
     pSorter[0].list.pList = null;
     pSorter[0].list.szPMA = (int64) 0;
     pSorter[0].bUsePMA = (uchar) 0;
     pSorter[0].iMemory = 0;
     pSorter[0].mxKeysize = 0;
-    sqlite3DbFree (db, (pSorter[0].pUnpacked).data);
     pSorter[0].pUnpacked = null;
 }
 
@@ -37513,8 +37413,6 @@ void sqlite3VdbeSorterClose (sqlite3[] db, VdbeCursor? pCsr) {
     if (pSorter != null) 
     {
         sqlite3VdbeSorterReset (db, pSorter);
-        sqlite3_free ((pSorter[0].list.aMemory).data);
-        sqlite3DbFree (db, pSorter);
         pCsr.uc.pSorter = null;
     }
 }
@@ -37525,12 +37423,10 @@ int vdbeSorterOpenTempFile (sqlite3? db, int64 nExtend, sqlite3_file?[] ppFd) {
     if (sqlite3FaultSim (202) != 0) {
         return (10 | (13 << 8));
     }
-    rc[0] = sqlite3OsOpenMalloc (db.pVfs, "", ppFd, ((((0x00001000 | 0x00000002) | 0x00000004) | 0x00000010) | 0x00000008), rc);
+    rc[0] = sqlite3OsOpenMalloc (db.pVfs, ("").data, ppFd, ((((0x00001000 | 0x00000002) | 0x00000004) | 0x00000010) | 0x00000008), rc);
     if (rc[0] == 0) 
     {
-        int64[] max = new int64[1];
-        max[0] = (int64) 0;
-        sqlite3OsFileControlHint (ppFd[0], 18, max);
+        sqlite3OsFileControlHint (ppFd[0], 18, new uint8[8]);
         if (nExtend > ((int64) 0)) 
         {
         }
@@ -37616,13 +37512,12 @@ int vdbeSorterSort (SortSubtask? pTask, SorterList? pList) {
     }
     p = pList.pList;
     pTask.xCompare = vdbeSorterGetCompare (pTask.pSorter);
-    c_memset (aSlot, 0, ((int) (64) * 8));
     while (p != null) 
     {
         SorterRecord? pNext = null;
         if (pList.aMemory != null) 
         {
-            if (p == pList.aMemory) 
+            if (p._c2v_data != null && c_ptr_u64 (p._c2v_data) == c_ptr_u64 (pList.aMemory)) 
             {
                 pNext = null;
             }
@@ -37659,7 +37554,7 @@ int vdbeSorterSort (SortSubtask? pTask, SorterList? pList) {
 // c2vala-ptrs: pFd_obj[PLAIN]=>T? p_obj[DEREF|WR|ARROW]=>T?
 void vdbePmaWriterInit (sqlite3_file? pFd, PmaWriter[] p, int nBuf, int64 iStart) {
     p[0].eFWErr = 0;
-    p[0].aBuffer = null;
+    p[0].aBuffer = new uchar[0];
     p[0].nBuffer = 0;
     p[0].iBufStart = 0;
     p[0].iBufEnd = 0;
@@ -37711,10 +37606,9 @@ int vdbePmaWriterFinish (PmaWriter[] p, int64[] piEof) {
         p[0].eFWErr = sqlite3OsWrite (_c2v_box_sqlite3_file_arr (p[0].pFd), _c2v_slice_uchar (p[0].aBuffer, (int) (p[0].iBufStart)), (p[0].iBufEnd - p[0].iBufStart), (p[0].iWriteOff + ((int64) p[0].iBufStart)));
     }
     piEof[0] = (p[0].iWriteOff + ((int64) p[0].iBufEnd));
-    sqlite3_free ((p[0].aBuffer).data);
     rc = p[0].eFWErr;
     p[0].eFWErr = 0;
-    p[0].aBuffer = null;
+    p[0].aBuffer = new uchar[0];
     p[0].nBuffer = 0;
     p[0].iBufStart = 0;
     p[0].iBufEnd = 0;
@@ -37737,7 +37631,7 @@ int vdbeSorterListToPMA (SortSubtask? pTask, SorterList? pList) {
     int rc = 0;
     PmaWriter writer = new PmaWriter ();
     writer.eFWErr = 0;
-    writer.aBuffer = null;
+    writer.aBuffer = new uchar[0];
     writer.nBuffer = 0;
     writer.iBufStart = 0;
     writer.iBufEnd = 0;
@@ -37767,10 +37661,7 @@ int vdbeSorterListToPMA (SortSubtask? pTask, SorterList? pList) {
         {
             pNext = p[0].u.pNext;
             vdbePmaWriteVarint (writer, (uint64) (p[0].nVal));
-            vdbePmaWriteBlob (writer, _c2v_slice_SorterRecord (new SorterRecord.at (p, 0), (int) (1)), p[0].nVal);
-            if (pList.aMemory == null) {
-                sqlite3_free (p);
-            }
+            vdbePmaWriteBlob (writer, ((!) p[0]._c2v_data), p[0].nVal);
         }
         pList.pList = _c2v_box_SorterRecord_obj (p);
         int64[] _c2v_ref_2 = { pTask.file.iEof };
@@ -38393,7 +38284,7 @@ int sqlite3VdbeSorterRowkey (VdbeCursor[] pCsr, sqlite3_value[] pOut) {
     }
     pOut[0].n = nKey[0];
     pOut[0].flags = (uint16) (((((int) pOut[0].flags) & ~(0x0dbf | 0x0400)) | 0x0010));
-    c_memcpy (c_str_to_bytes (pOut[0].z), pKey, nKey[0]);
+    c_memcpy (pOut[0].z, pKey, nKey[0]);
     return 0;
 }
 
@@ -38411,7 +38302,7 @@ int sqlite3VdbeSorterCompare (VdbeCursor[] pCsr, sqlite3_value[] pVal, int nKeyC
     if (r2 == null) 
     {
         pSorter.pUnpacked = sqlite3VdbeAllocUnpackedRecord (pKeyInfo);
-        r2 = pSorter.pUnpacked;
+        r2 = _c2v_box_UnpackedRecord_arr (pSorter.pUnpacked);
         if (r2 == null) {
             return 7;
         }
@@ -38427,7 +38318,7 @@ int sqlite3VdbeSorterCompare (VdbeCursor[] pCsr, sqlite3_value[] pVal, int nKeyC
             return 0;
         }
     }
-    pRes[0] = sqlite3VdbeRecordCompare (pVal[0].n, (pVal[0].z).data, r2);
+    pRes[0] = sqlite3VdbeRecordCompare (pVal[0].n, pVal[0].z, r2);
     return 0;
 }
 
@@ -38463,7 +38354,7 @@ int memjrnlRead (sqlite3_file? pJfd, uint8[] zBuf, int iAmt, int64 iOfst) {
         _off_zOut += (int) (nCopy);
         nRead -= iSpace;
         iChunkOffset = 0;
-    } while (((nRead >= 0) && (_c2v_assign_FileChunk_ (pChunk.pNext, ref pChunk) != 0)) && (nRead > 0));
+    } while (((nRead >= 0) && (_c2v_assign_FileChunk_ (pChunk.pNext, ref pChunk) != null)) && (nRead > 0));
     p.readpoint.iOffset = ((pChunk != null) ? (iOfst + ((int64) iAmt)) : 0);
     p.readpoint.pChunk = pChunk;
     return 0;
@@ -38476,7 +38367,6 @@ void memjrnlFreeChunks (FileChunk? pFirst) {
     for (pIter = _c2v_box_FileChunk_arr (pFirst); pIter != null; pIter = _c2v_box_FileChunk_arr (pNext)) 
     {
         pNext = pIter[0].pNext;
-        sqlite3_free (pIter);
     }
 }
 
@@ -38675,7 +38565,7 @@ int sqlite3JournalOpen (sqlite3_vfs? pVfs, uint8[] zName, sqlite3_file[] pJfd, i
 
 // c2vala-ptrs: pJfd_obj[PLAIN]=>T?
 void sqlite3MemJournalOpen (sqlite3_file[] pJfd) {
-    sqlite3JournalOpen (null, "", pJfd, 0, -1);
+    sqlite3JournalOpen (null, ("").data, pJfd, 0, -1);
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
@@ -38828,7 +38718,7 @@ int sqlite3WalkSelectExpr (Walker? pWalker, Select[] p) {
     if (p[0].pWinDefn != null) 
     {
         Parse? pParse = null;
-        if (((pWalker.xSelectCallback2 == sqlite3WalkWinDefnDummyCallback) || ((_c2v_assign_Parse_ (pWalker.pParse, ref pParse) != 0) && (((int) pParse.eParseMode) >= 2))) || (pWalker.xSelectCallback2 == sqlite3SelectPopWith)) 
+        if ((pWalker.xSelectCallback2 != null) || ((_c2v_assign_Parse_ (pWalker.pParse, ref pParse) != null) && (((int) pParse.eParseMode) >= 2))) 
         {
             int rc = walkWindowList (pWalker, p[0].pWinDefn, 0);
             return rc;
@@ -38964,7 +38854,7 @@ void resolveAlias (Parse? pParse, ExprList? pEList, int iCol, Expr[] pExpr, int 
     if (db[0].mallocFailed != 0) 
     {
         sqlite3ExprDelete (db, pDup);
-        pDup = null;
+        pDup = new Expr[0];
     }
     else 
     {
@@ -39094,23 +38984,23 @@ int isValidSchemaTableName (uint8[] zTab, Table[] pTab, uint8[] zDb) {
     _off_zLegacy = 0;
     if (c_strcmp ((string) c_bytes_add (zLegacy, _off_zLegacy + (int) (7)), (string) c_str_add ("sqlite_temp_master", (int) (7))) == 0) 
     {
-        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), c_str_add ("sqlite_temp_schema", (int) (7))) == 0) 
+        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), ("temp_schema").data) == 0) 
         {
             return 1;
         }
         if (zDb == null) {
             return 0;
         }
-        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), c_str_add ("sqlite_master", (int) (7))) == 0) {
+        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), ("master").data) == 0) {
             return 1;
         }
-        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), c_str_add ("sqlite_schema", (int) (7))) == 0) {
+        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), ("schema").data) == 0) {
             return 1;
         }
     }
     else 
     {
-        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), c_str_add ("sqlite_schema", (int) (7))) == 0) {
+        if (sqlite3StrICmp (c_bytes_add (zTab, _off_zTab + (int) (7)), ("schema").data) == 0) {
             return 1;
         }
     }
@@ -39150,7 +39040,7 @@ Expr[] sqlite3CreateColumnExpr (sqlite3[] db, SrcList? pSrc, int iSrc, int iCol)
             }
         }
     }
-    return _c2v_box_Expr_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pNC_obj[DEREF|ARROW]=>T? zMsg_obj[PLAIN]=>T? pExpr_obj[DEREF|WR|ARROW]=>T? pError_obj[PLAIN]=>T? zIn_obj[PLAIN]=>T?
@@ -39418,7 +39308,7 @@ int sqlite3ResolveOrderGroupBy (Parse? pParse, Select[] pSelect, ExprList? pOrde
                 {
                     if (((int) pItem[_off_pItem].u.x.iOrderByCol) > pEList.nExpr) 
                     {
-                        resolveOutOfRangeError (pParse, zType, (i + 1), pEList.nExpr, null);
+                        resolveOutOfRangeError (pParse, zType, (i + 1), pEList.nExpr, new Expr[0]);
                         return 1;
                     }
                     resolveAlias (pParse, pEList, (((int) pItem[_off_pItem].u.x.iOrderByCol) - 1), _c2v_box_Expr_arr (pItem[_off_pItem].pExpr), 0);
@@ -39870,7 +39760,7 @@ char sqlite3ExprAffinity (Expr[] pExpr) {
         }
         if (op == 36) 
         {
-            return sqlite3AffinityType ((pExpr[0].u.zToken).data, null);
+            return sqlite3AffinityType ((pExpr[0].u.zToken).data, new Column[0]);
         }
         if (op == 178) 
         {
@@ -39914,7 +39804,7 @@ int sqlite3ExprDataType (Expr[] pExpr) {
             if (_ft_2 || _sw_2 == 122) {
                 _ft_2 = true;
                 {
-                    pExpr = null;
+                    pExpr = new Expr[0];
                     break;
                 }
             }
@@ -39995,13 +39885,13 @@ Expr[] sqlite3ExprAddCollateToken (Parse? pParse, Expr[] pExpr, Token? pCollName
             pExpr = pNew;
         }
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pExpr_obj[PLAIN]=>T? zC_obj[NULL]=>T?
 Expr? sqlite3ExprAddCollateString (Parse? pParse, Expr[] pExpr, uint8[] zC) {
     Token s = new Token ();
-    sqlite3TokenInit (s, (string) zC);
+    sqlite3TokenInit (s, zC);
     return _c2v_box_Expr_obj (sqlite3ExprAddCollateToken (pParse, pExpr, s, 0));
 }
 
@@ -40011,7 +39901,7 @@ Expr[] sqlite3ExprSkipCollate (Expr[] pExpr) {
     {
         pExpr = _c2v_box_Expr_arr (pExpr[0].pLeft);
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: pExpr_obj[DEREF|ARROW]=>T?
@@ -40032,7 +39922,7 @@ Expr[] sqlite3ExprSkipCollateAndLikely (Expr[] pExpr) {
             break;
         }
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pExpr_obj[PLAIN]=>T? db_obj[DEREF|ARROW]=>T? pColl_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T? zColl_obj[PLAIN]=>T? pNext_obj[PLAIN]=>T?
@@ -40104,7 +39994,7 @@ CollSeq[] sqlite3ExprCollSeq (Parse? pParse, Expr[] pExpr) {
     {
         pColl = null;
     }
-    return _c2v_box_CollSeq_obj (pColl);
+    return pColl;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pExpr_obj[PLAIN]=>T? p_obj[NULL]=>T?
@@ -40113,7 +40003,7 @@ CollSeq[] sqlite3ExprNNCollSeq (Parse? pParse, Expr[] pExpr) {
     if (p == null) {
         p = _c2v_box_CollSeq_arr (pParse.db.pDfltColl);
     }
-    return _c2v_box_CollSeq_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pE1_obj[PLAIN]=>T? pE2_obj[PLAIN]=>T? pColl1_obj[DEREF|ARROW]=>T? pColl2_obj[DEREF|ARROW]=>T?
@@ -40205,7 +40095,7 @@ CollSeq[] sqlite3BinaryCompareCollSeq (Parse? pParse, Expr[] pLeft, Expr[] pRigh
             pColl = sqlite3ExprCollSeq (pParse, pRight);
         }
     }
-    return _c2v_box_CollSeq_obj (pColl);
+    return pColl;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T?
@@ -40274,14 +40164,14 @@ Expr[] sqlite3VectorFieldSubexpr (Expr[] pVector, int i) {
     {
         if ((((int) pVector[0].op) == 139) || (((int) pVector[0].op2) == 139)) 
         {
-            return pVector[0].x.pSelect.pEList.a[(int) (i)].pExpr;
+            return _c2v_box_Expr_arr (pVector[0].x.pSelect.pEList.a[(int) (i)].pExpr);
         }
         else 
         {
-            return pVector[0].x.pList.a[(int) (i)].pExpr;
+            return _c2v_box_Expr_arr (pVector[0].x.pList.a[(int) (i)].pExpr);
         }
     }
-    return _c2v_box_Expr_obj (pVector);
+    return pVector;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pVector_obj[DEREF|ARROW]=>T? pRet_obj[DEREF|WR|ARROW]=>T? ppVector_fref[DEREF|WR]=>_c2v_fref<T>
@@ -40308,12 +40198,12 @@ Expr[] sqlite3ExprForVectorField (Parse? pParse, Expr[] pVector, int iField, int
             if (((int) pParse.eParseMode) >= 2) 
             {
                 *ppVector = null;
-                return _c2v_box_Expr_obj (pVector);
+                return pVector;
             }
         }
         pRet = _c2v_box_Expr_arr (sqlite3ExprDup (_c2v_box_sqlite3_arr (pParse.db), pVector, 0));
     }
-    return _c2v_box_Expr_obj (pRet);
+    return pRet;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pExpr_obj[DEREF|ARROW]=>T?
@@ -40588,7 +40478,7 @@ Expr[] sqlite3ExprAlloc (sqlite3[] db, int op, Token? pToken, int dequote) {
         }
         pNew[0].nHeight = 1;
     }
-    return _c2v_box_Expr_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zToken_obj[PLAIN]=>T?
@@ -40632,8 +40522,8 @@ void sqlite3ExprAttachSubtrees (sqlite3[] db, Expr[] pRoot, Expr[] pLeft, Expr[]
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pLeft_obj[PLAIN]=>T? pRight_obj[PLAIN]=>T? p_obj[DEREF|WR|ARROW]=>T?
 Expr[] sqlite3PExpr (Parse? pParse, int op, Expr[] pLeft, Expr[] pRight) {
-    Expr[] p = new Expr[0];
-    p = sqlite3DbMallocRawNN (_c2v_box_sqlite3_arr (pParse.db), (uint64) 85);
+    Expr[] p = new Expr[1];
+    p[0] = new Expr ();
     if (p != null) 
     {
         p[0].op = 0;
@@ -40661,7 +40551,7 @@ Expr[] sqlite3PExpr (Parse? pParse, int op, Expr[] pLeft, Expr[] pRight) {
         sqlite3ExprDelete (_c2v_box_sqlite3_arr (pParse.db), pLeft);
         sqlite3ExprDelete (_c2v_box_sqlite3_arr (pParse.db), pRight);
     }
-    return _c2v_box_Expr_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pExpr_obj[DEREF|WR|ARROW]=>T? pSelect_obj[PLAIN]=>T?
@@ -40725,12 +40615,12 @@ Expr[] sqlite3ExprAnd (Parse? pParse, Expr[] pLeft, Expr[] pRight) {
     sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
     if (pLeft == null) 
     {
-        return _c2v_box_Expr_obj (pRight);
+        return pRight;
     }
     else 
     if (pRight == null) 
     {
-        return _c2v_box_Expr_obj (pLeft);
+        return pLeft;
     }
     else 
     {
@@ -40739,11 +40629,11 @@ Expr[] sqlite3ExprAnd (Parse? pParse, Expr[] pLeft, Expr[] pRight) {
         {
             sqlite3ExprDeferredDelete (pParse, pLeft);
             sqlite3ExprDeferredDelete (pParse, pRight);
-            return sqlite3Expr (db, 156, ("0").data);
+            return _c2v_box_Expr_arr (sqlite3Expr (db, 156, ("0").data));
         }
         else 
         {
-            return _c2v_box_Expr_obj (sqlite3PExpr (pParse, 44, pLeft, pRight));
+            return sqlite3PExpr (pParse, 44, pLeft, pRight);
         }
     }
 }
@@ -40756,7 +40646,7 @@ Expr[] sqlite3ExprFunction (Parse? pParse, ExprList[] pList, Token? pToken, int 
     if (pNew == null) 
     {
         sqlite3ExprListDelete (db, pList);
-        return null;
+        return new Expr[0];
     }
     pNew[0].w.iOfst = ((int) (((pParse.zTail).length - (pToken.z).length)));
     if (((pList != null) && (pList[0].nExpr > pParse.db.aLimit[(int) (6)])) && (!(pParse.nested != 0))) 
@@ -40769,7 +40659,7 @@ Expr[] sqlite3ExprFunction (Parse? pParse, ExprList[] pList, Token? pToken, int 
     if (eDistinct == 0x0000001) {
         pNew[0].flags |= 0x000004;
     }
-    return _c2v_box_Expr_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? p_obj[PLAIN]=>T?
@@ -40792,7 +40682,6 @@ void sqlite3ExprAddFunctionOrderBy (Parse? pParse, Expr[] pExpr, ExprList[] pOrd
     }
     if ((pExpr[0].x.pList == null) || (pExpr[0].x.pList.nExpr == 0)) 
     {
-        sqlite3ParserAddCleanup (pParse, sqlite3ExprListDeleteGeneric, pOrderBy);
         return;
     }
     if (((pExpr[0].flags & ((uint32) 0x1000000)) != ((uint32) 0)) && (((int) pExpr[0].y.pWin.eFrmType) != 167)) 
@@ -40923,7 +40812,6 @@ void sqlite3ExprDeleteNN (sqlite3[] db, Expr[] p) {
                 Expr[] pLeft = _c2v_box_Expr_arr (p[0].pLeft);
                 if ((!((p[0].flags & ((uint32) 0x8000000)) != ((uint32) 0))) && (!((pLeft[0].flags & ((uint32) 0x8000000)) != ((uint32) 0)))) 
                 {
-                    sqlite3DbNNFreeNN (db, p);
                     p = pLeft;
                     c2v_goto_exprDeleteRestart = true;
                     break;
@@ -40937,7 +40825,6 @@ void sqlite3ExprDeleteNN (sqlite3[] db, Expr[] p) {
         if (c2v_goto_exprDeleteRestart) break;
         if (!((p[0].flags & ((uint32) 0x8000000)) != ((uint32) 0))) 
         {
-            sqlite3DbNNFreeNN (db, p);
         }
         if (c2v_goto_exprDeleteRestart) break;
     } while (false);
@@ -40976,7 +40863,7 @@ void sqlite3ClearOnOrUsing (sqlite3[] db, OnOrUsing? p) {
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pExpr_obj[PLAIN]=>T?
 int sqlite3ExprDeferredDelete (Parse? pParse, Expr[] pExpr) {
-    return (int) ((null == sqlite3ParserAddCleanup (pParse, sqlite3ExprDeleteGeneric, pExpr)));
+    return 0;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[PLAIN]=>T?
@@ -41052,7 +40939,7 @@ With[] sqlite3WithDup (sqlite3[] db, With? p) {
             }
         }
     }
-    return _c2v_box_With_obj (pRet);
+    return pRet;
 }
 
 // c2vala-ptrs: pWalker_obj[DEREF|ARROW]=>T? pExpr_obj[DEREF|ARROW]=>T? pSelect_obj[PLAIN]=>T? pWin_obj[DEREF|ARROW]=>T?
@@ -41115,7 +41002,7 @@ ExprList? sqlite3ExprListDup (sqlite3[] db, ExprList[] p, int flags) {
             Expr[] pOldExpr = _c2v_box_Expr_arr (pOldItem[_off_pOldItem].pExpr);
             Expr? pNewExpr = null;
             pItem[_off_pItem].pExpr = sqlite3ExprDup (db, pOldExpr, flags);
-            if (((pOldExpr != null) && (((int) pOldExpr[0].op) == 178)) && (_c2v_assign_Expr_ (pItem[_off_pItem].pExpr, ref pNewExpr) != 0)) 
+            if (((pOldExpr != null) && (((int) pOldExpr[0].op) == 178)) && (_c2v_assign_Expr_ (pItem[_off_pItem].pExpr, ref pNewExpr) != null)) 
             {
                 if (pNewExpr.pRight != null) 
                 {
@@ -41347,7 +41234,7 @@ ExprList[] sqlite3ExprListAppendGrow (sqlite3[] db, ExprList[] pList, Expr[] pEx
     pItem = _c2v_slice_ExprList_item (pList[0].a, (int) (pList[0].nExpr++));
     pItem[0] = zeroItem;
     pItem[0].pExpr = _c2v_box_Expr_obj (pExpr);
-    return _c2v_box_ExprList_obj (pList);
+    return pList;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pList_obj[DEREF|NULL|ARROW]=>T? pExpr_obj[PLAIN]=>T? pItem_obj[DEREF|WR|ARROW]=>T?
@@ -41355,16 +41242,16 @@ ExprList[] sqlite3ExprListAppend (Parse? pParse, ExprList[] pList, Expr[] pExpr)
     ExprList_item[] pItem = new ExprList_item[0];
     if (pList == null) 
     {
-        return sqlite3ExprListAppendNew (_c2v_box_sqlite3_arr (pParse.db), pExpr);
+        return _c2v_box_ExprList_arr (sqlite3ExprListAppendNew (_c2v_box_sqlite3_arr (pParse.db), pExpr));
     }
     if (pList[0].nAlloc < (pList[0].nExpr + 1)) 
     {
-        return _c2v_box_ExprList_obj (sqlite3ExprListAppendGrow (_c2v_box_sqlite3_arr (pParse.db), pList, pExpr));
+        return sqlite3ExprListAppendGrow (_c2v_box_sqlite3_arr (pParse.db), pList, pExpr);
     }
     pItem = _c2v_slice_ExprList_item (pList[0].a, (int) (pList[0].nExpr++));
     pItem[0] = zeroItem;
     pItem[0].pExpr = _c2v_box_Expr_obj (pExpr);
-    return _c2v_box_ExprList_obj (pList);
+    return pList;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pList_obj[DEREF|NULL|ARROW]=>T? pColumns_obj[DEREF|NULL|ARROW]=>T? pExpr_obj[DEREF|NULL|ARROW]=>T? db_obj[DEREF|ARROW]=>T? pSubExpr_obj[NULL]=>T? pFirst_obj[DEREF|WR|NULL|ARROW]=>T?
@@ -41413,7 +41300,7 @@ ExprList[] sqlite3ExprListAppendVector (Parse? pParse, ExprList[] pList, IdList[
         {
             Expr? pFirst = pList[0].a[(int) (iFirst)].pExpr;
             pFirst.pRight = _c2v_box_Expr_obj (pExpr);
-            pExpr = null;
+            pExpr = new Expr[0];
             pFirst.iTable = pColumns[0].nId;
         }
         if (c2v_goto_vector_append_error) break;
@@ -41421,7 +41308,7 @@ ExprList[] sqlite3ExprListAppendVector (Parse? pParse, ExprList[] pList, IdList[
     c2v_goto_vector_append_error = false;
     sqlite3ExprUnmapAndDelete (pParse, pExpr);
     sqlite3IdListDelete (db, pColumns);
-    return _c2v_box_ExprList_obj (pList);
+    return pList;
 }
 
 // c2vala-ptrs: p_obj[DEREF|NULL|ARROW]=>T? pItem_obj[DEREF|ARROW]=>T?
@@ -41458,7 +41345,7 @@ void sqlite3ExprListSetName (Parse? pParse, ExprList[] pList, Token[] pName, int
             sqlite3Dequote (pItem.zEName.data);
             if (((int) pParse.eParseMode) >= 2) 
             {
-                sqlite3RenameTokenMap (pParse, pItem.zEName, pName);
+                sqlite3RenameTokenMap (pParse, pItem.zEName.data, pName);
             }
         }
     }
@@ -41499,7 +41386,6 @@ void exprListDeleteNN (sqlite3[] db, ExprList[] pList) {
         }
         _off_pItem++;
     } while (--i > 0);
-    sqlite3DbNNFreeNN (db, pList);
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pList_obj[PLAIN]=>T?
@@ -41580,7 +41466,7 @@ Expr[] sqlite3ExprSimplifiedAndOr (Expr[] pExpr) {
             pExpr = ((((int) pExpr[0].op) == 44) ? pLeft : pRight);
         }
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: pWalker_obj[DEREF|WR|ARROW]=>T? pExpr_obj[DEREF|ARROW]=>T? pList_obj[DEREF|ARROW]=>T? pDef_obj[DEREF|NULL|ARROW]=>T? db_obj[DEREF|ARROW]=>T?
@@ -41589,7 +41475,7 @@ int exprNodeIsConstantFunction (Walker? pWalker, Expr[] pExpr) {
     ExprList[] pList = new ExprList[0];
     FuncDef[] pDef = new FuncDef[0];
     sqlite3[] db = new sqlite3[0];
-    if (((pExpr[0].flags & ((uint32) 0x010000)) != ((uint32) 0)) || (_c2v_assign_ExprList__ (_c2v_box_ExprList_arr (pExpr[0].x.pList), ref pList) == 0)) 
+    if (((pExpr[0].flags & ((uint32) 0x010000)) != ((uint32) 0)) || (_c2v_assign_ExprList__ (_c2v_box_ExprList_arr (pExpr[0].x.pList), ref pList) == null)) 
     {
         n = 0;
     }
@@ -42105,7 +41991,7 @@ int sqlite3FindInIndex (Parse? pParse, Expr[] pX, uint32 inFlags, int[] prRhsHas
             prRhsHasNull = new int[0];
         }
     }
-    if ((pParse.nErr == 0) && (_c2v_assign_Select_ (isCandidateForInOpt (pX), ref p) != 0)) 
+    if ((pParse.nErr == 0) && (_c2v_assign_Select_ (isCandidateForInOpt (pX), ref p) != null)) 
     {
         sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
         Table[] pTab = new Table[0];
@@ -42504,7 +42390,7 @@ void sqlite3CodeRhsOfIN (Parse? pParse, Expr[] pExpr, int iTab) {
     }
     if (pKeyInfo != null) 
     {
-        sqlite3VdbeChangeP4 (v, addr, pKeyInfo, -8);
+        sqlite3VdbeChangeP4KeyInfo (v, addr, pKeyInfo);
     }
     if (addrOnce != 0) 
     {
@@ -42572,7 +42458,7 @@ int sqlite3CodeSubselect (Parse? pParse, Expr[] pExpr) {
     else 
     {
         pLimit = _c2v_box_Expr_arr (sqlite3Expr (_c2v_box_sqlite3_arr (pParse.db), 156, ("1").data));
-        pSel[0].pLimit = _c2v_box_Expr_obj (sqlite3PExpr (pParse, 149, pLimit, null));
+        pSel[0].pLimit = _c2v_box_Expr_obj (sqlite3PExpr (pParse, 149, pLimit, new Expr[0]));
     }
     pSel[0].iLimit = 0;
     if (sqlite3Select (pParse, pSel, _c2v_box_SelectDest_arr (dest)) != 0) 
@@ -42882,7 +42768,9 @@ void codeInteger (Parse? pParse, Expr[] pExpr, int negFlag, int iMem) {
             {
                 @value[0] = ((c == 3) ? (((int64) (-1)) - (((int64) 0xffffffff) | (((int64) 0x7fffffff) << ((int64) 32)))) : -@value[0]);
             }
-            sqlite3VdbeAddOp4Dup8 (v, 72, 0, iMem, 0, @value, -13);
+            uint8[] _v = new uint8[8];
+            c_u_set_u64_at (_v, 0, (uint64) @value[0]);
+            sqlite3VdbeAddOp4Dup8 (v, 72, 0, iMem, 0, _v, -13);
         }
     }
 }
@@ -42918,9 +42806,9 @@ void sqlite3ExprCodeGeneratedColumn (Parse? pParse, Table[] pTab, Column[] pCol,
     sqlite3ExprCodeCopy (pParse, _c2v_box_Expr_arr (sqlite3ColumnExpr (pTab, pCol)), regOut);
     if (((int) pCol[0].affinity) >= 0x42) 
     {
-        char[] _c2v_ref_4 = { pCol[0].affinity };
-        sqlite3VdbeAddOp4 (v, 96, regOut, 1, 0, _c2v_ref_4.data, 1);
-        pCol[0].affinity = _c2v_ref_4[0];
+        uint8[] _c2v_ref_4 = { (uint8) pCol[0].affinity };
+        sqlite3VdbeAddOp4 (v, 96, regOut, 1, 0, _c2v_ref_4, 1);
+        pCol[0].affinity = (char) _c2v_ref_4[0];
     }
     if (iAddr != 0) {
         sqlite3VdbeJumpHere (v, iAddr);
@@ -42947,7 +42835,7 @@ void sqlite3ExprCodeGetColumnOfTable (Vdbe[] v, Table[] pTab, int iTabCur, int i
             x = iCol;
         }
         else 
-        if ((_c2v_assign_Column__ (_c2v_slice_Column (pTab[0].aCol, (int) (iCol)), ref pCol).colFlags & 0x0020) != 0) 
+        if ((_c2v_assign_Column__ (_c2v_slice_Column (pTab[0].aCol, (int) (iCol)), ref pCol).colFlags & 0x0020) != null) 
         {
             Parse? pParse = sqlite3VdbeParser (v);
             if ((((int) pCol[0].colFlags) & 0x0100) != 0) 
@@ -43154,7 +43042,7 @@ int exprCodeInlineFunction (Parse? pParse, ExprList[] pFarg, int iFuncId, int ta
                 azAff[5] = "flexnum";
                 char aff = 0;
                 aff = sqlite3ExprAffinity (_c2v_box_Expr_arr (pFarg[0].a[(int) (0)].pExpr));
-                sqlite3VdbeLoadString (v, target, ((((int) aff) <= 0x40) ? "none" : azAff[(int) ((((int) aff) - 0x41))]));
+                sqlite3VdbeLoadString (v, target, ((((int) aff) <= 0x40) ? ("none").data : (azAff[(int) ((((int) aff) - 0x41))]).data));
                 break;
             }
         }
@@ -43266,8 +43154,8 @@ int exprPartidxExprLookup (Parse? pParse, Expr[] pExpr, int iTarget) {
                 addr = sqlite3VdbeAddOp1 (v, 20, p.iIdxCur);
             }
             ret = sqlite3ExprCodeTarget (pParse, _c2v_box_Expr_arr (p.pExpr), iTarget);
-            uchar[] _c2v_ref_0 = { p.aff };
-            sqlite3VdbeAddOp4 (_c2v_box_Vdbe_arr (pParse.pVdbe), 96, ret, 1, 0, _c2v_ref_0.data, 1);
+            uint8[] _c2v_ref_0 = { (uint8) p.aff };
+            sqlite3VdbeAddOp4 (_c2v_box_Vdbe_arr (pParse.pVdbe), 96, ret, 1, 0, _c2v_ref_0, 1);
             p.aff = _c2v_ref_0[0];
             if (addr != 0) 
             {
@@ -43878,7 +43766,7 @@ int sqlite3ExprCodeTarget (Parse? pParse, Expr[] pExpr, int target) {
                     aListelem = pEList.a;
                     nExpr = pEList.nExpr;
                     endLabel = sqlite3VdbeMakeLabel (pParse);
-                    if (_c2v_assign_Expr__ (_c2v_box_Expr_arr (pExpr[0].pLeft), ref pX) != 0) 
+                    if (_c2v_assign_Expr__ (_c2v_box_Expr_arr (pExpr[0].pLeft), ref pX) != null) 
                     {
                         pDel = _c2v_box_Expr_arr (sqlite3ExprDup (db, pX, 0));
                         if (db[0].mallocFailed != 0) 
@@ -44742,7 +44630,7 @@ int sqlite3ReferencesSrcList (Parse? pParse, Expr[] pExpr, SrcList? pSrcList) {
     x.db = null;
     x.pRef = null;
     x.nExclude = 0;
-    x.aiExclude = null;
+    x.aiExclude = new int[0];
     w.xExprCallback = exprRefToSrcList;
     w.xSelectCallback = selectRefEnter;
     w.xSelectCallback2 = selectRefLeave;
@@ -44759,7 +44647,7 @@ int sqlite3ReferencesSrcList (Parse? pParse, Expr[] pExpr, SrcList? pSrcList) {
         sqlite3WalkExpr (w, _c2v_box_Expr_arr (pExpr[0].y.pWin.pFilter));
     }
     if (x.aiExclude != null) {
-        sqlite3DbNNFreeNN (_c2v_box_sqlite3_arr (pParse.db), x.aiExclude.data);
+        x.aiExclude = new int[0];
     }
     if ((((int) w.eCode) & 0x01) != 0) 
     {
@@ -44777,7 +44665,8 @@ int sqlite3ReferencesSrcList (Parse? pParse, Expr[] pExpr, SrcList? pSrcList) {
 }
 
 // c2vala-ptrs: pWalker_obj[DEREF|ARROW]=>T? pExpr_obj[DEREF|ARROW]=>T? pAggInfo_obj[DEREF|ARROW]=>T? pParse_obj[DEREF|ARROW]=>T? db_obj[PLAIN]=>T?
-int agginfoPersistExprCb (Walker? pWalker, Expr[] pExpr) {
+int agginfoPersistExprCb (Walker? pWalker, Expr? pExpr_obj) {
+    Expr[] pExpr = _c2v_box_Expr_arr (pExpr_obj);
     if ((!((pExpr[0].flags & ((uint32) (0x010000 | 0x004000))) != ((uint32) 0))) && (pExpr[0].pAggInfo != null)) 
     {
         AggInfo? pAggInfo = pExpr[0].pAggInfo;
@@ -44786,7 +44675,7 @@ int agginfoPersistExprCb (Walker? pWalker, Expr[] pExpr) {
         sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
         if (((int) pExpr[0].op) != 169) 
         {
-            if ((iAgg < pAggInfo.nColumn) && (_c2v_box_AggInfo_col_arr (pAggInfo.aCol)[(int) (iAgg)].pCExpr == pExpr)) 
+            if ((iAgg < pAggInfo.nColumn) && (_c2v_box_AggInfo_col_arr (pAggInfo.aCol)[(int) (iAgg)].pCExpr == pExpr[0])) 
             {
                 pExpr = _c2v_box_Expr_arr (sqlite3ExprDup (db, pExpr, 0));
                 if ((pExpr != null) && (!(sqlite3ExprDeferredDelete (pParse, pExpr) != 0))) 
@@ -44797,7 +44686,7 @@ int agginfoPersistExprCb (Walker? pWalker, Expr[] pExpr) {
         }
         else 
         {
-            if ((iAgg < pAggInfo.nFunc) && (_c2v_box_AggInfo_func_arr (pAggInfo.aFunc)[(int) (iAgg)].pFExpr == pExpr)) 
+            if ((iAgg < pAggInfo.nFunc) && (_c2v_box_AggInfo_func_arr (pAggInfo.aFunc)[(int) (iAgg)].pFExpr == pExpr[0])) 
             {
                 pExpr = _c2v_box_Expr_arr (sqlite3ExprDup (db, pExpr, 0));
                 if ((pExpr != null) && (!(sqlite3ExprDeferredDelete (pParse, pExpr) != 0))) 
@@ -45237,9 +45126,9 @@ void renameReloadSchema (Parse? pParse, int iDb, uint16 p5) {
     if (v != null) 
     {
         sqlite3ChangeCookie (pParse, iDb);
-        sqlite3VdbeAddParseSchemaOp (_c2v_box_Vdbe_arr (pParse.pVdbe), iDb, "", p5);
+        sqlite3VdbeAddParseSchemaOp (_c2v_box_Vdbe_arr (pParse.pVdbe), iDb, ("").data, p5);
         if (iDb != 1) {
-            sqlite3VdbeAddParseSchemaOp (_c2v_box_Vdbe_arr (pParse.pVdbe), 1, "", p5);
+            sqlite3VdbeAddParseSchemaOp (_c2v_box_Vdbe_arr (pParse.pVdbe), 1, ("").data, p5);
         }
     }
 }
@@ -45257,7 +45146,7 @@ void sqlite3AlterRenameTable (Parse? pParse, SrcList[] pSrc, Token[] pName) {
     Vdbe[] v = new Vdbe[0];
     VTable? pVTab = null;
     do {
-        zName = "";
+        zName = new uint8[0];
         db = _c2v_box_sqlite3_arr (pParse.db);
         pVTab = null;
         if (db[0].mallocFailed != 0) {
@@ -45305,7 +45194,7 @@ void sqlite3AlterRenameTable (Parse? pParse, SrcList[] pSrc, Token[] pName) {
             break;
         }
         if (c2v_goto_exit_rename_table) break;
-        if (sqlite3AuthCheck (pParse, 26, zDb, (pTab[0].zName).data, "") != 0) 
+        if (sqlite3AuthCheck (pParse, 26, zDb, (pTab[0].zName).data, ("").data) != 0) 
         {
             c2v_goto_exit_rename_table = true;
             break;
@@ -45352,7 +45241,7 @@ void sqlite3AlterRenameTable (Parse? pParse, SrcList[] pSrc, Token[] pName) {
         {
             int i = ++pParse.nMem;
             sqlite3VdbeLoadString (v, i, zName);
-            sqlite3VdbeAddOp4 (v, 177, i, 0, 0, pVTab.data, -11);
+            sqlite3VdbeAddOp4 (v, 177, i, 0, 0, new uint8[0], -11);
         }
         if (c2v_goto_exit_rename_table) break;
         renameReloadSchema (pParse, iDb, (uint16) 0x0001);
@@ -45583,8 +45472,8 @@ void sqlite3AlterRenameColumn (Parse? pParse, SrcList[] pSrc, Token[] pOld, Toke
     int bQuote = 0;
     do {
         db = _c2v_box_sqlite3_arr (pParse.db);
-        zOld = "";
-        zNew = "";
+        zOld = new uint8[0];
+        zNew = new uint8[0];
         pTab = _c2v_box_Table_arr (sqlite3LocateTableItem (pParse, (uint32) 0, _c2v_slice_SrcItem (pSrc[0].a, (int) (0))));
         if (!(pTab != null)) {
             c2v_goto_exit_rename_column = true;
@@ -45603,7 +45492,7 @@ void sqlite3AlterRenameColumn (Parse? pParse, SrcList[] pSrc, Token[] pOld, Toke
         if (c2v_goto_exit_rename_column) break;
         iSchema = sqlite3SchemaToIndex (db, pTab[0].pSchema);
         zDb = (_c2v_box_Db_arr (db[0].aDb)[(int) (iSchema)].zDbSName).data;
-        if (sqlite3AuthCheck (pParse, 26, zDb, (pTab[0].zName).data, "") != 0) 
+        if (sqlite3AuthCheck (pParse, 26, zDb, (pTab[0].zName).data, ("").data) != 0) 
         {
             c2v_goto_exit_rename_column = true;
             break;
@@ -45657,7 +45546,8 @@ uint8[] sqlite3RenameTokenMap (Parse? pParse, uint8[] pPtr, Token[] pToken) {
     RenameToken[] pNew = new RenameToken[0];
     if (((int) pParse.eParseMode) != 3) 
     {
-        pNew = sqlite3DbMallocZero (_c2v_box_sqlite3_arr (pParse.db), (uint64) 28);
+        pNew = new RenameToken[1];
+        pNew[0] = new RenameToken ();
         if (pNew != null) 
         {
             pNew[0].p = pPtr;
@@ -45674,7 +45564,7 @@ void sqlite3RenameTokenRemap (Parse? pParse, uint8[] pTo, uint8[] pFrom) {
     RenameToken? p = null;
     for (p = pParse.pRename; p != null; p = p.pNext) 
     {
-        if (p.p == pFrom) 
+        if (c_ptr_u64 (p.p) == c_ptr_u64 (pFrom)) 
         {
             p.p = pTo;
             break;
@@ -45736,7 +45626,7 @@ void unmapColumnIdlistNames (Parse? pParse, IdList? pIdList) {
     int ii = 0;
     for (ii = 0; ii < pIdList.nId; ii++) 
     {
-        sqlite3RenameTokenRemap (pParse, new uint8[0], pIdList.a[(int) (ii)].zName);
+        sqlite3RenameTokenRemap (pParse, new uint8[0], pIdList.a[(int) (ii)].zName.data);
     }
 }
 
@@ -45758,7 +45648,7 @@ int renameUnmapSelectCb (Walker? pWalker, Select? p) {
         {
             if ((pList.a[(int) (i)].zEName != null) && (pList.a[(int) (i)].fg.eEName == ((uint32) 0))) 
             {
-                sqlite3RenameTokenRemap (pParse, new uint8[0], pList.a[(int) (i)].zEName);
+                sqlite3RenameTokenRemap (pParse, new uint8[0], pList.a[(int) (i)].zEName.data);
             }
         }
     }
@@ -45767,7 +45657,7 @@ int renameUnmapSelectCb (Walker? pWalker, Select? p) {
         SrcList? pSrc = p.pSrc;
         for (i = 0; i < pSrc.nSrc; i++) 
         {
-            sqlite3RenameTokenRemap (pParse, new uint8[0], pSrc.a[(int) (i)].zName);
+            sqlite3RenameTokenRemap (pParse, new uint8[0], pSrc.a[(int) (i)].zName.data);
             if (pSrc.a[(int) (i)].fg.isUsing == ((uint32) 0)) 
             {
                 sqlite3WalkExpr (pWalker, _c2v_box_Expr_arr (pSrc.a[(int) (i)].u3.pOn));
@@ -45823,7 +45713,7 @@ void sqlite3RenameExprlistUnmap (Parse? pParse, ExprList[] pEList) {
         {
             if (pEList[0].a[(int) (i)].fg.eEName == ((uint32) 0)) 
             {
-                sqlite3RenameTokenRemap (pParse, new uint8[0], pEList[0].a[(int) (i)].zEName);
+                sqlite3RenameTokenRemap (pParse, new uint8[0], (pEList[0].a[(int) (i)].zEName).data);
             }
         }
     }
@@ -45836,7 +45726,6 @@ void renameTokenFree (sqlite3[] db, RenameToken? pToken) {
     for (p = _c2v_box_RenameToken_arr (pToken); p != null; p = _c2v_box_RenameToken_arr (pNext)) 
     {
         pNext = p[0].pNext;
-        sqlite3DbFree (db, p);
     }
 }
 
@@ -45849,7 +45738,7 @@ RenameToken? renameTokenFind (Parse? pParse, RenameCtx? pCtx, uint8[] pPtr) {
     }
     for (pp = &(pParse.pRename); (*pp) != null; pp = &((*pp).pNext)) 
     {
-        if ((*pp).p == pPtr) 
+        if (c_ptr_u64 ((*pp).p) == c_ptr_u64 (pPtr)) 
         {
             RenameToken? pToken = (*pp);
             if (pCtx != null) 
@@ -45880,12 +45769,12 @@ int renameColumnExprCb (Walker? pWalker, Expr? pExpr) {
     RenameCtx? p = pWalker.u.pRename;
     if (((((int) pExpr.op) == 78) && (((int) pExpr.iColumn) == p.iCol)) && (pWalker.pParse.pTriggerTab == p.pTab)) 
     {
-        renameTokenFind (pWalker.pParse, p, pExpr);
+        renameTokenFind (pWalker.pParse, p, new uint8[0]);
     }
     else 
     if ((((((int) pExpr.op) == 168) && (((int) pExpr.iColumn) == p.iCol)) && ((pExpr.flags & ((uint32) (0x1000000 | 0x2000000))) == ((uint32) 0))) && (p.pTab == pExpr.y.pTab)) 
     {
-        renameTokenFind (pWalker.pParse, p, pExpr);
+        renameTokenFind (pWalker.pParse, p, new uint8[0]);
     }
     return 0;
 }
@@ -46055,7 +45944,7 @@ int renameEditSql (sqlite3_context? pCtx, RenameCtx? pRename, uint8[] zSql, uint
             c_memcpy (c_bytes_add (zOut, (int) (iOff)), zReplace, nReplace);
             sqlite3DbFree (db, pBest);
         }
-        sqlite3_result_text (pCtx, zOut, -1, ((sqlite3_destructor_type?) (-1)));
+        sqlite3_result_text (pCtx, zOut, -1, ((sqlite3_destructor_type?) null));
         sqlite3DbFree (db, zOut);
     }
     else 
@@ -46238,7 +46127,7 @@ void renameParseCleanup (Parse? pParse) {
         sqlite3VdbeFinalize (_c2v_box_Vdbe_arr (pParse.pVdbe));
     }
     sqlite3DeleteTable (db, _c2v_box_Table_arr (pParse.pNewTable));
-    while (_c2v_assign_Index__ (_c2v_box_Index_arr (pParse.pNewIndex), ref pIdx) != 0) 
+    while (_c2v_assign_Index__ (_c2v_box_Index_arr (pParse.pNewIndex), ref pIdx) != null) 
     {
         pParse.pNewIndex = pIdx[0].pNext;
         sqlite3FreeIndex (db, pIdx);
@@ -46683,7 +46572,7 @@ void dropColumnFunc (sqlite3_context? context, int NotUsed, sqlite3_value?[] arg
         }
         if (c2v_goto_drop_column_done) break;
         zNew = (sqlite3MPrintf (db, ("%.*s%s").data, ((zSql).length - (pCol.t.z).length), zSql, zEnd)).data;
-        sqlite3_result_text (context, zNew, -1, ((sqlite3_destructor_type?) (-1)));
+        sqlite3_result_text (context, zNew, -1, ((sqlite3_destructor_type?) null));
         sqlite3_free (zNew);
     } while (false);
     c2v_goto_drop_column_done = false;
@@ -46972,12 +46861,11 @@ void openStatTable (Parse? pParse, int iDb, int iStatCur, uint8[] zWhere, uint8[
 
 // c2vala-ptrs: pOld_ptr[CAST->StatAccum]=>StatAccum.at p_obj[DEREF|ARROW]=>T?
 void statAccumDestructor (uint8[] pOld) {
-    StatAccum[] p = _c2v_box_StatAccum_arr (new StatAccum.at (pOld, 0));
-    sqlite3DbFree (_c2v_box_sqlite3_arr (p[0].db), p);
 }
 
 // c2vala-ptrs: context_obj[PLAIN]=>T? argv_pp[IDX]=>C2VBox<T[]> p_arr[IDX|DEREF|WR|NULL|ARROW]=>T[] db_obj[PLAIN]=>T?
 void statInit (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
+    uint8[] _buf = new uint8[0];
     StatAccum[] p = new StatAccum[0];
     int nCol = 0;
     int nKeyCol = 0;
@@ -46989,12 +46877,13 @@ void statInit (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     nColUp = ((sizeof (uint64) < ((size_t) 8)) ? ((nCol + 1) & ~1) : nCol);
     nKeyCol = sqlite3_value_int (_c2v_box_sqlite3_value_arr (argv[(int) (1)]));
     n = (int) ((52 + (sizeof (uint64) * ((size_t) nColUp))));
-    p = sqlite3DbMallocZero (db, (uint64) n);
-    if (p == null) 
+    _buf = sqlite3DbMallocZero (db, (uint64) n);
+    if (_buf.length == 0) 
     {
         sqlite3_result_error_nomem (context);
         return;
     }
+    p = _c2v_box_StatAccum_arr (new StatAccum.at (_buf, 0));
     p[0].db = _c2v_box_sqlite3_obj (db);
     p[0].nEst = (uint64) (sqlite3_value_int64 (_c2v_box_sqlite3_value_arr (argv[(int) (2)])));
     p[0].nRow = (uint64) 0;
@@ -47002,8 +46891,8 @@ void statInit (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     p[0].nCol = nCol;
     p[0].nKeyCol = nKeyCol;
     p[0].nSkipAhead = (uchar) 0;
-    p[0].current.anDLt = _c2v_slice_StatAccum (p, (int) (1));
-    sqlite3_result_blob (context, p, (int) 52, statAccumDestructor);
+    p[0].current.anDLt = new uint64[nCol + 1];
+    sqlite3_result_blob (context, _buf, (int) 52, null);
 }
 
 public FuncDef statInitFuncdef;
@@ -47041,7 +46930,7 @@ void statGet (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     {
         sqlite3_str sStat = new sqlite3_str ();
         int i = 0;
-        sqlite3StrAccumInit (sStat, null, "", 0, ((p.nKeyCol + 1) * 100));
+        sqlite3StrAccumInit (sStat, new sqlite3[0], new uint8[0], 0, ((p.nKeyCol + 1) * 100));
         sqlite3_str_appendf (_c2v_box_sqlite3_str_arr (sStat), ("%llu").data, ((p.nSkipAhead != 0) ? p.nEst : p.nRow));
         for (i = 0; i < p.nKeyCol; i++) 
         {
@@ -47248,7 +47137,7 @@ void analyzeDatabase (Parse? pParse, int iDb) {
     sqlite3BeginWriteOperation (pParse, 0, iDb);
     iStatCur = pParse.nTab;
     pParse.nTab += 3;
-    openStatTable (pParse, iDb, iStatCur, "", "");
+    openStatTable (pParse, iDb, iStatCur, ("").data, ("").data);
     iMem = (pParse.nMem + 1);
     iTab = pParse.nTab;
     for (k = pSchema.tblHash.first; k != null; k = k.next) 
@@ -47318,12 +47207,12 @@ void sqlite3Analyze (Parse? pParse, Token[] pName1, Token[] pName2) {
             z = sqlite3NameFromToken (db, pTableName[0]);
             if (z != null) 
             {
-                if (_c2v_assign_Index_ (sqlite3FindIndex (db, z, zDb), ref pIdx) != 0) 
+                if (_c2v_assign_Index_ (sqlite3FindIndex (db, z, zDb), ref pIdx) != null) 
                 {
                     analyzeTable (pParse, _c2v_box_Table_arr (pIdx.pTable), pIdx);
                 }
                 else 
-                if (_c2v_assign_Table__ (_c2v_box_Table_arr (sqlite3LocateTable (pParse, (uint32) 0, z, zDb)), ref pTab) != 0) 
+                if (_c2v_assign_Table__ (_c2v_box_Table_arr (sqlite3LocateTable (pParse, (uint32) 0, z, zDb)), ref pTab) != null) 
                 {
                     analyzeTable (pParse, pTab, null);
                 }
@@ -47331,7 +47220,7 @@ void sqlite3Analyze (Parse? pParse, Token[] pName1, Token[] pName2) {
             }
         }
     }
-    if ((((int) db[0].nSqlExec) == 0) && (_c2v_assign_Vdbe__ (_c2v_box_Vdbe_arr (sqlite3GetVdbe (pParse)), ref v) != 0)) 
+    if ((((int) db[0].nSqlExec) == 0) && (_c2v_assign_Vdbe__ (_c2v_box_Vdbe_arr (sqlite3GetVdbe (pParse)), ref v) != null)) 
     {
         sqlite3VdbeAddOp0 (v, 166);
     }
@@ -47478,7 +47367,7 @@ int sqlite3AnalysisLoad (sqlite3[] db, int iDb) {
     }
     sInfo.db = _c2v_box_sqlite3_obj (db);
     sInfo.zDatabase = _c2v_box_Db_arr (db[0].aDb)[(int) (iDb)].zDbSName;
-    if ((_c2v_assign_Table_ (sqlite3FindTable (db, ("sqlite_stat1").data, sInfo.zDatabase.data), ref pStat1) != 0) && (((int) pStat1.eTabType) == 0)) 
+    if ((_c2v_assign_Table_ (sqlite3FindTable (db, ("sqlite_stat1").data, sInfo.zDatabase.data), ref pStat1) != null) && (((int) pStat1.eTabType) == 0)) 
     {
         zSql = (sqlite3MPrintf (db, ("SELECT tbl,idx,stat FROM %Q.sqlite_stat1").data, sInfo.zDatabase)).data;
         if (zSql == null) 
@@ -47897,7 +47786,7 @@ void sqlite3Detach (Parse? pParse, Expr[] pDbname) {
     detach_func.xInverse = null;
     detach_func.zName = "sqlite_detach";
     detach_func.u = _c2v_lit___anon_union_3_0 (null);
-    codeAttach (pParse, 25, _c2v_box_FuncDef_arr (detach_func), pDbname, null, null, pDbname);
+    codeAttach (pParse, 25, _c2v_box_FuncDef_arr (detach_func), pDbname, new Expr[0], new Expr[0], pDbname);
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? p_obj[PLAIN]=>T? pDbname_obj[PLAIN]=>T? pKey_obj[PLAIN]=>T?
@@ -48553,16 +48442,16 @@ uint8[] sqlite3PreferredTableName (uint8[] zName) {
     int _off_zName = 0;
     if (sqlite3_strnicmp (c_bytes_add (zName, _off_zName), ("sqlite_").data, 7) == 0) 
     {
-        if (sqlite3StrICmp (c_bytes_add (zName, _off_zName + (int) (7)), c_str_add ("sqlite_master", (int) (7))) == 0) 
+        if (sqlite3StrICmp (c_bytes_add (zName, _off_zName + (int) (7)), ("master").data) == 0) 
         {
-            return "sqlite_schema";
+            return ("sqlite_schema").data;
         }
-        if (sqlite3StrICmp (c_bytes_add (zName, _off_zName + (int) (7)), c_str_add ("sqlite_temp_master", (int) (7))) == 0) 
+        if (sqlite3StrICmp (c_bytes_add (zName, _off_zName + (int) (7)), ("temp_master").data) == 0) 
         {
-            return "sqlite_temp_schema";
+            return ("sqlite_temp_schema").data;
         }
     }
-    return (string) zName;
+    return zName;
 }
 
 // c2vala-ptrs: db_obj[DEREF|ARROW]=>T? zName_obj[PLAIN]=>T? zDb_obj[NULL]=>T? p_obj[PLAIN]=>T? pSchema_obj[DEREF|ARROW]=>T?
@@ -48590,10 +48479,6 @@ void sqlite3FreeIndex (sqlite3[] db, Index[] p) {
     sqlite3ExprDelete (db, _c2v_box_Expr_arr (p[0].pPartIdxWhere));
     sqlite3ExprListDelete (db, _c2v_box_ExprList_arr (p[0].aColExpr));
     sqlite3DbFree (db, (p[0].zColAff).data);
-    if (p[0].isResized != 0) {
-        sqlite3DbFree (db, p[0].azColl);
-    }
-    sqlite3DbFree (db, p);
 }
 
 // c2vala-ptrs: db_obj[DEREF|WR|ARROW]=>T? zIdxName_obj[PLAIN]=>T? pIndex_obj[DEREF|ARROW]=>T? pHash_obj[PLAIN]=>T? p_obj[DEREF|WR|ARROW]=>T?
@@ -48604,7 +48489,7 @@ void sqlite3UnlinkAndDeleteIndex (sqlite3[] db, int iDb, uint8[] zIdxName) {
     pIndex = sqlite3HashInsert (pHash, zIdxName, new uint8[0]);
     if (pIndex != null) 
     {
-        if (pIndex[0].pTable.pIndex == pIndex) 
+        if (pIndex[0].pTable.pIndex == pIndex[0]) 
         {
             pIndex[0].pTable.pIndex = pIndex[0].pNext;
         }
@@ -48612,11 +48497,11 @@ void sqlite3UnlinkAndDeleteIndex (sqlite3[] db, int iDb, uint8[] zIdxName) {
         {
             Index? p = null;
             p = pIndex[0].pTable.pIndex;
-            while ((p != null) && (p.pNext != pIndex)) 
+            while ((p != null) && (p.pNext != pIndex[0])) 
             {
                 p = p.pNext;
             }
-            if ((p != null) && (p.pNext == pIndex)) 
+            if ((p != null) && (p.pNext == pIndex[0])) 
             {
                 p.pNext = pIndex[0].pNext;
             }
@@ -48646,7 +48531,7 @@ void sqlite3ResetOneSchema (sqlite3[] db, int iDb) {
         {
             if ((((int) _c2v_box_Db_arr (db[0].aDb)[(int) (i)].pSchema.schemaFlags) & 0x0008) == 0x0008) 
             {
-                sqlite3SchemaClear ((_c2v_box_Db_arr (db[0].aDb)[(int) (i)].pSchema).data);
+                sqlite3SchemaClear (_c2v_box_Db_arr (db[0].aDb)[(int) (i)].pSchema._c2v_data ?? new uint8[0]);
             }
         }
     }
@@ -48663,7 +48548,7 @@ void sqlite3ResetAllSchemasOfConnection (sqlite3[] db) {
         {
             if (db[0].nSchemaLock == ((uint32) 0)) 
             {
-                sqlite3SchemaClear (pDb.pSchema.data);
+                sqlite3SchemaClear (pDb.pSchema._c2v_data ?? new uint8[0]);
             }
             else 
             {
@@ -48764,7 +48649,7 @@ void sqlite3DeleteColumnNames (sqlite3[] db, Table[] pTable) {
     int i = 0;
     Column[] pCol = new Column[0];
     int _off_pCol = 0;
-    if (_c2v_assign_Column__ (_c2v_box_Column_arr (pTable[0].aCol), ref pCol) != 0) 
+    if (_c2v_assign_Column__ (_c2v_box_Column_arr (pTable[0].aCol), ref pCol) != null) 
     {
         for (i = 0; i < ((int) pTable[0].nCol); ) {
             {
@@ -48773,7 +48658,9 @@ void sqlite3DeleteColumnNames (sqlite3[] db, Table[] pTable) {
             i++;
             _off_pCol++;
         }
-        sqlite3DbNNFreeNN (db, (pTable[0].aCol).data);
+    if (pTable[0].aCol != null) {
+        pTable[0].aCol = null;
+    }
         if (((int) pTable[0].eTabType) == 0) 
         {
             sqlite3ExprListDelete (db, _c2v_box_ExprList_arr (pTable[0].u.tab.pDfltList));
@@ -48821,7 +48708,6 @@ void deleteTable (sqlite3[] db, Table[] pTable) {
     sqlite3DbFree (db, (pTable[0].zName).data);
     sqlite3DbFree (db, (pTable[0].zColAff).data);
     sqlite3ExprListDelete (db, _c2v_box_ExprList_arr (pTable[0].pCheck));
-    sqlite3DbFree (db, pTable);
 }
 
 // c2vala-ptrs: db_obj[DEREF|NULL|ARROW]=>T? pTable_obj[DEREF|NULL|ARROW]=>T?
@@ -48860,9 +48746,9 @@ uint8[] sqlite3NameFromToken (sqlite3[] db, Token[] pName) {
     }
     else 
     {
-        zName = "";
+        zName = new uint8[0];
     }
-    return (string) zName;
+    return zName;
 }
 
 // c2vala-ptrs: p_obj[DEREF|WR|ARROW]=>T? v_obj[PLAIN]=>T?
@@ -49056,7 +48942,7 @@ void sqlite3StartTable (Parse? pParse, Token[] pName1, Token[] pName2, int isTem
     int iDb = 0;
     C2VBox<Token[]> pName = new C2VBox<Token[]> (null);
     do {
-        zName = "";
+        zName = new uint8[0];
         db = _c2v_box_sqlite3_arr (pParse.db);
         if ((db[0].init.busy != 0) && (db[0].init.newTnum == ((uint32) 1))) 
         {
@@ -49165,7 +49051,7 @@ void sqlite3StartTable (Parse? pParse, Token[] pName1, Token[] pName2, int isTem
         pTable[0].nTabRef = (uint32) 1;
         pTable[0].nRowLogEst = (int16) 200;
         pParse.pNewTable = _c2v_box_Table_obj (pTable);
-        if ((!(db[0].init.busy != 0)) && (_c2v_assign_Vdbe__ (_c2v_box_Vdbe_arr (sqlite3GetVdbe (pParse)), ref v) != 0)) 
+        if ((!(db[0].init.busy != 0)) && (_c2v_assign_Vdbe__ (_c2v_box_Vdbe_arr (sqlite3GetVdbe (pParse)), ref v) != null)) 
         {
             int addr1 = 0;
             int fileFormat = 0;
@@ -49227,7 +49113,6 @@ void sqlite3DeleteReturning (sqlite3[] db, uint8[] pArg) {
     pHash = _c2v_box_Db_arr (db[0].aDb)[(int) (1)].pSchema.trigHash;
     sqlite3HashInsert (pHash, pRet[0].zName, new uint8[0]);
     sqlite3ExprListDelete (db, _c2v_box_ExprList_arr (pRet[0].pReturnEL));
-    sqlite3DbFree (db, pRet);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|WR|ARROW]=>T? pList_obj[PLAIN]=>T? pRet_obj[DEREF|WR|NULL|ARROW]=>T? pHash_obj[PLAIN]=>T? db_obj[DEREF|ARROW]=>T?
@@ -49243,7 +49128,8 @@ void sqlite3AddReturning (Parse? pParse, ExprList[] pList) {
     {
     }
     pParse.bReturning = (uchar) 1;
-    pRet = sqlite3DbMallocZero (db, (uint64) 260);
+    pRet = new Returning[1];
+    pRet[0] = new Returning ();
     if (pRet == null) 
     {
         sqlite3ExprListDelete (db, pList);
@@ -49252,12 +49138,11 @@ void sqlite3AddReturning (Parse? pParse, ExprList[] pList) {
     pParse.u1.pReturning = _c2v_box_Returning_obj (pRet);
     pRet[0].pParse = pParse;
     pRet[0].pReturnEL = _c2v_box_ExprList_obj (pList);
-    sqlite3ParserAddCleanup (pParse, sqlite3DeleteReturning, pRet);
     if (db[0].mallocFailed != 0) {
         return;
     }
     sqlite3_snprintf ((int) (((int) (40) * 1)), pRet[0].zName, ("sqlite_returning_%p").data, pParse);
-    pRet[0].retTrig.zName = pRet[0].zName;
+    pRet[0].retTrig.zName = (string) pRet[0].zName;
     pRet[0].retTrig.op = (uchar) 151;
     pRet[0].retTrig.tr_tm = (uchar) 2;
     pRet[0].retTrig.bReturning = (uchar) 1;
@@ -49268,10 +49153,7 @@ void sqlite3AddReturning (Parse? pParse, ExprList[] pList) {
     pRet[0].retTStep.pTrig = pRet[0].retTrig;
     pRet[0].retTStep.pExprList = _c2v_box_ExprList_obj (pList);
     pHash = _c2v_box_Db_arr (db[0].aDb)[(int) (1)].pSchema.trigHash;
-    if (sqlite3HashInsert (pHash, pRet[0].zName, (pRet[0].retTrig).data) == pRet[0].retTrig) 
-    {
-        sqlite3OomFault (db);
-    }
+    sqlite3HashInsert (pHash, pRet[0].zName, new uint8[0]);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|WR|ARROW]=>T? z_buf[IDX|ARITH|WR|NULL]=>uint8[] zType_buf[IDX|WR]=>uint8[] pCol_obj[DEREF|WR|ARROW]=>T? db_obj[DEREF|ARROW]=>T? aNew_obj[NULL]=>T?
@@ -49625,7 +49507,7 @@ void sqlite3AddCollateType (Parse? pParse, Token[] pToken) {
     int i = 0;
     uint8[] zColl = new uint8[0];
     sqlite3[] db = new sqlite3[0];
-    if ((_c2v_assign_Table_ (pParse.pNewTable, ref p) == 0) || (((int) pParse.eParseMode) >= 2)) {
+    if ((_c2v_assign_Table_ (pParse.pNewTable, ref p) == null) || (((int) pParse.eParseMode) >= 2)) {
         return;
     }
     i = (((int) p.nCol) - 1);
@@ -49637,12 +49519,12 @@ void sqlite3AddCollateType (Parse? pParse, Token[] pToken) {
     if (sqlite3LocateCollSeq (pParse, zColl) != null) 
     {
         Index? pIdx = null;
-        sqlite3ColumnSetColl (db, _c2v_slice_Column (p.aCol, (int) (i)), zColl);
+        sqlite3ColumnSetColl (db, _c2v_slice_Column (_c2v_box_Column_arr (p.aCol), (int) (i)), zColl);
         for (pIdx = p.pIndex; pIdx != null; pIdx = pIdx.pNext) 
         {
             if (((int) pIdx.aiColumn[(int) (0)]) == i) 
             {
-                pIdx.azColl[(int) (0)] = sqlite3ColumnColl (_c2v_slice_Column (p.aCol, (int) (i)));
+                pIdx.azColl[(int) (0)] = sqlite3ColumnColl (_c2v_slice_Column (_c2v_box_Column_arr (p.aCol), (int) (i)));
             }
         }
     }
@@ -49879,17 +49761,18 @@ int resizeIndexObject (sqlite3[] db, Index[] pIdx, int N) {
     if (zExtra == null) {
         return 7;
     }
-    c_memcpy (zExtra, (pIdx[0].azColl).data, (8 * ((size_t) pIdx[0].nColumn)));
-    pIdx[0].azColl = zExtra;
-    _off_zExtra += (int) ((8 * ((size_t) N)));
-    c_memcpy (zExtra, (pIdx[0].aiRowLogEst).data, (sizeof (int16) * ((size_t) (((int) pIdx[0].nKeyCol) + 1))));
-    pIdx[0].aiRowLogEst = zExtra;
-    _off_zExtra += (int) ((sizeof (int16) * ((size_t) N)));
-    c_memcpy (zExtra, (pIdx[0].aiColumn).data, (sizeof (int16) * ((size_t) pIdx[0].nColumn)));
-    pIdx[0].aiColumn = zExtra;
-    _off_zExtra += (int) ((sizeof (int16) * ((size_t) N)));
-    c_memcpy (zExtra, (pIdx[0].aSortOrder).data, pIdx[0].nColumn);
-    pIdx[0].aSortOrder = zExtra;
+    string[] newColl = new string[N];
+    for (int _k = 0; _k < pIdx[0].nColumn && _k < N; _k++) newColl[_k] = pIdx[0].azColl[_k];
+    pIdx[0].azColl = newColl;
+    int16[] newLog = new int16[N];
+    for (int _k = 0; _k <= pIdx[0].nKeyCol && _k < N; _k++) newLog[_k] = pIdx[0].aiRowLogEst[_k];
+    pIdx[0].aiRowLogEst = newLog;
+    int16[] newCol = new int16[N];
+    for (int _k = 0; _k < pIdx[0].nColumn && _k < N; _k++) newCol[_k] = pIdx[0].aiColumn[_k];
+    pIdx[0].aiColumn = newCol;
+    uchar[] newSort = new uchar[N];
+    for (int _k = 0; _k < pIdx[0].nColumn && _k < N; _k++) newSort[_k] = pIdx[0].aSortOrder[_k];
+    pIdx[0].aSortOrder = newSort;
     pIdx[0].nColumn = (uint16) N;
     pIdx[0].isResized = (uint32) 1;
     return 0;
@@ -50647,10 +50530,10 @@ int sqlite3ReadOnlyShadowTables (sqlite3[] db) {
 int tableMayNotBeDropped (sqlite3[] db, Table[] pTab) {
     if (sqlite3_strnicmp ((pTab[0].zName).data, ("sqlite_").data, 7) == 0) 
     {
-        if (sqlite3_strnicmp (c_str_add (pTab[0].zName, ((int) (7))), ("stat").data, 4) == 0) {
+        if (sqlite3_strnicmp ((c_str_add (pTab[0].zName, ((int) (7)))).data, ("stat").data, 4) == 0) {
             return 0;
         }
-        if (sqlite3_strnicmp (c_str_add (pTab[0].zName, ((int) (7))), ("parameters").data, 10) == 0) {
+        if (sqlite3_strnicmp ((c_str_add (pTab[0].zName, ((int) (7)))).data, ("parameters").data, 10) == 0) {
             return 0;
         }
         return 1;
@@ -50960,13 +50843,13 @@ void sqlite3CreateForeignKey (Parse? pParse, ExprList[] pFromCol, Token[] pTo, E
 void sqlite3DeferForeignKey (Parse? pParse, int isDeferred) {
     Table? pTab = null;
     FKey? pFKey = null;
-    if (_c2v_assign_Table_ (pParse.pNewTable, ref pTab) == 0) {
+    if (_c2v_assign_Table_ (pParse.pNewTable, ref pTab) == null) {
         return;
     }
     if (!(((int) pTab.eTabType) == 0)) {
         return;
     }
-    if (_c2v_assign_FKey_ (pTab.u.tab.pFKey, ref pFKey) == 0) {
+    if (_c2v_assign_FKey_ (pTab.u.tab.pFKey, ref pFKey) == null) {
         return;
     }
     pFKey.isDeferred = ((uchar) isDeferred);
@@ -50987,7 +50870,7 @@ void sqlite3RefillIndex (Parse? pParse, Index[] pIndex, int memRootPage) {
     int regRecord = 0;
     sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
     int iDb = sqlite3SchemaToIndex (db, pIndex[0].pSchema);
-    if (sqlite3AuthCheck (pParse, 27, (pIndex[0].zName).data, "", (_c2v_box_Db_arr (db[0].aDb)[(int) (iDb)].zDbSName).data) != 0) 
+    if (sqlite3AuthCheck (pParse, 27, (pIndex[0].zName).data, ("").data, (_c2v_box_Db_arr (db[0].aDb)[(int) (iDb)].zDbSName).data) != 0) 
     {
         return;
     }
@@ -51006,7 +50889,7 @@ void sqlite3RefillIndex (Parse? pParse, Index[] pIndex, int memRootPage) {
     }
     pKey = sqlite3KeyInfoOfIndex (pParse, pIndex);
     iSorter = pParse.nTab++;
-    sqlite3VdbeAddOp4 (v, 119, iSorter, 0, (int) (pIndex[0].nKeyCol), (string) sqlite3KeyInfoRef (pKey), -8);
+    sqlite3VdbeAddOp4KeyInfo (v, 119, iSorter, 0, (int) (pIndex[0].nKeyCol), sqlite3KeyInfoRef (pKey));
     sqlite3OpenTable (pParse, iTab, iDb, pTab, 102);
     addr1 = sqlite3VdbeAddOp2 (v, 36, iTab, 0);
     regRecord = sqlite3GetTempReg (pParse);
@@ -51019,7 +50902,7 @@ void sqlite3RefillIndex (Parse? pParse, Index[] pIndex, int memRootPage) {
     if (memRootPage < 0) {
         sqlite3VdbeAddOp2 (v, 145, (int) tnum, iDb);
     }
-    sqlite3VdbeAddOp4 (v, 113, iIdx, ((int) tnum), iDb, (string) pKey, -8);
+    sqlite3VdbeAddOp4KeyInfo (v, 113, iIdx, ((int) tnum), iDb, pKey);
     sqlite3VdbeChangeP5 (v, (uint16) ((0x01 | ((memRootPage >= 0) ? 0x10 : 0))));
     addr1 = sqlite3VdbeAddOp2 (v, 34, iSorter, 0);
     if (((int) pIndex[0].onError) != 0) 
@@ -51058,7 +50941,7 @@ Index[] sqlite3AllocateIndexObject (sqlite3[] db, int16 nCol, int nExtra, string
     p = sqlite3DbMallocZero (db, (uint64) ((nByte + nExtra)));
     if (p != null) 
     {
-        uint8[] pExtra = c_bytes_add ((string) p, (int) (((162 + ((size_t) 7)) & ((size_t) ~7))));
+        uint8[] pExtra = c_bytes_add (p, (int) (((162 + ((size_t) 7)) & ((size_t) ~7))));
         int _off_pExtra = 0;
         p[0].azColl = pExtra;
         _off_pExtra += (int) ((((8 * ((size_t) nCol)) + ((size_t) 7)) & ((size_t) ~7)));
@@ -51069,9 +50952,9 @@ Index[] sqlite3AllocateIndexObject (sqlite3[] db, int16 nCol, int nExtra, string
         p[0].aSortOrder = pExtra;
         p[0].nColumn = (uint16) nCol;
         p[0].nKeyCol = (uint16) ((((int) nCol) - 1));
-        ppExtra[0] = (string) c_bytes_add ((string) p, (int) (nByte));
+        ppExtra[0] = (string) c_bytes_add (p, (int) (nByte));
     }
-    return _c2v_box_Index_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pList_obj[DEREF|ARROW]=>T?
@@ -51116,7 +50999,7 @@ void sqlite3CreateIndex (Parse? pParse, Token[] pName1, Token[] pName2, SrcList[
     do {
         pTab = null;
         pIndex = null;
-        zName = "";
+        zName = new uint8[0];
         db = _c2v_box_sqlite3_arr (pParse.db);
         pName[0] = null;
         nExtra = 0;
@@ -51641,13 +51524,13 @@ void sqlite3CreateIndex (Parse? pParse, Token[] pName1, Token[] pName2, SrcList[
     {
         Index?* ppFrom = null;
         Index? pThis = null;
-        for (ppFrom = &(pTab.pIndex); _c2v_assign_Index_ ((*ppFrom), ref pThis) != 0; ppFrom = &(pThis.pNext)) 
+        for (ppFrom = &(pTab.pIndex); _c2v_assign_Index_ ((*ppFrom), ref pThis) != null; ppFrom = &(pThis.pNext)) 
         {
             Index? pNext = null;
             if (((int) pThis.onError) != 5) {
                 continue;
             }
-            while ((_c2v_assign_Index_ (pThis.pNext, ref pNext) != 0) && (((int) pNext.onError) != 5)) 
+            while ((_c2v_assign_Index_ (pThis.pNext, ref pNext) != null) && (((int) pNext.onError) != 5)) 
             {
                 *ppFrom = pNext;
                 pThis.pNext = pNext.pNext;
@@ -51688,7 +51571,9 @@ void sqlite3DefaultRowEst (Index[] pIdx) {
         x -= 10;
     }
     a[(int) (0)] = x;
-    c_memcpy (_c2v_slice_int16 (a, (int) (1)), aVal, (((size_t) nCopy) * sizeof (int16)));
+    for (int _ci = 0; _ci < nCopy; _ci++) {
+        a[1 + _ci] = aVal[_ci];
+    }
     for (i = (nCopy + 1); i <= ((int) pIdx[0].nKeyCol); i++) 
     {
         a[(int) (i)] = (int16) 23;
@@ -51795,7 +51680,7 @@ uint8[] sqlite3ArrayAllocate (sqlite3[] db, uint8[] pArray, int szEntry, int[] p
         }
         pArray = pNew;
     }
-    z = (string) pArray;
+    z = pArray;
     c_memset (c_bytes_add (z, (int) ((n * ((int64) szEntry)))), 0, szEntry);
     ++pnEntry[0];
     return pArray;
@@ -51829,7 +51714,7 @@ IdList[] sqlite3IdListAppend (Parse? pParse, IdList[] pList, Token[] pToken) {
     {
         sqlite3RenameTokenMap (pParse, pList[0].a[(int) (i)].zName, pToken);
     }
-    return _c2v_box_IdList_obj (pList);
+    return pList;
 }
 
 // c2vala-ptrs: db_obj[NULL]=>T? pList_obj[DEREF|NULL|ARROW]=>T?
@@ -51900,7 +51785,7 @@ SrcList[] sqlite3SrcListEnlarge (Parse? pParse, SrcList[] pSrc, int nExtra, int 
     {
         pSrc[0].a[(int) (i)].iCursor = -1;
     }
-    return _c2v_box_SrcList_obj (pSrc);
+    return pSrc;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|NULL|ARROW]=>T? pList_obj[DEREF|WR|NULL|ARROW]=>T? pTable_obj[NULL]=>T? pDatabase_obj[DEREF|NULL|ARROW]=>T? pItem_obj[DEREF|WR|ARROW]=>T? db_obj[PLAIN]=>T? pNew_obj[NULL]=>T?
@@ -51910,10 +51795,9 @@ SrcList[] sqlite3SrcListAppend (Parse? pParse, SrcList[] pList, Token[] pTable, 
     db = _c2v_box_sqlite3_arr (pParse.db);
     if (pList == null) 
     {
-        pList = sqlite3DbMallocRawNN (_c2v_box_sqlite3_arr (pParse.db), (uint64) 156);
-        if (pList == null) {
-            return null;
-        }
+        pList = { new SrcList () };
+        pList[0].a = new SrcItem[1];
+        pList[0].a[0] = new SrcItem ();
         pList[0].nAlloc = (uint32) 1;
         pList[0].nSrc = 1;
         _c2v_slice_SrcItem (pList[0].a, (int) (0))[0].zName = "";
@@ -51934,7 +51818,7 @@ SrcList[] sqlite3SrcListAppend (Parse? pParse, SrcList[] pList, Token[] pTable, 
         if (pNew == null) 
         {
             sqlite3SrcListDelete (db, pList);
-            return null;
+            return new SrcList[0];
         }
         else 
         {
@@ -51944,7 +51828,7 @@ SrcList[] sqlite3SrcListAppend (Parse? pParse, SrcList[] pList, Token[] pTable, 
     pItem = _c2v_box_SrcItem_obj (_c2v_slice_SrcItem (pList[0].a, (int) ((pList[0].nSrc - 1))));
     if ((pDatabase != null) && (pDatabase[0].z == null)) 
     {
-        pDatabase = null;
+        pDatabase = new Token[0];
     }
     if (pDatabase != null) 
     {
@@ -51956,7 +51840,7 @@ SrcList[] sqlite3SrcListAppend (Parse? pParse, SrcList[] pList, Token[] pTable, 
         pItem.zName = (string) sqlite3NameFromToken (db, pTable);
         pItem.u4.zDatabase = "";
     }
-    return _c2v_box_SrcList_obj (pList);
+    return pList;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pList_obj[DEREF|ARROW]=>T? pItem_arr[ARITH|DEREF|WR|ARROW]=>T[]
@@ -51995,14 +51879,12 @@ void sqlite3SrcListAssignCursors (Parse? pParse, SrcList? pList) {
 // c2vala-ptrs: db_obj[PLAIN]=>T? pSubq_obj[DEREF|NULL|ARROW]=>T?
 void sqlite3SubqueryDelete (sqlite3[] db, Subquery[] pSubq) {
     sqlite3SelectDelete (db, _c2v_box_Select_arr (pSubq[0].pSelect));
-    sqlite3DbFree (db, pSubq);
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pItem_obj[DEREF|NULL|ARROW]=>T? pSel_obj[PLAIN]=>T?
 Select? sqlite3SubqueryDetach (sqlite3[] db, SrcItem[] pItem) {
     Select? pSel = null;
     pSel = pItem[0].u4.pSubq.pSelect;
-    sqlite3DbFree (db, (pItem[0].u4.pSubq).data);
     pItem[0].u4.pSubq = null;
     pItem[0].fg.isSubquery = (uint32) 0;
     return pSel;
@@ -52058,7 +51940,6 @@ void sqlite3SrcListDelete (sqlite3[] db, SrcList[] pList) {
             _off_pItem++;
         }
     }
-    sqlite3DbNNFreeNN (db, pList);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pItem_obj[DEREF|ARROW]=>T? pSelect_obj[NULL]=>T? p_arr[ARITH|DEREF|WR|NULL|ARROW]=>T[]
@@ -52082,16 +51963,10 @@ int sqlite3SrcItemAttachSubquery (Parse? pParse, SrcItem[] pItem, Select[] pSele
             return 0;
         }
     }
-    pItem[0].u4.pSubq = sqlite3DbMallocRawNN (_c2v_box_sqlite3_arr (pParse.db), (uint64) 20);
+    pItem[0].u4.pSubq = new Subquery ();
     p = pItem[0].u4.pSubq;
-    if (p == null) 
-    {
-        sqlite3SelectDelete (_c2v_box_sqlite3_arr (pParse.db), pSelect);
-        return 0;
-    }
     pItem[0].fg.isSubquery = (uint32) 1;
     p.pSelect = _c2v_box_Select_obj (pSelect);
-    c_memset (c_str_add (p, ((int) (8))), 0, (20 - 8));
     return 1;
 }
 
@@ -52154,12 +52029,12 @@ SrcList[] sqlite3SrcListAppendFromTerm (Parse? pParse, SrcList[] p, Token[] pTab
             pItem[0].u3.pOn = pOnUsing.pOn;
         }
         if (c2v_goto_append_from_error) break;
-        return _c2v_box_SrcList_obj (p);
+        return p;
     } while (false);
     c2v_goto_append_from_error = false;
     sqlite3ClearOnOrUsing (db, pOnUsing);
     sqlite3SelectDelete (db, pSubquery);
-    return null;
+    return new SrcList[0];
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|ARROW]=>T? pIndexedBy_obj[DEREF|NULL|ARROW]=>T? pItem_obj[DEREF|ARROW]=>T?
@@ -52193,11 +52068,10 @@ SrcList[] sqlite3SrcListAppendList (Parse? pParse, SrcList[] p1, SrcList[] p2) {
         {
             p1 = pNew;
             _c2v_copy_arr_SrcItem (p1[0].a, (int) (1), p2[0].a, 0, (int) (p2[0].nSrc));
-            sqlite3DbFree (_c2v_box_sqlite3_arr (pParse.db), p2);
             p1[0].a[(int) (0)].fg.jointype |= (0x40 & ((int) p1[0].a[(int) (1)].fg.jointype));
         }
     }
-    return _c2v_box_SrcList_obj (p1);
+    return p1;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|ARROW]=>T? pList_obj[PLAIN]=>T? pItem_obj[DEREF|ARROW]=>T?
@@ -52245,7 +52119,7 @@ void sqlite3BeginTransaction (Parse? pParse, int type) {
     Vdbe[] v = new Vdbe[0];
     int i = 0;
     db = pParse.db;
-    if (sqlite3AuthCheck (pParse, 22, ("BEGIN").data, "", "") != 0) 
+    if (sqlite3AuthCheck (pParse, 22, ("BEGIN").data, ("").data, ("").data) != 0) 
     {
         return;
     }
@@ -52284,7 +52158,7 @@ void sqlite3EndTransaction (Parse? pParse, int eType) {
     Vdbe[] v = new Vdbe[0];
     int isRollback = 0;
     isRollback = (int) ((eType == 12));
-    if (sqlite3AuthCheck (pParse, 22, ((isRollback != 0) ? "ROLLBACK" : "COMMIT"), "", "") != 0) 
+    if (sqlite3AuthCheck (pParse, 22, ((isRollback != 0) ? ("ROLLBACK").data : ("COMMIT").data), ("").data, ("").data) != 0) 
     {
         return;
     }
@@ -52305,7 +52179,7 @@ void sqlite3Savepoint (Parse? pParse, int op, Token[] pName) {
         az[0] = "BEGIN";
         az[1] = "RELEASE";
         az[2] = "ROLLBACK";
-        if ((!(v != null)) || (sqlite3AuthCheck (pParse, 32, (az[(int) (op)]).data, zName, "") != 0)) 
+        if ((!(v != null)) || (sqlite3AuthCheck (pParse, 32, (az[(int) (op)]).data, zName, ("").data) != 0)) 
         {
             sqlite3DbFree (_c2v_box_sqlite3_arr (pParse.db), zName);
             return;
@@ -52408,7 +52282,7 @@ void sqlite3UniqueConstraint (Parse? pParse, int onError, Index[] pIdx) {
     int j = 0;
     sqlite3_str errMsg = new sqlite3_str ();
     Table? pTab = pIdx[0].pTable;
-    sqlite3StrAccumInit (errMsg, _c2v_box_sqlite3_arr (pParse.db), "", 0, pParse.db.aLimit[(int) (0)]);
+    sqlite3StrAccumInit (errMsg, _c2v_box_sqlite3_arr (pParse.db), new uint8[0], 0, pParse.db.aLimit[(int) (0)]);
     if (pIdx[0].aColExpr != null) 
     {
         sqlite3_str_appendf (_c2v_box_sqlite3_str_arr (errMsg), ("index '%q'").data, pIdx[0].zName);
@@ -52605,14 +52479,15 @@ KeyInfo[] sqlite3KeyInfoOfIndex (Parse? pParse, Index[] pIdx) {
             pKey = null;
         }
     }
-    return _c2v_box_KeyInfo_obj (pKey);
+    return pKey;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pName_obj[PLAIN]=>T? pArglist_obj[PLAIN]=>T? pQuery_obj[PLAIN]=>T? pNew_obj[DEREF|WR|NULL|ARROW]=>T? db_obj[DEREF|ARROW]=>T?
 Cte[] sqlite3CteNew (Parse? pParse, Token[] pName, ExprList[] pArglist, Select[] pQuery, uchar eM10d) {
     Cte[] pNew = new Cte[0];
     sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
-    pNew = sqlite3DbMallocZero (db, (uint64) 48);
+    pNew = new Cte[1];
+    pNew[0] = new Cte ();
     if (db[0].mallocFailed != 0) 
     {
         sqlite3ExprListDelete (db, pArglist);
@@ -52625,7 +52500,7 @@ Cte[] sqlite3CteNew (Parse? pParse, Token[] pName, ExprList[] pArglist, Select[]
         pNew[0].zName = (string) sqlite3NameFromToken (_c2v_box_sqlite3_arr (pParse.db), pName);
         pNew[0].eM10d = eM10d;
     }
-    return _c2v_box_Cte_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pCte_obj[DEREF|NULL|ARROW]=>T?
@@ -52638,7 +52513,6 @@ void cteClear (sqlite3[] db, Cte[] pCte) {
 // c2vala-ptrs: db_obj[PLAIN]=>T? pCte_obj[NULL]=>T?
 void sqlite3CteDelete (sqlite3[] db, Cte[] pCte) {
     cteClear (db, pCte);
-    sqlite3DbFree (db, pCte);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pWith_obj[DEREF|ARROW]=>T? pCte_obj[DEREF|NULL|ARROW]=>T? db_obj[DEREF|ARROW]=>T? pNew_obj[DEREF|NULL|ARROW]=>T? zName_obj[NULL]=>T?
@@ -52648,7 +52522,7 @@ With[] sqlite3WithAdd (Parse? pParse, With[] pWith, Cte[] pCte) {
     uint8[] zName = new uint8[0];
     if (pCte == null) 
     {
-        return _c2v_box_With_obj (pWith);
+        return pWith;
     }
     zName = (pCte[0].zName).data;
     if ((zName != null) && (pWith != null)) 
@@ -52679,9 +52553,8 @@ With[] sqlite3WithAdd (Parse? pParse, With[] pWith, Cte[] pCte) {
     else 
     {
         pNew[0].a[(int) (pNew[0].nCte++)] = pCte[0];
-        sqlite3DbFree (db, pCte);
     }
-    return _c2v_box_With_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pWith_obj[DEREF|ARROW]=>T?
@@ -52693,7 +52566,6 @@ void sqlite3WithDelete (sqlite3[] db, With[] pWith) {
         {
             cteClear (db, _c2v_slice_Cte (pWith[0].a, (int) (i)));
         }
-        sqlite3DbFree (db, pWith);
     }
 }
 
@@ -52791,7 +52663,7 @@ CollSeq[] findCollSeqEntry (sqlite3[] db, uint8[] zName, int create) {
             }
         }
     }
-    return _c2v_box_CollSeq_obj (pColl);
+    return pColl;
 }
 
 // c2vala-ptrs: db_obj[DEREF|ARROW]=>T? zName_obj[PLAIN]=>T? pColl_arr[ARITH]=>T[]
@@ -52811,7 +52683,7 @@ CollSeq[] sqlite3FindCollSeq (sqlite3[] db, uchar enc, uint8[] zName, int create
         pColl = _c2v_box_CollSeq_arr (db[0].pDfltColl);
         _off_pColl = 0;
     }
-    return _c2v_box_CollSeq_obj (pColl);
+    return pColl;
 }
 
 // c2vala-ptrs: db_obj[DEREF|WR|ARROW]=>T?
@@ -52837,14 +52709,14 @@ CollSeq[] sqlite3GetCollSeq (Parse? pParse, uchar enc, CollSeq[] pColl, uint8[] 
     }
     if (((p != null) && (!(p[0].xCmp != null))) && (synthCollSeq (db, p) != 0)) 
     {
-        p = null;
+        p = new CollSeq[0];
     }
     if (p == null) 
     {
         sqlite3ErrorMsg (pParse, ("no such collation sequence: %s").data, zName);
         pParse.rc = (1 | (1 << 8));
     }
-    return _c2v_box_CollSeq_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? zName_obj[PLAIN]=>T? db_obj[DEREF|ARROW]=>T? pColl_obj[DEREF|NULL|ARROW]=>T?
@@ -52858,7 +52730,7 @@ CollSeq[] sqlite3LocateCollSeq (Parse? pParse, uint8[] zName) {
     {
         pColl = sqlite3GetCollSeq (pParse, enc, pColl, zName);
     }
-    return _c2v_box_CollSeq_obj (pColl);
+    return pColl;
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
@@ -52965,7 +52837,7 @@ FuncDef[] sqlite3FindFunction (sqlite3[] db, uint8[] zName, int nArg, uchar enc,
             p = p.pNext;
         }
     }
-    if (((createFlag != 0) && (bestScore < 6)) && (_c2v_assign_FuncDef__ (sqlite3DbMallocZero (db, (uint64) (((69 + ((size_t) nName)) + ((size_t) 1)))), ref pBest) != 0)) 
+    if (((createFlag != 0) && (bestScore < 6)) && (_c2v_assign_FuncDef__ (sqlite3DbMallocZero (db, (uint64) (((69 + ((size_t) nName)) + ((size_t) 1)))), ref pBest) != null)) 
     {
         FuncDef? pOther = null;
         uchar[] z = new uchar[0];
@@ -52991,7 +52863,7 @@ FuncDef[] sqlite3FindFunction (sqlite3[] db, uint8[] zName, int nArg, uchar enc,
     }
     if ((pBest != null) && ((pBest[0].xSFunc != null) || (createFlag != 0))) 
     {
-        return _c2v_box_FuncDef_obj (pBest);
+        return pBest;
     }
     return null;
 }
@@ -53850,8 +53722,9 @@ void lengthFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
                 }
                 z0 = z;
                 _off_z0 = _off_z;
-                while (c_assign_u8 (z[_off_z], ref c) != 0) 
+                while (z[_off_z] != 0) 
                 {
+                    c = z[_off_z];
                     _off_z++;
                     if (((int) c) >= 0xc0) 
                     {
@@ -53983,8 +53856,8 @@ void instrFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     sqlite3_value[] pC2 = new sqlite3_value[0];
     do {
         N = 1;
-        pC1 = null;
-        pC2 = null;
+        pC1 = new sqlite3_value[0];
+        pC2 = new sqlite3_value[0];
         // (void) argc
         typeHaystack = sqlite3_value_type (_c2v_box_sqlite3_value_arr (argv[(int) (0)]));
         typeNeedle = sqlite3_value_type (_c2v_box_sqlite3_value_arr (argv[(int) (1)]));
@@ -54076,16 +53949,16 @@ void printfFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     uint8[] zFormat = new uint8[0];
     int n = 0;
     sqlite3[] db = _c2v_box_sqlite3_arr (sqlite3_context_db_handle (context));
-    if ((argc >= 1) && (_c2v_assign_uint8__ ((sqlite3_value_text (_c2v_box_sqlite3_value_arr (argv[_off_argv + (int) (0)]))).data, ref zFormat) != 0)) 
+    if ((argc >= 1) && (_c2v_assign_uint8__ (sqlite3_value_text (_c2v_box_sqlite3_value_arr (argv[_off_argv + (int) (0)])), ref zFormat) != null)) 
     {
         x.nArg = (argc - 1);
         x.nUsed = 0;
         x.apArg = _c2v_slice_sqlite3_value_ (argv, _off_argv + (int) (1));
-        sqlite3StrAccumInit (str, db, "", 0, db[0].aLimit[(int) (0)]);
+        sqlite3StrAccumInit (str, db, new uint8[0], 0, db[0].aLimit[(int) (0)]);
         str.printfFlags = (uchar) 0x02;
         sqlite3_str_appendf (_c2v_box_sqlite3_str_arr (str), zFormat, x);
         n = (int) str.nChar;
-        sqlite3_result_text (context, (sqlite3StrAccumFinish (_c2v_box_sqlite3_str_arr (str))).data, n, ((sqlite3_destructor_type?) sqlite3OomClear));
+        sqlite3_result_text (context, (sqlite3StrAccumFinish (_c2v_box_sqlite3_str_arr (str))).data, n, null);
     }
 }
 
@@ -54210,7 +54083,7 @@ void substrFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
                 }
             }
         }
-        sqlite3_result_text64 (context, (string) z, (_off_z2 - _off_z), ((sqlite3_destructor_type?) (-1)), (uchar) 1);
+        sqlite3_result_text64 (context, z, (_off_z2 - _off_z), ((sqlite3_destructor_type?) null), (uchar) 1);
     }
     else 
     {
@@ -54221,7 +54094,7 @@ void substrFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
                 p2 = (int64) 0;
             }
         }
-        sqlite3_result_blob64 (context, (string) _c2v_slice_uchar (z, (int) (p1)), ((uint64) p2), ((sqlite3_destructor_type?) (-1)));
+        sqlite3_result_blob64 (context, _c2v_slice_uchar (z, (int) (p1)), ((uint64) p2), ((sqlite3_destructor_type?) null));
     }
 }
 
@@ -54271,16 +54144,16 @@ void roundFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
 
 // c2vala-ptrs: context_obj[PLAIN]=>T? z_obj[NULL]=>T? db_obj[DEREF|ARROW]=>T?
 uint8[] contextMalloc (sqlite3_context? context, int64 nByte) {
-    string z = "";
+    uint8[] z = new uint8[0];
     sqlite3? db = sqlite3_context_db_handle (context);
     if (nByte > ((int64) db.aLimit[(int) (0)])) 
     {
         sqlite3_result_error_toobig (context);
-        z = "";
+        z = new uint8[0];
     }
     else 
     {
-        z = (string) sqlite3Malloc ((uint64) nByte);
+        z = sqlite3Malloc ((uint64) nByte);
         if (!(z != null)) 
         {
             sqlite3_result_error_nomem (context);
@@ -54292,7 +54165,7 @@ uint8[] contextMalloc (sqlite3_context? context, int64 nByte) {
 // c2vala-ptrs: context_obj[PLAIN]=>T? argv_pp[IDX]=>C2VBox<T[]> z1_buf[IDX|WR]=>uint8[] z2_buf[IDX|NULL]=>uint8[](ro)
 void upperFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     uint8[] z1 = new uint8[0];
-    string z2 = "";
+    uint8[] z2 = new uint8[0];
     int i = 0;
     int n = 0;
     // (void) argc
@@ -54307,7 +54180,7 @@ void upperFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
             {
                 z1[(int) (i)] = (uint8) (((char) ((((int) z2[(int) (i)]) & ~(((int) sqlite3CtypeMap[(int) (((uchar) (z2[(int) (i)])))]) & 0x20)))));
             }
-            sqlite3_result_text (context, z1, n, sqlite3_free);
+            sqlite3_result_text (context, z1, n, null);
         }
     }
 }
@@ -54315,7 +54188,7 @@ void upperFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
 // c2vala-ptrs: context_obj[PLAIN]=>T? argv_pp[IDX]=>C2VBox<T[]> z1_buf[IDX|WR]=>uint8[] z2_buf[IDX|NULL]=>uint8[](ro)
 void lowerFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     uint8[] z1 = new uint8[0];
-    string z2 = "";
+    uint8[] z2 = new uint8[0];
     int i = 0;
     int n = 0;
     // (void) argc
@@ -54330,7 +54203,7 @@ void lowerFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
             {
                 z1[(int) (i)] = (uint8) (sqlite3UpperToLower[(int) (((uchar) (z2[(int) (i)])))]);
             }
-            sqlite3_result_text (context, z1, n, sqlite3_free);
+            sqlite3_result_text (context, z1, n, null);
         }
     }
 }
@@ -54338,9 +54211,11 @@ void lowerFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
 // c2vala-ptrs: context_obj[PLAIN]=>T? NotUsed2_pp[PLAIN]=>C2VBox<T[]>
 void randomFunc (sqlite3_context? context, int NotUsed, sqlite3_value?[] NotUsed2) {
     int64[] r = new int64[1];
+    uint8[] _rbuf = new uint8[8];
     // (void) NotUsed
     // (void) NotUsed2
-    sqlite3_randomness ((int) (sizeof (int64)), r.data);
+    sqlite3_randomness ((int) (sizeof (int64)), _rbuf);
+    r[0] = (int64) c_u_get_u64_at (_rbuf, 0);
     if (r[0] < ((int64) 0)) 
     {
         r[0] = -(r[0] & (((int64) 0xffffffff) | (((int64) 0x7fffffff) << ((int64) 32))));
@@ -54362,7 +54237,7 @@ void randomBlob (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     if (p != null) 
     {
         sqlite3_randomness ((int) n, p);
-        sqlite3_result_blob (context, (string) p, (int) n, sqlite3_free);
+        sqlite3_result_blob (context, p, (int) n, null);
     }
 }
 
@@ -54522,7 +54397,7 @@ void errlogFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
 void compileoptionusedFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     uint8[] zOptName = new uint8[0];
     // (void) argc
-    if (_c2v_assign_uint8__ ((sqlite3_value_text (_c2v_box_sqlite3_value_arr (argv[(int) (0)]))).data, ref zOptName) != 0) 
+    if (_c2v_assign_uint8__ (sqlite3_value_text (_c2v_box_sqlite3_value_arr (argv[(int) (0)])), ref zOptName) != null) 
     {
         sqlite3_result_int (context, sqlite3_compileoption_used (zOptName));
     }
@@ -54579,7 +54454,7 @@ void sqlite3QuoteValue (sqlite3_str[] pStr, sqlite3_value[] pValue) {
                 sqlite3StrAccumEnlarge (pStr, ((nBlob * ((int64) 2)) + ((int64) 4)));
                 if (((int) pStr[0].accError) == 0) 
                 {
-                    uint8[] zText = (pStr[0].zText).data;
+                    uint8[] zText = pStr[0].zText;
                     int i = 0;
                     for (i = 0; ((int64) i) < nBlob; i++) 
                     {
@@ -54618,9 +54493,9 @@ void quoteFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     sqlite3_str str = new sqlite3_str ();
     sqlite3[] db = _c2v_box_sqlite3_arr (sqlite3_context_db_handle (context));
     // (void) argc
-    sqlite3StrAccumInit (str, db, "", 0, db[0].aLimit[(int) (0)]);
+    sqlite3StrAccumInit (str, db, new uint8[0], 0, db[0].aLimit[(int) (0)]);
     sqlite3QuoteValue (_c2v_box_sqlite3_str_arr (str), _c2v_box_sqlite3_value_arr (argv[(int) (0)]));
-    sqlite3_result_text (context, (sqlite3StrAccumFinish (_c2v_box_sqlite3_str_arr (str))).data, (int) str.nChar, ((sqlite3_destructor_type?) sqlite3OomClear));
+    sqlite3_result_text (context, (sqlite3StrAccumFinish (_c2v_box_sqlite3_str_arr (str))).data, (int) str.nChar, null);
     if (((int) str.accError) != 0) 
     {
         sqlite3_result_null (context);
@@ -54863,7 +54738,7 @@ void replaceFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     }
     if (((int) zPattern[(int) (0)]) == 0) 
     {
-        sqlite3_result_text (context, (string) zStr, nStr, ((sqlite3_destructor_type?) (-1)));
+        sqlite3_result_text (context, zStr, nStr, null);
         return;
     }
     nPattern = sqlite3_value_bytes (_c2v_box_sqlite3_value_arr (argv[(int) (1)]));
@@ -54919,7 +54794,7 @@ void replaceFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
     zOut[(int) (j)] = zStr[(int) (i)];
     j += (nStr - i);
     zOut[(int) (j)] = (uchar) 0;
-    sqlite3_result_text (context, (string) zOut, j, sqlite3_free);
+    sqlite3_result_text (context, zOut, j, null);
 }
 
 // c2vala-ptrs: context_obj[PLAIN]=>T? argv_pp[IDX]=>C2VBox<T[]> zIn_buf[IDX|ARITH|NULL]=>uint8[](ro) zCharSet_obj[PLAIN]=>T? aLen_arr[IDX|WR]=>T[] azChar_pp[IDX|WR|NULL]=>C2VBox<T[]> lenOne_arr[PLAIN]=>T[] azOne_arr[PLAIN]=>T[] z_buf[ARITH|DEREF]=>uint8[](ro)
@@ -55054,7 +54929,7 @@ void trimFunc (sqlite3_context? context, int argc, sqlite3_value?[] argv) {
             sqlite3_free (azChar);
         }
     }
-    sqlite3_result_text (context, (string) zIn, (int) nIn, ((sqlite3_destructor_type?) (-1)));
+    sqlite3_result_text (context, (string) zIn, (int) nIn, ((sqlite3_destructor_type?) null));
 }
 
 // c2vala-ptrs: context_obj[PLAIN]=>T? argv_pp[IDX]=>C2VBox<T[]> zSep_obj[PLAIN]=>T? z_buf[IDX|WR|NULL]=>uint8[] v_obj[NULL]=>T?
@@ -55516,7 +55391,9 @@ void groupConcatInverse (sqlite3_context? context, int argc, sqlite3_value?[] ar
             if (pGCC.nAccum > 0) 
             {
                 nVS += pGCC.pnSepLengths[0];
-                c_memmove (c_str_to_bytes (pGCC.pnSepLengths), _c2v_slice_int (pGCC.pnSepLengths, (int) (1)), (((size_t) (pGCC.nAccum - 1)) * sizeof (int)));
+                for (int _ci = 0; _ci < pGCC.nAccum - 1; _ci++) {
+                    pGCC.pnSepLengths[_ci] = pGCC.pnSepLengths[_ci + 1];
+                }
             }
         }
         else 
@@ -55530,12 +55407,11 @@ void groupConcatInverse (sqlite3_context? context, int argc, sqlite3_value?[] ar
         else 
         {
             pGCC.str.nChar -= nVS;
-            c_memmove (c_str_to_bytes (pGCC.str.zText), c_str_add (pGCC.str.zText, (int) (nVS)), pGCC.str.nChar);
+            c_memmove (pGCC.str.zText, c_bytes_add (pGCC.str.zText, (int) (nVS)), pGCC.str.nChar);
         }
         if (pGCC.str.nChar == ((uint32) 0)) 
         {
             pGCC.str.mxAlloc = (uint32) 0;
-            sqlite3_free (pGCC.pnSepLengths.data);
             pGCC.pnSepLengths = new int[0];
         }
     }
@@ -55547,7 +55423,6 @@ void groupConcatFinalize (sqlite3_context? context) {
     if (pGCC != null) 
     {
         sqlite3ResultStrAccum (context, _c2v_box_sqlite3_str_arr (pGCC.str));
-        sqlite3_free (pGCC.pnSepLengths.data);
     }
 }
 
@@ -55574,7 +55449,7 @@ void groupConcatValue (sqlite3_context? context) {
         else 
         {
             uint8[] zText = (sqlite3_str_value (pAccum)).data;
-            sqlite3_result_text (context, zText, (int) (pAccum[0].nChar), ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (context, zText, (int) (pAccum[0].nChar), ((sqlite3_destructor_type?) null));
         }
     }
 }
@@ -55674,7 +55549,7 @@ void sqlite3RegisterBuiltinFunctions () {
     for (int _c2v_i = 0; _c2v_i < 76; _c2v_i++) { aBuiltinFunc[_c2v_i] = new FuncDef (); }
     aBuiltinFunc[0].nArg = (int8) 2;
     aBuiltinFunc[0].funcFlags = (uint32) (((((((0x00800000 | 1) | 0x00040000) | 0x4000) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[0].pUserData = c_str_add ("", (int) (1));
+    aBuiltinFunc[0].pUserData = c_bytes_add (("").data, (int) (1));
     aBuiltinFunc[0].pNext = null;
     aBuiltinFunc[0].xSFunc = versionFunc;
     aBuiltinFunc[0].xFinalize = null;
@@ -55684,7 +55559,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[0].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[1].nArg = (int8) 2;
     aBuiltinFunc[1].funcFlags = (uint32) (((((((0x00800000 | 1) | 0x00040000) | 0x4000) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[1].pUserData = c_str_add ("", (int) (3));
+    aBuiltinFunc[1].pUserData = c_bytes_add (("").data, (int) (3));
     aBuiltinFunc[1].pNext = null;
     aBuiltinFunc[1].xSFunc = versionFunc;
     aBuiltinFunc[1].xFinalize = null;
@@ -55694,7 +55569,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[1].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[2].nArg = (int8) 2;
     aBuiltinFunc[2].funcFlags = (uint32) (((((((0x00800000 | 1) | 0x00040000) | 0x4000) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[2].pUserData = c_str_add ("", (int) (2));
+    aBuiltinFunc[2].pUserData = c_bytes_add (("").data, (int) (2));
     aBuiltinFunc[2].pNext = null;
     aBuiltinFunc[2].xSFunc = versionFunc;
     aBuiltinFunc[2].xFinalize = null;
@@ -55704,7 +55579,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[2].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[3].nArg = (int8) 1;
     aBuiltinFunc[3].funcFlags = (uint32) (((((((0x00800000 | 1) | 0x00040000) | 0x4000) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[3].pUserData = c_str_add ("", (int) (4));
+    aBuiltinFunc[3].pUserData = c_bytes_add (("").data, (int) (4));
     aBuiltinFunc[3].pNext = null;
     aBuiltinFunc[3].xSFunc = versionFunc;
     aBuiltinFunc[3].xFinalize = null;
@@ -55734,7 +55609,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[5].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[6].nArg = (int8) 1;
     aBuiltinFunc[6].funcFlags = (uint32) (((((0x00800000 | 1) | 0x00400000) | 0x0800) | 0x0400));
-    aBuiltinFunc[6].pUserData = c_str_add ("", (int) (99));
+    aBuiltinFunc[6].pUserData = c_bytes_add (("").data, (int) (99));
     aBuiltinFunc[6].pNext = null;
     aBuiltinFunc[6].xSFunc = versionFunc;
     aBuiltinFunc[6].xFinalize = null;
@@ -55744,7 +55619,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[6].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[7].nArg = (int8) 2;
     aBuiltinFunc[7].funcFlags = (uint32) (((((0x00800000 | 1) | 0x00400000) | 0x0800) | 0x0400));
-    aBuiltinFunc[7].pUserData = c_str_add ("", (int) (99));
+    aBuiltinFunc[7].pUserData = c_bytes_add (("").data, (int) (99));
     aBuiltinFunc[7].pNext = null;
     aBuiltinFunc[7].xSFunc = versionFunc;
     aBuiltinFunc[7].xFinalize = null;
@@ -55754,7 +55629,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[7].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[8].nArg = (int8) 1;
     aBuiltinFunc[8].funcFlags = (uint32) (((((0x00800000 | 1) | 0x00400000) | 0x0800) | 0x0400));
-    aBuiltinFunc[8].pUserData = c_str_add ("", (int) (99));
+    aBuiltinFunc[8].pUserData = c_bytes_add (("").data, (int) (99));
     aBuiltinFunc[8].pNext = null;
     aBuiltinFunc[8].xSFunc = versionFunc;
     aBuiltinFunc[8].xFinalize = null;
@@ -55764,7 +55639,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[8].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[9].nArg = (int8) 1;
     aBuiltinFunc[9].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[9].pUserData = c_str_add ("", (int) (1));
+    aBuiltinFunc[9].pUserData = c_bytes_add (("").data, (int) (1));
     aBuiltinFunc[9].pNext = null;
     aBuiltinFunc[9].xSFunc = trimFunc;
     aBuiltinFunc[9].xFinalize = null;
@@ -55774,7 +55649,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[9].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[10].nArg = (int8) 2;
     aBuiltinFunc[10].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[10].pUserData = c_str_add ("", (int) (1));
+    aBuiltinFunc[10].pUserData = c_bytes_add (("").data, (int) (1));
     aBuiltinFunc[10].pNext = null;
     aBuiltinFunc[10].xSFunc = trimFunc;
     aBuiltinFunc[10].xFinalize = null;
@@ -55784,7 +55659,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[10].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[11].nArg = (int8) 1;
     aBuiltinFunc[11].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[11].pUserData = c_str_add ("", (int) (2));
+    aBuiltinFunc[11].pUserData = c_bytes_add (("").data, (int) (2));
     aBuiltinFunc[11].pNext = null;
     aBuiltinFunc[11].xSFunc = trimFunc;
     aBuiltinFunc[11].xFinalize = null;
@@ -55794,7 +55669,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[11].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[12].nArg = (int8) 2;
     aBuiltinFunc[12].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[12].pUserData = c_str_add ("", (int) (2));
+    aBuiltinFunc[12].pUserData = c_bytes_add (("").data, (int) (2));
     aBuiltinFunc[12].pNext = null;
     aBuiltinFunc[12].xSFunc = trimFunc;
     aBuiltinFunc[12].xFinalize = null;
@@ -55804,7 +55679,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[12].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[13].nArg = (int8) 1;
     aBuiltinFunc[13].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[13].pUserData = c_str_add ("", (int) (3));
+    aBuiltinFunc[13].pUserData = c_bytes_add (("").data, (int) (3));
     aBuiltinFunc[13].pNext = null;
     aBuiltinFunc[13].xSFunc = trimFunc;
     aBuiltinFunc[13].xFinalize = null;
@@ -55814,7 +55689,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[13].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[14].nArg = (int8) 2;
     aBuiltinFunc[14].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[14].pUserData = c_str_add ("", (int) (3));
+    aBuiltinFunc[14].pUserData = c_bytes_add (("").data, (int) (3));
     aBuiltinFunc[14].pNext = null;
     aBuiltinFunc[14].xSFunc = trimFunc;
     aBuiltinFunc[14].xFinalize = null;
@@ -55824,7 +55699,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[14].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[15].nArg = (int8) (-1);
     aBuiltinFunc[15].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (1 * 0x0020)));
-    aBuiltinFunc[15].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[15].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[15].pNext = null;
     aBuiltinFunc[15].xSFunc = minmaxFunc;
     aBuiltinFunc[15].xFinalize = null;
@@ -55834,7 +55709,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[15].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[16].nArg = (int8) 0;
     aBuiltinFunc[16].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (1 * 0x0020)));
-    aBuiltinFunc[16].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[16].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[16].pNext = null;
     aBuiltinFunc[16].xSFunc = null;
     aBuiltinFunc[16].xFinalize = null;
@@ -55844,7 +55719,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[16].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[17].nArg = (int8) 1;
     aBuiltinFunc[17].funcFlags = (uint32) (((((0x00800000 | 1) | (1 * 0x0020)) | 0x1000) | 0x08000000));
-    aBuiltinFunc[17].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[17].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[17].pNext = null;
     aBuiltinFunc[17].xSFunc = minmaxStep;
     aBuiltinFunc[17].xFinalize = minMaxFinalize;
@@ -55854,7 +55729,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[17].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[18].nArg = (int8) (-1);
     aBuiltinFunc[18].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (1 * 0x0020)));
-    aBuiltinFunc[18].pUserData = c_str_add ("", (int) (1));
+    aBuiltinFunc[18].pUserData = c_bytes_add (("").data, (int) (1));
     aBuiltinFunc[18].pNext = null;
     aBuiltinFunc[18].xSFunc = minmaxFunc;
     aBuiltinFunc[18].xFinalize = null;
@@ -55864,7 +55739,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[18].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[19].nArg = (int8) 0;
     aBuiltinFunc[19].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (1 * 0x0020)));
-    aBuiltinFunc[19].pUserData = c_str_add ("", (int) (1));
+    aBuiltinFunc[19].pUserData = c_bytes_add (("").data, (int) (1));
     aBuiltinFunc[19].pNext = null;
     aBuiltinFunc[19].xSFunc = null;
     aBuiltinFunc[19].xFinalize = null;
@@ -55874,7 +55749,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[19].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[20].nArg = (int8) 1;
     aBuiltinFunc[20].funcFlags = (uint32) (((((0x00800000 | 1) | (1 * 0x0020)) | 0x1000) | 0x08000000));
-    aBuiltinFunc[20].pUserData = c_str_add ("", (int) (1));
+    aBuiltinFunc[20].pUserData = c_bytes_add (("").data, (int) (1));
     aBuiltinFunc[20].pNext = null;
     aBuiltinFunc[20].xSFunc = minmaxStep;
     aBuiltinFunc[20].xFinalize = minMaxFinalize;
@@ -55884,7 +55759,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[20].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[21].nArg = (int8) 1;
     aBuiltinFunc[21].funcFlags = (uint32) (((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)) | 0x0080));
-    aBuiltinFunc[21].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[21].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[21].pNext = null;
     aBuiltinFunc[21].xSFunc = typeofFunc;
     aBuiltinFunc[21].xFinalize = null;
@@ -55894,7 +55769,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[21].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[22].nArg = (int8) 1;
     aBuiltinFunc[22].funcFlags = (uint32) ((((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)) | 0x0080) | 0x000100000));
-    aBuiltinFunc[22].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[22].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[22].pNext = null;
     aBuiltinFunc[22].xSFunc = subtypeFunc;
     aBuiltinFunc[22].xFinalize = null;
@@ -55904,7 +55779,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[22].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[23].nArg = (int8) 1;
     aBuiltinFunc[23].funcFlags = (uint32) (((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)) | 0x0040));
-    aBuiltinFunc[23].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[23].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[23].pNext = null;
     aBuiltinFunc[23].xSFunc = lengthFunc;
     aBuiltinFunc[23].xFinalize = null;
@@ -55914,7 +55789,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[23].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[24].nArg = (int8) 1;
     aBuiltinFunc[24].funcFlags = (uint32) (((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)) | 0x00c0));
-    aBuiltinFunc[24].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[24].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[24].pNext = null;
     aBuiltinFunc[24].xSFunc = bytelengthFunc;
     aBuiltinFunc[24].xFinalize = null;
@@ -55924,7 +55799,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[24].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[25].nArg = (int8) 2;
     aBuiltinFunc[25].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[25].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[25].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[25].pNext = null;
     aBuiltinFunc[25].xSFunc = instrFunc;
     aBuiltinFunc[25].xFinalize = null;
@@ -55934,7 +55809,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[25].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[26].nArg = (int8) (-1);
     aBuiltinFunc[26].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[26].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[26].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[26].pNext = null;
     aBuiltinFunc[26].xSFunc = printfFunc;
     aBuiltinFunc[26].xFinalize = null;
@@ -55944,7 +55819,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[26].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[27].nArg = (int8) (-1);
     aBuiltinFunc[27].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[27].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[27].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[27].pNext = null;
     aBuiltinFunc[27].xSFunc = printfFunc;
     aBuiltinFunc[27].xFinalize = null;
@@ -55954,7 +55829,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[27].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[28].nArg = (int8) 1;
     aBuiltinFunc[28].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[28].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[28].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[28].pNext = null;
     aBuiltinFunc[28].xSFunc = unicodeFunc;
     aBuiltinFunc[28].xFinalize = null;
@@ -55964,7 +55839,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[28].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[29].nArg = (int8) (-1);
     aBuiltinFunc[29].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[29].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[29].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[29].pNext = null;
     aBuiltinFunc[29].xSFunc = charFunc;
     aBuiltinFunc[29].xFinalize = null;
@@ -55974,7 +55849,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[29].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[30].nArg = (int8) 1;
     aBuiltinFunc[30].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[30].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[30].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[30].pNext = null;
     aBuiltinFunc[30].xSFunc = absFunc;
     aBuiltinFunc[30].xFinalize = null;
@@ -55984,7 +55859,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[30].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[31].nArg = (int8) 1;
     aBuiltinFunc[31].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[31].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[31].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[31].pNext = null;
     aBuiltinFunc[31].xSFunc = roundFunc;
     aBuiltinFunc[31].xFinalize = null;
@@ -55994,7 +55869,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[31].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[32].nArg = (int8) 2;
     aBuiltinFunc[32].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[32].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[32].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[32].pNext = null;
     aBuiltinFunc[32].xSFunc = roundFunc;
     aBuiltinFunc[32].xFinalize = null;
@@ -56004,7 +55879,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[32].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[33].nArg = (int8) 1;
     aBuiltinFunc[33].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[33].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[33].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[33].pNext = null;
     aBuiltinFunc[33].xSFunc = upperFunc;
     aBuiltinFunc[33].xFinalize = null;
@@ -56014,7 +55889,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[33].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[34].nArg = (int8) 1;
     aBuiltinFunc[34].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[34].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[34].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[34].pNext = null;
     aBuiltinFunc[34].xSFunc = lowerFunc;
     aBuiltinFunc[34].xFinalize = null;
@@ -56024,7 +55899,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[34].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[35].nArg = (int8) 1;
     aBuiltinFunc[35].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[35].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[35].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[35].pNext = null;
     aBuiltinFunc[35].xSFunc = hexFunc;
     aBuiltinFunc[35].xFinalize = null;
@@ -56034,7 +55909,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[35].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[36].nArg = (int8) 1;
     aBuiltinFunc[36].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[36].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[36].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[36].pNext = null;
     aBuiltinFunc[36].xSFunc = unhexFunc;
     aBuiltinFunc[36].xFinalize = null;
@@ -56044,7 +55919,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[36].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[37].nArg = (int8) 2;
     aBuiltinFunc[37].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[37].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[37].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[37].pNext = null;
     aBuiltinFunc[37].xSFunc = unhexFunc;
     aBuiltinFunc[37].xFinalize = null;
@@ -56054,7 +55929,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[37].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[38].nArg = (int8) (-1);
     aBuiltinFunc[38].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[38].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[38].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[38].pNext = null;
     aBuiltinFunc[38].xSFunc = concatFunc;
     aBuiltinFunc[38].xFinalize = null;
@@ -56064,7 +55939,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[38].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[39].nArg = (int8) 0;
     aBuiltinFunc[39].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[39].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[39].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[39].pNext = null;
     aBuiltinFunc[39].xSFunc = null;
     aBuiltinFunc[39].xFinalize = null;
@@ -56074,7 +55949,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[39].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[40].nArg = (int8) (-1);
     aBuiltinFunc[40].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[40].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[40].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[40].pNext = null;
     aBuiltinFunc[40].xSFunc = concatwsFunc;
     aBuiltinFunc[40].xFinalize = null;
@@ -56084,7 +55959,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[40].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[41].nArg = (int8) 0;
     aBuiltinFunc[41].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[41].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[41].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[41].pNext = null;
     aBuiltinFunc[41].xSFunc = null;
     aBuiltinFunc[41].xFinalize = null;
@@ -56094,7 +55969,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[41].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[42].nArg = (int8) 1;
     aBuiltinFunc[42].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[42].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[42].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[42].pNext = null;
     aBuiltinFunc[42].xSFunc = null;
     aBuiltinFunc[42].xFinalize = null;
@@ -56104,7 +55979,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[42].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[43].nArg = (int8) 2;
     aBuiltinFunc[43].funcFlags = (uint32) (((((0x00800000 | 1) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[43].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[43].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[43].pNext = null;
     aBuiltinFunc[43].xSFunc = versionFunc;
     aBuiltinFunc[43].xFinalize = null;
@@ -56114,7 +55989,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[43].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[44].nArg = (int8) 0;
     aBuiltinFunc[44].funcFlags = (uint32) (((0x00800000 | 1) | (0 * 0x0020)));
-    aBuiltinFunc[44].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[44].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[44].pNext = null;
     aBuiltinFunc[44].xSFunc = randomFunc;
     aBuiltinFunc[44].xFinalize = null;
@@ -56124,7 +55999,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[44].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[45].nArg = (int8) 1;
     aBuiltinFunc[45].funcFlags = (uint32) (((0x00800000 | 1) | (0 * 0x0020)));
-    aBuiltinFunc[45].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[45].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[45].pNext = null;
     aBuiltinFunc[45].xSFunc = randomBlob;
     aBuiltinFunc[45].xFinalize = null;
@@ -56134,7 +56009,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[45].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[46].nArg = (int8) 2;
     aBuiltinFunc[46].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (1 * 0x0020)));
-    aBuiltinFunc[46].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[46].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[46].pNext = null;
     aBuiltinFunc[46].xSFunc = nullifFunc;
     aBuiltinFunc[46].xFinalize = null;
@@ -56164,7 +56039,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[48].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[49].nArg = (int8) 2;
     aBuiltinFunc[49].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[49].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[49].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[49].pNext = null;
     aBuiltinFunc[49].xSFunc = errlogFunc;
     aBuiltinFunc[49].xFinalize = null;
@@ -56174,7 +56049,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[49].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[50].nArg = (int8) 1;
     aBuiltinFunc[50].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[50].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[50].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[50].pNext = null;
     aBuiltinFunc[50].xSFunc = quoteFunc;
     aBuiltinFunc[50].xFinalize = null;
@@ -56184,7 +56059,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[50].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[51].nArg = (int8) 0;
     aBuiltinFunc[51].funcFlags = (uint32) (((0x00800000 | 1) | (0 * 0x0020)));
-    aBuiltinFunc[51].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[51].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[51].pNext = null;
     aBuiltinFunc[51].xSFunc = last_insert_rowid;
     aBuiltinFunc[51].xFinalize = null;
@@ -56194,7 +56069,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[51].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[52].nArg = (int8) 0;
     aBuiltinFunc[52].funcFlags = (uint32) (((0x00800000 | 1) | (0 * 0x0020)));
-    aBuiltinFunc[52].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[52].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[52].pNext = null;
     aBuiltinFunc[52].xSFunc = changes;
     aBuiltinFunc[52].xFinalize = null;
@@ -56204,7 +56079,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[52].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[53].nArg = (int8) 0;
     aBuiltinFunc[53].funcFlags = (uint32) (((0x00800000 | 1) | (0 * 0x0020)));
-    aBuiltinFunc[53].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[53].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[53].pNext = null;
     aBuiltinFunc[53].xSFunc = total_changes;
     aBuiltinFunc[53].xFinalize = null;
@@ -56214,7 +56089,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[53].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[54].nArg = (int8) 3;
     aBuiltinFunc[54].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[54].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[54].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[54].pNext = null;
     aBuiltinFunc[54].xSFunc = replaceFunc;
     aBuiltinFunc[54].xFinalize = null;
@@ -56224,7 +56099,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[54].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[55].nArg = (int8) 1;
     aBuiltinFunc[55].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[55].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[55].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[55].pNext = null;
     aBuiltinFunc[55].xSFunc = zeroblobFunc;
     aBuiltinFunc[55].xFinalize = null;
@@ -56234,7 +56109,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[55].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[56].nArg = (int8) 2;
     aBuiltinFunc[56].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[56].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[56].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[56].pNext = null;
     aBuiltinFunc[56].xSFunc = substrFunc;
     aBuiltinFunc[56].xFinalize = null;
@@ -56244,7 +56119,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[56].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[57].nArg = (int8) 3;
     aBuiltinFunc[57].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[57].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[57].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[57].pNext = null;
     aBuiltinFunc[57].xSFunc = substrFunc;
     aBuiltinFunc[57].xFinalize = null;
@@ -56254,7 +56129,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[57].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[58].nArg = (int8) 2;
     aBuiltinFunc[58].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[58].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[58].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[58].pNext = null;
     aBuiltinFunc[58].xSFunc = substrFunc;
     aBuiltinFunc[58].xFinalize = null;
@@ -56264,7 +56139,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[58].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[59].nArg = (int8) 3;
     aBuiltinFunc[59].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[59].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[59].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[59].pNext = null;
     aBuiltinFunc[59].xSFunc = substrFunc;
     aBuiltinFunc[59].xFinalize = null;
@@ -56274,7 +56149,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[59].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[60].nArg = (int8) 1;
     aBuiltinFunc[60].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0));
-    aBuiltinFunc[60].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[60].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[60].pNext = null;
     aBuiltinFunc[60].xSFunc = sumStep;
     aBuiltinFunc[60].xFinalize = sumFinalize;
@@ -56284,7 +56159,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[60].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[61].nArg = (int8) 1;
     aBuiltinFunc[61].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0));
-    aBuiltinFunc[61].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[61].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[61].pNext = null;
     aBuiltinFunc[61].xSFunc = sumStep;
     aBuiltinFunc[61].xFinalize = totalFinalize;
@@ -56294,7 +56169,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[61].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[62].nArg = (int8) 1;
     aBuiltinFunc[62].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0));
-    aBuiltinFunc[62].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[62].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[62].pNext = null;
     aBuiltinFunc[62].xSFunc = sumStep;
     aBuiltinFunc[62].xFinalize = avgFinalize;
@@ -56304,7 +56179,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[62].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[63].nArg = (int8) 0;
     aBuiltinFunc[63].funcFlags = (uint32) (((((0x00800000 | 1) | (0 * 0x0020)) | 0x0100) | 0x08000000));
-    aBuiltinFunc[63].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[63].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[63].pNext = null;
     aBuiltinFunc[63].xSFunc = countStep;
     aBuiltinFunc[63].xFinalize = countFinalize;
@@ -56314,7 +56189,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[63].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[64].nArg = (int8) 1;
     aBuiltinFunc[64].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0x08000000));
-    aBuiltinFunc[64].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[64].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[64].pNext = null;
     aBuiltinFunc[64].xSFunc = countStep;
     aBuiltinFunc[64].xFinalize = countFinalize;
@@ -56324,7 +56199,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[64].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[65].nArg = (int8) 1;
     aBuiltinFunc[65].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0));
-    aBuiltinFunc[65].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[65].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[65].pNext = null;
     aBuiltinFunc[65].xSFunc = groupConcatStep;
     aBuiltinFunc[65].xFinalize = groupConcatFinalize;
@@ -56334,7 +56209,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[65].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[66].nArg = (int8) 2;
     aBuiltinFunc[66].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0));
-    aBuiltinFunc[66].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[66].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[66].pNext = null;
     aBuiltinFunc[66].xSFunc = groupConcatStep;
     aBuiltinFunc[66].xFinalize = groupConcatFinalize;
@@ -56344,7 +56219,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[66].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[67].nArg = (int8) 2;
     aBuiltinFunc[67].funcFlags = (uint32) ((((0x00800000 | 1) | (0 * 0x0020)) | 0));
-    aBuiltinFunc[67].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[67].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[67].pNext = null;
     aBuiltinFunc[67].xSFunc = groupConcatStep;
     aBuiltinFunc[67].xFinalize = groupConcatFinalize;
@@ -56384,7 +56259,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[70].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[71].nArg = (int8) 1;
     aBuiltinFunc[71].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[71].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[71].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[71].pNext = null;
     aBuiltinFunc[71].xSFunc = null;
     aBuiltinFunc[71].xFinalize = null;
@@ -56394,7 +56269,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[71].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[72].nArg = (int8) 0;
     aBuiltinFunc[72].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[72].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[72].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[72].pNext = null;
     aBuiltinFunc[72].xSFunc = null;
     aBuiltinFunc[72].xFinalize = null;
@@ -56404,7 +56279,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[72].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[73].nArg = (int8) 1;
     aBuiltinFunc[73].funcFlags = (uint32) ((((0x00800000 | 0x0800) | 1) | (0 * 0x0020)));
-    aBuiltinFunc[73].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[73].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[73].pNext = null;
     aBuiltinFunc[73].xSFunc = signFunc;
     aBuiltinFunc[73].xFinalize = null;
@@ -56414,7 +56289,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[73].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[74].nArg = (int8) (-1);
     aBuiltinFunc[74].funcFlags = (uint32) (((((0x00800000 | 1) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[74].pUserData = c_str_add ("", (int) (0));
+    aBuiltinFunc[74].pUserData = c_bytes_add (("").data, (int) (0));
     aBuiltinFunc[74].pNext = null;
     aBuiltinFunc[74].xSFunc = versionFunc;
     aBuiltinFunc[74].xFinalize = null;
@@ -56424,7 +56299,7 @@ void sqlite3RegisterBuiltinFunctions () {
     aBuiltinFunc[74].u = _c2v_lit___anon_union_3_0 (null);
     aBuiltinFunc[75].nArg = (int8) 3;
     aBuiltinFunc[75].funcFlags = (uint32) (((((0x00800000 | 1) | 0x00400000) | 0x0800) | 0));
-    aBuiltinFunc[75].pUserData = c_str_add ("", (int) (5));
+    aBuiltinFunc[75].pUserData = c_bytes_add (("").data, (int) (5));
     aBuiltinFunc[75].pNext = null;
     aBuiltinFunc[75].xSFunc = versionFunc;
     aBuiltinFunc[75].xFinalize = null;
@@ -56561,7 +56436,7 @@ void fkLookupParent (Parse? pParse, int iDb, Table[] pTab, Index[] pIdx, FKey? p
             int regTemp = sqlite3GetTempReg (pParse);
             sqlite3VdbeAddOp2 (v, 81, ((((int) sqlite3TableColumnToStorage (_c2v_box_Table_arr (pFKey.pFrom), (int16) (aiCol[(int) (0)]))) + 1) + regData), regTemp);
             iMustBeInt = sqlite3VdbeAddOp2 (v, 13, regTemp, 0);
-            if ((pTab == pFKey.pFrom) && (nIncr == 1)) 
+            if ((pTab[0] == pFKey.pFrom) && (nIncr == 1)) 
             {
                 sqlite3VdbeAddOp3 (v, 54, regData, iOk, regTemp);
                 sqlite3VdbeChangeP5 (v, (uint16) 0x90);
@@ -56583,7 +56458,7 @@ void fkLookupParent (Parse? pParse, int iDb, Table[] pTab, Index[] pIdx, FKey? p
             {
                 sqlite3VdbeAddOp2 (v, 80, ((((int) sqlite3TableColumnToStorage (_c2v_box_Table_arr (pFKey.pFrom), (int16) (aiCol[(int) (i)]))) + 1) + regData), (regTemp + i));
             }
-            if ((pTab == pFKey.pFrom) && (nIncr == 1)) 
+            if ((pTab[0] == pFKey.pFrom) && (nIncr == 1)) 
             {
                 int iJump = ((sqlite3VdbeCurrentAddr (v) + nCol) + 1);
                 for (i = 0; i < nCol; i++) 
@@ -56607,7 +56482,7 @@ void fkLookupParent (Parse? pParse, int iDb, Table[] pTab, Index[] pIdx, FKey? p
     }
     if ((((!(pFKey.isDeferred != 0)) && (!((pParse.db.flags & ((uint64) 0x00080000)) != 0))) && (!(pParse.pToplevel != null))) && (!(pParse.isMultiWrite != 0))) 
     {
-        sqlite3HaltConstraint (pParse, (19 | (3 << 8)), 2, "", (int8) (-1), (uchar) 4);
+        sqlite3HaltConstraint (pParse, (19 | (3 << 8)), 2, ("").data, (int8) (-1), (uchar) 4);
     }
     else 
     {
@@ -56647,7 +56522,7 @@ Expr[] exprTableRegister (Parse? pParse, Table[] pTab, int regBase, int16 iCol) 
             pExpr[0].affExpr = (char) 0x44;
         }
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pTab_obj[PLAIN]=>T? pExpr_obj[DEREF|WR|ARROW]=>T?
@@ -56759,7 +56634,6 @@ void fkTriggerDelete (sqlite3[] dbMem, Trigger[] p) {
         sqlite3ExprListDelete (dbMem, _c2v_box_ExprList_arr (pStep.pExprList));
         sqlite3SelectDelete (dbMem, _c2v_box_Select_arr (pStep.pSelect));
         sqlite3ExprDelete (dbMem, _c2v_box_Expr_arr (p[0].pWhen));
-        sqlite3DbFree (dbMem, p);
     }
 }
 
@@ -56807,12 +56681,12 @@ void sqlite3FkDropTable (Parse? pParse, SrcList[] pName, Table[] pTab) {
             sqlite3VdbeAddOp2 (v, 49, 1, iSkip);
         }
         pParse.disableTriggers = (uchar) 1;
-        sqlite3DeleteFrom (pParse, _c2v_box_SrcList_arr (sqlite3SrcListDup (db, pName, 0)), null, null, null);
+        sqlite3DeleteFrom (pParse, _c2v_box_SrcList_arr (sqlite3SrcListDup (db, pName, 0)), new Expr[0], null, null);
         pParse.disableTriggers = (uchar) 0;
         if ((db[0].flags & ((uint64) 0x00080000)) == ((uint64) 0)) 
         {
             sqlite3VdbeAddOp2 (v, 49, 0, (sqlite3VdbeCurrentAddr (v) + 2));
-            sqlite3HaltConstraint (pParse, (19 | (3 << 8)), 2, "", (int8) (-1), (uchar) 4);
+            sqlite3HaltConstraint (pParse, (19 | (3 << 8)), 2, ("").data, (int8) (-1), (uchar) 4);
         }
         if (iSkip != 0) 
         {
@@ -57264,7 +57138,7 @@ Trigger[] fkActionTrigger (Parse? pParse, Table[] pTab, FKey? pFKey, ExprList[] 
         pFKey.apTrigger[(int) (iAction)] = _c2v_box_Trigger_obj (pTrigger);
         pTrigger[0].op = ((pChanges != null) ? 130 : 129);
     }
-    return _c2v_box_Trigger_obj (pTrigger);
+    return pTrigger;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTab_obj[PLAIN]=>T? pChanges_obj[PLAIN]=>T? aChange_obj[NULL]=>T? pFKey_obj[DEREF|ARROW]=>T? pAct_obj[PLAIN]=>T?
@@ -57385,7 +57259,7 @@ string sqlite3IndexAffinityStr (sqlite3[] db, Index[] pIdx) {
 // c2vala-ptrs: db_obj[PLAIN]=>T? pTab_obj[DEREF|ARROW]=>T? zColAff_buf[IDX|WR]=>uint8[]
 uint8[] sqlite3TableAffinityStr (sqlite3[] db, Table[] pTab) {
     uint8[] zColAff = new uint8[0];
-    zColAff = (string) sqlite3DbMallocRaw (db, (uint64) ((((int) pTab[0].nCol) + 1)));
+    zColAff = sqlite3DbMallocRaw (db, (uint64) ((((int) pTab[0].nCol) + 1)));
     if (zColAff != null) 
     {
         int i = 0;
@@ -57401,7 +57275,7 @@ uint8[] sqlite3TableAffinityStr (sqlite3[] db, Table[] pTab) {
             zColAff[(int) (j--)] = (uint8) 0;
         } while ((j >= 0) && (((int) zColAff[(int) (j)]) <= 0x41));
     }
-    return (string) zColAff;
+    return zColAff;
 }
 
 // c2vala-ptrs: v_obj[PLAIN]=>T? pTab_obj[DEREF|WR|ARROW]=>T? zColAff_obj[NULL]=>T? pPrev_obj[DEREF|WR|NULL|ARROW]=>T?
@@ -57586,14 +57460,14 @@ int autoIncBegin (Parse? pParse, int iDb, Table[] pTab) {
             return 0;
         }
         pInfo = _c2v_box_AutoincInfo_arr (pToplevel.pAinc);
-        while ((pInfo != null) && (pInfo[0].pTab != pTab)) 
+        while ((pInfo != null) && (pInfo[0].pTab != _c2v_box_Table_obj (pTab))) 
         {
             pInfo = _c2v_box_AutoincInfo_arr (pInfo[0].pNext);
         }
         if (pInfo == null) 
         {
-            pInfo = sqlite3DbMallocRawNN (_c2v_box_sqlite3_arr (pParse.db), (uint64) 24);
-            sqlite3ParserAddCleanup (pToplevel, sqlite3DbFree, pInfo);
+            pInfo = new AutoincInfo[1];
+            pInfo[0] = new AutoincInfo ();
             if (pParse.db.mallocFailed != 0) {
                 return 0;
             }
@@ -57895,7 +57769,7 @@ Select[] sqlite3MultiValues (Parse? pParse, Select[] pLeft, ExprList[] pRow) {
         }
         sqlite3ExprListDelete (_c2v_box_sqlite3_arr (pParse.db), pRow);
     }
-    return _c2v_box_Select_obj (pLeft);
+    return pLeft;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|WR|ARROW]=>T? pTabList_obj[DEREF|ARROW]=>T? pSelect_obj[DEREF|WR|NULL|ARROW]=>T? pColumn_obj[DEREF|WR|NULL|ARROW]=>T? pUpsert_obj[DEREF|ARROW]=>T? db_obj[DEREF|ARROW]=>T? pTab_obj[DEREF|NULL|ARROW]=>T? v_obj[NULL]=>T? pIdx_obj[DEREF|ARROW]=>T? pList_obj[DEREF|NULL|ARROW]=>T? aRegIdx_arr[IDX|WR|NULL]=>T[] pTrigger_obj[NULL]=>T? pItem_obj[DEREF|ARROW]=>T? pSubq_obj[DEREF|ARROW]=>T? pNx_obj[DEREF|WR|NULL|ARROW]=>T? pX_obj[DEREF|ARROW]=>T? pIpk_obj[DEREF|ARROW]=>T? pVTab_obj[PLAIN]=>T?
@@ -59389,7 +59263,7 @@ void sqlite3CompleteInsertion (Parse? pParse, Table[] pTab, int iDataCur, int iI
     sqlite3VdbeAddOp3 (v, 128, iDataCur, aRegIdx[(int) (i)], regNewData);
     if (!(pParse.nested != 0)) 
     {
-        sqlite3VdbeAppendP4 (v, pTab, -5);
+        sqlite3VdbeAppendP4Table (v, pTab);
     }
     sqlite3VdbeChangeP5 (v, (uint16) pik_flags);
 }
@@ -59814,7 +59688,7 @@ int sqlite3_exec (sqlite3[] db, uint8[] zSql, sqlite3_callback? xCallback, uint8
     bool c2v_goto_exec_out = false;
     int rc = 0;
     string[] zLeftover = new string[1];
-    sqlite3_stmt?[] pStmt = new sqlite3_stmt?[1];
+    Vdbe?[] pStmt = new Vdbe?[1];
     pStmt[0] = null;
     string[] azCols = new uint8[0];
     int callbackIsInit = 0;
@@ -59958,7 +59832,6 @@ int sqlite3_cancel_auto_extension (xBenignBegin? xInit) {
 void sqlite3_reset_auto_extension () {
     if (sqlite3_initialize () == 0) 
     {
-        sqlite3_free (sqlite3Autoext.aExt);
         sqlite3Autoext.aExt = null;
         sqlite3Autoext.nExt = (uint32) 0;
     }
@@ -60167,7 +60040,9 @@ void setPragmaResultColumnNames (Vdbe[] v, PragmaName? pPragma) {
 // c2vala-ptrs: v_obj[PLAIN]=>T?
 void returnSingleInt (Vdbe[] v, int64 _p_value) {
     int64[] @value = { _p_value };
-    sqlite3VdbeAddOp4Dup8 (v, 72, 0, 1, 0, @value, -13);
+    uint8[] _v = new uint8[8];
+    c_u_set_u64_at (_v, 0, (uint64) @value[0]);
+    sqlite3VdbeAddOp4Dup8 (v, 72, 0, 1, 0, _v, -13);
     sqlite3VdbeAddOp2 (v, 84, 1, 1);
 }
 
@@ -60175,7 +60050,7 @@ void returnSingleInt (Vdbe[] v, int64 _p_value) {
 void returnSingleText (Vdbe[] v, uint8[] zValue) {
     if (zValue != null) 
     {
-        sqlite3VdbeLoadString (v, 1, (string) zValue);
+        sqlite3VdbeLoadString (v, 1, zValue);
         sqlite3VdbeAddOp2 (v, 84, 1, 1);
     }
 }
@@ -60272,7 +60147,7 @@ void pragmaFunclistLine (Vdbe[] v, FuncDef? p, int isBuiltin, int showInternFunc
     {
         string zType = "";
         string[] azEnc = new string[4];
-        azEnc[0] = 0;
+        azEnc[0] = "";
         azEnc[1] = "utf8";
         azEnc[2] = "utf16le";
         azEnc[3] = "utf16be";
@@ -60376,7 +60251,7 @@ void sqlite3Pragma (Parse? pParse, Token[] pId1, Token[] pId2, Token[] pValue, i
         if (rc == 0) 
         {
             sqlite3VdbeSetNumCols (v, 1);
-            sqlite3VdbeSetColName (v, 0, 0, (aFcntl[(int) (0)]).data, ((sqlite3_destructor_type?) (-1)));
+            sqlite3VdbeSetColName (v, 0, 0, (aFcntl[(int) (0)]).data, ((sqlite3_destructor_type?) null));
             returnSingleText (v, (aFcntl[(int) (0)]).data);
             sqlite3_free ((aFcntl[(int) (0)]).data);
             c2v_goto_pragma_out = true;
@@ -60618,7 +60493,7 @@ void sqlite3Pragma (Parse? pParse, Token[] pId1, Token[] pId2, Token[] pValue, i
                     {
                         uint8[] zMode = new uint8[0];
                         int n = sqlite3Strlen30 (zRight);
-                        for (eMode = 0; _c2v_assign_uint8__ ((sqlite3JournalModename (eMode)).data, ref zMode) != 0; eMode++) 
+                        for (eMode = 0; _c2v_assign_uint8__ ((sqlite3JournalModename (eMode)).data, ref zMode) != null; eMode++) 
                         {
                             if (sqlite3_strnicmp (zRight, zMode, n) == 0) {
                                 break;
@@ -61041,7 +60916,7 @@ void sqlite3Pragma (Parse? pParse, Token[] pId1, Token[] pId2, Token[] pValue, i
                                     uint8[] zSql = (sqlite3MPrintf (db, ("SELECT*FROM\"%w\"").data, pTab[0].zName)).data;
                                     if (zSql != null) 
                                     {
-                                        sqlite3_stmt?[] pDummy = new sqlite3_stmt?[1];
+                                        Vdbe?[] pDummy = new Vdbe?[1];
                                         pDummy[0] = null;
                                         sqlite3_prepare (db, zSql, -1, pDummy, new uint8[0]);
                                         sqlite3_finalize (pDummy[0]);
@@ -62154,7 +62029,7 @@ void sqlite3Pragma (Parse? pParse, Token[] pId1, Token[] pId2, Token[] pValue, i
                     int i = 0;
                     uint8[] zOpt = new uint8[0];
                     pParse.nMem = 1;
-                    while (_c2v_assign_uint8__ ((sqlite3_compileoption_get (i++)).data, ref zOpt) != 0) 
+                    while (_c2v_assign_uint8__ ((sqlite3_compileoption_get (i++)).data, ref zOpt) != null) 
                     {
                         sqlite3VdbeLoadString (v, 1, zOpt);
                         sqlite3VdbeAddOp2 (v, 84, 1, 1);
@@ -62395,7 +62270,7 @@ int pragmaVtabConnect (sqlite3[] db, uint8[] pAux, int argc, string[] argv, sqli
     char[] zBuf = new char[200];
     // (void) argc
     // (void) argv
-    sqlite3StrAccumInit (acc, null, zBuf, (int) (((int) (200) * 1)), 0);
+    sqlite3StrAccumInit (acc, new sqlite3[0], zBuf, (int) (((int) (200) * 1)), 0);
     sqlite3_str_appendall (_c2v_box_sqlite3_str_arr (acc), ("CREATE TABLE x").data);
     {
         i = 0;
@@ -62458,8 +62333,6 @@ int pragmaVtabConnect (sqlite3[] db, uint8[] pAux, int argc, string[] argv, sqli
 
 // c2vala-ptrs: pVtab_ptr[CAST->PragmaVtab]=>PragmaVtab.at pTab_obj[PLAIN]=>T?
 int pragmaVtabDisconnect (sqlite3_vtab? pVtab) {
-    PragmaVtab[] pTab = _c2v_box_PragmaVtab_arr (((PragmaVtab?) pVtab));
-    sqlite3_free (pTab);
     return 0;
 }
 
@@ -62558,7 +62431,6 @@ void pragmaVtabCursorClear (PragmaVtabCursor[] pCsr) {
 int pragmaVtabClose (sqlite3_vtab_cursor? cur) {
     PragmaVtabCursor[] pCsr = _c2v_box_PragmaVtabCursor_arr (((PragmaVtabCursor?) cur));
     pragmaVtabCursorClear (pCsr);
-    sqlite3_free (pCsr);
     return 0;
 }
 
@@ -62604,7 +62476,7 @@ int pragmaVtabFilter (sqlite3_vtab_cursor? pVtabCursor, int idxNum, uint8[] idxS
         i++;
         j++;
     }
-    sqlite3StrAccumInit (acc, null, "", 0, pTab.db.aLimit[(int) (1)]);
+    sqlite3StrAccumInit (acc, new sqlite3[0], new uint8[0], 0, pTab.db.aLimit[(int) (1)]);
     sqlite3_str_appendall (_c2v_box_sqlite3_str_arr (acc), ("PRAGMA ").data);
     if (pCsr[0].azArg[(int) (1)] != null) 
     {
@@ -62619,7 +62491,7 @@ int pragmaVtabFilter (sqlite3_vtab_cursor? pVtabCursor, int idxNum, uint8[] idxS
     if (zSql == null) {
         return 7;
     }
-    sqlite3_stmt?[] _c2v_ref_0 = { pCsr[0].pPragma };
+    Vdbe?[] _c2v_ref_0 = { pCsr[0].pPragma };
     rc = sqlite3_prepare_v2 (_c2v_box_sqlite3_arr (pTab.db), zSql, -1, _c2v_ref_0, new uint8[0]);
     pCsr[0].pPragma = _c2v_ref_0[0];
     sqlite3_free (zSql);
@@ -62647,7 +62519,7 @@ int pragmaVtabColumn (sqlite3_vtab_cursor? pVtabCursor, sqlite3_context? ctx, in
     }
     else 
     {
-        sqlite3_result_text (ctx, (pCsr.azArg[(int) ((i - ((int) pTab.iHidden)))]).data, -1, ((sqlite3_destructor_type?) (-1)));
+        sqlite3_result_text (ctx, (pCsr.azArg[(int) ((i - ((int) pTab.iHidden)))]).data, -1, ((sqlite3_destructor_type?) null));
     }
     return 0;
 }
@@ -62719,7 +62591,7 @@ int sqlite3IndexHasDuplicateRootPage (Index[] pIndex) {
     Index? p = null;
     for (p = pIndex[0].pTable.pIndex; p != null; p = p.pNext) 
     {
-        if ((p.tnum == pIndex[0].tnum) && (p != pIndex)) {
+        if ((p.tnum == pIndex[0].tnum) && (p != pIndex[0])) {
             return 1;
         }
     }
@@ -62752,7 +62624,7 @@ int sqlite3InitCallback (uint8[] pInit, int argc, string[] argv, string[] NotUse
     {
         int rc = 0;
         uchar saved_iDb = db[0].init.iDb;
-        sqlite3_stmt?[] pStmt = new sqlite3_stmt?[1];
+        Vdbe?[] pStmt = new Vdbe?[1];
         db[0].init.iDb = (uchar) iDb;
         uint32[] _c2v_ref_6 = { db[0].init.newTnum };
         bool _c2v_cond_7 = (sqlite3GetUInt32 ((argv[(int) (3)]).data, _c2v_ref_6) == 0) || ((db[0].init.newTnum > pData.mxPage) && (pData.mxPage > ((uint32) 0)));
@@ -63131,17 +63003,16 @@ int sqlite3SchemaToIndex (sqlite3[] db, Schema? pSchema) {
 void sqlite3ParseObjectReset (Parse? pParse) {
     sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
     if (pParse.aTableLock != null) {
-        sqlite3DbNNFreeNN (db, pParse.aTableLock.data);
+        pParse.aTableLock = null;
     }
     while (pParse.pCleanup != null) 
     {
         ParseCleanup[] pCleanup = _c2v_box_ParseCleanup_arr (pParse.pCleanup);
         pParse.pCleanup = pCleanup[0].pNext;
-        ((!) pCleanup[0].xCleanup) (_c2v_box_sqlite3_obj (db), pCleanup[0].pPtr);
-        sqlite3DbNNFreeNN (db, pCleanup);
+        ((!) pCleanup[0].xCleanup) (db, pCleanup[0].pPtr);
     }
     if (pParse.aLabel != null) {
-        sqlite3DbNNFreeNN (db, pParse.aLabel.data);
+        pParse.aLabel = new int[0];
     }
     if (pParse.pConstExpr != null) 
     {
@@ -63173,7 +63044,7 @@ uint8[] sqlite3ParserAddCleanup (Parse? pParse, xCleanup? xCleanup, uint8[] pPtr
     }
     else 
     {
-        ((!) xCleanup) (pParse.db, pPtr);
+        ((!) xCleanup) (_c2v_box_sqlite3_arr (pParse.db), pPtr);
         pPtr = new uint8[0];
     }
     return pPtr;
@@ -63186,13 +63057,13 @@ void sqlite3ParseObjectInit (Parse? pParse, sqlite3[] db) {
 
 // c2vala: UNTRANSLATED sqlite3Prepare (sqlite3.c:143287) -- sqlite3.c:143301: address-of a non-lvalue
 // TODO: port this function by hand.
-int sqlite3Prepare (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe[] pReprepare, sqlite3_stmt?[] ppStmt, string[] pzTail) {
+int sqlite3Prepare (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe[] pReprepare, Vdbe?[] ppStmt, string[] pzTail) {
     return 0;
 }
 
 // c2vala: UNTRANSLATED sqlite3LockAndPrepare (sqlite3.c:143441) -- sqlite3.c:143470: comma operator outside for/statement is not supported
 // TODO: port this function by hand.
-int sqlite3LockAndPrepare (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe[] pOld, sqlite3_stmt?[] ppStmt, string[] pzTail) {
+int sqlite3LockAndPrepare (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe[] pOld, Vdbe?[] ppStmt, string[] pzTail) {
     return 0;
 }
 
@@ -63203,28 +63074,28 @@ int sqlite3Reprepare (Vdbe[] p) {
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_obj[PLAIN]=>T? ppStmt_pp[DEREF|NULL]=>C2VBox<T[]> pzTail_obj[PLAIN]=>T?
-int sqlite3_prepare (sqlite3[] db, uint8[] zSql, int nBytes, sqlite3_stmt?[] ppStmt, string[] pzTail) {
+int sqlite3_prepare (sqlite3[] db, uint8[] zSql, int nBytes, Vdbe?[] ppStmt, string[] pzTail) {
     int rc = 0;
     rc = sqlite3LockAndPrepare (db, zSql, nBytes, (uint32) 0, null, ppStmt, pzTail);
     return rc;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_obj[PLAIN]=>T? ppStmt_pp[DEREF|NULL]=>C2VBox<T[]> pzTail_obj[PLAIN]=>T?
-int sqlite3_prepare_v2 (sqlite3[] db, uint8[] zSql, int nBytes, sqlite3_stmt?[] ppStmt, string[] pzTail) {
+int sqlite3_prepare_v2 (sqlite3[] db, uint8[] zSql, int nBytes, Vdbe?[] ppStmt, string[] pzTail) {
     int rc = 0;
     rc = sqlite3LockAndPrepare (db, zSql, nBytes, (uint32) 0x80, null, ppStmt, pzTail);
     return rc;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_obj[PLAIN]=>T? ppStmt_pp[DEREF|NULL]=>C2VBox<T[]> pzTail_obj[PLAIN]=>T?
-int sqlite3_prepare_v3 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, sqlite3_stmt?[] ppStmt, string[] pzTail) {
+int sqlite3_prepare_v3 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe?[] ppStmt, string[] pzTail) {
     int rc = 0;
     rc = sqlite3LockAndPrepare (db, zSql, nBytes, (((uint32) 0x80) | (prepFlags & ((uint32) 0x0f))), null, ppStmt, pzTail);
     return rc;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_ptr[ARITH|NULL]=>C2VPtr ppStmt_pp[DEREF|WR]=>C2VBox<T[]> pzTail_pp[DEREF|WR]=>C2VBox<T[]> zSql8_obj[PLAIN]=>T? zTail8_buf[ARITH|ADDR]=>uint8[](ro) z_buf[IDX|NULL]=>uint8[](ro)
-int sqlite3Prepare16 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, sqlite3_stmt?[] ppStmt, C2VBox<uint8[]>? pzTail) {
+int sqlite3Prepare16 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe?[] ppStmt, C2VBox<uint8[]>? pzTail) {
     uint8[] zSql8 = new uint8[0];
     C2VBox<uint8[]> zTail8 = new C2VBox<uint8[]> ("");
     int rc = 0;
@@ -63267,21 +63138,21 @@ int sqlite3Prepare16 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, 
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_ptr[PLAIN]=>C2VPtr ppStmt_pp[DEREF|NULL]=>C2VBox<T[]> pzTail_pp[PLAIN]=>C2VBox<T[]>
-int sqlite3_prepare16 (sqlite3[] db, uint8[] zSql, int nBytes, sqlite3_stmt?[] ppStmt, C2VBox<uint8[]>? pzTail) {
+int sqlite3_prepare16 (sqlite3[] db, uint8[] zSql, int nBytes, Vdbe?[] ppStmt, C2VBox<uint8[]>? pzTail) {
     int rc = 0;
     rc = sqlite3Prepare16 (db, zSql, nBytes, (uint32) 0, ppStmt, pzTail);
     return rc;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_ptr[PLAIN]=>C2VPtr ppStmt_pp[DEREF|NULL]=>C2VBox<T[]> pzTail_pp[PLAIN]=>C2VBox<T[]>
-int sqlite3_prepare16_v2 (sqlite3[] db, uint8[] zSql, int nBytes, sqlite3_stmt?[] ppStmt, C2VBox<uint8[]>? pzTail) {
+int sqlite3_prepare16_v2 (sqlite3[] db, uint8[] zSql, int nBytes, Vdbe?[] ppStmt, C2VBox<uint8[]>? pzTail) {
     int rc = 0;
     rc = sqlite3Prepare16 (db, zSql, nBytes, (uint32) 0x80, ppStmt, pzTail);
     return rc;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zSql_ptr[PLAIN]=>C2VPtr ppStmt_pp[DEREF|NULL]=>C2VBox<T[]> pzTail_pp[PLAIN]=>C2VBox<T[]>
-int sqlite3_prepare16_v3 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, sqlite3_stmt?[] ppStmt, C2VBox<uint8[]>? pzTail) {
+int sqlite3_prepare16_v3 (sqlite3[] db, uint8[] zSql, int nBytes, uint32 prepFlags, Vdbe?[] ppStmt, C2VBox<uint8[]>? pzTail) {
     int rc = 0;
     rc = sqlite3Prepare16 (db, zSql, nBytes, (((uint32) 0x80) | (prepFlags & ((uint32) 0x0f))), ppStmt, pzTail);
     return rc;
@@ -63309,9 +63180,6 @@ void clearSelect (sqlite3[] db, Select[] p, int bFree) {
         while (p[0].pWin != null) 
         {
             sqlite3WindowUnlinkFromSelect (_c2v_box_Window_arr (p[0].pWin));
-        }
-        if (bFree != 0) {
-            sqlite3DbNNFreeNN (db, p);
         }
         p = _c2v_box_Select_arr (pPrior);
         bFree = 1;
@@ -63396,7 +63264,7 @@ Select[] findRightmost (Select[] p) {
     while (p[0].pNext != null) {
         p = _c2v_box_Select_arr (p[0].pNext);
     }
-    return _c2v_box_Select_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pA_obj[PLAIN]=>T? pB_obj[NULL]=>T? pC_obj[NULL]=>T? apAll_arr[IDX|WR]=>T[] p_obj[DEREF|ARROW]=>T? zKeyText_buf[IDX]=>string.data aKeyword_arr[IDX]=>T[] zSp1_buf[ARITH]=>string.data zSp2_buf[ARITH]=>string.data
@@ -63767,8 +63635,8 @@ void pushOntoSorter (Parse? pParse, SortCtx? pSort, Select[] pSelect, int regDat
         }
         pOp.p2 = (nKey + nData);
         pKI = pOp.p4.pKeyInfo;
-        c_memset (c_str_to_bytes (pKI.aSortFlags), 0, pKI.nKeyField);
-        sqlite3VdbeChangeP4 (v, -1, pKI.data, -8);
+        pKI.aSortFlags = new uchar[pKI.nKeyField];
+        sqlite3VdbeChangeP4KeyInfo (v, -1, _c2v_box_KeyInfo_arr (pKI));
         pOp.p4.pKeyInfo = _c2v_box_KeyInfo_obj (sqlite3KeyInfoFromExprList (pParse, _c2v_box_ExprList_arr (pSort.pOrderBy), nOBSat, ((pKI.nAllField - pKI.nKeyField) - 1)));
         pOp = null;
         addrJmp = sqlite3VdbeCurrentAddr (v);
@@ -63849,7 +63717,7 @@ int codeDistinct (Parse? pParse, int eTnctType, int iTab, int addrRepeat, ExprLi
                     {
                         sqlite3VdbeAddOp3 (v, 54, (regElem + i), addrRepeat, (regPrev + i));
                     }
-                    sqlite3VdbeChangeP4 (v, -1, (string) pColl, -2);
+                    sqlite3VdbeChangeP4CollSeq (v, -1, pColl);
                     sqlite3VdbeChangeP5 (v, (uint16) 0x80);
                 }
                 sqlite3VdbeAddOp3 (v, 80, regElem, regPrev, (nResultCol - 1));
@@ -64216,7 +64084,7 @@ KeyInfo[] sqlite3KeyInfoAlloc (sqlite3[] db, int N, int X) {
     {
         return new KeyInfo.at (sqlite3OomFault (db), 0);
     }
-    return _c2v_box_KeyInfo_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: p_obj[DEREF|ARROW]=>T?
@@ -64224,9 +64092,6 @@ void sqlite3KeyInfoUnref (KeyInfo[] p) {
     if (p != null) 
     {
         p[0].nRef = p[0].nRef - 1;
-        if (p[0].nRef == ((uint32) 0)) {
-            sqlite3DbNNFreeNN (_c2v_box_sqlite3_arr (p[0].db), p);
-        }
     }
 }
 
@@ -64236,7 +64101,7 @@ KeyInfo[] sqlite3KeyInfoRef (KeyInfo[] p) {
     {
         p[0].nRef = p[0].nRef + 1;
     }
-    return _c2v_box_KeyInfo_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pList_obj[DEREF|ARROW]=>T? pInfo_obj[DEREF|ARROW]=>T? pItem_arr[ARITH|DEREF|ARROW]=>T[] db_obj[PLAIN]=>T?
@@ -64265,7 +64130,7 @@ KeyInfo[] sqlite3KeyInfoFromExprList (Parse? pParse, ExprList[] pList, int iStar
             }
         }
     }
-    return _c2v_box_KeyInfo_obj (pInfo);
+    return pInfo;
 }
 
 // c2vala-ptrs: z_obj[PLAIN]=>T?
@@ -64548,7 +64413,7 @@ uint8[] columnTypeImpl (NameContext? pNC, Expr[] pExpr) {
                     }
                     else 
                     {
-                        zType = sqlite3ColumnType (_c2v_slice_Column (pTab.aCol, (int) (iCol)), "");
+                        zType = (string) sqlite3ColumnType (_c2v_slice_Column (pTab.aCol, (int) (iCol)), ("").data);
                     }
                 }
                 break;
@@ -64586,7 +64451,7 @@ void generateColumnTypes (Parse? pParse, SrcList? pTabList, ExprList? pEList) {
         Expr[] p = _c2v_box_Expr_arr (pEList.a[(int) (i)].pExpr);
         uint8[] zType = new uint8[0];
         zType = columnTypeImpl (sNC, p);
-        sqlite3VdbeSetColName (v, i, 1, zType, ((sqlite3_destructor_type?) (-1)));
+        sqlite3VdbeSetColName (v, i, 1, zType, ((sqlite3_destructor_type?) null));
     }
 }
 
@@ -64618,7 +64483,7 @@ void sqlite3GenerateColumnNames (Parse? pParse, Select[] pSelect) {
         if ((pEList.a[(int) (i)].zEName != null) && (pEList.a[(int) (i)].fg.eEName == ((uint32) 0))) 
         {
             uint8[] zName = (pEList.a[(int) (i)].zEName).data;
-            sqlite3VdbeSetColName (v, i, 0, zName, ((sqlite3_destructor_type?) (-1)));
+            sqlite3VdbeSetColName (v, i, 0, zName, ((sqlite3_destructor_type?) null));
         }
         else 
         if ((srcName != 0) && (((int) p.op) == 168)) 
@@ -64645,7 +64510,7 @@ void sqlite3GenerateColumnNames (Parse? pParse, Select[] pSelect) {
             }
             else 
             {
-                sqlite3VdbeSetColName (v, i, 0, zCol, ((sqlite3_destructor_type?) (-1)));
+                sqlite3VdbeSetColName (v, i, 0, zCol, ((sqlite3_destructor_type?) null));
             }
         }
         else 
@@ -64676,7 +64541,10 @@ int sqlite3ColumnsFromExprList (Parse? pParse, ExprList? pEList, int16[] pnCol, 
     if (pEList != null) 
     {
         nCol = pEList.nExpr;
-        aCol = sqlite3DbMallocZero (db, (uint64) ((37 * ((size_t) nCol))));
+        aCol = new Column[nCol];
+        for (int _ci = 0; _ci < nCol; _ci++) {
+            aCol[_ci] = new Column ();
+        }
         if (nCol > 32767) {
             nCol = 32767;
         }
@@ -64684,7 +64552,7 @@ int sqlite3ColumnsFromExprList (Parse? pParse, ExprList? pEList, int16[] pnCol, 
     else 
     {
         nCol = 0;
-        aCol = null;
+        aCol = new Column[0];
     }
     pnCol[0] = (int16) nCol;
     paCol[0] = _c2v_box_Column_obj (aCol);
@@ -64696,7 +64564,7 @@ int sqlite3ColumnsFromExprList (Parse? pParse, ExprList? pEList, int16[] pnCol, 
             {
                 ExprList_item[] pX = _c2v_slice_ExprList_item (pEList.a, (int) (i));
                 ExprList_item? pCollide = null;
-                if ((_c2v_assign_uint8__ ((pX[0].zEName).data, ref zName) != 0) && (pX[0].fg.eEName == ((uint32) 0))) 
+                if ((_c2v_assign_uint8__ ((pX[0].zEName).data, ref zName) != null) && (pX[0].fg.eEName == ((uint32) 0))) 
                 {
                 }
                 else 
@@ -64713,7 +64581,7 @@ int sqlite3ColumnsFromExprList (Parse? pParse, ExprList? pEList, int16[] pnCol, 
                         if (iCol < 0) {
                             iCol = (int) pTab.iPKey;
                         }
-                        zName = ((iCol >= 0) ? _c2v_box_Column_arr (pTab.aCol)[(int) (iCol)].zCnName : "rowid");
+                        zName = (((iCol >= 0) ? _c2v_box_Column_arr (pTab.aCol)[(int) (iCol)].zCnName : "rowid")).data;
                     }
                     else 
                     if (((int) pColExpr[0].op) == 60) 
@@ -64733,7 +64601,7 @@ int sqlite3ColumnsFromExprList (Parse? pParse, ExprList? pEList, int16[] pnCol, 
                     zName = (sqlite3MPrintf (db, ("column%d").data, (i + 1))).data;
                 }
                 cnt[0] = (uint32) 0;
-                while ((zName != null) && (_c2v_assign_ExprList_item_ (_c2v_box_ExprList_item_obj (sqlite3HashFind (ht, zName)), ref pCollide) != 0)) 
+                while ((zName != null) && (_c2v_assign_ExprList_item_ (_c2v_box_ExprList_item_obj (sqlite3HashFind (ht, zName)), ref pCollide) != null)) 
                 {
                     if (pCollide.fg.bUsingTerm != 0) 
                     {
@@ -64778,7 +64646,6 @@ int sqlite3ColumnsFromExprList (Parse? pParse, ExprList? pEList, int16[] pnCol, 
         {
             sqlite3DbFree (db, (aCol[(int) (j)].zCnName).data);
         }
-        sqlite3DbFree (db, aCol);
         paCol[0] = null;
         pnCol[0] = (int16) 0;
         return pParse.rc;
@@ -64837,7 +64704,7 @@ void sqlite3SubqueryColumnTypes (Parse? pParse, Table[] pTab, Select[] pSelect, 
                 {
                     pCol[_off_pCol].affinity = aff;
                 }
-                if ((((int) pCol[_off_pCol].affinity) >= 0x42) && ((pS2.pNext != null) || (pS2 != pSelect))) 
+                if ((((int) pCol[_off_pCol].affinity) >= 0x42) && ((pS2.pNext != null) || (pS2 != pSelect[0]))) 
                 {
                     for (pS2 = pS2.pNext; pS2 != null; pS2 = pS2.pNext) 
                     {
@@ -64858,7 +64725,7 @@ void sqlite3SubqueryColumnTypes (Parse? pParse, Table[] pTab, Select[] pSelect, 
                     }
                 }
                 zType = columnTypeImpl (sNC, p);
-                if ((zType == null) || (pCol[_off_pCol].affinity != sqlite3AffinityType (zType, null))) 
+                if ((zType == null) || (pCol[_off_pCol].affinity != sqlite3AffinityType (zType, new Column[0]))) 
                 {
                     if ((((int) pCol[_off_pCol].affinity) == 0x43) || (((int) pCol[_off_pCol].affinity) == 0x46)) 
                     {
@@ -64866,7 +64733,7 @@ void sqlite3SubqueryColumnTypes (Parse? pParse, Table[] pTab, Select[] pSelect, 
                     }
                     else 
                     {
-                        zType = "";
+                        zType = new uint8[0];
                         for (j = 1; j < 6; j++) 
                         {
                             if (sqlite3StdTypeAffinity[(int) (j)] == pCol[_off_pCol].affinity) 
@@ -64881,13 +64748,12 @@ void sqlite3SubqueryColumnTypes (Parse? pParse, Table[] pTab, Select[] pSelect, 
                 {
                     int64 k = (int64) (sqlite3Strlen30 (zType));
                     n = (int64) (sqlite3Strlen30 ((pCol[_off_pCol].zCnName).data));
-                    pCol[_off_pCol].zCnName = (string) sqlite3DbReallocOrFree (db, (pCol[_off_pCol].zCnName).data, (uint64) (((n + k) + ((int64) 2))));
-                    pCol[_off_pCol].colFlags &= ~(0x0004 | 0x0200);
-                    if (pCol[_off_pCol].zCnName != null) 
-                    {
-                        c_memcpy (c_str_add (pCol[_off_pCol].zCnName, (int) ((n + ((int64) 1)))), zType, (k + ((int64) 1)));
-                        pCol[_off_pCol].colFlags |= 0x0004;
-                    }
+                    uint8[] _zn = new uint8[(int) ((n + k) + 2)];
+                    c_memcpy (_zn, (pCol[_off_pCol].zCnName).data, n + 1);
+                    c_memcpy (c_bytes_add (_zn, (int) (n + 1)), zType, k + 1);
+                    pCol[_off_pCol].zCnName = (string) _zn;
+                    pCol[_off_pCol].colFlags &= ~0x0200;
+                    pCol[_off_pCol].colFlags |= 0x0004;
                 }
                 pColl = sqlite3ExprCollSeq (pParse, p);
                 if (pColl != null) 
@@ -64913,16 +64779,12 @@ Table[] sqlite3ResultSetOfSelect (Parse? pParse, Select[] pSelect, char aff) {
     sqlite3SelectPrep (pParse, pSelect, null);
     db[0].flags = savedFlags;
     if (pParse.nErr != 0) {
-        return null;
+        return new Table[0];
     }
     while (pSelect[0].pPrior != null) {
         pSelect = _c2v_box_Select_arr (pSelect[0].pPrior);
     }
-    pTab = sqlite3DbMallocZero (db, (uint64) 114);
-    if (pTab == null) 
-    {
-        return null;
-    }
+    pTab = { new Table () };
     pTab[0].nTabRef = (uint32) 1;
     pTab[0].zName = "";
     pTab[0].nRowLogEst = (int16) 200;
@@ -64936,9 +64798,9 @@ Table[] sqlite3ResultSetOfSelect (Parse? pParse, Select[] pSelect, char aff) {
     if (db[0].mallocFailed != 0) 
     {
         sqlite3DeleteTable (db, pTab);
-        return null;
+        return new Table[0];
     }
-    return _c2v_box_Table_obj (pTab);
+    return pTab;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|WR|ARROW]=>T?
@@ -65010,13 +64872,13 @@ CollSeq[] multiSelectCollSeq (Parse? pParse, Select[] p, int iCol) {
     }
     else 
     {
-        pRet = null;
+        pRet = new CollSeq[0];
     }
     if ((pRet == null) && (iCol < p[0].pEList.nExpr)) 
     {
         pRet = sqlite3ExprCollSeq (pParse, _c2v_box_Expr_arr (p[0].pEList.a[(int) (iCol)].pExpr));
     }
-    return _c2v_box_CollSeq_obj (pRet);
+    return pRet;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|ARROW]=>T? pOrderBy_obj[DEREF|NULL|ARROW]=>T? db_obj[DEREF|ARROW]=>T? pRet_obj[DEREF|ARROW]=>T? pItem_obj[DEREF|ARROW]=>T? pTerm_obj[DEREF|ARROW]=>T? pColl_obj[DEREF|NULL|ARROW]=>T?
@@ -65049,7 +64911,7 @@ KeyInfo[] multiSelectOrderByKeyInfo (Parse? pParse, Select[] p, int nExtra) {
             pRet[0].aSortFlags[(int) (i)] = pOrderBy.a[(int) (i)].fg.sortFlags;
         }
     }
-    return _c2v_box_KeyInfo_obj (pRet);
+    return pRet;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|WR|ARROW]=>T? pDest_obj[PLAIN]=>T? pSrc_obj[DEREF|ARROW]=>T? v_obj[PLAIN]=>T? pSetup_obj[DEREF|WR|ARROW]=>T? pFirstRec_obj[DEREF|WR|NULL|ARROW]=>T? pOrderBy_obj[DEREF|ARROW]=>T? pLimit_obj[PLAIN]=>T? pKeyInfo_obj[PLAIN]=>T?
@@ -65088,7 +64950,7 @@ void generateWithRecursiveQuery (Parse? pParse, Select[] p, SelectDest[] pDest) 
             return;
         }
         if (c2v_goto_end_of_recursive_query) break;
-        if (sqlite3AuthCheck (pParse, 33, "", "", "") != 0) {
+        if (sqlite3AuthCheck (pParse, 33, ("").data, ("").data, ("").data) != 0) {
             return;
         }
         if (c2v_goto_end_of_recursive_query) break;
@@ -65129,7 +64991,7 @@ void generateWithRecursiveQuery (Parse? pParse, Select[] p, SelectDest[] pDest) 
         if (pOrderBy != null) 
         {
             KeyInfo[] pKeyInfo = multiSelectOrderByKeyInfo (pParse, p, 1);
-            sqlite3VdbeAddOp4 (v, 117, iQueue, (pOrderBy.nExpr + 2), 0, (string) pKeyInfo, -8);
+            sqlite3VdbeAddOp4KeyInfo (v, 117, iQueue, (pOrderBy.nExpr + 2), 0, pKeyInfo);
             destQueue.pOrderBy = pOrderBy;
         }
         else 
@@ -65252,7 +65114,7 @@ int multiSelect (Parse? pParse, Select[] p, SelectDest[] pDest) {
     sqlite3[] db = new sqlite3[0];
     do {
         rc = 0;
-        pDelete = null;
+        pDelete = new Select[0];
         db = _c2v_box_sqlite3_arr (pParse.db);
         pPrior = _c2v_box_Select_arr (p[0].pPrior);
         dest = pDest[0];
@@ -65522,7 +65384,7 @@ int multiSelect (Parse? pParse, Select[] p, SelectDest[] pDest) {
                         break;
                     }
                     sqlite3VdbeChangeP2 (v, addr, nCol);
-                    sqlite3VdbeChangeP4 (v, addr, (string) sqlite3KeyInfoRef (pKeyInfo), -8);
+                    sqlite3VdbeChangeP4KeyInfo (v, addr, sqlite3KeyInfoRef (pKeyInfo));
                     pLoop.addrOpenEphm[(int) (i)] = -1;
                     if (c2v_goto_multi_select_end) { break; }
                 }
@@ -65566,7 +65428,7 @@ int generateOutputSubroutine (Parse? pParse, Select[] p, SelectDest? pIn, Select
         int addr1 = 0;
         int addr2 = 0;
         addr1 = sqlite3VdbeAddOp1 (v, 17, regPrev);
-        addr2 = sqlite3VdbeAddOp4 (v, 90, pIn.iSdst, (regPrev + 1), pIn.nSdst, (string) sqlite3KeyInfoRef (pKeyInfo), -8);
+        addr2 = sqlite3VdbeAddOp4KeyInfo (v, 90, pIn.iSdst, (regPrev + 1), pIn.nSdst, sqlite3KeyInfoRef (pKeyInfo));
         sqlite3VdbeAddOp3 (v, 14, (addr2 + 2), iContinue, (addr2 + 2));
         sqlite3VdbeJumpHere (v, addr1);
         sqlite3VdbeAddOp3 (v, 80, pIn.iSdst, (regPrev + 1), (pIn.nSdst - 1));
@@ -65899,7 +65761,7 @@ int multiSelectOrderBy (Parse? pParse, Select[] p, SelectDest[] pDest) {
     sqlite3VdbeAddOp2 (v, 12, regAddrB, addrEofB);
     sqlite3VdbeResolveLabel (v, labelCmpr);
     sqlite3VdbeAddOp4 (v, 89, 0, 0, 0, (string) aPermute, -14);
-    sqlite3VdbeAddOp4 (v, 90, destA.iSdst, destB.iSdst, nOrderBy, (string) pKeyMerge, -8);
+    sqlite3VdbeAddOp4KeyInfo (v, 90, destA.iSdst, destB.iSdst, nOrderBy, pKeyMerge);
     sqlite3VdbeChangeP5 (v, (uint16) 0x01);
     sqlite3VdbeAddOp3 (v, 14, addrAltB, addrAeqB, addrAgtB);
     sqlite3VdbeResolveLabel (v, labelEnd);
@@ -65968,7 +65830,7 @@ Expr[] substExpr (SubstContext? pSubst, Expr[] pExpr) {
                 if (db[0].mallocFailed != 0) 
                 {
                     sqlite3ExprDelete (db, pNew);
-                    return _c2v_box_Expr_obj (pExpr);
+                    return pExpr;
                 }
                 if (pSubst.isOuterJoin != 0) 
                 {
@@ -66022,7 +65884,7 @@ Expr[] substExpr (SubstContext? pSubst, Expr[] pExpr) {
             substExprList (pSubst, pWin.pOrderBy);
         }
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: pSubst_obj[PLAIN]=>T? pList_obj[DEREF|NULL|ARROW]=>T?
@@ -66072,7 +65934,7 @@ void substSelect (SubstContext? pSubst, Select[] p, int doPrior) {
                 _off_pItem++;
             }
         }
-    } while ((doPrior != 0) && (_c2v_assign_Select__ (_c2v_box_Select_arr (p[0].pPrior), ref p) != 0));
+    } while ((doPrior != 0) && (_c2v_assign_Select__ (_c2v_box_Select_arr (p[0].pPrior), ref p) != null));
 }
 
 // c2vala-ptrs: pWalker_obj[DEREF|ARROW]=>T? pExpr_obj[DEREF|ARROW]=>T? pItem_obj[DEREF|WR|ARROW]=>T?
@@ -66346,14 +66208,14 @@ int flattenSubquery (Parse? pParse, Select[] p, int iFrom, int isAgg) {
             if ((db[0].dbOptFlags & ((uint32) 0x00800000)) != ((uint32) 0)) {
                 return 0;
             }
-            aCsrMap = sqlite3DbMallocZero (db, (((uint64) (((int64) pParse.nTab) + ((int64) 1))) * ((uint64) sizeof (int))));
+            aCsrMap = new int[pParse.nTab + 1];
             if (aCsrMap != null) {
                 aCsrMap[(int) (0)] = pParse.nTab;
             }
         }
     }
     pParse.zAuthContext = pSubitem[0].zName;
-    sqlite3AuthCheck (pParse, 21, "", "", "");
+    sqlite3AuthCheck (pParse, 21, ("").data, ("").data, ("").data);
     pParse.zAuthContext = zSavedAuthContext;
     if (pSubitem[0].fg.isSubquery != 0) 
     {
@@ -66361,7 +66223,7 @@ int flattenSubquery (Parse? pParse, Select[] p, int iFrom, int isAgg) {
     }
     else 
     {
-        pSub1 = null;
+        pSub1 = new Select[0];
     }
     sqlite3DbFree (db, (pSubitem[0].zName).data);
     sqlite3DbFree (db, (pSubitem[0].zAlias).data);
@@ -66402,7 +66264,6 @@ int flattenSubquery (Parse? pParse, Select[] p, int iFrom, int isAgg) {
             p[0].pPrior = _c2v_box_Select_obj (pNew);
         }
     }
-    sqlite3DbFree (db, aCsrMap);
     if (db[0].mallocFailed != 0) 
     {
         sqlite3SrcItemAttachSubquery (pParse, pSubitem, pSub1, 0);
@@ -66413,8 +66274,6 @@ int flattenSubquery (Parse? pParse, Select[] p, int iFrom, int isAgg) {
         Table[] pTabToDel = _c2v_box_Table_arr (pSubitem[0].pSTab);
         if (pTabToDel[0].nTabRef == ((uint32) 1)) 
         {
-            Parse? pToplevel = ((pParse.pToplevel != null) ? pParse.pToplevel : pParse);
-            sqlite3ParserAddCleanup (pToplevel, sqlite3DeleteTableGeneric, pTabToDel);
         }
         else 
         {
@@ -66609,7 +66468,7 @@ int propagateConstantExprRewriteOne (WhereConst? pConst, Expr? pExpr, int bIgnor
     for (i = 0; i < pConst.nConst; i++) 
     {
         Expr[] pColumn = _c2v_box_Expr_arr (pConst.apExpr[(int) ((i * 2))]);
-        if (pColumn == pExpr) {
+        if (pColumn[0] == pExpr) {
             continue;
         }
         if (pColumn[0].iTable != pExpr.iTable) {
@@ -66886,7 +66745,7 @@ Table? isSimpleCount (Select[] p, AggInfo[] pAggInfo) {
     if (((int) pExpr.op) != 169) {
         return null;
     }
-    if (pExpr.pAggInfo != pAggInfo) {
+    if (pExpr.pAggInfo != _c2v_box_AggInfo_obj (pAggInfo)) {
         return null;
     }
     if ((_c2v_box_AggInfo_func_arr (pAggInfo[0].aFunc)[(int) (0)].pFunc.funcFlags & ((uint32) 0x0100)) == ((uint32) 0)) {
@@ -67032,7 +66891,7 @@ With[] sqlite3WithPush (Parse? pParse, With[] pWith, uchar bFree) {
             pParse.pWith = _c2v_box_With_obj (pWith);
         }
     }
-    return _c2v_box_With_obj (pWith);
+    return pWith;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|WR|ARROW]=>T? pWalker_obj[PLAIN]=>T? pFrom_obj[DEREF|WR|ARROW]=>T? pCte_obj[DEREF|WR|ARROW]=>T? pWith_obj[ADDR]=>T? db_obj[DEREF|ARROW]=>T? pTab_obj[DEREF|WR|NULL|ARROW]=>T? pEList_obj[DEREF|ARROW]=>T? pSel_obj[DEREF|WR|NULL|ARROW]=>T? pLeft_obj[DEREF|ARROW]=>T? pRecTerm_obj[DEREF|WR|NULL|ARROW]=>T? pSavedWith_obj[PLAIN]=>T? pCteUse_obj[DEREF|WR|NULL|ARROW]=>T? pSrc_obj[DEREF|ARROW]=>T? pItem_obj[DEREF|WR|ARROW]=>T?
@@ -67076,20 +66935,14 @@ int resolveFromTermToCte (Parse? pParse, Walker? pWalker, SrcItem[] pFrom) {
         if (cannotBeFunction (pParse, pFrom) != 0) {
             return 2;
         }
-        pTab = sqlite3DbMallocZero (db, (uint64) 114);
-        if (pTab == null) {
-            return 2;
-        }
+        pTab = new Table[1];
+        pTab[0] = new Table ();
         pCteUse = _c2v_box_CteUse_arr (pCte.pUse);
         if (pCteUse == null) 
         {
-            pCteUse = sqlite3DbMallocZero (db, (uint64) 26);
-            pCte.pUse = pCteUse;
-            if ((pCteUse == null) || (sqlite3ParserAddCleanup (pParse, sqlite3DbFree, pCteUse) == null)) 
-            {
-                sqlite3DbFree (db, pTab);
-                return 2;
-            }
+            pCteUse = new CteUse[1];
+            pCteUse[0] = new CteUse ();
+            pCte.pUse = _c2v_box_CteUse_obj (pCteUse);
             pCteUse[0].eM10d = pCte.eM10d;
         }
         pFrom[0].pSTab = _c2v_box_Table_obj (pTab);
@@ -67222,8 +67075,9 @@ int sqlite3ExpandSubquery (Parse? pParse, SrcItem[] pFrom) {
     Select? pSel = null;
     Table[] pTab = new Table[0];
     pSel = pFrom[0].u4.pSubq.pSelect;
-    pTab = sqlite3DbMallocZero (_c2v_box_sqlite3_arr (pParse.db), (uint64) 114);
-    pFrom[0].pSTab = pTab;
+    pTab = new Table[1];
+    pTab[0] = new Table ();
+    pFrom[0].pSTab = _c2v_box_Table_obj (pTab);
     if (pTab == null) {
         return 7;
     }
@@ -67860,7 +67714,7 @@ void resetAccumulator (Parse? pParse, AggInfo[] pAggInfo) {
                     else 
                     {
                         KeyInfo[] pKeyInfo = sqlite3KeyInfoFromExprList (pParse, _c2v_box_ExprList_arr (pE.x.pList), 0, 0);
-                        pFunc[_off_pFunc].iDistAddr = sqlite3VdbeAddOp4 (v, 117, pFunc[_off_pFunc].iDistinct, 0, 0, (string) pKeyInfo, -8);
+                        pFunc[_off_pFunc].iDistAddr = sqlite3VdbeAddOp4KeyInfo (v, 117, pFunc[_off_pFunc].iDistinct, 0, 0, pKeyInfo);
                         sqlite3VdbeExplain (pParse, (uchar) 0, ("USE TEMP B-TREE FOR %s(DISTINCT)").data, pFunc[_off_pFunc].pFunc.zName);
                     }
                 }
@@ -67887,7 +67741,7 @@ void resetAccumulator (Parse? pParse, AggInfo[] pAggInfo) {
                     {
                         pKeyInfo[0].nKeyField = pKeyInfo[0].nKeyField + 1;
                     }
-                    sqlite3VdbeAddOp4 (v, 117, pFunc[_off_pFunc].iOBTab, (pOBList[0].nExpr + nExtra), 0, (string) pKeyInfo, -8);
+                    sqlite3VdbeAddOp4KeyInfo (v, 117, pFunc[_off_pFunc].iOBTab, (pOBList[0].nExpr + nExtra), 0, pKeyInfo);
                     sqlite3VdbeExplain (pParse, (uchar) 0, ("USE TEMP B-TREE FOR %s(ORDER BY)").data, pFunc[_off_pFunc].pFunc.zName);
                 }
             }
@@ -67951,14 +67805,14 @@ void finalizeAggFunctions (Parse? pParse, AggInfo[] pAggInfo) {
                         sqlite3ReleaseTempReg (pParse, regSubtype);
                     }
                     sqlite3VdbeAddOp3 (v, 162, 0, regAgg, ((pAggInfo[0].iFirstReg + pAggInfo[0].nColumn) + i));
-                    sqlite3VdbeAppendP4 (v, (pF[_off_pF].pFunc).data, -7);
+                    sqlite3VdbeAppendP4FuncDef (v, pF[_off_pF].pFunc);
                     sqlite3VdbeChangeP5 (v, (uint16) (((uchar) nArg)));
                     sqlite3VdbeAddOp2 (v, 39, pF[_off_pF].iOBTab, (iTop + 1));
                     sqlite3VdbeJumpHere (v, iTop);
                     sqlite3ReleaseTempRange (pParse, regAgg, nArg);
                 }
                 sqlite3VdbeAddOp2 (v, 165, ((pAggInfo[0].iFirstReg + pAggInfo[0].nColumn) + i), ((pList != null) ? pList.nExpr : 0));
-                sqlite3VdbeAppendP4 (v, (pF[_off_pF].pFunc).data, -7);
+                sqlite3VdbeAppendP4FuncDef (v, pF[_off_pF].pFunc);
             }
             i++;
             _off_pF++;
@@ -68111,7 +67965,7 @@ void updateAccumulator (Parse? pParse, int regAcc, AggInfo[] pAggInfo, int eDist
                         sqlite3VdbeAddOp4 (v, 85, regHit, 0, 0, (string) pColl, -2);
                     }
                     sqlite3VdbeAddOp3 (v, 162, 0, regAgg, ((pAggInfo[0].iFirstReg + pAggInfo[0].nColumn) + i));
-                    sqlite3VdbeAppendP4 (v, (pF[_off_pF].pFunc).data, -7);
+                    sqlite3VdbeAppendP4FuncDef (v, pF[_off_pF].pFunc);
                     sqlite3VdbeChangeP5 (v, (uint16) (((uchar) nArg)));
                     sqlite3ReleaseTempRange (pParse, regAgg, nArg);
                 }
@@ -68253,10 +68107,6 @@ SrcItem? isSelfJoinView (SrcList[] pTabList, SrcItem[] pThis, int iFirst, int iE
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pArg_ptr[CAST->AggInfo]=>AggInfo.at p_obj[DEREF|ARROW]=>T?
 void agginfoFree (sqlite3[] db, uint8[] pArg) {
-    AggInfo[] p = _c2v_box_AggInfo_arr (new AggInfo.at (pArg, 0));
-    sqlite3DbFree (db, (p[0].aCol).data);
-    sqlite3DbFree (db, (p[0].aFunc).data);
-    sqlite3DbFreeNN (db, p);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|WR|ARROW]=>T? pSub_obj[DEREF|WR|ARROW]=>T? pPrior_obj[PLAIN]=>T? pExpr_obj[DEREF|NULL|ARROW]=>T? pCount_obj[PLAIN]=>T? db_obj[PLAIN]=>T? pFrom_obj[DEREF|ARROW]=>T? pTerm_obj[PLAIN]=>T?
@@ -68726,7 +68576,7 @@ int sqlite3Select (Parse? pParse, Select[] p, SelectDest[] pDest) {
                 pSub[0].nSelectRow = pCteUse.nRowEst;
             }
             else 
-            if (_c2v_assign_SrcItem_ (isSelfJoinView (pTabList, _c2v_slice_SrcItem (pItem, _off_pItem), 0, i), ref pPrior) != 0) 
+            if (_c2v_assign_SrcItem_ (isSelfJoinView (pTabList, _c2v_slice_SrcItem (pItem, _off_pItem), 0, i), ref pPrior) != null) 
             {
                 Subquery? pPriorSubq = null;
                 pPriorSubq = pPrior.u4.pSubq;
@@ -68807,7 +68657,7 @@ int sqlite3Select (Parse? pParse, Select[] p, SelectDest[] pDest) {
             KeyInfo[] pKeyInfo = new KeyInfo[0];
             pKeyInfo = sqlite3KeyInfoFromExprList (pParse, _c2v_box_ExprList_arr (sSort.pOrderBy), 0, pEList[0].nExpr);
             sSort.iECursor = pParse.nTab++;
-            sSort.addrSortIndex = sqlite3VdbeAddOp4 (v, 117, sSort.iECursor, ((sSort.pOrderBy.nExpr + 1) + pEList[0].nExpr), 0, (string) pKeyInfo, -8);
+            sSort.addrSortIndex = sqlite3VdbeAddOp4KeyInfo (v, 117, sSort.iECursor, ((sSort.pOrderBy.nExpr + 1) + pEList[0].nExpr), 0, pKeyInfo);
         }
         else 
         {
@@ -69061,7 +68911,7 @@ int sqlite3Select (Parse? pParse, Select[] p, SelectDest[] pDest) {
                 }
                 pAggInfo[0].sortingIdx = pParse.nTab++;
                 pKeyInfo = sqlite3KeyInfoFromExprList (pParse, pGroupBy, 0, pAggInfo[0].nColumn);
-                addrSortingIdx = sqlite3VdbeAddOp4 (v, 119, pAggInfo[0].sortingIdx, (int) (pAggInfo[0].nSortingColumn), 0, (string) pKeyInfo, -8);
+                addrSortingIdx = sqlite3VdbeAddOp4KeyInfo (v, 119, pAggInfo[0].sortingIdx, (int) (pAggInfo[0].nSortingColumn), 0, pKeyInfo);
                 iUseFlag = ++pParse.nMem;
                 iAbortFlag = ++pParse.nMem;
                 regOutputRow = ++pParse.nMem;
@@ -69177,7 +69027,7 @@ int sqlite3Select (Parse? pParse, Select[] p, SelectDest[] pDest) {
                     }
                     if (c2v_goto_select_end) { break; }
                 }
-                sqlite3VdbeAddOp4 (v, 90, iAMem, iBMem, pGroupBy[0].nExpr, (string) sqlite3KeyInfoRef (pKeyInfo), -8);
+                sqlite3VdbeAddOp4KeyInfo (v, 90, iAMem, iBMem, pGroupBy[0].nExpr, sqlite3KeyInfoRef (pKeyInfo));
                 addr1 = sqlite3VdbeCurrentAddr (v);
                 sqlite3VdbeAddOp3 (v, 14, (addr1 + 1), 0, (addr1 + 1));
                 sqlite3VdbeAddOp2 (v, 10, regOutputRow, addrOutputRow);
@@ -69223,7 +69073,7 @@ int sqlite3Select (Parse? pParse, Select[] p, SelectDest[] pDest) {
             else 
             {
                 Table[] pTab = new Table[0];
-                if (_c2v_assign_Table__ (_c2v_box_Table_arr (isSimpleCount (p, pAggInfo)), ref pTab) != 0) 
+                if (_c2v_assign_Table__ (_c2v_box_Table_arr (isSimpleCount (p, pAggInfo)), ref pTab) != null) 
                 {
                     int iDb = sqlite3SchemaToIndex (_c2v_box_sqlite3_arr (pParse.db), pTab[0].pSchema);
                     int iCsr = pParse.nTab++;
@@ -69255,7 +69105,7 @@ int sqlite3Select (Parse? pParse, Select[] p, SelectDest[] pDest) {
                     sqlite3VdbeAddOp4Int (v, 102, iCsr, ((int) iRoot), iDb, 1);
                     if (pKeyInfo != null) 
                     {
-                        sqlite3VdbeChangeP4 (v, -1, (string) pKeyInfo, -8);
+                        sqlite3VdbeChangeP4KeyInfo (v, -1, pKeyInfo);
                     }
                     assignAggregateRegisters (pParse, pAggInfo);
                     sqlite3VdbeAddOp2 (v, 98, iCsr, ((pAggInfo[0].iFirstReg + pAggInfo[0].nColumn) + 0));
@@ -69582,7 +69432,7 @@ void sqlite3BeginTrigger (Parse? pParse, Token[] pName1, Token[] pName2, int tr_
     DbFixer sFix = new DbFixer ();
     do {
         pTrigger = null;
-        zName = "";
+        zName = new uint8[0];
         db = _c2v_box_sqlite3_arr (pParse.db);
         if (isTemp != 0) 
         {
@@ -69740,7 +69590,7 @@ void sqlite3BeginTrigger (Parse? pParse, Token[] pName1, Token[] pName2, int tr_
         }
         if (c2v_goto_trigger_cleanup || c2v_goto_trigger_orphan_error) break;
         pTrigger[0].zName = (string) zName;
-        zName = "";
+        zName = new uint8[0];
         pTrigger[0].table = (string) sqlite3DbStrDup (db, (pTableName[0].a[(int) (0)].zName).data);
         pTrigger[0].pSchema = _c2v_box_Db_arr (db[0].aDb)[(int) (iDb)].pSchema;
         pTrigger[0].pTabSchema = pTab.pSchema;
@@ -69904,17 +69754,13 @@ uint8[] triggerSpanDup (sqlite3[] db, uint8[] zStart, uint8[] zEnd) {
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pSelect_obj[PLAIN]=>T? zStart_obj[PLAIN]=>T? zEnd_obj[PLAIN]=>T? pTriggerStep_obj[DEREF|WR|NULL|ARROW]=>T?
 TriggerStep[] sqlite3TriggerSelectStep (sqlite3[] db, Select[] pSelect, uint8[] zStart, uint8[] zEnd) {
-    TriggerStep[] pTriggerStep = sqlite3DbMallocZero (db, (uint64) 104);
-    if (pTriggerStep == null) 
-    {
-        sqlite3SelectDelete (db, pSelect);
-        return null;
-    }
+    TriggerStep[] pTriggerStep = new TriggerStep[1];
+    pTriggerStep[0] = new TriggerStep ();
     pTriggerStep[0].op = (uchar) 139;
     pTriggerStep[0].pSelect = _c2v_box_Select_obj (pSelect);
     pTriggerStep[0].orconf = (uchar) 11;
     pTriggerStep[0].zSpan = (string) triggerSpanDup (db, zStart, zEnd);
-    return _c2v_box_TriggerStep_obj (pTriggerStep);
+    return pTriggerStep;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pName_obj[DEREF|ARROW]=>T? zStart_obj[PLAIN]=>T? zEnd_obj[PLAIN]=>T? db_obj[PLAIN]=>T? pTriggerStep_arr[IDX|DEREF|WR|ARROW]=>T[] z_buf[WR]=>uint8[]
@@ -69922,12 +69768,11 @@ TriggerStep[] triggerStepAllocate (Parse? pParse, uchar op, Token[] pName, uint8
     sqlite3[] db = _c2v_box_sqlite3_arr (pParse.db);
     TriggerStep[] pTriggerStep = new TriggerStep[0];
     if (pParse.nErr != 0) {
-        return null;
+        return new TriggerStep[0];
     }
-    pTriggerStep = sqlite3DbMallocZero (db, (uint64) (((104 + ((size_t) pName[0].n)) + ((size_t) 1))));
-    if (pTriggerStep != null) 
+    pTriggerStep = { new TriggerStep () };
     {
-        uint8[] z = (string) _c2v_slice_TriggerStep (pTriggerStep, (int) (1));
+        uint8[] z = new uint8[pName[0].n + 1];
         c_memcpy (z, (pName[0].z).data, pName[0].n);
         sqlite3Dequote (z);
         pTriggerStep[0].zTarget = (string) z;
@@ -69938,7 +69783,7 @@ TriggerStep[] triggerStepAllocate (Parse? pParse, uchar op, Token[] pName, uint8
             sqlite3RenameTokenMap (pParse, (pTriggerStep[0].zTarget).data, pName);
         }
     }
-    return _c2v_box_TriggerStep_obj (pTriggerStep);
+    return pTriggerStep;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTableName_obj[PLAIN]=>T? pColumn_obj[PLAIN]=>T? pSelect_obj[NULL]=>T? pUpsert_obj[DEREF|ARROW]=>T? zStart_obj[PLAIN]=>T? zEnd_obj[PLAIN]=>T? db_obj[DEREF|ARROW]=>T? pTriggerStep_obj[DEREF|WR|ARROW]=>T?
@@ -69951,7 +69796,7 @@ TriggerStep[] sqlite3TriggerInsertStep (Parse? pParse, Token[] pTableName, IdLis
         if (((int) pParse.eParseMode) >= 2) 
         {
             pTriggerStep[0].pSelect = _c2v_box_Select_obj (pSelect);
-            pSelect = null;
+            pSelect = new Select[0];
         }
         else 
         {
@@ -69971,7 +69816,7 @@ TriggerStep[] sqlite3TriggerInsertStep (Parse? pParse, Token[] pTableName, IdLis
         sqlite3UpsertDelete (db, pUpsert);
     }
     sqlite3SelectDelete (db, pSelect);
-    return _c2v_box_TriggerStep_obj (pTriggerStep);
+    return pTriggerStep;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTableName_obj[PLAIN]=>T? pFrom_obj[PLAIN]=>T? pEList_obj[PLAIN]=>T? pWhere_obj[PLAIN]=>T? zStart_obj[PLAIN]=>T? zEnd_obj[PLAIN]=>T? db_obj[PLAIN]=>T? pTriggerStep_obj[DEREF|WR|ARROW]=>T?
@@ -69986,9 +69831,9 @@ TriggerStep[] sqlite3TriggerUpdateStep (Parse? pParse, Token[] pTableName, SrcLi
             pTriggerStep[0].pExprList = _c2v_box_ExprList_obj (pEList);
             pTriggerStep[0].pWhere = _c2v_box_Expr_obj (pWhere);
             pTriggerStep[0].pFrom = _c2v_box_SrcList_obj (pFrom);
-            pEList = null;
-            pWhere = null;
-            pFrom = null;
+            pEList = new ExprList[0];
+            pWhere = new Expr[0];
+            pFrom = new SrcList[0];
         }
         else 
         {
@@ -70001,7 +69846,7 @@ TriggerStep[] sqlite3TriggerUpdateStep (Parse? pParse, Token[] pTableName, SrcLi
     sqlite3ExprListDelete (db, pEList);
     sqlite3ExprDelete (db, pWhere);
     sqlite3SrcListDelete (db, pFrom);
-    return _c2v_box_TriggerStep_obj (pTriggerStep);
+    return pTriggerStep;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTableName_obj[PLAIN]=>T? pWhere_obj[PLAIN]=>T? zStart_obj[PLAIN]=>T? zEnd_obj[PLAIN]=>T? db_obj[PLAIN]=>T? pTriggerStep_obj[DEREF|WR|ARROW]=>T?
@@ -70014,7 +69859,7 @@ TriggerStep[] sqlite3TriggerDeleteStep (Parse? pParse, Token[] pTableName, Expr[
         if (((int) pParse.eParseMode) >= 2) 
         {
             pTriggerStep[0].pWhere = _c2v_box_Expr_obj (pWhere);
-            pWhere = null;
+            pWhere = new Expr[0];
         }
         else 
         {
@@ -70023,7 +69868,7 @@ TriggerStep[] sqlite3TriggerDeleteStep (Parse? pParse, Token[] pTableName, Expr[
         pTriggerStep[0].orconf = (uchar) 11;
     }
     sqlite3ExprDelete (db, pWhere);
-    return _c2v_box_TriggerStep_obj (pTriggerStep);
+    return pTriggerStep;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pTrigger_obj[DEREF|NULL|ARROW]=>T?
@@ -70036,7 +69881,6 @@ void sqlite3DeleteTrigger (sqlite3[] db, Trigger[] pTrigger) {
     sqlite3DbFree (db, (pTrigger[0].table).data);
     sqlite3ExprDelete (db, _c2v_box_Expr_arr (pTrigger[0].pWhen));
     sqlite3IdListDelete (db, _c2v_box_IdList_arr (pTrigger[0].pColumns));
-    sqlite3DbFree (db, pTrigger);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|WR|ARROW]=>T? pName_obj[DEREF|ARROW]=>T? pTrigger_obj[NULL]=>T? zDb_obj[NULL]=>T? zName_obj[PLAIN]=>T? db_obj[DEREF|ARROW]=>T?
@@ -70048,7 +69892,7 @@ void sqlite3DropTrigger (Parse? pParse, SrcList[] pName, int noErr) {
     uint8[] zName = new uint8[0];
     sqlite3[] db = new sqlite3[0];
     do {
-        pTrigger = null;
+        pTrigger = new Trigger[0];
         db = _c2v_box_sqlite3_arr (pParse.db);
         if (db[0].mallocFailed != 0) {
             c2v_goto_drop_trigger_cleanup = true;
@@ -70069,8 +69913,9 @@ void sqlite3DropTrigger (Parse? pParse, SrcList[] pName, int noErr) {
             if ((zDb != null) && (sqlite3DbIsNamed (db, j, zDb) == 0)) {
                 continue;
             }
-            pTrigger = sqlite3HashFind (_c2v_box_Db_arr (db[0].aDb)[(int) (j)].pSchema.trigHash, zName);
-            if (pTrigger != null) {
+            uint8[] _tr = sqlite3HashFind (_c2v_box_Db_arr (db[0].aDb)[(int) (j)].pSchema.trigHash, zName);
+            if (_tr.length > 0) {
+                pTrigger = _c2v_box_Trigger_arr (new Trigger.at (_tr, 0));
                 break;
             }
             if (c2v_goto_drop_trigger_cleanup) { break; }
@@ -70114,16 +69959,16 @@ void sqlite3DropTriggerPtr (Parse? pParse, Trigger[] pTrigger) {
     {
         int code = 16;
         uint8[] zDb = (_c2v_box_Db_arr (db.aDb)[(int) (iDb)].zDbSName).data;
-        uint8[] zTab = (((!(0 != 0)) && (iDb == 1)) ? "sqlite_temp_master" : "sqlite_master");
+        uint8[] zTab = (((!(0 != 0)) && (iDb == 1)) ? ("sqlite_temp_master").data : ("sqlite_master").data);
         if (iDb == 1) {
             code = 14;
         }
-        if ((sqlite3AuthCheck (pParse, code, (pTrigger[0].zName).data, pTable.zName.data, zDb) != 0) || (sqlite3AuthCheck (pParse, 9, zTab, "", zDb) != 0)) 
+        if ((sqlite3AuthCheck (pParse, code, (pTrigger[0].zName).data, pTable.zName.data, zDb) != 0) || (sqlite3AuthCheck (pParse, 9, zTab, ("").data, zDb) != 0)) 
         {
             return;
         }
     }
-    if (_c2v_assign_Vdbe__ (_c2v_box_Vdbe_arr (sqlite3GetVdbe (pParse)), ref v) != 0) 
+    if (_c2v_assign_Vdbe__ (_c2v_box_Vdbe_arr (sqlite3GetVdbe (pParse)), ref v) != null) 
     {
         sqlite3NestedParse (pParse, ("DELETE FROM %Q.sqlite_master WHERE name=%Q AND type='trigger'").data, _c2v_box_Db_arr (db.aDb)[(int) (iDb)].zDbSName, pTrigger[0].zName);
         sqlite3ChangeCookie (pParse, iDb);
@@ -70136,8 +69981,9 @@ void sqlite3UnlinkAndDeleteTrigger (sqlite3[] db, int iDb, uint8[] zName) {
     Trigger[] pTrigger = new Trigger[0];
     Hash? pHash = null;
     pHash = _c2v_box_Db_arr (db[0].aDb)[(int) (iDb)].pSchema.trigHash;
-    pTrigger = sqlite3HashInsert (pHash, zName, new uint8[0]);
-    if (pTrigger != null) 
+    uint8[] _tr2 = sqlite3HashInsert (pHash, zName, new uint8[0]);
+    pTrigger = (_tr2.length > 0) ? _c2v_box_Trigger_arr (new Trigger.at (_tr2, 0)) : new Trigger[0];
+    if (pTrigger.length > 0) 
     {
         if (pTrigger[0].pSchema == pTrigger[0].pTabSchema) 
         {
@@ -70147,7 +69993,7 @@ void sqlite3UnlinkAndDeleteTrigger (sqlite3[] db, int iDb, uint8[] zName) {
                 Trigger?* pp = null;
                 for (pp = &(pTab.pTrigger); (*pp) != null; pp = &((*pp).pNext)) 
                 {
-                    if ((*pp) == pTrigger) 
+                    if ((*pp) == pTrigger[0]) 
                     {
                         *pp = (*pp).pNext;
                         break;
@@ -70302,7 +70148,7 @@ SrcList[] sqlite3TriggerStepSrc (Parse? pParse, TriggerStep? pStep) {
     {
         sqlite3DbFree (db, zName);
     }
-    return _c2v_box_SrcList_obj (pSrc);
+    return pSrc;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pTerm_obj[DEREF|NULL|ARROW]=>T?
@@ -70362,7 +70208,7 @@ ExprList[] sqlite3ExpandReturning (Parse? pParse, ExprList? pList, Table[] pTab)
             }
         }
     }
-    return _c2v_box_ExprList_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: NotUsed_obj[PLAIN]=>T? pExpr_obj[DEREF|WR|ARROW]=>T?
@@ -70534,7 +70380,7 @@ int codeTriggerProgram (Parse? pParse, TriggerStep? pStepList, int orconf) {
             if (_ft_2 || _sw_2 == 130) {
                 _ft_2 = true;
                 {
-                    sqlite3Update (pParse, sqlite3TriggerStepSrc (pParse, pStep), _c2v_box_ExprList_arr (sqlite3ExprListDup (db, _c2v_box_ExprList_arr (pStep.pExprList), 0)), _c2v_box_Expr_arr (sqlite3ExprDup (db, _c2v_box_Expr_arr (pStep.pWhere), 0)), (int) pParse.eOrconf, null, null, null);
+                    sqlite3Update (pParse, sqlite3TriggerStepSrc (pParse, pStep), _c2v_box_ExprList_arr (sqlite3ExprListDup (db, _c2v_box_ExprList_arr (pStep.pExprList), 0)), _c2v_box_Expr_arr (sqlite3ExprDup (db, _c2v_box_Expr_arr (pStep.pWhere), 0)), (int) pParse.eOrconf, new ExprList[0], null, null);
                     sqlite3VdbeAddOp0 (v, 131);
                     break;
                 }
@@ -70550,7 +70396,7 @@ int codeTriggerProgram (Parse? pParse, TriggerStep? pStepList, int orconf) {
             if (_ft_2 || _sw_2 == 129) {
                 _ft_2 = true;
                 {
-                    sqlite3DeleteFrom (pParse, sqlite3TriggerStepSrc (pParse, pStep), _c2v_box_Expr_arr (sqlite3ExprDup (db, _c2v_box_Expr_arr (pStep.pWhere), 0)), null, null);
+                    sqlite3DeleteFrom (pParse, sqlite3TriggerStepSrc (pParse, pStep), _c2v_box_Expr_arr (sqlite3ExprDup (db, _c2v_box_Expr_arr (pStep.pWhere), 0)), new ExprList[0], null);
                     sqlite3VdbeAddOp0 (v, 131);
                     break;
                 }
@@ -70673,7 +70519,7 @@ TriggerPrg[] codeRowTrigger (Parse? pParse, Trigger[] pTrigger, Table[] pTab, in
         transferParseError (pParse, sSubParse);
     }
     sqlite3ParseObjectReset (sSubParse);
-    return _c2v_box_TriggerPrg_obj (pPrg);
+    return pPrg;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTrigger_obj[DEREF|ARROW]=>T? pTab_obj[NULL]=>T? pRoot_obj[DEREF|ARROW]=>T? pPrg_obj[DEREF|NULL|ARROW]=>T?
@@ -70687,7 +70533,7 @@ TriggerPrg[] getRowTrigger (Parse? pParse, Trigger[] pTrigger, Table[] pTab, int
         pPrg = codeRowTrigger (pParse, pTrigger, pTab, orconf);
         pParse.db.errByteOffset = -1;
     }
-    return _c2v_box_TriggerPrg_obj (pPrg);
+    return pPrg;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? p_obj[DEREF|ARROW]=>T? pTab_obj[PLAIN]=>T? v_obj[PLAIN]=>T? pPrg_obj[DEREF|ARROW]=>T?
@@ -70698,7 +70544,7 @@ void sqlite3CodeRowTriggerDirect (Parse? pParse, Trigger[] p, Table[] pTab, int 
     if (pPrg != null) 
     {
         int bRecursive = (int) (((p[0].zName != null) && (((uint64) 0) == (pParse.db.flags & ((uint64) 0x00002000)))));
-        sqlite3VdbeAddOp4 (v, 48, reg, ignoreJump, ++pParse.nMem, (pPrg[0].pProgram).data, -4);
+        sqlite3VdbeAddOp4SubProgram (v, 48, reg, ignoreJump, ++pParse.nMem, pPrg[0].pProgram);
         sqlite3VdbeChangeP5 (v, (uint16) (((uchar) bRecursive)));
     }
 }
@@ -70798,7 +70644,7 @@ Expr[] exprRowColumn (Parse? pParse, int iCol) {
     if (pRet != null) {
         pRet[0].iColumn = (int16) ((iCol + 1));
     }
-    return _c2v_box_Expr_obj (pRet);
+    return pRet;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pPk_obj[DEREF|ARROW]=>T? pChanges_obj[DEREF|NULL|ARROW]=>T? pTabList_obj[DEREF|ARROW]=>T? pWhere_obj[PLAIN]=>T? pOrderBy_obj[PLAIN]=>T? pLimit_obj[PLAIN]=>T? pSelect_obj[DEREF|WR|ARROW]=>T? pList_obj[PLAIN]=>T? pGrp_obj[PLAIN]=>T? pLimit2_obj[PLAIN]=>T? pOrderBy2_obj[PLAIN]=>T? db_obj[PLAIN]=>T? pTab_obj[DEREF|ARROW]=>T? pSrc_obj[DEREF|ARROW]=>T? pWhere2_obj[PLAIN]=>T? pNew_obj[PLAIN]=>T?
@@ -71272,7 +71118,7 @@ void sqlite3Update (Parse? pParse, SrcList[] pTabList, ExprList[] pChanges, Expr
                     if (pKeyInfo != null) 
                     {
                         pKeyInfo[0].nAllField = (uint16) nEphCol;
-                        sqlite3VdbeAppendP4 (v, pKeyInfo, -8);
+                        sqlite3VdbeAppendP4KeyInfo (v, pKeyInfo);
                     }
                 }
                 if (nChangeFrom != 0) 
@@ -71854,8 +71700,8 @@ Upsert? sqlite3UpsertDup (sqlite3[] db, Upsert? p) {
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pTarget_obj[PLAIN]=>T? pTargetWhere_obj[PLAIN]=>T? pSet_obj[NULL]=>T? pWhere_obj[PLAIN]=>T? pNext_obj[PLAIN]=>T? pNew_obj[DEREF|WR|NULL|ARROW]=>T?
 Upsert[] sqlite3UpsertNew (sqlite3[] db, ExprList[] pTarget, Expr[] pTargetWhere, ExprList[] pSet, Expr[] pWhere, Upsert[] pNext) {
-    Upsert[] pNew = new Upsert[0];
-    pNew = sqlite3DbMallocZero (db, (uint64) 92);
+    Upsert[] pNew = new Upsert[1];
+    pNew[0] = new Upsert ();
     if (pNew == null) 
     {
         sqlite3ExprListDelete (db, pTarget);
@@ -71863,7 +71709,7 @@ Upsert[] sqlite3UpsertNew (sqlite3[] db, ExprList[] pTarget, Expr[] pTargetWhere
         sqlite3ExprListDelete (db, pSet);
         sqlite3ExprDelete (db, pWhere);
         sqlite3UpsertDelete (db, pNext);
-        return null;
+        return new Upsert[0];
     }
     else 
     {
@@ -71874,7 +71720,7 @@ Upsert[] sqlite3UpsertNew (sqlite3[] db, ExprList[] pTarget, Expr[] pTargetWhere
         pNew[0].isDoUpdate = (uchar) ((pSet != null));
         pNew[0].pNextUpsert = _c2v_box_Upsert_obj (pNext);
     }
-    return _c2v_box_Upsert_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pTabList_obj[DEREF|ARROW]=>T? pUpsert_obj[DEREF|WR|NULL|ARROW]=>T? pAll_obj[PLAIN]=>T? pTab_obj[DEREF|ARROW]=>T? pIdx_obj[DEREF|ARROW]=>T? pTarget_obj[DEREF|ARROW]=>T? pTerm_obj[DEREF|ARROW]=>T? sCol_arr[IDX|WR]=>T[] pExpr_obj[DEREF|ARROW]=>T? zWhich_buf[IDX|WR]=>uint8[]
@@ -71921,7 +71767,7 @@ int sqlite3UpsertAnalyzeTarget (Parse? pParse, SrcList[] pTabList, Upsert? pUpse
                     continue;
                 }
             }
-            c_memset (sCol, 0, ((int) (2) * 85));
+            for (int _ci = 0; _ci < 2; _ci++) { sCol[_ci] = new Expr (); }
             sCol[(int) (0)].op = (uchar) 114;
             sCol[(int) (0)].pLeft = _c2v_box_Expr_obj (_c2v_slice_Expr (sCol, (int) (1)));
             sCol[(int) (1)].op = (uchar) 168;
@@ -72043,7 +71889,7 @@ Upsert[] sqlite3UpsertOfIndex (Upsert[] pUpsert, Index[] pIdx) {
     {
         pUpsert = _c2v_box_Upsert_arr (pUpsert[0].pNextUpsert);
     }
-    return _c2v_box_Upsert_obj (pUpsert);
+    return pUpsert;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|WR|ARROW]=>T? pUpsert_obj[DEREF|NULL|ARROW]=>T? pTab_obj[DEREF|ARROW]=>T? pIdx_obj[PLAIN]=>T? v_obj[NULL]=>T? db_obj[PLAIN]=>T? pSrc_obj[PLAIN]=>T? pTop_obj[DEREF|ARROW]=>T? pPk_obj[DEREF|ARROW]=>T?
@@ -72091,12 +71937,12 @@ void sqlite3UpsertDoUpdate (Parse? pParse, Upsert[] pUpsert, Table[] pTab, Index
             sqlite3VdbeAddOp1 (v, 87, (pTop[0].regData + i));
         }
     }
-    sqlite3Update (pParse, pSrc, _c2v_box_ExprList_arr (sqlite3ExprListDup (db, _c2v_box_ExprList_arr (pUpsert[0].pUpsertSet), 0)), _c2v_box_Expr_arr (sqlite3ExprDup (db, _c2v_box_Expr_arr (pUpsert[0].pUpsertWhere), 0)), 2, null, null, pUpsert);
+    sqlite3Update (pParse, pSrc, _c2v_box_ExprList_arr (sqlite3ExprListDup (db, _c2v_box_ExprList_arr (pUpsert[0].pUpsertSet), 0)), _c2v_box_Expr_arr (sqlite3ExprDup (db, _c2v_box_Expr_arr (pUpsert[0].pUpsertWhere), 0)), 2, new ExprList[0], null, pUpsert);
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? pzErrMsg_obj[PLAIN]=>T? zSql_obj[PLAIN]=>T? pStmt_obj[ADDR]=>T? zSubSql_obj[PLAIN]=>T?
 int execSql (sqlite3[] db, string[] pzErrMsg, uint8[] zSql) {
-    sqlite3_stmt?[] pStmt = new sqlite3_stmt?[1];
+    Vdbe?[] pStmt = new Vdbe?[1];
     int rc = 0;
     rc = sqlite3_prepare_v2 (db, zSql, -1, pStmt, new uint8[0]);
     if (rc != 0) {
@@ -72449,7 +72295,7 @@ Module[] sqlite3VtabCreateModule (sqlite3[] db, uint8[] zName, sqlite3_module? p
             sqlite3VtabModuleUnref (db, pDel);
         }
     }
-    return _c2v_box_Module_obj (pMod);
+    return pMod;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? zName_obj[PLAIN]=>T? pModule_obj[PLAIN]=>T? pAux_ptr[PLAIN]=>C2VPtr
@@ -72517,7 +72363,7 @@ void sqlite3VtabLock (VTable[] pVTab) {
 // c2vala-ptrs: db_obj[PLAIN]=>T? pTab_obj[DEREF|ARROW]=>T? pVtab_obj[DEREF|ARROW]=>T?
 VTable? sqlite3GetVTable (sqlite3[] db, Table[] pTab) {
     VTable? pVtab = null;
-    for (pVtab = pTab[0].u.vtab.p; (pVtab != null) && (pVtab.db != db); pVtab = pVtab.pNext) {
+    for (pVtab = pTab[0].u.vtab.p; (pVtab != null) && (pVtab.db != ((db.length > 0) ? db[0] : null)); pVtab = pVtab.pNext) {
     }
     return pVtab;
 }
@@ -72534,7 +72380,6 @@ void sqlite3VtabUnlock (VTable[] pVTab) {
             ((!) p.pModule.xDisconnect) (p);
         }
         sqlite3VtabModuleUnref (_c2v_box_sqlite3_arr (pVTab[0].db), _c2v_box_Module_arr (pVTab[0].pMod));
-        sqlite3DbFree (db, pVTab);
     }
 }
 
@@ -72548,7 +72393,7 @@ VTable? vtabDisconnectAll (sqlite3[] db, Table[] p) {
     {
         sqlite3? db2 = pVTable.db;
         VTable? pNext = pVTable.pNext;
-        if (db2 == db) 
+        if (db2 == ((db.length > 0) ? db[0] : null)) 
         {
             pRet = pVTable;
             p[0].u.vtab.p = pRet;
@@ -72569,7 +72414,7 @@ void sqlite3VtabDisconnect (sqlite3[] db, Table? p) {
     VTable?* ppVTab = null;
     for (ppVTab = &(p.u.vtab.p); (*ppVTab) != null; ppVTab = &((*ppVTab).pNext)) 
     {
-        if ((*ppVTab).db == db) 
+        if ((*ppVTab).db == ((db.length > 0) ? db[0] : null)) 
         {
             VTable[] pVTab = _c2v_box_VTable_arr ((*ppVTab));
             *ppVTab = pVTab[0].pNext;
@@ -72596,7 +72441,7 @@ void sqlite3VtabUnlockList (sqlite3[] db) {
 // c2vala-ptrs: db_obj[DEREF|NULL|ARROW]=>T? p_obj[DEREF|ARROW]=>T?
 void sqlite3VtabClear (sqlite3[] db, Table[] p) {
     if (db[0].pnBytesFreed == null) {
-        vtabDisconnectAll (null, p);
+        vtabDisconnectAll (new sqlite3[0], p);
     }
     if (p[0].u.vtab.azArg != null) 
     {
@@ -72607,7 +72452,6 @@ void sqlite3VtabClear (sqlite3[] db, Table[] p) {
                 sqlite3DbFree (db, (p[0].u.vtab.azArg[(int) (i)]).data);
             }
         }
-        sqlite3DbFree (db, (p[0].u.vtab.azArg).data);
     }
 }
 
@@ -72621,7 +72465,12 @@ void addModuleArgument (Parse? pParse, Table[] pTable, uint8[] zArg) {
     {
         sqlite3ErrorMsg (pParse, ("too many columns on %s").data, pTable[0].zName);
     }
-    azModuleArg = sqlite3DbRealloc (db, (pTable[0].u.vtab.azArg).data, (uint64) nBytes);
+    azModuleArg = new string[2 + pTable[0].u.vtab.nArg];
+    if (pTable[0].u.vtab.azArg != null) {
+        for (int _ci = 0; _ci < pTable[0].u.vtab.nArg && _ci < pTable[0].u.vtab.azArg.length; _ci++) {
+            azModuleArg[_ci] = pTable[0].u.vtab.azArg[_ci];
+        }
+    }
     if (azModuleArg == null) 
     {
         sqlite3DbFree (db, zArg);
@@ -72647,7 +72496,7 @@ void sqlite3VtabBeginParse (Parse? pParse, Token[] pName1, Token[] pName2, Token
     pTable[0].eTabType = (uchar) 1;
     db = _c2v_box_sqlite3_arr (pParse.db);
     addModuleArgument (pParse, pTable, sqlite3NameFromToken (db, pModuleName));
-    addModuleArgument (pParse, pTable, "");
+    addModuleArgument (pParse, pTable, new uint8[0]);
     addModuleArgument (pParse, pTable, sqlite3DbStrDup (db, (pTable[0].zName).data));
     pParse.sNameToken.n = (uint32) (((int) (((pParse.sNameToken.z).length - (((pModuleName[0].z)).length - (int) (pModuleName[0].n))))));
     if (pTable[0].u.vtab.azArg != null) 
@@ -73089,7 +72938,7 @@ int sqlite3VtabSync (sqlite3[] db, Vdbe[] p) {
     {
         x? x = null;
         sqlite3_vtab? pVtab = aVTrans[(int) (i)].pVtab;
-        if ((pVtab != null) && (_c2v_assign_x_ (pVtab.pModule.xSync, ref x) != 0)) 
+        if ((pVtab != null) && (_c2v_assign_x_ (pVtab.pModule.xSync, ref x) != null)) 
         {
             rc = ((!) x) (pVtab);
             sqlite3VtabImportErrmsg (p, pVtab);
@@ -73101,13 +72950,13 @@ int sqlite3VtabSync (sqlite3[] db, Vdbe[] p) {
 
 // c2vala-ptrs: db_obj[PLAIN]=>T?
 int sqlite3VtabRollback (sqlite3[] db) {
-    callFinaliser (db, ((int) null.xRollback));
+    callFinaliser (db, 0);
     return 0;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T?
 int sqlite3VtabCommit (sqlite3[] db) {
-    callFinaliser (db, ((int) null.xCommit));
+    callFinaliser (db, 1);
     return 0;
 }
 
@@ -73129,7 +72978,7 @@ int sqlite3VtabBegin (sqlite3[] db, VTable[] pVTab) {
         int i = 0;
         for (i = 0; i < db[0].nVTrans; i++) 
         {
-            if (db[0].aVTrans[(int) (i)] == pVTab) 
+            if (db[0].aVTrans[(int) (i)] == pVTab[0]) 
             {
                 return 0;
             }
@@ -73203,32 +73052,32 @@ FuncDef[] sqlite3VtabOverloadFunction (sqlite3[] db, FuncDef[] pDef, int nArg, E
     FuncDef[] pNew = new FuncDef[0];
     int rc = 0;
     if (pExpr == null) {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     if (((int) pExpr.op) != 168) {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     pTab = _c2v_box_Table_arr (pExpr.y.pTab);
     if (pTab == null) {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     if (!(((int) pTab[0].eTabType) == 1)) {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     pVtab = sqlite3GetVTable (db, pTab).pVtab;
     pMod = ((sqlite3_module?) pVtab.pModule);
     if (pMod.xFindFunction == null) {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     rc = ((!) pMod.xFindFunction) (pVtab, nArg, (pDef[0].zName).data, xSFunc, pArg);
     if (rc == 0) 
     {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     pNew = sqlite3DbMallocZero (db, (uint64) (((69 + ((size_t) sqlite3Strlen30 ((pDef[0].zName).data))) + ((size_t) 1))));
     if (pNew == null) 
     {
-        return _c2v_box_FuncDef_obj (pDef);
+        return pDef;
     }
     pNew[0] = pDef[0];
     pNew[0].zName = (string) (string) _c2v_slice_FuncDef (pNew, (int) (1));
@@ -73236,7 +73085,7 @@ FuncDef[] sqlite3VtabOverloadFunction (sqlite3[] db, FuncDef[] pDef, int nArg, E
     pNew[0].xSFunc = xSFunc;
     pNew[0].pUserData = pArg.val;
     pNew[0].funcFlags |= 0x0010;
-    return _c2v_box_FuncDef_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTab_obj[DEREF|NULL|ARROW]=>T? pToplevel_obj[DEREF|WR|ARROW]=>T? apVtabLock_pp[PLAIN]=>C2VBox<T[]>
@@ -73727,7 +73576,7 @@ Expr? removeUnindexableInClauseTerms (Parse? pParse, int iEq, WhereLoop? pLoop, 
             }
             for (i = iEq; i < ((int) pLoop.nLTerm); i++) 
             {
-                if (pLoop.aLTerm[(int) (i)].pExpr == pX) 
+                if (pLoop.aLTerm[(int) (i)].pExpr == pX[0]) 
                 {
                     int iField = 0;
                     iField = (pLoop.aLTerm[(int) (i)].u.x.iField - 1);
@@ -73792,7 +73641,7 @@ void codeINTerm (Parse? pParse, WhereTerm[] pTerm, WhereLevel[] pLevel, int iEq,
     }
     for (i = 0; i < iEq; i++) 
     {
-        if ((pLoop.aLTerm[(int) (i)] != null) && (pLoop.aLTerm[(int) (i)].pExpr == pX)) 
+        if ((pLoop.aLTerm[(int) (i)] != null) && (pLoop.aLTerm[(int) (i)].pExpr == pX[0])) 
         {
             disableTerm (pLevel, pTerm);
             return;
@@ -73800,7 +73649,7 @@ void codeINTerm (Parse? pParse, WhereTerm[] pTerm, WhereLevel[] pLevel, int iEq,
     }
     for (i = iEq; i < ((int) pLoop.nLTerm); i++) 
     {
-        if (pLoop.aLTerm[(int) (i)].pExpr == pX) {
+        if (pLoop.aLTerm[(int) (i)].pExpr == pX[0]) {
             nEq++;
         }
     }
@@ -73818,7 +73667,7 @@ void codeINTerm (Parse? pParse, WhereTerm[] pTerm, WhereLevel[] pLevel, int iEq,
             pX = _c2v_box_Expr_arr (removeUnindexableInClauseTerms (pParse, iEq, pLoop, pX));
             if (!(db[0].mallocFailed != 0)) 
             {
-                aiMap = sqlite3DbMallocZero (_c2v_box_sqlite3_arr (pParse.db), (uint64) ((sizeof (int) * ((size_t) nEq))));
+                aiMap = new int[nEq];
                 eType = sqlite3FindInIndex (pParse, pX, (uint32) 0x0004, new int[0], aiMap, iTab);
                 pExpr.iTable = iTab[0];
             }
@@ -73827,7 +73676,7 @@ void codeINTerm (Parse? pParse, WhereTerm[] pTerm, WhereLevel[] pLevel, int iEq,
         else 
         {
             int n = sqlite3ExprVectorSize (_c2v_box_Expr_arr (pX[0].pLeft));
-            aiMap = sqlite3DbMallocZero (_c2v_box_sqlite3_arr (pParse.db), (uint64) ((sizeof (int) * ((nEq > n) ? nEq : n))));
+            aiMap = new int[(nEq > n) ? nEq : n];
             eType = sqlite3FindInIndex (pParse, pX, (uint32) 0x0004, new int[0], aiMap, iTab);
         }
         pX = _c2v_box_Expr_arr (pExpr);
@@ -73857,7 +73706,7 @@ void codeINTerm (Parse? pParse, WhereTerm[] pTerm, WhereLevel[] pLevel, int iEq,
         _off_pIn += (int) (i);
         for (i = iEq; i < ((int) pLoop.nLTerm); i++) 
         {
-            if (pLoop.aLTerm[(int) (i)].pExpr == pX) 
+            if (pLoop.aLTerm[(int) (i)].pExpr == pX[0]) 
             {
                 int iOut = ((iTarget + i) - iEq);
                 if (eType == 1) 
@@ -73900,7 +73749,6 @@ void codeINTerm (Parse? pParse, WhereTerm[] pTerm, WhereLevel[] pLevel, int iEq,
     {
         pLevel[0].u.@in.nIn = 0;
     }
-    sqlite3DbFree (_c2v_box_sqlite3_arr (pParse.db), aiMap);
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pTerm_obj[DEREF|ARROW]=>T? pLevel_obj[DEREF|ARROW]=>T? pX_obj[DEREF|ARROW]=>T?
@@ -75358,13 +75206,11 @@ void sqlite3WhereRightJoinLoop (WhereInfo[] pWInfo, int iLevel, WhereLevel[] pLe
 // c2vala-ptrs: db_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T?
 void whereOrInfoDelete (sqlite3[] db, WhereOrInfo[] p) {
     sqlite3WhereClauseClear (p[0].wc);
-    sqlite3DbFree (db, p);
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? p_obj[DEREF|ARROW]=>T?
 void whereAndInfoDelete (sqlite3[] db, WhereAndInfo[] p) {
     sqlite3WhereClauseClear (p[0].wc);
-    sqlite3DbFree (db, p);
 }
 
 // c2vala-ptrs: pWC_obj[DEREF|WR|ARROW]=>T? p_obj[DEREF|ARROW]=>T? pTerm_obj[DEREF|WR|ARROW]=>T? pOld_obj[PLAIN]=>T? db_obj[PLAIN]=>T?
@@ -75427,7 +75273,9 @@ int allowedOp (int op) {
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pExpr_obj[DEREF|WR|ARROW]=>T? t_obj[PLAIN]=>T?
 uint16 exprCommute (Parse? pParse, Expr[] pExpr) {
-    if (((((int) pExpr[0].pLeft.op) == 177) || (((int) pExpr[0].pRight.op) == 177)) || (sqlite3BinaryCompareCollSeq (pParse, _c2v_box_Expr_arr (pExpr[0].pLeft), _c2v_box_Expr_arr (pExpr[0].pRight)) != sqlite3BinaryCompareCollSeq (pParse, _c2v_box_Expr_arr (pExpr[0].pRight), _c2v_box_Expr_arr (pExpr[0].pLeft)))) 
+    CollSeq[] _c1 = sqlite3BinaryCompareCollSeq (pParse, _c2v_box_Expr_arr (pExpr[0].pLeft), _c2v_box_Expr_arr (pExpr[0].pRight));
+    CollSeq[] _c2 = sqlite3BinaryCompareCollSeq (pParse, _c2v_box_Expr_arr (pExpr[0].pRight), _c2v_box_Expr_arr (pExpr[0].pLeft));
+    if (((((int) pExpr[0].pLeft.op) == 177) || (((int) pExpr[0].pRight.op) == 177)) || (((_c1.length > 0) ? _c1[0] : null) != ((_c2.length > 0) ? _c2[0] : null))) 
     {
         pExpr[0].flags ^= 0x000400;
     }
@@ -75888,11 +75736,11 @@ void exprAnalyzeOrTerm (SrcList[] pSrc, WhereClause? pWC, int idxTerm) {
     {
         int iOne = 0;
         WhereTerm? pOne = null;
-        while (_c2v_assign_WhereTerm_ (whereNthSubterm (_c2v_box_WhereTerm_obj (_c2v_slice_WhereTerm (pOrWc.a, (int) (0))), iOne++), ref pOne) != 0) 
+        while (_c2v_assign_WhereTerm_ (whereNthSubterm (_c2v_box_WhereTerm_obj (_c2v_slice_WhereTerm (pOrWc.a, (int) (0))), iOne++), ref pOne) != null) 
         {
             int iTwo = 0;
             WhereTerm? pTwo = null;
-            while (_c2v_assign_WhereTerm_ (whereNthSubterm (_c2v_box_WhereTerm_obj (_c2v_slice_WhereTerm (pOrWc.a, (int) (1))), iTwo++), ref pTwo) != 0) 
+            while (_c2v_assign_WhereTerm_ (whereNthSubterm (_c2v_box_WhereTerm_obj (_c2v_slice_WhereTerm (pOrWc.a, (int) (1))), iTwo++), ref pTwo) != null) 
             {
                 whereCombineDisjuncts (pSrc, pWC, pOne, pTwo);
             }
@@ -76824,7 +76672,8 @@ int sqlite3WhereBreakLabel (WhereInfo[] pWInfo) {
 
 // c2vala-ptrs: pWInfo_obj[DEREF|ARROW]=>T? aiCur_obj[WR]=>T?
 int sqlite3WhereOkOnePass (WhereInfo[] pWInfo, int[] aiCur) {
-    c_memcpy (aiCur, pWInfo[0].aiCurOnePass, (sizeof (int) * ((size_t) 2)));
+    aiCur[0] = pWInfo[0].aiCurOnePass[0];
+    aiCur[1] = pWInfo[0].aiCurOnePass[1];
     return (int) (pWInfo[0].eOnePass);
 }
 
@@ -76957,9 +76806,9 @@ Expr[] whereRightSubexprIsColumn (Expr[] p) {
     p = sqlite3ExprSkipCollateAndLikely (_c2v_box_Expr_arr (p[0].pRight));
     if (((p != null) && (((int) p[0].op) == 168)) && (!((p[0].flags & ((uint32) 0x000020)) != ((uint32) 0)))) 
     {
-        return _c2v_box_Expr_obj (p);
+        return p;
     }
-    return null;
+    return new Expr[0];
 }
 
 // c2vala-ptrs: pParse_obj[PLAIN]=>T? pTerm_obj[DEREF|ARROW]=>T? pX_obj[DEREF|ARROW]=>T? pRet_obj[DEREF|ARROW]=>T?
@@ -77002,7 +76851,7 @@ WhereTerm[] whereScanNext (WhereScan? pScan) {
                 {
                     if ((((pTerm[_off_pTerm].leftCursor == iCur) && (pTerm[_off_pTerm].u.x.leftColumn == ((int) iColumn))) && ((((int) iColumn) != -2) || (sqlite3ExprCompareSkip (_c2v_box_Expr_arr (pTerm[_off_pTerm].pExpr.pLeft), _c2v_box_Expr_arr (pScan.pIdxExpr), iCur) == 0))) && ((((int) pScan.iEquiv) <= 1) || (!((pTerm[_off_pTerm].pExpr.flags & ((uint32) 0x000001)) != ((uint32) 0))))) 
                     {
-                        if ((((((int) pTerm[_off_pTerm].eOperator) & 0x0800) != 0) && (((int) pScan.nEquiv) < ((int) ((((int) (11) * 4) / sizeof (int)))))) && (_c2v_assign_Expr__ (whereRightSubexprIsColumn (_c2v_box_Expr_arr (pTerm[_off_pTerm].pExpr)), ref pX) != 0)) 
+                        if ((((((int) pTerm[_off_pTerm].eOperator) & 0x0800) != 0) && (((int) pScan.nEquiv) < ((int) ((((int) (11) * 4) / sizeof (int)))))) && (_c2v_assign_Expr__ (whereRightSubexprIsColumn (_c2v_box_Expr_arr (pTerm[_off_pTerm].pExpr)), ref pX) != null)) 
                         {
                             int j = 0;
                             for (j = 0; j < ((int) pScan.nEquiv); j++) 
@@ -77070,7 +76919,7 @@ WhereTerm[] whereScanNext (WhereScan? pScan) {
                             }
                             pScan.pWC = pWC;
                             pScan.k = (k + 1);
-                            return _c2v_box_WhereTerm_obj (pTerm);
+                            return pTerm;
                         }
                     }
                 }
@@ -77153,7 +77002,7 @@ WhereTerm[] sqlite3WhereFindTerm (WhereClause? pWC, int iCur, int iColumn, uint6
         {
             if ((p[0].prereqRight == ((uint64) 0)) && ((((uint32) p[0].eOperator) & op) != ((uint32) 0))) 
             {
-                return _c2v_box_WhereTerm_obj (p);
+                return p;
             }
             if (pResult == null) {
                 pResult = _c2v_box_WhereTerm_obj (p);
@@ -77945,7 +77794,7 @@ sqlite3_index_info[] allocateIndexInfo (WhereInfo? pWInfo, WhereClause? pWC, uin
     }
     pIdxInfo[0].nOrderBy = j;
     pmNoOmit[0] = mNoOmit;
-    return _c2v_box_sqlite3_index_info_obj (pIdxInfo);
+    return pIdxInfo;
 }
 
 // c2vala-ptrs: pIdxInfo_obj[DEREF|WR|ARROW]=>T?
@@ -78797,7 +78646,7 @@ int indexMightHelpWithOrderBy (WhereLoopBuilder[] pBuilder, Index[] pIndex, int 
             }
         }
         else 
-        if (_c2v_assign_ExprList_ (pIndex[0].aColExpr, ref aColExpr) != 0) 
+        if (_c2v_assign_ExprList_ (pIndex[0].aColExpr, ref aColExpr) != null) 
         {
             for (jj = 0; jj < ((int) pIndex[0].nKeyCol); jj++) 
             {
@@ -80088,7 +79937,7 @@ int8 wherePathSatisfiesOrderBy (WhereInfo[] pWInfo, ExprList? pOrderBy, WherePat
                         Expr? pX = pLoop.aLTerm[(int) (j)].pExpr;
                         for (i = (j + 1); i < ((int) pLoop.u.btree.nEq); i++) 
                         {
-                            if (pLoop.aLTerm[(int) (i)].pExpr == pX) 
+                            if (pLoop.aLTerm[(int) (i)].pExpr == pX[0]) 
                             {
                                 bOnce = (uchar) 0;
                                 break;
@@ -81330,7 +81179,7 @@ WhereInfo[] sqlite3WhereBegin (Parse? pParse, SrcList[] pTabList, Expr[] pWhere,
                     if (iDb >= 0) {
                         sqlite3CodeVerifySchema (pParse, iDb);
                     }
-                    if (((((int) pTabItem.fg.jointype) & 0x10) != 0) && (_c2v_assign_WhereRightJoin_ (_c2v_box_WhereRightJoin_obj (sqlite3WhereMalloc (pWInfo, (uint64) 20)), ref pLevel[_off_pLevel].pRJ) != 0)) 
+                    if (((((int) pTabItem.fg.jointype) & 0x10) != 0) && (_c2v_assign_WhereRightJoin_ (_c2v_box_WhereRightJoin_obj (sqlite3WhereMalloc (pWInfo, (uint64) 20)), ref pLevel[_off_pLevel].pRJ) != null)) 
                     {
                         WhereRightJoin? pRJ = pLevel[_off_pLevel].pRJ;
                         pRJ.iMatch = pParse.nTab++;
@@ -81347,7 +81196,7 @@ WhereInfo[] sqlite3WhereBegin (Parse? pParse, SrcList[] pTabList, Expr[] pWhere,
                             {
                                 pInfo[0].aColl[(int) (0)] = null;
                                 pInfo[0].aSortFlags[(int) (0)] = (uchar) 0;
-                                sqlite3VdbeAppendP4 (v, pInfo, -8);
+                                sqlite3VdbeAppendP4KeyInfo (v, pInfo);
                             }
                         }
                         else 
@@ -81431,7 +81280,7 @@ WhereInfo[] sqlite3WhereBegin (Parse? pParse, SrcList[] pTabList, Expr[] pWhere,
         }
         if (c2v_goto_whereBeginError) break;
         pWInfo[0].iEndWhere = sqlite3VdbeCurrentAddr (v);
-        return _c2v_box_WhereInfo_obj (pWInfo);
+        return pWInfo;
     } while (false);
     c2v_goto_whereBeginError = false;
     if (pWInfo != null) 
@@ -82540,7 +82389,7 @@ ExprList[] exprListAppendList (Parse? pParse, ExprList[] pList, ExprList[] pAppe
             }
         }
     }
-    return _c2v_box_ExprList_obj (pList);
+    return pList;
 }
 
 // c2vala-ptrs: pWalker_obj[DEREF|ARROW]=>T? pExpr_obj[DEREF|ARROW]=>T?
@@ -82742,7 +82591,7 @@ Expr[] sqlite3WindowOffsetExpr (Parse? pParse, Expr[] pExpr) {
         sqlite3ExprDelete (_c2v_box_sqlite3_arr (pParse.db), pExpr);
         pExpr = sqlite3ExprAlloc (_c2v_box_sqlite3_arr (pParse.db), 122, null, 0);
     }
-    return _c2v_box_Expr_obj (pExpr);
+    return pExpr;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pStart_obj[NULL]=>T? pEnd_obj[NULL]=>T? pWin_obj[DEREF|WR|NULL|ARROW]=>T?
@@ -82989,7 +82838,7 @@ void sqlite3WindowCodeInit (Parse? pParse, Select[] pSelect) {
                 pKeyInfo[0].aSortFlags[(int) (0)] = (uchar) 0x01;
             }
             sqlite3VdbeAddOp2 (v, 117, pWin.csrApp, 2);
-            sqlite3VdbeAppendP4 (v, pKeyInfo, -8);
+            sqlite3VdbeAppendP4KeyInfo (v, pKeyInfo);
             sqlite3VdbeAddOp2 (v, 71, 0, (pWin.regApp + 1));
         }
         else 
@@ -83150,7 +82999,7 @@ void windowAggStep (WindowCodeArg? p, Window? pMWin, int csr, int bInverse, int 
                 sqlite3VdbeAddOp4 (v, 85, 0, 0, 0, (string) pColl, -2);
             }
             sqlite3VdbeAddOp3 (v, ((bInverse != 0) ? 161 : 162), bInverse, regArg, pWin.regAccum);
-            sqlite3VdbeAppendP4 (v, pFunc, -7);
+            sqlite3VdbeAppendP4FuncDef (v, pFunc[0]);
             sqlite3VdbeChangeP5 (v, (uint16) (((uchar) nArg)));
             if (pWin.bExprArgs != 0) 
             {
@@ -83188,14 +83037,14 @@ void windowAggFinal (WindowCodeArg? p, int bFin) {
             if (bFin != 0) 
             {
                 sqlite3VdbeAddOp2 (v, 165, pWin.regAccum, nArg);
-                sqlite3VdbeAppendP4 (v, pWin.pWFunc.data, -7);
+                sqlite3VdbeAppendP4FuncDef (v, pWin.pWFunc);
                 sqlite3VdbeAddOp2 (v, 80, pWin.regAccum, pWin.regResult);
                 sqlite3VdbeAddOp2 (v, 75, 0, pWin.regAccum);
             }
             else 
             {
                 sqlite3VdbeAddOp3 (v, 164, pWin.regAccum, nArg, pWin.regResult);
-                sqlite3VdbeAppendP4 (v, pWin.pWFunc.data, -7);
+                sqlite3VdbeAppendP4FuncDef (v, pWin.pWFunc);
             }
         }
     }
@@ -83259,7 +83108,7 @@ void windowFullScan (WindowCodeArg? p) {
         {
             windowReadPeerValues (p, csr, regPeer);
             sqlite3VdbeAddOp3 (v, 90, regPeer, regCPeer, nPeer);
-            sqlite3VdbeAppendP4 (v, pKeyInfo, -8);
+            sqlite3VdbeAppendP4KeyInfo (v, pKeyInfo);
             addr = (sqlite3VdbeCurrentAddr (v) + 1);
             sqlite3VdbeAddOp3 (v, 14, addr, lblNext, addr);
         }
@@ -83418,7 +83267,7 @@ void windowIfNewPeer (Parse? pParse, ExprList[] pOrderBy, int regNew, int regOld
         int nVal = pOrderBy[0].nExpr;
         KeyInfo[] pKeyInfo = sqlite3KeyInfoFromExprList (pParse, pOrderBy, 0, 0);
         sqlite3VdbeAddOp3 (v, 90, regOld, regNew, nVal);
-        sqlite3VdbeAppendP4 (v, pKeyInfo, -8);
+        sqlite3VdbeAppendP4KeyInfo (v, pKeyInfo);
         sqlite3VdbeAddOp3 (v, 14, (sqlite3VdbeCurrentAddr (v) + 1), addr, (sqlite3VdbeCurrentAddr (v) + 1));
         sqlite3VdbeAddOp3 (v, 80, regNew, regOld, (nVal - 1));
     }
@@ -83654,7 +83503,7 @@ Window[] sqlite3WindowDup (sqlite3[] db, Expr? pOwner, Window? p) {
             pNew[0].bImplicitFrame = p.bImplicitFrame;
         }
     }
-    return _c2v_box_Window_obj (pNew);
+    return pNew;
 }
 
 // c2vala-ptrs: db_obj[PLAIN]=>T? p_obj[PLAIN]=>T? pWin_obj[DEREF|ARROW]=>T? pRet_obj[ADDR]=>T? pp_fref[DEREF|WR|NULL|ARROW]=>_c2v_fref<T>
@@ -83800,7 +83649,7 @@ void sqlite3WindowCodeStep (Parse? pParse, Select[] p, WhereInfo[] pWInfo, int r
         KeyInfo[] pKeyInfo = sqlite3KeyInfoFromExprList (pParse, pPart, 0, 0);
         regFlushPart = ++pParse.nMem;
         addr = sqlite3VdbeAddOp3 (v, 90, regNewPart, pMWin.regPart, nPart);
-        sqlite3VdbeAppendP4 (v, pKeyInfo, -8);
+        sqlite3VdbeAppendP4KeyInfo (v, pKeyInfo);
         sqlite3VdbeAddOp3 (v, 14, (addr + 2), (addr + 4), (addr + 2));
         addrGosubFlush = sqlite3VdbeAddOp1 (v, 10, regFlushPart);
         sqlite3VdbeAddOp3 (v, 80, regNewPart, pMWin.regPart, (nPart - 1));
@@ -84053,7 +83902,7 @@ Select[] attachWithToSelect (Parse? pParse, Select[] pSelect, With[] pWith) {
     {
         sqlite3WithDelete (_c2v_box_sqlite3_arr (pParse.db), pWith);
     }
-    return _c2v_box_Select_obj (pSelect);
+    return pSelect;
 }
 
 // c2vala-ptrs: pOld_ptr[PLAIN]=>C2VPtr
@@ -84098,7 +83947,7 @@ Expr[] tokenExpr (Parse? pParse, int op, Token t) {
             return new Expr.at (sqlite3RenameTokenMap (pParse, p, _c2v_box_Token_arr (t)), 0);
         }
     }
-    return _c2v_box_Expr_obj (p);
+    return p;
 }
 
 // c2vala-ptrs: pParse_obj[DEREF|ARROW]=>T? pY_obj[DEREF|ARROW]=>T? pA_obj[DEREF|WR|ARROW]=>T? db_obj[PLAIN]=>T?
@@ -84120,7 +83969,7 @@ ExprList[] parserAddExprIdListTerm (Parse? pParse, ExprList[] pPrior, Token[] pI
         sqlite3ErrorMsg (pParse, ("syntax error after column name \"%.*s\"").data, pIdToken[0].n, pIdToken[0].z);
     }
     sqlite3ExprListSetName (pParse, p, pIdToken, 1);
-    return _c2v_box_ExprList_obj (p);
+    return p;
 }
 
 public uint16[] yy_action;
@@ -88779,7 +88628,7 @@ void sqlite3LeaveMutexAndCloseZombie (sqlite3[] db) {
     }
     if (_c2v_box_Db_arr (db[0].aDb)[(int) (1)].pSchema != null) 
     {
-        sqlite3SchemaClear ((_c2v_box_Db_arr (db[0].aDb)[(int) (1)].pSchema).data);
+        sqlite3SchemaClear (_c2v_box_Db_arr (db[0].aDb)[(int) (1)].pSchema._c2v_data ?? new uint8[0]);
     }
     sqlite3VtabUnlockList (db);
     sqlite3CollapseDatabaseArray (db);
@@ -90238,7 +90087,7 @@ int sqlite3_table_column_metadata (sqlite3[] db, uint8[] zDbName, uint8[] zTable
         if (c2v_goto_error_out) break;
         if (pCol != null) 
         {
-            zDataType = sqlite3ColumnType (pCol, "");
+            zDataType = sqlite3ColumnType (pCol, ("").data);
             zCollSeq = sqlite3ColumnColl (pCol);
             notnull = (int) ((pCol[0].notNull != ((uint32) 0)));
             primarykey = (int) (((((int) pCol[0].colFlags) & 0x0001) != 0));
@@ -91371,7 +91220,7 @@ void jsonReturnString (JsonString? p, JsonParse[] pParse, sqlite3_context? ctx) 
         else 
         if (p.bStatic != 0) 
         {
-            sqlite3_result_text64 (p.pCtx, p.zBuf.data, p.nUsed, ((sqlite3_destructor_type?) (-1)), (uchar) 1);
+            sqlite3_result_text64 (p.pCtx, p.zBuf.data, p.nUsed, ((sqlite3_destructor_type?) null), (uchar) 1);
         }
         else 
         if (jsonStringTerminate (p) != 0) 
@@ -93474,7 +93323,7 @@ JsonParse[] jsonParseFuncArg (sqlite3_context? ctx, sqlite3_value[] pArg, uint32
             pFromCache[0].nJPRef = pFromCache[0].nJPRef + 1;
             if ((flgs & ((uint32) 0x01)) == ((uint32) 0)) 
             {
-                return _c2v_box_JsonParse_obj (pFromCache);
+                return pFromCache;
             }
         }
         if (c2v_goto_json_pfa_oom || c2v_goto_json_pfa_malformed || c2v_goto_rebuild_from_cache) break;
@@ -93523,7 +93372,7 @@ JsonParse[] jsonParseFuncArg (sqlite3_context? ctx, sqlite3_value[] pArg, uint32
             p[0].nBlobAlloc = p[0].nBlob;
             p[0].hasNonstd = pFromCache[0].hasNonstd;
             jsonParseFree (pFromCache);
-            return _c2v_box_JsonParse_obj (p);
+            return p;
         }
         if (c2v_goto_json_pfa_oom || c2v_goto_json_pfa_malformed || c2v_goto_rebuild_from_cache) break;
         if (eType == 4) 
@@ -93535,7 +93384,7 @@ JsonParse[] jsonParseFuncArg (sqlite3_context? ctx, sqlite3_value[] pArg, uint32
                     c2v_goto_json_pfa_oom = true;
                     break;
                 }
-                return _c2v_box_JsonParse_obj (p);
+                return p;
             }
         }
         if (c2v_goto_json_pfa_oom || c2v_goto_json_pfa_malformed || c2v_goto_rebuild_from_cache) break;
@@ -93556,7 +93405,7 @@ JsonParse[] jsonParseFuncArg (sqlite3_context? ctx, sqlite3_value[] pArg, uint32
             if ((flgs & ((uint32) 0x02)) != 0) 
             {
                 p[0].nErr = (uchar) 1;
-                return _c2v_box_JsonParse_obj (p);
+                return p;
             }
             else 
             {
@@ -93598,7 +93447,7 @@ JsonParse[] jsonParseFuncArg (sqlite3_context? ctx, sqlite3_value[] pArg, uint32
             }
         }
         if (c2v_goto_json_pfa_oom || c2v_goto_json_pfa_malformed || c2v_goto_rebuild_from_cache) break;
-        return _c2v_box_JsonParse_obj (p);
+        return p;
     } while (false);
     }
     if (!c2v_goto_json_pfa_oom) {
@@ -93607,7 +93456,7 @@ JsonParse[] jsonParseFuncArg (sqlite3_context? ctx, sqlite3_value[] pArg, uint32
         if ((flgs & ((uint32) 0x02)) != 0) 
         {
             p[0].nErr = (uchar) 1;
-            return _c2v_box_JsonParse_obj (p);
+            return p;
         }
         else 
         {
@@ -93642,7 +93491,7 @@ void jsonReturnParse (sqlite3_context? ctx, JsonParse[] p) {
         }
         else 
         {
-            sqlite3_result_blob (ctx, (p[0].aBlob).data, (int) (p[0].nBlob), ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_blob (ctx, (p[0].aBlob).data, (int) (p[0].nBlob), ((sqlite3_destructor_type?) null));
         }
     }
     else 
@@ -94580,12 +94429,12 @@ void jsonArrayCompute (sqlite3_context? ctx, int isFinal) {
         else 
         if (isFinal != 0) 
         {
-            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((pStr.bStatic != 0) ? ((sqlite3_destructor_type?) (-1)) : sqlite3RCStrUnref));
+            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((pStr.bStatic != 0) ? ((sqlite3_destructor_type?) null) : sqlite3RCStrUnref));
             pStr.bStatic = (uchar) 1;
         }
         else 
         {
-            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((sqlite3_destructor_type?) null));
             jsonStringTrimOneChar (pStr);
         }
     }
@@ -94717,12 +94566,12 @@ void jsonObjectCompute (sqlite3_context? ctx, int isFinal) {
         else 
         if (isFinal != 0) 
         {
-            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((pStr.bStatic != 0) ? ((sqlite3_destructor_type?) (-1)) : sqlite3RCStrUnref));
+            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((pStr.bStatic != 0) ? ((sqlite3_destructor_type?) null) : sqlite3RCStrUnref));
             pStr.bStatic = (uchar) 1;
         }
         else 
         {
-            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((sqlite3_destructor_type?) (-1)));
+            sqlite3_result_text (ctx, pStr.zBuf.data, ((int) pStr.nUsed), ((sqlite3_destructor_type?) null));
             jsonStringTrimOneChar (pStr);
         }
     }
@@ -95035,11 +94884,11 @@ int jsonEachColumn (sqlite3_vtab_cursor? cur, sqlite3_context? ctx, int iColumn)
                     else 
                     if (p.path.zBuf[(int) ((j + ((uint32) 1)))] == '"') 
                     {
-                        sqlite3_result_text (ctx, c_str_add (p.path.zBuf, (int) ((j + ((uint32) 2)))), (int) ((n - ((uint32) 3))), ((sqlite3_destructor_type?) (-1)));
+                        sqlite3_result_text (ctx, c_str_add (p.path.zBuf, (int) ((j + ((uint32) 2)))), (int) ((n - ((uint32) 3))), ((sqlite3_destructor_type?) null));
                     }
                     else 
                     {
-                        sqlite3_result_text (ctx, c_str_add (p.path.zBuf, (int) ((j + ((uint32) 1)))), (int) ((n - ((uint32) 1))), ((sqlite3_destructor_type?) (-1)));
+                        sqlite3_result_text (ctx, c_str_add (p.path.zBuf, (int) ((j + ((uint32) 1)))), (int) ((n - ((uint32) 1))), ((sqlite3_destructor_type?) null));
                     }
                     break;
                 }
@@ -95110,7 +94959,7 @@ int jsonEachColumn (sqlite3_vtab_cursor? cur, sqlite3_context? ctx, int iColumn)
                 if (p.nParent != 0) {
                     jsonAppendPathName (p);
                 }
-                sqlite3_result_text64 (ctx, p.path.zBuf.data, p.path.nUsed, ((sqlite3_destructor_type?) (-1)), (uchar) 1);
+                sqlite3_result_text64 (ctx, p.path.zBuf.data, p.path.nUsed, ((sqlite3_destructor_type?) null), (uchar) 1);
                 p.path.nUsed = nBase;
                 break;
             }
@@ -95119,7 +94968,7 @@ int jsonEachColumn (sqlite3_vtab_cursor? cur, sqlite3_context? ctx, int iColumn)
             _ft_6 = true;
             {
                 uint32 n = (uint32) (jsonEachPathLength (p));
-                sqlite3_result_text64 (ctx, p.path.zBuf.data, (uint64) n, ((sqlite3_destructor_type?) (-1)), (uchar) 1);
+                sqlite3_result_text64 (ctx, p.path.zBuf.data, (uint64) n, ((sqlite3_destructor_type?) null), (uchar) 1);
                 break;
             }
         }
@@ -95135,11 +94984,11 @@ int jsonEachColumn (sqlite3_vtab_cursor? cur, sqlite3_context? ctx, int iColumn)
             {
                 if (p.sParse.zJson == null) 
                 {
-                    sqlite3_result_blob (ctx, p.sParse.aBlob.data, (int) p.sParse.nBlob, ((sqlite3_destructor_type?) (-1)));
+                    sqlite3_result_blob (ctx, p.sParse.aBlob.data, (int) p.sParse.nBlob, ((sqlite3_destructor_type?) null));
                 }
                 else 
                 {
-                    sqlite3_result_text (ctx, p.sParse.zJson.data, -1, ((sqlite3_destructor_type?) (-1)));
+                    sqlite3_result_text (ctx, p.sParse.zJson.data, -1, ((sqlite3_destructor_type?) null));
                 }
                 break;
             }
@@ -95393,7 +95242,7 @@ void sqlite3RegisterJsonFunctions () {
     for (int _c2v_i = 0; _c2v_i < 34; _c2v_i++) { aJsonFunc[_c2v_i] = new FuncDef (); }
     aJsonFunc[0].nArg = (int8) 1;
     aJsonFunc[0].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[0].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[0].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[0].pNext = null;
     aJsonFunc[0].xSFunc = jsonRemoveFunc;
     aJsonFunc[0].xFinalize = null;
@@ -95403,7 +95252,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[0].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[1].nArg = (int8) 1;
     aJsonFunc[1].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[1].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[1].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[1].pNext = null;
     aJsonFunc[1].xSFunc = jsonRemoveFunc;
     aJsonFunc[1].xFinalize = null;
@@ -95413,7 +95262,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[1].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[2].nArg = (int8) (-1);
     aJsonFunc[2].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (0 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[2].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[2].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[2].pNext = null;
     aJsonFunc[2].xSFunc = jsonArrayFunc;
     aJsonFunc[2].xFinalize = null;
@@ -95423,7 +95272,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[2].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[3].nArg = (int8) (-1);
     aJsonFunc[3].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (0 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[3].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[3].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[3].pNext = null;
     aJsonFunc[3].xSFunc = jsonArrayFunc;
     aJsonFunc[3].xFinalize = null;
@@ -95433,7 +95282,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[3].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[4].nArg = (int8) 1;
     aJsonFunc[4].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[4].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[4].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[4].pNext = null;
     aJsonFunc[4].xSFunc = jsonArrayLengthFunc;
     aJsonFunc[4].xFinalize = null;
@@ -95443,7 +95292,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[4].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[5].nArg = (int8) 2;
     aJsonFunc[5].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[5].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[5].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[5].pNext = null;
     aJsonFunc[5].xSFunc = jsonArrayLengthFunc;
     aJsonFunc[5].xFinalize = null;
@@ -95453,7 +95302,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[5].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[6].nArg = (int8) 1;
     aJsonFunc[6].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[6].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[6].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[6].pNext = null;
     aJsonFunc[6].xSFunc = jsonErrorFunc;
     aJsonFunc[6].xFinalize = null;
@@ -95463,7 +95312,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[6].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[7].nArg = (int8) (-1);
     aJsonFunc[7].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[7].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[7].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[7].pNext = null;
     aJsonFunc[7].xSFunc = jsonExtractFunc;
     aJsonFunc[7].xFinalize = null;
@@ -95473,7 +95322,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[7].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[8].nArg = (int8) (-1);
     aJsonFunc[8].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[8].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[8].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[8].pNext = null;
     aJsonFunc[8].xSFunc = jsonExtractFunc;
     aJsonFunc[8].xFinalize = null;
@@ -95483,7 +95332,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[8].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[9].nArg = (int8) 2;
     aJsonFunc[9].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[9].pUserData = c_str_add ("", (int) ((0x01 | (0 * 0x08))));
+    aJsonFunc[9].pUserData = c_bytes_add (("").data, (int) ((0x01 | (0 * 0x08))));
     aJsonFunc[9].pNext = null;
     aJsonFunc[9].xSFunc = jsonExtractFunc;
     aJsonFunc[9].xFinalize = null;
@@ -95493,7 +95342,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[9].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[10].nArg = (int8) 2;
     aJsonFunc[10].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[10].pUserData = c_str_add ("", (int) ((0x02 | (0 * 0x08))));
+    aJsonFunc[10].pUserData = c_bytes_add (("").data, (int) ((0x02 | (0 * 0x08))));
     aJsonFunc[10].pNext = null;
     aJsonFunc[10].xSFunc = jsonExtractFunc;
     aJsonFunc[10].xFinalize = null;
@@ -95503,7 +95352,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[10].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[11].nArg = (int8) (-1);
     aJsonFunc[11].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[11].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[11].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[11].pNext = null;
     aJsonFunc[11].xSFunc = jsonSetFunc;
     aJsonFunc[11].xFinalize = null;
@@ -95513,7 +95362,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[11].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[12].nArg = (int8) (-1);
     aJsonFunc[12].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (1 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[12].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[12].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[12].pNext = null;
     aJsonFunc[12].xSFunc = jsonSetFunc;
     aJsonFunc[12].xFinalize = null;
@@ -95523,7 +95372,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[12].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[13].nArg = (int8) (-1);
     aJsonFunc[13].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (0 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[13].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[13].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[13].pNext = null;
     aJsonFunc[13].xSFunc = jsonObjectFunc;
     aJsonFunc[13].xFinalize = null;
@@ -95533,7 +95382,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[13].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[14].nArg = (int8) (-1);
     aJsonFunc[14].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (0 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[14].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[14].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[14].pNext = null;
     aJsonFunc[14].xSFunc = jsonObjectFunc;
     aJsonFunc[14].xFinalize = null;
@@ -95543,7 +95392,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[14].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[15].nArg = (int8) 2;
     aJsonFunc[15].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[15].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[15].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[15].pNext = null;
     aJsonFunc[15].xSFunc = jsonPatchFunc;
     aJsonFunc[15].xFinalize = null;
@@ -95553,7 +95402,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[15].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[16].nArg = (int8) 2;
     aJsonFunc[16].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[16].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[16].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[16].pNext = null;
     aJsonFunc[16].xSFunc = jsonPatchFunc;
     aJsonFunc[16].xFinalize = null;
@@ -95563,7 +95412,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[16].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[17].nArg = (int8) 1;
     aJsonFunc[17].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[17].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[17].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[17].pNext = null;
     aJsonFunc[17].xSFunc = jsonPrettyFunc;
     aJsonFunc[17].xFinalize = null;
@@ -95573,7 +95422,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[17].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[18].nArg = (int8) 2;
     aJsonFunc[18].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[18].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[18].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[18].pNext = null;
     aJsonFunc[18].xSFunc = jsonPrettyFunc;
     aJsonFunc[18].xFinalize = null;
@@ -95583,7 +95432,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[18].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[19].nArg = (int8) 1;
     aJsonFunc[19].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (0 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[19].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[19].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[19].pNext = null;
     aJsonFunc[19].xSFunc = jsonQuoteFunc;
     aJsonFunc[19].xFinalize = null;
@@ -95593,7 +95442,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[19].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[20].nArg = (int8) (-1);
     aJsonFunc[20].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[20].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[20].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[20].pNext = null;
     aJsonFunc[20].xSFunc = jsonRemoveFunc;
     aJsonFunc[20].xFinalize = null;
@@ -95603,7 +95452,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[20].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[21].nArg = (int8) (-1);
     aJsonFunc[21].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[21].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[21].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[21].pNext = null;
     aJsonFunc[21].xSFunc = jsonRemoveFunc;
     aJsonFunc[21].xFinalize = null;
@@ -95613,7 +95462,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[21].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[22].nArg = (int8) (-1);
     aJsonFunc[22].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[22].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[22].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[22].pNext = null;
     aJsonFunc[22].xSFunc = jsonReplaceFunc;
     aJsonFunc[22].xFinalize = null;
@@ -95623,7 +95472,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[22].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[23].nArg = (int8) (-1);
     aJsonFunc[23].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (1 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[23].pUserData = c_str_add ("", (int) ((0 | (1 * 0x08))));
+    aJsonFunc[23].pUserData = c_bytes_add (("").data, (int) ((0 | (1 * 0x08))));
     aJsonFunc[23].pNext = null;
     aJsonFunc[23].xSFunc = jsonReplaceFunc;
     aJsonFunc[23].xFinalize = null;
@@ -95633,7 +95482,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[23].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[24].nArg = (int8) (-1);
     aJsonFunc[24].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (1 * 0x000100000)) | (1 * 0x001000000)));
-    aJsonFunc[24].pUserData = c_str_add ("", (int) ((0x04 | (0 * 0x08))));
+    aJsonFunc[24].pUserData = c_bytes_add (("").data, (int) ((0x04 | (0 * 0x08))));
     aJsonFunc[24].pNext = null;
     aJsonFunc[24].xSFunc = jsonSetFunc;
     aJsonFunc[24].xFinalize = null;
@@ -95643,7 +95492,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[24].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[25].nArg = (int8) (-1);
     aJsonFunc[25].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (1 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[25].pUserData = c_str_add ("", (int) ((0x04 | (1 * 0x08))));
+    aJsonFunc[25].pUserData = c_bytes_add (("").data, (int) ((0x04 | (1 * 0x08))));
     aJsonFunc[25].pNext = null;
     aJsonFunc[25].xSFunc = jsonSetFunc;
     aJsonFunc[25].xFinalize = null;
@@ -95653,7 +95502,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[25].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[26].nArg = (int8) 1;
     aJsonFunc[26].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[26].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[26].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[26].pNext = null;
     aJsonFunc[26].xSFunc = jsonTypeFunc;
     aJsonFunc[26].xFinalize = null;
@@ -95663,7 +95512,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[26].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[27].nArg = (int8) 2;
     aJsonFunc[27].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[27].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[27].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[27].pNext = null;
     aJsonFunc[27].xSFunc = jsonTypeFunc;
     aJsonFunc[27].xFinalize = null;
@@ -95673,7 +95522,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[27].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[28].nArg = (int8) 1;
     aJsonFunc[28].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[28].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[28].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[28].pNext = null;
     aJsonFunc[28].xSFunc = jsonValidFunc;
     aJsonFunc[28].xFinalize = null;
@@ -95683,7 +95532,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[28].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[29].nArg = (int8) 2;
     aJsonFunc[29].funcFlags = (uint32) (((((((0x00800000 | 0x000000800) | 0x0800) | 1) | (1 * 0x8000)) | (0 * 0x000100000)) | (0 * 0x001000000)));
-    aJsonFunc[29].pUserData = c_str_add ("", (int) ((0 | (0 * 0x08))));
+    aJsonFunc[29].pUserData = c_bytes_add (("").data, (int) ((0 | (0 * 0x08))));
     aJsonFunc[29].pNext = null;
     aJsonFunc[29].xSFunc = jsonValidFunc;
     aJsonFunc[29].xFinalize = null;
@@ -95693,7 +95542,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[29].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[30].nArg = (int8) 1;
     aJsonFunc[30].funcFlags = (uint32) (((((((0x00800000 | 1) | (0 * 0x0020)) | 0x000100000) | 0x001000000) | 1) | 0x000000800));
-    aJsonFunc[30].pUserData = c_str_add ("", (int) (0));
+    aJsonFunc[30].pUserData = c_bytes_add (("").data, (int) (0));
     aJsonFunc[30].pNext = null;
     aJsonFunc[30].xSFunc = jsonArrayStep;
     aJsonFunc[30].xFinalize = jsonArrayFinal;
@@ -95703,7 +95552,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[30].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[31].nArg = (int8) 1;
     aJsonFunc[31].funcFlags = (uint32) (((((((0x00800000 | 1) | (0 * 0x0020)) | 0x000100000) | 0x001000000) | 1) | 0x000000800));
-    aJsonFunc[31].pUserData = c_str_add ("", (int) (0x08));
+    aJsonFunc[31].pUserData = c_bytes_add (("").data, (int) (0x08));
     aJsonFunc[31].pNext = null;
     aJsonFunc[31].xSFunc = jsonArrayStep;
     aJsonFunc[31].xFinalize = jsonArrayFinal;
@@ -95713,7 +95562,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[31].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[32].nArg = (int8) 2;
     aJsonFunc[32].funcFlags = (uint32) (((((((0x00800000 | 1) | (0 * 0x0020)) | 0x000100000) | 0x001000000) | 1) | 0x000000800));
-    aJsonFunc[32].pUserData = c_str_add ("", (int) (0));
+    aJsonFunc[32].pUserData = c_bytes_add (("").data, (int) (0));
     aJsonFunc[32].pNext = null;
     aJsonFunc[32].xSFunc = jsonObjectStep;
     aJsonFunc[32].xFinalize = jsonObjectFinal;
@@ -95723,7 +95572,7 @@ void sqlite3RegisterJsonFunctions () {
     aJsonFunc[32].u = _c2v_lit___anon_union_3_0 (null);
     aJsonFunc[33].nArg = (int8) 2;
     aJsonFunc[33].funcFlags = (uint32) (((((((0x00800000 | 1) | (0 * 0x0020)) | 0x000100000) | 0x001000000) | 1) | 0x000000800));
-    aJsonFunc[33].pUserData = c_str_add ("", (int) (0x08));
+    aJsonFunc[33].pUserData = c_bytes_add (("").data, (int) (0x08));
     aJsonFunc[33].pNext = null;
     aJsonFunc[33].xSFunc = jsonObjectStep;
     aJsonFunc[33].xFinalize = jsonObjectFinal;
@@ -96812,7 +96661,7 @@ public void c2vala_init_globals () {
     fmtinfo[22].prefix = (uchar) 0;
     sqlite3OomStr = new sqlite3_str ();
     sqlite3OomStr.db = null;
-    sqlite3OomStr.zText = "";
+    sqlite3OomStr.zText = new uint8[0];
     sqlite3OomStr.nAlloc = (uint32) 0;
     sqlite3OomStr.mxAlloc = (uint32) 0;
     sqlite3OomStr.nChar = (uint32) 0;
