@@ -5,4 +5,5 @@
 =poll=ok
 =sleep=ok
 =wait=ok
+=fdguard=ok
 !FAIL

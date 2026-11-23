@@ -5,8 +5,9 @@ using Planet.Rt;
 
 namespace Planet.Kernel {
 
-    // Simple kernel FD table (16 slots at KernelLayout.FD_TABLE, 32 bytes
-    // each: +0 in_use, +8 ino, +16 size, +24 pos)
+    // Kernel handle table (16 slots at KernelLayout.FD_TABLE, 32 bytes each:
+    // +0 kind | owner<<32, +8 ino, +16 size, +24 pos). A slot is reachable only
+    // by its owner or through that task's inherited stdio.
     private const int MAX_FDS = 16;
     private const int USER_LIMIT = 0x4000000; // 64 MiB, the PMM cap
     private const int MAX_PATH = 512;
@@ -17,6 +18,7 @@ namespace Planet.Kernel {
     private const int E_PERM = 1;
     private const int E_NOENT = 2;
     private const int E_IO = 5;
+    private const int E_BAD_HANDLE = 9;
     private const int E_ACCES = 13;
     private const int E_EXIST = 17;
     private const int E_NOTDIR = 20;
@@ -39,9 +41,9 @@ namespace Planet.Kernel {
     // Readiness of the console/stdin source used by SYS_POLL.
     private bool console_input_ready () {
         int in_fd = Sched.get_stdio_in ();
-        if (in_fd >= 3 && in_fd < MAX_FDS) {
+        if (fd_allowed (in_fd)) {
             int slot = KernelLayout.FD_TABLE + in_fd * 32;
-            int kind = mmio_read64 (slot);
+            int kind = fd_kind_of (slot);
             if (kind == 1 || kind == 2)
                 return mmio_read64 (slot + 24) < mmio_read64 (slot + 16);
         }
@@ -67,11 +69,77 @@ namespace Planet.Kernel {
         return fd == -1 || (fd >= 3 && fd < MAX_FDS);
     }
 
+    private static int fd_kind_of (int slot) {
+        return mmio_read64 (slot) & 0xFFFFFFFF;
+    }
+
+    private static int fd_owner_of (int slot) {
+        return mmio_read64 (slot) >> 32;
+    }
+
+    private static bool fd_inherited_stdio (int fd) {
+        if (fd < 3)
+            return false;
+        return fd == Sched.get_stdio_in () || fd == Sched.get_stdio_out ();
+    }
+
+    // A task may use a slot it owns plus the stdio slots inherited from its
+    // parent. It may close only what it owns.
+    private static bool fd_allowed (int fd) {
+        if (fd < 3 || fd >= MAX_FDS)
+            return false;
+        int slot = KernelLayout.FD_TABLE + fd * 32;
+        if (fd_kind_of (slot) == 0)
+            return false;
+        return fd_owner_of (slot) == Sched.current_tid () || fd_inherited_stdio (fd);
+    }
+
+    private static bool fd_owned (int fd) {
+        if (fd < 3 || fd >= MAX_FDS)
+            return false;
+        int slot = KernelLayout.FD_TABLE + fd * 32;
+        return fd_kind_of (slot) != 0 && fd_owner_of (slot) == Sched.current_tid ();
+    }
+
+    private static void fd_clear_at (int slot) {
+        mmio_write64 (slot + 0, 0);
+        mmio_write64 (slot + 8, 0);
+        mmio_write64 (slot + 16, 0);
+        mmio_write64 (slot + 24, 0);
+    }
+
+    private static int fd_alloc (int kind, int id, int size) {
+        int owner = Sched.current_tid ();
+        for (int fd = 3; fd < MAX_FDS; fd++) {
+            int slot = KernelLayout.FD_TABLE + fd * 32;
+            if (mmio_read64 (slot) == 0) {
+                mmio_write64 (slot + 0, kind | (owner << 32));
+                mmio_write64 (slot + 8, id);
+                mmio_write64 (slot + 16, size);
+                mmio_write64 (slot + 24, 0);
+                return fd;
+            }
+        }
+        return -1;
+    }
+
+    // Called when a task exits or is reaped. Inherited stdio belongs to the
+    // parent and is deliberately left open.
+    public static void release_fds (int tid) {
+        for (int fd = 3; fd < MAX_FDS; fd++) {
+            int slot = KernelLayout.FD_TABLE + fd * 32;
+            if (mmio_read64 (slot) != 0 && fd_owner_of (slot) == tid)
+                fd_clear_at (slot);
+        }
+    }
+
     private int write_fd_data (int fd, int buf, int len) {
         if (fd < 3 || fd >= MAX_FDS)
             return -1;
         int slot = KernelLayout.FD_TABLE + fd * 32;
-        int fkind = mmio_read64 (slot);
+        if (!fd_allowed (fd))
+            return -1;
+        int fkind = fd_kind_of (slot);
         if (fkind != 1 && fkind != 2)
             return -1;
         int rslot = mmio_read64 (slot + 8);
@@ -139,9 +207,9 @@ namespace Planet.Kernel {
                 return 0;
             case 5: // SYS_READ_KEY() -> ASCII char or -1
                 int in_fd = Sched.get_stdio_in ();
-                if (in_fd >= 3 && in_fd < MAX_FDS) {
+                if (fd_allowed (in_fd)) {
                     int slot = KernelLayout.FD_TABLE + in_fd * 32;
-                    int fkind = mmio_read64 (slot);
+                    int fkind = fd_kind_of (slot);
                     if (fkind == 1 || fkind == 2) {
                         int rslot = mmio_read64 (slot + 8);
                         int pos = mmio_read64 (slot + 24);
@@ -182,27 +250,18 @@ namespace Planet.Kernel {
                 } else {
                     return fail (E_NOENT);
                 }
-                for (int fd = 3; fd < MAX_FDS; fd++) {
-                    int slot = KernelLayout.FD_TABLE + fd * 32;
-                    if (mmio_read64 (slot) == 0) {
-                        mmio_write64 (slot + 0, fd_kind);
-                        mmio_write64 (slot + 8, id);
-                        mmio_write64 (slot + 16, fsz);
-                        mmio_write64 (slot + 24, 0);
-                        ok ();
-                        return fd;
-                    }
-                }
-                return fail (E_NOSPC);
+                int fd6 = fd_alloc (fd_kind, id, fsz);
+                if (fd6 < 0)
+                    return fail (E_NOSPC);
+                ok ();
+                return fd6;
             case 7: // SYS_READ(fd, buf, len)
                 if (!user_ok (a1, a2))
                     return fail (E_INVAL);
-                if (a0 < 3 || a0 >= MAX_FDS)
-                    return fail (E_INVAL);
+                if (!fd_allowed (a0))
+                    return fail (E_BAD_HANDLE);
                 int slot7 = KernelLayout.FD_TABLE + a0 * 32;
-                int kind7 = mmio_read64 (slot7);
-                if (kind7 == 0)
-                    return fail (E_INVAL);
+                int kind7 = fd_kind_of (slot7);
                 int id7 = mmio_read64 (slot7 + 8);
                 int fsz7 = mmio_read64 (slot7 + 16);
                 int pos7 = mmio_read64 (slot7 + 24);
@@ -218,18 +277,16 @@ namespace Planet.Kernel {
                 ok ();
                 return n7;
             case 8: // SYS_CLOSE(fd)
-                if (a0 < 3 || a0 >= MAX_FDS)
-                    return fail (E_INVAL);
+                if (!fd_owned (a0))
+                    return fail (E_BAD_HANDLE);
                 int slot8 = KernelLayout.FD_TABLE + a0 * 32;
-                mmio_write64 (slot8, 0);
+                fd_clear_at (slot8);
                 ok ();
                 return 0;
             case 9: // SYS_FILE_SIZE(fd)
-                if (a0 < 3 || a0 >= MAX_FDS)
-                    return fail (E_INVAL);
+                if (!fd_allowed (a0))
+                    return fail (E_BAD_HANDLE);
                 int slot9 = KernelLayout.FD_TABLE + a0 * 32;
-                if (mmio_read64 (slot9) == 0)
-                    return fail (E_INVAL);
                 return mmio_read64 (slot9 + 16);
             case 10: // SYS_YIELD()
                 cpu_sti ();
@@ -275,23 +332,18 @@ namespace Planet.Kernel {
                     if (fid14 < 0)
                         return fail (E_NOSPC);
                 }
-                for (int fd = 3; fd < MAX_FDS; fd++) {
-                    int slot14 = KernelLayout.FD_TABLE + fd * 32;
-                    if (mmio_read64 (slot14) == 0) {
-                        mmio_write64 (slot14 + 0, fd_kind14);
-                        mmio_write64 (slot14 + 8, fid14);
-                        mmio_write64 (slot14 + 16, 0);
-                        mmio_write64 (slot14 + 24, 0);
-                        ok ();
-                        return fd;
-                    }
-                }
-                return fail (E_NOSPC);
+                int fd14 = fd_alloc (fd_kind14, fid14, 0);
+                if (fd14 < 0)
+                    return fail (E_NOSPC);
+                ok ();
+                return fd14;
             case 15: // SYS_WRITE(fd, buf, len)
                 if (!user_ok (a1, a2))
                     return fail (E_INVAL);
                 if (a0 == 1 || a0 == 2)
                     return write_console_or_stdio (a1, a2);
+                if (!fd_allowed (a0))
+                    return fail (E_BAD_HANDLE);
                 int w15 = write_fd_data (a0, a1, a2);
                 if (w15 < 0)
                     return fail (E_IO);
@@ -309,14 +361,14 @@ namespace Planet.Kernel {
             case 19: // SYS_SET_STDIO(in_fd, out_fd)
                 if (!fd_ok (a0) || !fd_ok (a1))
                     return fail (E_INVAL);
+                if ((a0 >= 3 && !fd_allowed (a0)) || (a1 >= 3 && !fd_allowed (a1)))
+                    return fail (E_BAD_HANDLE);
                 Sched.set_stdio (a0, a1);
                 return 0;
             case 20: // SYS_SEEK(fd, offset; -1 = end)
-                if (a0 < 3 || a0 >= MAX_FDS)
-                    return fail (E_INVAL);
+                if (!fd_allowed (a0))
+                    return fail (E_BAD_HANDLE);
                 int slot20 = KernelLayout.FD_TABLE + a0 * 32;
-                if (mmio_read64 (slot20) == 0)
-                    return fail (E_INVAL);
                 int sz20 = mmio_read64 (slot20 + 16);
                 int target20 = (a1 < 0) ? sz20 : a1;
                 mmio_write64 (slot20 + 24, target20);
@@ -589,7 +641,7 @@ namespace Planet.Kernel {
                         } else if (fd59 == 1 || fd59 == 2) {
                             rd59 = true;
                         } else if (fd59 >= 3 && fd59 < MAX_FDS) {
-                            rd59 = mmio_read64 (KernelLayout.FD_TABLE + fd59 * 32) != 0;
+                            rd59 = fd_allowed (fd59);
                         }
                         if (rd59)
                             mask59 = mask59 | (1 << i59);

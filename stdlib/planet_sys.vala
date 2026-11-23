@@ -132,6 +132,7 @@ namespace Planet {
 
         // errno values, mirrored from the kernel (SYS_ERRNO).
         public const int EIO = 5;
+        public const int EBADF = 9;
         public const int ENOENT = 2;
         public const int EACCES = 13;
         public const int EEXIST = 17;

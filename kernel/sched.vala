@@ -385,6 +385,7 @@ namespace Planet.Kernel {
                     Fb.release_for_cr3 (ucr3);
             }
             mmio_write64 (tcb + 24, code);
+            release_fds (cur);
             mmio_write64 (tcb + 0, TASK_ZOMBIE);
             cpu_sti ();
             while (true) {
@@ -458,6 +459,7 @@ namespace Planet.Kernel {
 
         private static int reap_zombie (int tid) {
             int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
+            release_fds (tid);
             int code = mmio_read64 (tcb + 24);
             int sbase = mmio_read64 (tcb + 16);
             int spages = mmio_read64 (tcb + 80);

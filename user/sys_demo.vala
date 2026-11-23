@@ -9,6 +9,23 @@ private int shared_word = 0;
 private RecMutex demo_mutex = new RecMutex ();
 private Cond demo_cond = new Cond ();
 
+private int probe_fd = -1;
+private int probe_rc = -2;
+private int probe_err = 0;
+
+[AsmBody(@"
+    lea fd_probe_worker(%rip), %rax
+    ret
+")]
+private extern int addr_fd_probe ();
+
+public void fd_probe_worker (int arg) {
+    var buf = new uint8[1];
+    probe_rc = Sys.read (probe_fd, buf, 1);
+    probe_err = Sys.errno_code ();
+    Sys.sys (11, 0, 0, 0);
+}
+
 private uint8[]? demo_worker () {
     demo_mutex.@lock ();
     shared_word = 42;
@@ -119,6 +136,23 @@ int main (string[] args) {
         print ("wait=FAIL\n");
         fails++;
     }
+
+    // 8. A handle belongs to the task that opened it: another task is denied
+    int owned_fd = Sys.open ("/hello.txt");
+    probe_fd = owned_fd;
+    probe_rc = -2;
+    probe_err = 0;
+    int probe_tid = Sys.sys (27, addr_fd_probe (), 0, 0);
+    if (probe_tid > 0)
+        Sys.wait (probe_tid);
+    if (owned_fd >= 3 && probe_rc == -1 && probe_err == Sys.EBADF)
+        print ("fdguard=ok\n");
+    else {
+        print ("fdguard=FAIL\n");
+        fails++;
+    }
+    if (owned_fd >= 3)
+        Sys.close (owned_fd);
 
     return fails;
 }
