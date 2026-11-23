@@ -317,3 +317,10 @@ The middle option is viable precisely because there is no ABI: `GLib.StringBuild
 | Inexact floating-point formatting | Numbers that do not return to their original value | Round-trip test against an oracle (RT-08) |
 | Disproportionate Unicode tables | Bloated binary | Compressed ranges generated at build time (RT-09) |
 | The `host` profile leaks dependencies into the target | Host symbol in a system binary | Per-directory symbol audit (VE-02) |
+
+## 12. Recent GLib & `c2vala` runtime additions
+
+- **`GLib.StringChunk`** ([stdlib/glib/core.vala](../../stdlib/glib/core.vala)): implements `StringChunk (size_t size = 4096)`, `insert (string)`, `insert_len (string, ssize_t)`, `insert_const (string)` (FNV-1a open-addressed deduplication), `clear ()`, and `free ()`. Used by `c_intern_str` in [tools/c2vala_rt.vala](../../tools/c2vala_rt.vala).
+- **`uintptr`-based buffer addressing**: `__core_arr_addr` ([stdlib/glib/core.vala](../../stdlib/glib/core.vala)), `__bytes_arr_addr` ([stdlib/glib/bytes.vala](../../stdlib/glib/bytes.vala)), `__codec_arr_addr` ([stdlib/glib/codec.vala](../../stdlib/glib/codec.vala)), `c_ptr_u64`, and `__c2v_arr_addr` ([tools/c2vala_rt.vala](../../tools/c2vala_rt.vala)) use `uintptr.from_pointer ((void*) arr) + 16` instead of duplicate `[AsmBody]` blocks.
+- **`c2vala` translation & `c2vala_rt` updates** ([tools/c2vala/translator.vala](../../tools/c2vala/translator.vala)): `c_is*` / `c_to*` delegate to `((char) c).* ()`; C `DateTime` maps to `_c2v_DateTime`; `struct tm` zero-initialization maps `tm_*` fields to `GLib.Time`; null `0` literals in `FUNC_PTR` assignments/initializers emit `null`; and `(uint64) ptr` casts lower via `c_ptr_u64` / `uintptr.from_pointer`.
+

@@ -342,6 +342,18 @@ namespace Planet {
             return __sys4 (50, vaddr, size, 0, 0);
         }
 
+        public static int protect_user_ro (int vaddr, int size) {
+            if (vaddr < USER_MIN_ADDR || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
+                return -1;
+            return __sys4 (52, vaddr, size, 0, 0);
+        }
+
+        public static int map_user_ro_at (int vaddr, int size) {
+            if (vaddr < USER_MIN_ADDR || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
+                return -1;
+            return __sys4 (53, vaddr, size, 0, 0);
+        }
+
         public static void poke8 (int addr, int val) {
             if (addr < USER_MIN_ADDR)
                 return;

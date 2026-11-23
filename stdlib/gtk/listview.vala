@@ -70,19 +70,7 @@ namespace Gtk {
         }
 
         public override void gather_damage () {
-            if (child == null)
-                return;
-            child.gather_damage ();
-            int n = child.damage_rect_count ();
-            for (int j = 0; j < n; j++) {
-                int x = 0;
-                int y = 0;
-                int w = 0;
-                int h = 0;
-                if (child.damage_rect_at (j, out x, out y, out w, out h))
-                    damage_box (x, y, w, h);
-            }
-            child.clear_damage ();
+            hoist_child_damage (child);
         }
     }
 
@@ -100,6 +88,12 @@ namespace Gtk {
 
         public void set_selection_mode (SelectionMode mode) {
             selection_mode = mode;
+            if (mode == SelectionMode.NONE)
+                unselect_all ();
+        }
+
+        public SelectionMode get_selection_mode () {
+            return selection_mode;
         }
 
         private void reindex () {
@@ -107,7 +101,7 @@ namespace Gtk {
                 rows[i].index = i;
         }
 
-        public void append (Widget child) {
+        private ListBoxRow wrap_row (Widget child) {
             ListBoxRow row;
             if (child is ListBoxRow) {
                 row = (ListBoxRow) child;
@@ -115,27 +109,88 @@ namespace Gtk {
                 row = new ListBoxRow ();
                 row.set_child (child);
             }
-            rows.add (row);
+            row.set_parent (this);
+            return row;
+        }
+
+        public void append (Widget child) {
+            rows.add (wrap_row (child));
             reindex ();
+        }
+
+        public void prepend (Widget child) {
+            insert (child, 0);
+        }
+
+        public void insert (Widget child, int position) {
+            var row = wrap_row (child);
+            if (position < 0 || position >= rows.length) {
+                rows.add (row);
+                reindex ();
+                return;
+            }
+            var nr = new GenericArray<ListBoxRow> ();
+            for (int i = 0; i < rows.length; i++) {
+                if (i == position)
+                    nr.add (row);
+                nr.add (rows[i]);
+            }
+            rows = nr;
+            if (selected_index >= position)
+                selected_index++;
+            reindex ();
+        }
+
+        public void unselect_all () {
+            bool changed = false;
+            for (int i = 0; i < rows.length; i++) {
+                if (rows[i].selected) {
+                    rows[i].selected = false;
+                    changed = true;
+                }
+            }
+            if (selected_index != -1) {
+                selected_index = -1;
+                changed = true;
+            }
+            if (changed) {
+                row_selected (null);
+                damage_self ();
+            }
+        }
+
+        public void unselect_row (ListBoxRow row) {
+            if (!row.selected)
+                return;
+            row.selected = false;
+            if (selected_index >= 0 && selected_index < rows.length && rows[selected_index] == row)
+                selected_index = -1;
+            row_selected (null);
+            damage_self ();
         }
 
         public void remove (Widget child) {
             for (int i = 0; i < rows.length; i++) {
                 if (rows[i] == child || rows[i].get_child () == child) {
+                    rows[i].unparent ();
                     rows.remove_index (i);
                     if (selected_index == i)
                         selected_index = -1;
                     else if (selected_index > i)
                         selected_index--;
                     reindex ();
+                    damage_self ();
                     return;
                 }
             }
         }
 
         public void remove_all () {
+            for (int i = 0; i < rows.length; i++)
+                rows[i].unparent ();
             rows = new GenericArray<ListBoxRow> ();
             selected_index = -1;
+            damage_self ();
         }
 
         public int get_count () {
@@ -174,19 +229,8 @@ namespace Gtk {
         }
 
         public override void gather_damage () {
-            for (int i = 0; i < rows.length; i++) {
-                rows[i].gather_damage ();
-                int n = rows[i].damage_rect_count ();
-                for (int j = 0; j < n; j++) {
-                    int x = 0;
-                    int y = 0;
-                    int w = 0;
-                    int h = 0;
-                    if (rows[i].damage_rect_at (j, out x, out y, out w, out h))
-                        damage_box (x, y, w, h);
-                }
-                rows[i].clear_damage ();
-            }
+            for (int i = 0; i < rows.length; i++)
+                hoist_child_damage (rows[i]);
         }
 
         public override bool handle_key (int key) {
@@ -267,12 +311,12 @@ namespace Gtk {
         public override bool on_key_press (int key) {
             if (!focused || !visible || !sensitive || rows.length == 0)
                 return false;
-            if (key == 0xFF52) { // Up
+            if (key == 0x81 || key == 0xFF52) { // Up
                 int nxt = (selected_index > 0) ? (selected_index - 1) : 0;
                 select_row (rows[nxt]);
                 return true;
             }
-            if (key == 0xFF54) { // Down
+            if (key == 0x82 || key == 0xFF54) { // Down
                 int nxt = (selected_index + 1 < rows.length) ? (selected_index + 1) : (rows.length - 1);
                 select_row (rows[nxt]);
                 return true;
@@ -291,6 +335,7 @@ namespace Gtk {
         private GenericArray<string> labels;
         private GenericArray<string> icon_names;
         public int row_height = 28;
+        public bool single_click_activate = false;
         private int selected_index = -1;
         private int hovered_index = -1;
         public double font_size = 14.0;
@@ -302,6 +347,9 @@ namespace Gtk {
             labels = new GenericArray<string> ();
             icon_names = new GenericArray<string> ();
         }
+
+        public void set_single_click_activate (bool sca) { single_click_activate = sca; }
+        public bool get_single_click_activate () { return single_click_activate; }
 
         public void set_items (GenericArray<string> items, GenericArray<string>? icons = null) {
             labels = items;
@@ -396,7 +444,7 @@ namespace Gtk {
                 grab_focus ();
                 bool already = (selected_index == idx);
                 set_selected (idx);
-                if (already)
+                if (already || single_click_activate)
                     activate (idx);
                 return true;
             }

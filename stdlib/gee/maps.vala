@@ -294,7 +294,7 @@ namespace Gee {
         }
     }
 
-    public class HashMap<K, V> : Object {
+    public class HashMap<K, V> : Object, Map<K, V> {
         private K[] karr;
         private V[] varr;
         private int[] hashes; // -1 = empty, >= 0 = occupied mixed hash

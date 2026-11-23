@@ -99,6 +99,7 @@ namespace Planet.Kernel {
             if (cp == 0x00A1) return 0xAD; // ¡
             if (cp == 0x00B0) return 0xF8; // °
             if (cp == 0x2022) return 0x07; // •
+            if (cp == 0x1FA90) return 0x01; // 🪐
             return '?';
         }
 

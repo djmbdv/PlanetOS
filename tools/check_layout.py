@@ -19,6 +19,8 @@ It stops the build when:
 Usage: check_layout.py <kernel-image>
 """
 
+import ast
+import operator
 import os
 import re
 import struct
@@ -67,15 +69,48 @@ ASM_REFS = [
     ("kernel/mouse.vala", "MOUSE_HEAD", 0),
 ]
 
-CONST_RE = re.compile(r"public const int (\w+)\s*=\s*(0x[0-9A-Fa-f]+|\d+)\s*;")
+CONST_RE = re.compile(r"public const int (\w+)\s*=\s*([^;]+?)\s*;")
 HEX_RE = re.compile(r"0x[0-9A-Fa-f]+")
+
+_BIN_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.FloorDiv: operator.floordiv,
+    ast.Div: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.LShift: operator.lshift,
+    ast.RShift: operator.rshift,
+    ast.BitOr: operator.or_,
+    ast.BitAnd: operator.and_,
+    ast.BitXor: operator.xor,
+}
+_UNARY_OPS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+    ast.Invert: operator.invert,
+}
+
+
+def _eval_const(node, consts):
+    if isinstance(node, ast.Expression):
+        return _eval_const(node.body, consts)
+    if isinstance(node, ast.Constant) and isinstance(node.value, int):
+        return node.value
+    if isinstance(node, ast.Name) and node.id in consts:
+        return consts[node.id]
+    if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
+        return _BIN_OPS[type(node.op)](_eval_const(node.left, consts), _eval_const(node.right, consts))
+    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
+        return _UNARY_OPS[type(node.op)](_eval_const(node.operand, consts))
+    raise ValueError(f"unsupported const expr: {ast.dump(node)}")
 
 
 def read_consts():
     text = open(LAYOUT, "r", encoding="utf-8").read()
     consts = {}
     for name, value in CONST_RE.findall(text):
-        consts[name] = int(value, 0)
+        consts[name] = _eval_const(ast.parse(value.strip(), mode="eval"), consts)
     return consts
 
 

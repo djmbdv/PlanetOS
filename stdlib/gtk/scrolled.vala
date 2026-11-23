@@ -7,6 +7,10 @@ namespace Gtk {
         public Widget? child = null;
         public int scroll_x = 0;
         public int scroll_y = 0;
+        public PolicyType hscrollbar_policy = PolicyType.AUTOMATIC;
+        public PolicyType vscrollbar_policy = PolicyType.AUTOMATIC;
+        public int min_content_width = 0;
+        public int min_content_height = 0;
         private int content_w = 0;
         private int content_h = 0;
         private int natural_w = 0;
@@ -22,11 +26,40 @@ namespace Gtk {
         }
 
         public void set_child (Widget? w) {
+            if (child != null)
+                child.unparent ();
             child = w;
+            if (child != null)
+                child.set_parent (this);
             scroll_x = 0;
             scroll_y = 0;
             sb_dragging = false;
         }
+
+        public Widget? get_child () {
+            return child;
+        }
+
+        public void set_policy (PolicyType hpolicy, PolicyType vpolicy) {
+            hscrollbar_policy = hpolicy;
+            vscrollbar_policy = vpolicy;
+            damage_self ();
+        }
+
+        public void get_policy (out PolicyType hpolicy, out PolicyType vpolicy) {
+            hpolicy = hscrollbar_policy;
+            vpolicy = vscrollbar_policy;
+        }
+
+        public void set_min_content_width (int w) {
+            min_content_width = (w < 0) ? 0 : w;
+        }
+        public int get_min_content_width () { return min_content_width; }
+
+        public void set_min_content_height (int h) {
+            min_content_height = (h < 0) ? 0 : h;
+        }
+        public int get_min_content_height () { return min_content_height; }
 
         public void add (Widget w) {
             set_child (w);
@@ -116,8 +149,10 @@ namespace Gtk {
         }
 
         public override void measure (out int min_w, out int min_h) {
-            min_w = (req_w > 0) ? req_w : 120;
-            min_h = (req_h > 0) ? req_h : 100;
+            int mw = (req_w > min_content_width) ? req_w : min_content_width;
+            int mh = (req_h > min_content_height) ? req_h : min_content_height;
+            min_w = (mw > 0) ? mw : 120;
+            min_h = (mh > 0) ? mh : 100;
         }
 
         public override void allocate (int ax, int ay, int aw, int ah) {
@@ -329,13 +364,31 @@ namespace Gtk {
             orientation = orient;
         }
 
-        public void set_start_child (Widget? w) {
-            start_child = w;
+        public void set_orientation (Orientation orient) {
+            if (orientation != orient) {
+                orientation = orient;
+                damage_self ();
+            }
         }
+        public Orientation get_orientation () { return orientation; }
+
+        public void set_start_child (Widget? w) {
+            if (start_child != null)
+                start_child.unparent ();
+            start_child = w;
+            if (start_child != null)
+                start_child.set_parent (this);
+        }
+        public Widget? get_start_child () { return start_child; }
 
         public void set_end_child (Widget? w) {
+            if (end_child != null)
+                end_child.unparent ();
             end_child = w;
+            if (end_child != null)
+                end_child.set_parent (this);
         }
+        public Widget? get_end_child () { return end_child; }
 
         public void set_position (int pos) {
             int np = (pos < 40) ? 40 : pos;
@@ -413,32 +466,8 @@ namespace Gtk {
         }
 
         public override void gather_damage () {
-            if (start_child != null) {
-                start_child.gather_damage ();
-                int n = start_child.damage_rect_count ();
-                for (int j = 0; j < n; j++) {
-                    int x = 0;
-                    int y = 0;
-                    int w = 0;
-                    int h = 0;
-                    if (start_child.damage_rect_at (j, out x, out y, out w, out h))
-                        damage_box (x, y, w, h);
-                }
-                start_child.clear_damage ();
-            }
-            if (end_child != null) {
-                end_child.gather_damage ();
-                int n = end_child.damage_rect_count ();
-                for (int j = 0; j < n; j++) {
-                    int x = 0;
-                    int y = 0;
-                    int w = 0;
-                    int h = 0;
-                    if (end_child.damage_rect_at (j, out x, out y, out w, out h))
-                        damage_box (x, y, w, h);
-                }
-                end_child.clear_damage ();
-            }
+            hoist_child_damage (start_child);
+            hoist_child_damage (end_child);
         }
 
         public override bool on_pointer_motion (int mx, int my) {
@@ -535,21 +564,86 @@ namespace Gtk {
         public int append_page (Widget child, string tab_label = "") {
             pages.add (child);
             labels.add (tab_label);
+            child.set_parent (this);
             int idx = pages.length - 1;
             if (width > 0 && height > tab_h)
                 child.allocate (x, y + tab_h, width, height - tab_h);
             return idx;
         }
 
+        public int prepend_page (Widget child, string tab_label = "") {
+            return insert_page (child, tab_label, 0);
+        }
+
+        public int insert_page (Widget child, string tab_label, int position) {
+            int pos = position;
+            if (pos < 0 || pos >= pages.length)
+                return append_page (child, tab_label);
+            var np = new GenericArray<Widget> ();
+            var nl = new GenericArray<string> ();
+            for (int i = 0; i < pages.length; i++) {
+                if (i == pos) {
+                    np.add (child);
+                    nl.add (tab_label);
+                }
+                np.add (pages[i]);
+                nl.add (labels[i]);
+            }
+            pages = np;
+            labels = nl;
+            child.set_parent (this);
+            if (current_page >= pos)
+                current_page++;
+            if (width > 0 && height > tab_h)
+                child.allocate (x, y + tab_h, width, height - tab_h);
+            damage_self ();
+            return pos;
+        }
+
         public void remove_page (int page_num) {
             if (page_num < 0 || page_num >= pages.length)
                 return;
+            pages[page_num].unparent ();
             pages.remove_index (page_num);
             labels.remove_index (page_num);
-            if (current_page >= pages.length && pages.length > 0)
-                current_page = pages.length - 1;
-            if (pages.length == 0)
+            if (pages.length == 0) {
                 current_page = 0;
+            } else if (page_num < current_page) {
+                current_page--;
+            } else if (current_page >= pages.length) {
+                current_page = pages.length - 1;
+            }
+            if (pages.length > 0 && width > 0 && height > tab_h)
+                pages[current_page].allocate (x, y + tab_h, width, height - tab_h);
+            damage_self ();
+        }
+
+        public string? get_tab_label_text (Widget child) {
+            for (int i = 0; i < pages.length; i++) {
+                if (pages[i] == child)
+                    return labels[i];
+            }
+            return null;
+        }
+
+        public void set_tab_label_text (Widget child, string tab_text) {
+            for (int i = 0; i < pages.length; i++) {
+                if (pages[i] == child) {
+                    labels[i] = tab_text;
+                    damage_box (x, y, width, tab_h);
+                    return;
+                }
+            }
+        }
+
+        public void next_page () {
+            if (current_page + 1 < pages.length)
+                set_current_page (current_page + 1);
+        }
+
+        public void prev_page () {
+            if (current_page > 0)
+                set_current_page (current_page - 1);
         }
 
         public int get_n_pages () {
@@ -643,17 +737,7 @@ namespace Gtk {
         public override void gather_damage () {
             if (current_page < 0 || current_page >= pages.length)
                 return;
-            pages[current_page].gather_damage ();
-            int n = pages[current_page].damage_rect_count ();
-            for (int j = 0; j < n; j++) {
-                int x = 0;
-                int y = 0;
-                int w = 0;
-                int h = 0;
-                if (pages[current_page].damage_rect_at (j, out x, out y, out w, out h))
-                    damage_box (x, y, w, h);
-            }
-            pages[current_page].clear_damage ();
+            hoist_child_damage (pages[current_page]);
         }
 
         public override bool on_pointer_motion (int mx, int my) {

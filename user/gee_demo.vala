@@ -17,6 +17,13 @@ int main () {
     list.sort (new StrComparator ());
     if (list.first () != "alpha" || list.last () != "delta")
         fails++;
+    int list_iter_count = 0;
+    foreach (var s in list) {
+        if (s.length > 0)
+            list_iter_count++;
+    }
+    if (list_iter_count != 4)
+        fails++;
 
     // 2. LinkedList<int>
     var ll = new LinkedList<int> ();

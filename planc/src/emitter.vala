@@ -729,6 +729,11 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x8D); code.u8 (0x44); code.u8 (0x08); code.u8 (0x10);
         }
 
+        // shl rcx, imm8                      48 C1 E1 imm8
+        public void shl_rcx_imm (uint8 count) {
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE1); code.u8 (count);
+        }
+
         // mov byte ptr [rcx + disp], al      88 41 d8 | 88 81 d32
         public void store_rcx_disp_byte_al (int disp) {
             code.u8 (0x88);
@@ -1730,6 +1735,46 @@ namespace Planc {
         }
 
         // void* __planc_ref(void* rdi) -> returns rdi in rax.
+        public void emit_rt_arena_alloc (int arena_bss_off, int cursor_bss_off) {
+            // rdi = payload_bytes, esi = elem_ref (unused, always 0)
+            var l_have_cur = new_label ();
+            var l_fallback = new_label ();
+            // rcx = [cursor_bss_off]
+            load_global (cursor_bss_off, PatchSpace.BSS);
+            test_rax_rax ();
+            branch (BranchKind.JNE, l_have_cur);
+            lea_rax_bss (arena_bss_off);
+            bind (l_have_cur);
+            mov_rcx_rax ();
+            // rdx = rcx + 16 + ((rdi + 7) & ~7)
+            // mov rax, rdi; add rax, 7; and rax, -8; add rax, 16; add rax, rcx
+            mov_rax_rdi ();
+            add_rax_imm (7);
+            // and rax, -8   48 83 E0 F8
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xE0); code.u8 (0xF8);
+            add_rax_imm (16);
+            add_rax_rcx ();
+            mov_rdx_rax ();
+            // cmp rdx, arena_bss_off + 65536
+            lea_rax_bss (arena_bss_off + 65536);
+            // cmp rdx, rax   48 39 C2
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xC2);
+            branch (BranchKind.JA, l_fallback);
+            // [cursor_bss_off] = rdx
+            mov_rax_rdx ();
+            store_global (cursor_bss_off, PatchSpace.BSS);
+            // Zero 16-byte header (refcount = 0 = immortal, len = 0) and return rcx in rax
+            xor_eax ();
+            store_rcx_disp_rax (0);
+            store_rcx_disp_rax (8);
+            mov_rax_rcx ();
+            ret ();
+            bind (l_fallback);
+            // Fallback to heap __planc_alloc (rdi, esi already set)
+            call_rel32 ("__planc_alloc");
+            ret ();
+        }
+
         public void emit_rt_ref (Label mem_panic_lbl) {
             var l_done = new_label ();
             // mov rax, rdi                    48 89 F8

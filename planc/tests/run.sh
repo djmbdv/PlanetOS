@@ -526,15 +526,15 @@ if command -v qemu-system-x86_64 >/dev/null 2>&1; then
         ko "freestanding_qemu" "user init compile failed: $(cat "$WORK/u.err")"
     elif ! "$PLANC" --target=planetos --image-base=0x900000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/worker.vala" -o "$w_bin" 2>"$WORK/w.err"; then
         ko "freestanding_qemu" "user worker compile failed: $(cat "$WORK/w.err")"
-    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/memory.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/user/wc.vala" -o "$wc_bin" 2>"$WORK/wc.err"; then
         ko "freestanding_qemu" "user wc compile failed: $(cat "$WORK/wc.err")"
     elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala" "$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala" "$ROOT/user/cairo_demo.vala" -o "$cd_bin" 2>"$WORK/cd.err"; then
         ko "freestanding_qemu" "user cairo_demo compile failed: $(cat "$WORK/cd.err")"
     elif ! "$PLANC" --target=spirv "$ROOT/user/frag_planet.vala" -o "$sp_bin" 2>"$WORK/sp.err"; then
         ko "freestanding_qemu" "frag_planet.vala compile failed: $(cat "$WORK/sp.err")"
-    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala" "$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
+    elif ! "$PLANC" --target=planetos "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala" "$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala" "$ROOT/user/spv_demo.vala" -o "$sd_bin" 2>"$WORK/sd.err"; then
         ko "freestanding_qemu" "user spv_demo compile failed: $(cat "$WORK/sd.err")"
-    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
+    elif ! "$PLANC" --target=planetos --image-base=0xA00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/memory.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/user/shell.vala" -o "$s_bin" 2>"$WORK/s.err"; then
         ko "freestanding_qemu" "user shell compile failed: $(cat "$WORK/s.err")"
     else
     python3 - "$k_disk" "$u_bin" "$s_bin" "$w_bin" "$wc_bin" "$cd_bin" "$sp_bin" "$sd_bin" << 'PYEOF'

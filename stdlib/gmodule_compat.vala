@@ -159,6 +159,9 @@ namespace GModule {
                     Sys.poke8 (vaddr + b, (int) buf[foff + b]);
                 for (int b = fsz; b < msz; b++)
                     Sys.poke8 (vaddr + b, 0);
+                // Sections 0 (.text) and 1 (.rodata) are read-only once populated.
+                if (i < 2)
+                    Sys.protect_user_ro (vaddr, msz);
             }
             register_static (path, "PlanetOS .dlib");
             int pos = meta_off;

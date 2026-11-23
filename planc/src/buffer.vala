@@ -1,7 +1,8 @@
 // Byte buffer, string builder, and shared host formatting utilities.
 //
-// Deliberately avoids GLib classes so the compiler builds cleanly both in
-// Stage 0 (valac + host_stage0) and Stages 1-3 (planc + host_native).
+// Uses only types/APIs compatible with both Stage 0 (valac + glib-2.0) and
+// Stages 1-3 (planc + PlanetOS stdlib/glib), avoiding unimplemented GLib APIs
+// or signature mismatches that would break self-compilation.
 
 namespace Planc {
 
@@ -117,6 +118,14 @@ namespace Planc {
             reserve (data.length);
             for (int i = 0; i < data.length; i++)
                 storage[used++] = data[i];
+        }
+
+        public void append_buffer (Buffer other) {
+            if (other.used == 0)
+                return;
+            reserve (other.used);
+            for (int i = 0; i < other.used; i++)
+                storage[used++] = other.storage[i];
         }
 
         // Raw bytes of a UTF-8 string, without the terminating NUL.

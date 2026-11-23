@@ -3,8 +3,18 @@
 // Only what the translated subset needs: the string helpers that Vala does not
 // expose as free functions. Everything else (printf) maps to GLib directly.
 
+using GLib;
+
 public int c_strlen (string s) {
     return s.length;
+}
+
+private static StringChunk? _c2v_str_chunk = null;
+
+public unowned string c_intern_str (string s) {
+    if (_c2v_str_chunk == null)
+        _c2v_str_chunk = new StringChunk (4096);
+    return ((!) _c2v_str_chunk).insert_const (s);
 }
 
 public int c_strcmp (string a, string b) {
@@ -54,35 +64,50 @@ public string c_hex (uint64 v, bool upper) {
     return out_s;
 }
 
+public uint64 c_ptr_u64 (uint8[]? a) {
+    if (a == null) return 0;
+    return (uint64) (uintptr.from_pointer ((void*) ((!) a)) + (uintptr) 16);
+}
+
+private int __c2v_arr_addr (uint8[] a) {
+    return (int) c_ptr_u64 (a);
+}
+
 public void c_memcpy (uint8[] dst, uint8[] src, size_t n) {
     int limit = (int) n;
-    for (int i = 0; i < limit; i++)
-        dst[i] = src[i];
+    if (limit <= 0) return;
+    if (limit > dst.length) limit = dst.length;
+    if (limit > src.length) limit = src.length;
+    if (limit <= 0) return;
+    GLib.Memory.copy (__c2v_arr_addr (dst), __c2v_arr_addr (src), (size_t) limit);
 }
 
 public void c_memmove (uint8[] dst, uint8[] src, size_t n) {
     int limit = (int) n;
-    var tmp = new uint8[limit];
-    for (int i = 0; i < limit; i++)
-        tmp[i] = src[i];
-    for (int i = 0; i < limit; i++)
-        dst[i] = tmp[i];
+    if (limit <= 0) return;
+    if (limit > dst.length) limit = dst.length;
+    if (limit > src.length) limit = src.length;
+    if (limit <= 0) return;
+    GLib.Memory.move (__c2v_arr_addr (dst), __c2v_arr_addr (src), (size_t) limit);
 }
 
 public void c_memset (uint8[] dst, int c, size_t n) {
     int limit = (int) n;
-    uint8 b = (uint8) c;
-    for (int i = 0; i < limit; i++)
-        dst[i] = b;
+    if (limit <= 0) return;
+    if (limit > dst.length) limit = dst.length;
+    if (limit <= 0) return;
+    GLib.Memory.set (__c2v_arr_addr (dst), c, (size_t) limit);
 }
 
 public int c_memcmp (uint8[] a, uint8[] b, size_t n) {
     int limit = (int) n;
-    for (int i = 0; i < limit; i++) {
-        if (a[i] != b[i])
-            return (a[i] < b[i]) ? -1 : 1;
-    }
-    return 0;
+    if (limit <= 0) return 0;
+    if (limit > a.length) limit = a.length;
+    if (limit > b.length) limit = b.length;
+    if (limit <= 0) return 0;
+    int diff = GLib.Memory.cmp (__c2v_arr_addr (a), __c2v_arr_addr (b), (size_t) limit);
+    if (diff == 0) return 0;
+    return (diff < 0) ? -1 : 1;
 }
 
 public uint8[] c_realloc_u8 (uint8[]? old, size_t new_len) {
@@ -342,6 +367,25 @@ public uint8[] c_strcat_buf (uint8[] dst, string src) {
     return dst;
 }
 
+public int c_sprintf_buf (uint8[] dst, string src) {
+    c_strcpy_buf (dst, src);
+    return src.length;
+}
+
+public int c_snprintf_buf (uint8[] dst, size_t max_n, string src) {
+    int lim = (int) max_n;
+    if (lim > 0) {
+        int copy_n = src.length;
+        if (copy_n >= lim) copy_n = lim - 1;
+        if (copy_n > dst.length) copy_n = dst.length > 0 ? dst.length - 1 : 0;
+        for (int i = 0; i < copy_n; i++)
+            dst[i] = src[i];
+        if (copy_n < dst.length)
+            dst[copy_n] = 0;
+    }
+    return src.length;
+}
+
 public class C2VArena {
     public uint8[] buf;
     public int used;
@@ -419,6 +463,23 @@ public class C2VArena {
         int off = alloc (bytes, align);
         return new C2VPtr.from_bytes (buf, off);
     }
+
+    public C2VPtr alloc_with_header (int hdr_bytes, int body_bytes, int align = 8) {
+        int h = (hdr_bytes < 0) ? 0 : hdr_bytes;
+        int b = (body_bytes < 0) ? 0 : body_bytes;
+        int off = alloc (h + b, align);
+        return new C2VPtr.from_bytes (buf, off + h);
+    }
+}
+
+public class C2VBox<T> : Object {
+    public T val;
+    public int off = 0;
+
+    public C2VBox (T v, int o = 0) {
+        val = v;
+        off = o;
+    }
 }
 
 public class C2VPtr : Object {
@@ -430,7 +491,7 @@ public class C2VPtr : Object {
 
     public C2VPtr.from_bytes (uint8[] b, int off = 0) {
         data = b;
-        offset = off;
+        offset = (off < 0) ? 0 : ((off > b.length) ? b.length : off);
     }
 
     public C2VPtr.from_obj (Object? o) {
@@ -440,9 +501,55 @@ public class C2VPtr : Object {
     public C2VPtr add (int delta) {
         var p = new C2VPtr ();
         p.data = data;
-        p.offset = offset + delta;
+        int64 n = (int64) offset + (int64) delta;
+        if (n < 0) n = 0;
+        if (data != null && n > (int64) ((!) data).length)
+            n = (int64) ((!) data).length;
+        p.offset = (int) n;
         p.obj = obj;
         return p;
+    }
+
+    public uint8 get_u8_at (int rel_off) {
+        if (data == null) return 0;
+        int64 pos = (int64) offset + (int64) rel_off;
+        if (pos < 0 || pos >= (int64) ((!) data).length) return 0;
+        return ((!) data)[(int) pos];
+    }
+
+    public void set_u8_at (int rel_off, uint8 val) {
+        if (data == null) return;
+        int64 pos = (int64) offset + (int64) rel_off;
+        if (pos < 0 || pos >= (int64) ((!) data).length) return;
+        c_u_set_u8_at ((!) data, (int) pos, val);
+    }
+
+    public uint32 get_u32_at (int rel_off) {
+        if (data == null) return 0;
+        int64 pos = (int64) offset + (int64) rel_off;
+        if (pos < 0 || pos + 4 > (int64) ((!) data).length) return 0;
+        return c_u_get_u32_at ((!) data, (int) pos);
+    }
+
+    public void set_u32_at (int rel_off, uint32 val) {
+        if (data == null) return;
+        int64 pos = (int64) offset + (int64) rel_off;
+        if (pos < 0 || pos + 4 > (int64) ((!) data).length) return;
+        c_u_set_u32_at ((!) data, (int) pos, val);
+    }
+
+    public uint64 get_u64_at (int rel_off) {
+        if (data == null) return 0;
+        int64 pos = (int64) offset + (int64) rel_off;
+        if (pos < 0 || pos + 8 > (int64) ((!) data).length) return 0;
+        return c_u_get_u64_at ((!) data, (int) pos);
+    }
+
+    public void set_u64_at (int rel_off, uint64 val) {
+        if (data == null) return;
+        int64 pos = (int64) offset + (int64) rel_off;
+        if (pos < 0 || pos + 8 > (int64) ((!) data).length) return;
+        c_u_set_u64_at ((!) data, (int) pos, val);
     }
 
     public uint8[] as_bytes () {
@@ -468,39 +575,39 @@ public int c_puts (string s) {
 }
 
 public int c_isspace (int c) {
-    return (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f') ? 1 : 0;
+    return ((char) c).isspace () ? 1 : 0;
 }
 
 public int c_isdigit (int c) {
-    return (c >= '0' && c <= '9') ? 1 : 0;
+    return ((char) c).isdigit () ? 1 : 0;
 }
 
 public int c_isupper (int c) {
-    return (c >= 'A' && c <= 'Z') ? 1 : 0;
+    return ((char) c).isupper () ? 1 : 0;
 }
 
 public int c_islower (int c) {
-    return (c >= 'a' && c <= 'z') ? 1 : 0;
+    return ((char) c).islower () ? 1 : 0;
 }
 
 public int c_isalpha (int c) {
-    return (c_isupper (c) != 0 || c_islower (c) != 0) ? 1 : 0;
+    return ((char) c).isalpha () ? 1 : 0;
 }
 
 public int c_isalnum (int c) {
-    return (c_isalpha (c) != 0 || c_isdigit (c) != 0) ? 1 : 0;
+    return ((char) c).isalnum () ? 1 : 0;
 }
 
 public int c_isxdigit (int c) {
-    return (c_isdigit (c) != 0 || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) ? 1 : 0;
+    return ((char) c).isxdigit () ? 1 : 0;
 }
 
 public int c_tolower (int c) {
-    return c_isupper (c) != 0 ? (c + 32) : c;
+    return (int) ((char) c).tolower ();
 }
 
 public int c_toupper (int c) {
-    return c_islower (c) != 0 ? (c - 32) : c;
+    return (int) ((char) c).toupper ();
 }
 
 [AsmBody(@"
@@ -1231,6 +1338,14 @@ public int c_pthread_cond_wait (Cond? c, RecMutex? m) {
     return 0;
 }
 
+public int c_pthread_cond_timedwait (Cond? c, RecMutex? m, int64[] abstime) {
+    if (c != null && m != null) {
+        int64 end_us = (abstime.length > 0) ? abstime[0] * 1000000 : 0;
+        return ((!) c).wait_until ((!) m, end_us) ? 0 : 110;
+    }
+    return 0;
+}
+
 public int c_pthread_cond_signal (Cond? c) {
     if (c != null)
         ((!) c).signal ();
@@ -1241,4 +1356,51 @@ public int c_pthread_cond_broadcast (Cond? c) {
     if (c != null)
         ((!) c).broadcast ();
     return 0;
+}
+
+// POSIX -> GLib compatibility helpers
+public int c_usleep (uint32 usec) {
+    int64 target = get_real_time () + (int64) usec;
+    while (get_real_time () < target) {}
+    return 0;
+}
+
+public int c_sleep (uint sec) {
+    int64 target = get_real_time () + (int64) sec * 1000000;
+    while (get_real_time () < target) {}
+    return 0;
+}
+
+public int c_clock_gettime (int clk_id, int64[] ts) {
+    int64 us = get_real_time ();
+    if (ts.length >= 2) {
+        ts[0] = us / 1000000;
+        ts[1] = (us % 1000000) * 1000;
+    }
+    return 0;
+}
+
+public int c_gettimeofday (int64[] tv) {
+    int64 us = get_real_time ();
+    if (tv.length >= 2) {
+        tv[0] = us / 1000000;
+        tv[1] = us % 1000000;
+    }
+    return 0;
+}
+
+public bool c_s_islnk (int m) {
+    return (m & 0170000) == 0120000;
+}
+
+public bool c_s_isdir (int m) {
+    return (m & 0170000) == 0040000;
+}
+
+public bool c_s_isreg (int m) {
+    return (m & 0170000) == 0100000;
+}
+
+public int c_getpid () {
+    return 1;
 }

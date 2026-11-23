@@ -57,6 +57,17 @@ namespace Gee {
         public abstract G poll_tail ();
     }
 
+    public interface Map<K, V> : Object {
+        public abstract int size { get; }
+        public abstract bool is_empty { get; }
+        public abstract bool has_key (K key);
+        public abstract bool has (K key, V value);
+        public abstract V get (K key);
+        public abstract void set (K key, V value);
+        public abstract bool unset (K key);
+        public abstract void clear ();
+    }
+
     public class Comparator<G> : Object {
         public virtual int compare (G a, G b) {
             return 0;
@@ -97,20 +108,6 @@ namespace Gee {
         x *= (uint32) 0xC2B2AE35;
         x ^= x >> 16;
         return (int) (x & (uint32) 0x7FFFFFFF);
-    }
-
-    public int str_hash (string s) {
-        uint32 h = (uint32) 0x811C9DC5;
-        int n = s.length;
-        for (int i = 0; i < n; i++) {
-            h ^= (uint32) s[i];
-            h *= (uint32) 0x01000193;
-        }
-        return (int) (h & (uint32) 0x7FFFFFFF);
-    }
-
-    public int int_hash (int v) {
-        return __planc_hash (v);
     }
 
     public int str_cmp (string a, string b) {

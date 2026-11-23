@@ -1,0 +1,68 @@
+// Pure-Vala GLib.Bit bit-scan utilities (bsf/bsr) for PlanetOS.
+
+namespace GLib {
+
+    [AsmBody(@"
+        # __bit_bsf(mask in rdi) -> rax (caller ensures mask != 0)
+        .byte 0x48, 0x0f, 0xbc, 0xc7
+        ret
+    ")]
+    private extern int __bit_bsf (ulong mask);
+
+    [AsmBody(@"
+        # __bit_bsr(mask in rdi) -> rax (caller ensures mask != 0)
+        .byte 0x48, 0x0f, 0xbd, 0xc7
+        ret
+    ")]
+    private extern int __bit_bsr (ulong mask);
+
+    /**
+     * Bit manipulation and bit-scan helpers (GLib.Bit).
+     */
+    public class Bit : Object {
+
+        /**
+         * Finds the position of the first bit set in mask, searching from nth_bit + 1 upward.
+         * Pass nth_bit = -1 to start from bit 0. Returns -1 if no matching bit is set.
+         */
+        public static int nth_lsf (ulong mask, int nth_bit) {
+            if (mask == 0 || nth_bit >= 63)
+                return -1;
+            ulong m = mask;
+            if (nth_bit >= 0) {
+                int shift = nth_bit + 1;
+                m = m >> shift;
+                if (m == 0)
+                    return -1;
+                return shift + __bit_bsf (m);
+            }
+            return __bit_bsf (m);
+        }
+
+        /**
+         * Finds the position of the highest bit set in mask below nth_bit.
+         * Pass nth_bit = -1 to search all 64 bits. Returns -1 if no matching bit is set.
+         */
+        public static int nth_msf (ulong mask, int nth_bit) {
+            if (mask == 0 || nth_bit == 0)
+                return -1;
+            ulong m = mask;
+            if (nth_bit > 0 && nth_bit < 64) {
+                ulong keep = (1UL << nth_bit) - 1UL;
+                m = m & keep;
+            }
+            if (m == 0)
+                return -1;
+            return __bit_bsr (m);
+        }
+
+        /**
+         * Returns the number of bits required to store number (1 when number == 0).
+         */
+        public static uint storage (ulong number) {
+            if (number == 0)
+                return 1;
+            return (uint) (__bit_bsr (number) + 1);
+        }
+    }
+}

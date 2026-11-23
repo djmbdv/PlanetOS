@@ -523,25 +523,21 @@ namespace Gee {
         }
 
         public bool remove (G item) {
-            LinkNode<G>? cur = head;
-            while (cur != null) {
+            LinkNode<G>?* pp = &head;
+            while (*pp != null) {
+                var cur = (!) *pp;
                 if (cur.val == item) {
-                    LinkNode<G>? prv = cur.prev;
-                    LinkNode<G>? nxt = cur.next;
-                    if (prv != null)
-                        prv.next = nxt;
+                    if (cur.next != null)
+                        cur.next.prev = cur.prev;
                     else
-                        head = nxt;
-                    if (nxt != null)
-                        nxt.prev = prv;
-                    else
-                        tail = prv;
+                        tail = cur.prev;
+                    *pp = cur.next;
                     cur.prev = null;
                     cur.next = null;
                     _size--;
                     return true;
                 }
-                cur = cur.next;
+                pp = &(cur.next);
             }
             return false;
         }

@@ -42,6 +42,7 @@ GLIB_CORE = os.path.join(ROOT, "stdlib", "glib", "core.vala")
 GLIB_PROCESS = os.path.join(ROOT, "stdlib", "glib", "process.vala")
 GLIB_TIME = os.path.join(ROOT, "stdlib", "glib", "time.vala")
 GLIB_THREAD = os.path.join(ROOT, "stdlib", "glib", "thread.vala")
+GLIB_MEMORY = os.path.join(ROOT, "stdlib", "glib", "memory.vala")
 PLANET_SYS = os.path.join(ROOT, "stdlib", "planet_sys.vala")
 
 IS_WINDOWS = os.name == "nt"
@@ -237,7 +238,7 @@ def main(argv):
         # candidate: planc (when --translator vala) or valac on the translated source + runtime shim
         vala_exe = os.path.join(case_work, "translated.exe")
         if use_planc:
-            build = subprocess.run([PLANC_BIN, PLANET_SYS, GLIB_CORE, GLIB_MATH, GLIB_PROCESS, GLIB_TIME, GLIB_THREAD, vala_out, RUNTIME, "-o", vala_exe],
+            build = subprocess.run([PLANC_BIN, PLANET_SYS, GLIB_CORE, GLIB_MATH, GLIB_PROCESS, GLIB_TIME, GLIB_THREAD, GLIB_MEMORY, vala_out, RUNTIME, "-o", vala_exe],
                                    capture_output=True, text=True)
         else:
             build = sh('valac --pkg=glib-2.0 "%s" "%s" -o "%s"'

@@ -119,19 +119,29 @@ namespace Planet.Kernel {
             Pmm.free_frame (cr3);
         }
 
-        public static void map_user_4k (int cr3, int addr) {
+        public static void map_user_4k_phys (int cr3, int vaddr, int paddr, int flags = 0x07) {
             if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
                 return;
-            int aligned = addr & ~0xFFF;
+            int va = vaddr & ~0xFFF;
+            int pa = paddr & ~0xFFF;
+            int pf = (flags == 0x05) ? 0x05 : 0x07;
             int pdpt = mmio_read64 (cr3) & ~0xFFF;
             int pd = mmio_read64 (pdpt) & ~0xFFF;
             int pt_base = 0;
-            if (!ensure_pt_in_pd (pd, aligned, true, out pt_base))
+            if (!ensure_pt_in_pd (pd, va, true, out pt_base))
                 return;
-            int pt_idx = (aligned >> 12) & 0x1FF;
-            mmio_write64 (pt_base + pt_idx * 8, aligned | 0x07);
+            int pt_idx = (va >> 12) & 0x1FF;
+            mmio_write64 (pt_base + pt_idx * 8, pa | pf);
             if (vmm_read_cr3 () == cr3)
-                vmm_invlpg (aligned);
+                vmm_invlpg (va);
+        }
+
+        public static void map_user_4k (int cr3, int addr) {
+            map_user_4k_phys (cr3, addr, addr, 0x07);
+        }
+
+        public static void map_user_4k_ro (int cr3, int addr) {
+            map_user_4k_phys (cr3, addr, addr, 0x05);
         }
 
         public static void unmap_user_4k (int cr3, int addr) {
@@ -156,6 +166,16 @@ namespace Planet.Kernel {
             int last = (start + size - 1) & ~0xFFF;
             for (int p = first; p <= last; p += 4096) {
                 map_user_4k (cr3, p);
+            }
+        }
+
+        public static void map_user_range_ro (int cr3, int start, int size) {
+            if (size <= 0)
+                return;
+            int first = start & ~0xFFF;
+            int last = (start + size - 1) & ~0xFFF;
+            for (int p = first; p <= last; p += 4096) {
+                map_user_4k_ro (cr3, p);
             }
         }
 

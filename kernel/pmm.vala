@@ -54,12 +54,12 @@ namespace Planet.Kernel {
         private static int pmm_double_free_count = 0;
         private const int PAGE_SIZE = 4096;
         private const int MAX_BYTES = 0x4000000;   // 64 MiB cap (16384 frames)
-        private const int MAX_FRAMES = 16384;
+        private const int MAX_FRAMES = MAX_BYTES / PAGE_SIZE;
         private const int MAX_ORDER = 23;          // F[22] = 17711 > 16384
 
-        private const int META_BASE = 0x110000;    // KernelLayout.PMM_BITMAP
-        private const int AVAIL_BASE = 0x118000;
-        private const int FIB_BASE = 0x118100;
+        private const int META_BASE = KernelLayout.PMM_BITMAP;
+        private const int AVAIL_BASE = META_BASE + 0x8000;
+        private const int FIB_BASE = AVAIL_BASE + 0x100;
 
         // 16-bit META layout per frame:
         // bit 15: free (1 = head of free block, 0 = allocated or interior)
@@ -220,7 +220,16 @@ namespace Planet.Kernel {
             }
             if (pmm_total_frames > res_end) {
                 int bot2 = (first_free > res_end) ? first_free : res_end;
-                add_free_range (bot2, pmm_total_frames);
+                int dlib_start = 0x1800000 / PAGE_SIZE;
+                int dlib_end = 0x1900000 / PAGE_SIZE;
+                if (bot2 < dlib_start) {
+                    int top2 = (pmm_total_frames < dlib_start) ? pmm_total_frames : dlib_start;
+                    add_free_range (bot2, top2);
+                }
+                if (pmm_total_frames > dlib_end) {
+                    int bot3 = (bot2 > dlib_end) ? bot2 : dlib_end;
+                    add_free_range (bot3, pmm_total_frames);
+                }
             }
         }
 

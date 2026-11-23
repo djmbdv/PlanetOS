@@ -25,6 +25,30 @@ namespace Planc {
             exit (134);
         }
 
+        public static uint8[] read_bytes (string path) throws FileError {
+            int fd = Sys.open (path);
+            if (fd < 0)
+                throw new FileError.FAILED (@"cannot open '$path'");
+            int sz = Sys.file_size (fd);
+            if (sz < 0) {
+                Sys.close (fd);
+                throw new FileError.FAILED (@"cannot stat '$path'");
+            }
+            var buf = new uint8[sz];
+            int got = 0;
+            while (got < sz) {
+                var chunk = new uint8[sz - got];
+                int r = Sys.read (fd, chunk, sz - got);
+                if (r <= 0)
+                    break;
+                for (int i = 0; i < r; i++)
+                    buf[got + i] = chunk[i];
+                got = got + r;
+            }
+            Sys.close (fd);
+            return buf;
+        }
+
         public static string read_file (string path) throws FileError {
             int fd = Sys.open (path);
             if (fd < 0)

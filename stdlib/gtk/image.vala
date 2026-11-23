@@ -6,7 +6,7 @@ namespace Gtk {
     public class Image : Widget {
         public string icon_name = "";
         public int pixel_size = 20;
-        private int[]? pixbuf = null;
+        private uint8[]? rgba_buf = null;
         private int pb_w = 0;
         private int pb_h = 0;
 
@@ -20,22 +20,61 @@ namespace Gtk {
         public void set_from_icon_name (string name, int size = 20) {
             icon_name = name;
             pixel_size = (size < 8) ? 8 : size;
-            pixbuf = null;
+            rgba_buf = null;
+            pb_w = 0;
+            pb_h = 0;
+            damage_self ();
+        }
+
+        public string get_icon_name () {
+            return icon_name;
         }
 
         public void set_pixel_size (int size) {
-            pixel_size = (size < 8) ? 8 : size;
+            int ns = (size < 8) ? 8 : size;
+            if (ns != pixel_size) {
+                pixel_size = ns;
+                damage_self ();
+            }
+        }
+
+        public int get_pixel_size () {
+            return pixel_size;
+        }
+
+        public void clear () {
+            icon_name = "";
+            rgba_buf = null;
+            pb_w = 0;
+            pb_h = 0;
+            damage_self ();
         }
 
         public void set_from_pixbuf (int[] pixels, int pw, int ph) {
-            pixbuf = pixels;
+            if (pw <= 0 || ph <= 0 || pw > 4096 || ph > 4096)
+                return;
+            int64 count = (int64) pw * (int64) ph;
+            if (count > (int64) pixels.length)
+                return;
+            int n = (int) count;
+            var buf = new uint8[n * 4];
+            for (int i = 0; i < n; i++) {
+                int argb = pixels[i];
+                int off = i * 4;
+                buf[off + 0] = (uint8) ((argb >> 16) & 0xFF);
+                buf[off + 1] = (uint8) ((argb >> 8) & 0xFF);
+                buf[off + 2] = (uint8) (argb & 0xFF);
+                buf[off + 3] = (uint8) ((argb >> 24) & 0xFF);
+            }
+            rgba_buf = buf;
             pb_w = pw;
             pb_h = ph;
+            damage_self ();
         }
 
         public override void measure (out int min_w, out int min_h) {
-            int w = (pixbuf != null && pb_w > 0) ? pb_w : pixel_size;
-            int h = (pixbuf != null && pb_h > 0) ? pb_h : pixel_size;
+            int w = (rgba_buf != null && pb_w > 0) ? pb_w : pixel_size;
+            int h = (rgba_buf != null && pb_h > 0) ? pb_h : pixel_size;
             min_w = (req_w > w) ? req_w : w;
             min_h = (req_h > h) ? req_h : h;
         }
@@ -79,23 +118,10 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
-            if (pixbuf != null && pb_w > 0 && pb_h > 0) {
+            if (rgba_buf != null && pb_w > 0 && pb_h > 0) {
                 int ox = x + (width - pb_w) / 2;
                 int oy = y + (height - pb_h) / 2;
-                for (int py = 0; py < pb_h; py++) {
-                    for (int px = 0; px < pb_w; px++) {
-                        int argb = pixbuf[py * pb_w + px];
-                        int a = (argb >> 24) & 0xFF;
-                        if (a == 0)
-                            continue;
-                        double r = (double) ((argb >> 16) & 0xFF) / 255.0;
-                        double g = (double) ((argb >> 8) & 0xFF) / 255.0;
-                        double b = (double) (argb & 0xFF) / 255.0;
-                        cr.set_source_rgba (r, g, b, (double) a / 255.0);
-                        cr.rectangle ((double) (ox + px), (double) (oy + py), 1.0, 1.0);
-                        cr.fill ();
-                    }
-                }
+                cr.draw_rgba (rgba_buf, pb_w, pb_h, ox, oy);
                 return;
             }
             if (icon_name.length > 0) {

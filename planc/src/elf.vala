@@ -102,17 +102,17 @@ namespace Planc {
         // string constant containing NULs would be truncated at the first one.
         // Layout: "\0" ".text\0" ".rodata\0" ".data\0" ".bss\0" ".symtab\0"
         //         ".strtab\0" ".shstrtab\0"
-        private const int SHSTRTAB_SIZE = 1 + 6 + 8 + 6 + 5 + 8 + 8 + 10 + 12 + 14 + 12;
         private const uint32 NAME_TEXT = 1;
-        private const uint32 NAME_RODATA = 7;
-        private const uint32 NAME_DATA = 15;
-        private const uint32 NAME_BSS = 21;
-        private const uint32 NAME_SYMTAB = 26;
-        private const uint32 NAME_STRTAB = 34;
-        private const uint32 NAME_SHSTRTAB = 42;
-        private const uint32 NAME_DEBUG_LINE = 52;
-        private const uint32 NAME_DEBUG_ABBREV = 64;
-        private const uint32 NAME_DEBUG_INFO = 78;
+        private const uint32 NAME_RODATA = NAME_TEXT + 6;
+        private const uint32 NAME_DATA = NAME_RODATA + 8;
+        private const uint32 NAME_BSS = NAME_DATA + 6;
+        private const uint32 NAME_SYMTAB = NAME_BSS + 5;
+        private const uint32 NAME_STRTAB = NAME_SYMTAB + 8;
+        private const uint32 NAME_SHSTRTAB = NAME_STRTAB + 8;
+        private const uint32 NAME_DEBUG_LINE = NAME_SHSTRTAB + 10;
+        private const uint32 NAME_DEBUG_ABBREV = NAME_DEBUG_LINE + 12;
+        private const uint32 NAME_DEBUG_INFO = NAME_DEBUG_ABBREV + 14;
+        private const int SHSTRTAB_SIZE = 1 + 6 + 8 + 6 + 5 + 8 + 8 + 10 + 12 + 14 + 12;
 
         private static int strtab_size (GenericArray<Symbol> symbols) {
             var size = 1;  // leading NUL

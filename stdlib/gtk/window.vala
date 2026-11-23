@@ -7,7 +7,7 @@ namespace Gtk {
 
     private bool gtk_running = false;
 
-    public void init (string[] args) {
+    public void init (string[]? args = null) {
         gtk_running = true;
     }
 
@@ -22,38 +22,117 @@ namespace Gtk {
     public class GtkWindow : Widget {
         public string title = "PlanetOS";
         public Widget? child = null;
+        public Widget? titlebar = null;
+        public bool resizable = true;
+        public bool decorated = true;
+        private int default_w = 640;
+        private int default_h = 420;
         private Window? gdk_win = null;
         private Context? cr = null;
         private int cur_mx = -1;
         private int cur_my = -1;
 
+        public signal bool close_request ();
+
         public GtkWindow (int w = 640, int h = 420) {
-            width = (w < 64) ? 64 : w;
-            height = (h < 64) ? 64 : h;
+            default_w = (w < 64) ? 64 : w;
+            default_h = (h < 64) ? 64 : h;
+            width = default_w;
+            height = default_h;
         }
 
         ~GtkWindow () {
+            destroy ();
+        }
+
+        public void set_title (string? t) {
+            string nt = (t != null) ? t : "";
+            if (nt == title)
+                return;
+            title = nt;
+            damage_box (0, 0, width, 38);
+        }
+
+        public string get_title () {
+            return title;
+        }
+
+        public void set_default_size (int w, int h) {
+            default_w = (w < 64) ? 64 : w;
+            default_h = (h < 64) ? 64 : h;
+            width = default_w;
+            height = default_h;
+        }
+
+        public void get_default_size (out int w, out int h) {
+            w = default_w;
+            h = default_h;
+        }
+
+        public void set_resizable (bool r) { resizable = r; }
+        public bool get_resizable () { return resizable; }
+        public void set_decorated (bool d) {
+            if (decorated != d) {
+                decorated = d;
+                damage_self ();
+            }
+        }
+        public bool get_decorated () { return decorated; }
+
+        public void set_titlebar (Widget? tb) {
+            if (titlebar != null)
+                titlebar.unparent ();
+            titlebar = tb;
+            if (titlebar != null)
+                titlebar.set_parent (this);
+            damage_box (0, 0, width, 38);
+        }
+
+        public Widget? get_titlebar () {
+            return titlebar;
+        }
+
+        public void add (Widget w) {
+            set_child (w);
+        }
+
+        public void set_child (Widget? w) {
+            if (child != null)
+                child.unparent ();
+            child = w;
+            if (child != null)
+                child.set_parent (this);
+        }
+
+        public Widget? get_child () {
+            return child;
+        }
+
+        public void present () {
+            show_all ();
+        }
+
+        public void close () {
+            if (close_request ())
+                return;
+            destroy ();
+            main_quit ();
+        }
+
+        public void destroy () {
+            if (child != null) {
+                child.unparent ();
+                child = null;
+            }
+            if (titlebar != null) {
+                titlebar.unparent ();
+                titlebar = null;
+            }
             if (gdk_win != null) {
                 gdk_win.close ();
                 gdk_win = null;
             }
-        }
-
-        public void set_title (string t) {
-            title = t;
-        }
-
-        public void set_default_size (int w, int h) {
-            width = (w < 64) ? 64 : w;
-            height = (h < 64) ? 64 : h;
-        }
-
-        public void add (Widget w) {
-            child = w;
-        }
-
-        public void set_child (Widget? w) {
-            child = w;
+            cr = null;
         }
 
         public bool show_all () {
@@ -68,13 +147,21 @@ namespace Gtk {
                 height = gdk_win.height;
                 cr = gdk_win.create_cairo_context ();
             }
+            int top_y = decorated ? 56 : 16;
+            if (titlebar != null)
+                titlebar.allocate (0, 0, width, 38);
             if (child != null) {
                 int cw = (width > 40) ? (width - 40) : 0;
-                int ch = (height > 76) ? (height - 76) : 0;
-                child.allocate (20, 56, cw, ch);
+                int ch = (height > top_y + 20) ? (height - top_y - 20) : 0;
+                child.allocate (20, top_y, cw, ch);
             }
             redraw ();
             return true;
+        }
+
+        public override void gather_damage () {
+            hoist_child_damage (titlebar);
+            hoist_child_damage (child);
         }
 
         public void redraw () {
@@ -84,20 +171,18 @@ namespace Gtk {
             gdk_win.present ();
             // A full repaint already covers anything a widget queued while it
             // changed, so drop that damage instead of repainting it again.
-            if (child != null) {
-                child.gather_damage ();
-                child.clear_damage ();
-            }
+            gather_damage ();
+            clear_damage ();
         }
 
         // Repaints and publishes every pending rectangle (at most four, the
         // protocol ceiling). Distant changes stay separate instead of collapsing
         // into one bounding box that would repaint everything in between.
         private void redraw_damage () {
-            if (child == null || cr == null || gdk_win == null || !gdk_win.is_valid ())
+            if (cr == null || gdk_win == null || !gdk_win.is_valid ())
                 return;
-            child.gather_damage ();
-            int n = child.damage_rect_count ();
+            gather_damage ();
+            int n = damage_rect_count ();
             if (n <= 0)
                 return;
             int[] xs = new int[n];
@@ -105,8 +190,8 @@ namespace Gtk {
             int[] ws = new int[n];
             int[] hs = new int[n];
             for (int i = 0; i < n; i++)
-                child.damage_rect_at (i, out xs[i], out ys[i], out ws[i], out hs[i]);
-            child.clear_damage ();
+                damage_rect_at (i, out xs[i], out ys[i], out ws[i], out hs[i]);
+            clear_damage ();
             for (int i = 0; i < n; i++) {
                 cr.save ();
                 cr.rectangle ((double) xs[i], (double) ys[i], (double) ws[i], (double) hs[i]);
@@ -140,15 +225,21 @@ namespace Gtk {
             cr.set_source_rgb (0.094, 0.125, 0.157);
             cr.paint ();
 
-            // Minimalist headerbar (Elevated Surface #212B36 -> Slate Atmosphere #182028)
-            cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.129, 0.169, 0.212, 0.094, 0.125, 0.157);
-            // Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
-            cr.rectangle (0.0, 38.0, (double) width, 1.0);
-            cr.fill ();
-            // Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
-            TextHelper.draw_text (cr, title, 14, 10, 16.0);
+            if (decorated) {
+                if (titlebar != null) {
+                    titlebar.draw (cr);
+                } else {
+                    // Minimalist headerbar (Elevated Surface #212B36 -> Slate Atmosphere #182028)
+                    cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.129, 0.169, 0.212, 0.094, 0.125, 0.157);
+                    // Stratosphere Line (#26323F)
+                    cr.set_source_rgb (0.149, 0.196, 0.247);
+                    cr.rectangle (0.0, 38.0, (double) width, 1.0);
+                    cr.fill ();
+                    // Lunar White (#F0F4F8)
+                    cr.set_source_rgb (0.941, 0.957, 0.973);
+                    TextHelper.draw_text (cr, title, 14, 10, 16.0);
+                }
+            }
 
             if (child != null)
                 child.draw (cr);
@@ -241,11 +332,8 @@ namespace Gtk {
                 }
                 if (!gtk_running)
                     break;
-                int dn = 0;
-                if (child != null) {
-                    child.gather_damage ();
-                    dn = child.damage_rect_count ();
-                }
+                gather_damage ();
+                int dn = damage_rect_count ();
                 if (dn > 0)
                     redraw_damage ();
                 else if (dirty)
@@ -271,27 +359,60 @@ namespace Gtk {
 
     public class GtkApplication : Object {
         public string application_id;
-        private GtkWindow? active_win = null;
+        private GenericArray<GtkWindow> windows;
 
         public signal void activate ();
 
         public GtkApplication (string app_id = "org.planetos.App") {
             application_id = app_id;
+            windows = new GenericArray<GtkWindow> ();
+        }
+
+        public string get_application_id () {
+            return application_id;
+        }
+
+        public void set_application_id (string app_id) {
+            application_id = app_id;
         }
 
         public void add_window (GtkWindow w) {
-            active_win = w;
+            for (int i = 0; i < windows.length; i++) {
+                if (windows[i] == w)
+                    return;
+            }
+            windows.add (w);
+        }
+
+        public void remove_window (GtkWindow w) {
+            for (int i = 0; i < windows.length; i++) {
+                if (windows[i] == w) {
+                    windows.remove_index (i);
+                    return;
+                }
+            }
+        }
+
+        public GenericArray<GtkWindow> get_windows () {
+            return windows;
         }
 
         public GtkWindow? get_active_window () {
-            return active_win;
+            if (windows.length == 0)
+                return null;
+            return windows[windows.length - 1];
         }
 
-        public int run (string[] args) {
+        public void quit () {
+            main_quit ();
+        }
+
+        public int run (string[]? args = null) {
             init (args);
             activate ();
-            if (active_win != null)
-                active_win.run (false);
+            var win = get_active_window ();
+            if (win != null)
+                win.run (false);
             return 0;
         }
     }

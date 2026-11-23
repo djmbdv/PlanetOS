@@ -6,6 +6,7 @@ namespace Gtk {
     public class Box : Widget {
         public Orientation orientation = Orientation.VERTICAL;
         public int spacing = 8;
+        public bool homogeneous = false;
         public GenericArray<Widget> children;
         private GenericArray<bool> expands;
         private GenericArray<bool> fills;
@@ -20,20 +21,115 @@ namespace Gtk {
             paddings = new GenericArray<int> ();
         }
 
+        public void set_orientation (Orientation orient) {
+            if (orientation != orient) {
+                orientation = orient;
+                damage_self ();
+            }
+        }
+
+        public Orientation get_orientation () { return orientation; }
+
+        public void set_spacing (int sp) {
+            int ns = (sp < 0) ? 0 : sp;
+            if (ns != spacing) {
+                spacing = ns;
+                damage_self ();
+            }
+        }
+
+        public int get_spacing () { return spacing; }
+
+        public void set_homogeneous (bool h) {
+            if (homogeneous != h) {
+                homogeneous = h;
+                damage_self ();
+            }
+        }
+
+        public bool get_homogeneous () { return homogeneous; }
+
         public void pack_start (Widget child, bool expand = false, bool fill = true, int padding = 0) {
             children.add (child);
             expands.add (expand);
             fills.add (fill);
             paddings.add ((padding < 0) ? 0 : padding);
+            child.set_parent (this);
+        }
+
+        public void append (Widget child) {
+            pack_start (child, false, true, 0);
+        }
+
+        public void prepend (Widget child) {
+            var nc = new GenericArray<Widget> ();
+            var ne = new GenericArray<bool> ();
+            var nf = new GenericArray<bool> ();
+            var np = new GenericArray<int> ();
+            nc.add (child);
+            ne.add (false);
+            nf.add (true);
+            np.add (0);
+            for (int i = 0; i < children.length; i++) {
+                nc.add (children[i]);
+                ne.add (expands[i]);
+                nf.add (fills[i]);
+                np.add (paddings[i]);
+            }
+            children = nc;
+            expands = ne;
+            fills = nf;
+            paddings = np;
+            child.set_parent (this);
+        }
+
+        public void insert_child_after (Widget child, Widget? sibling) {
+            if (sibling == null) {
+                prepend (child);
+                return;
+            }
+            int idx = -1;
+            for (int i = 0; i < children.length; i++) {
+                if (children[i] == sibling) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0 || idx == children.length - 1) {
+                append (child);
+                return;
+            }
+            var nc = new GenericArray<Widget> ();
+            var ne = new GenericArray<bool> ();
+            var nf = new GenericArray<bool> ();
+            var np = new GenericArray<int> ();
+            for (int i = 0; i < children.length; i++) {
+                nc.add (children[i]);
+                ne.add (expands[i]);
+                nf.add (fills[i]);
+                np.add (paddings[i]);
+                if (i == idx) {
+                    nc.add (child);
+                    ne.add (false);
+                    nf.add (true);
+                    np.add (0);
+                }
+            }
+            children = nc;
+            expands = ne;
+            fills = nf;
+            paddings = np;
+            child.set_parent (this);
         }
 
         public void add (Widget child) {
-            pack_start (child, false, true, 0);
+            append (child);
         }
 
         public bool remove (Widget child) {
             for (int i = 0; i < children.length; i++) {
                 if (children[i] == child) {
+                    children[i].unparent ();
                     children.remove_index (i);
                     expands.remove_index (i);
                     fills.remove_index (i);
@@ -44,9 +140,17 @@ namespace Gtk {
             return false;
         }
 
+        private bool child_expands (int i) {
+            if (expands[i])
+                return true;
+            var c = children[i];
+            return (orientation == Orientation.VERTICAL) ? c.vexpand : c.hexpand;
+        }
+
         public override void measure (out int min_w, out int min_h) {
             int total_w = 0;
             int total_h = 0;
+            int max_main = 0;
             int vis_count = 0;
             for (int i = 0; i < children.length; i++) {
                 var c = children[i];
@@ -55,15 +159,27 @@ namespace Gtk {
                 int cw = 0;
                 int ch = 0;
                 c.measure (out cw, out ch);
+                cw += c.margin_start + c.margin_end;
+                ch += c.margin_top + c.margin_bottom;
                 int pad = paddings[i] * 2;
                 if (orientation == Orientation.VERTICAL) {
                     if (cw > total_w) total_w = cw;
-                    total_h += ch + pad;
+                    int mh = ch + pad;
+                    if (mh > max_main) max_main = mh;
+                    total_h += mh;
                 } else {
-                    total_w += cw + pad;
+                    int mw = cw + pad;
+                    if (mw > max_main) max_main = mw;
+                    total_w += mw;
                     if (ch > total_h) total_h = ch;
                 }
                 vis_count++;
+            }
+            if (homogeneous && vis_count > 0) {
+                if (orientation == Orientation.VERTICAL)
+                    total_h = max_main * vis_count;
+                else
+                    total_w = max_main * vis_count;
             }
             if (vis_count > 1) {
                 if (orientation == Orientation.VERTICAL)
@@ -81,42 +197,88 @@ namespace Gtk {
             width = (aw < 0) ? 0 : aw;
             height = (ah < 0) ? 0 : ah;
 
-            int min_w = 0;
-            int min_h = 0;
-            measure (out min_w, out min_h);
-            int exp_count = 0;
-            for (int i = 0; i < children.length; i++) {
-                if (children[i].visible && expands[i])
-                    exp_count++;
-            }
-            int extra = 0;
-            if (exp_count > 0) {
-                int avail = (orientation == Orientation.VERTICAL) ? (height - min_h) : (width - min_w);
-                if (avail > 0)
-                    extra = avail / exp_count;
-            }
+            int n = children.length;
+            if (n == 0)
+                return;
 
-            int cx = ax;
-            int cy = ay;
-            for (int i = 0; i < children.length; i++) {
+            // Single-pass measure cache: measure each visible child once.
+            int[] cws = new int[n];
+            int[] chs = new int[n];
+            int vis_count = 0;
+            int exp_count = 0;
+            int total_main = 0;
+            for (int i = 0; i < n; i++) {
                 var c = children[i];
                 if (!c.visible)
                     continue;
                 int cw = 0;
                 int ch = 0;
                 c.measure (out cw, out ch);
+                cws[i] = cw;
+                chs[i] = ch;
+                int pad = paddings[i] * 2;
+                if (orientation == Orientation.VERTICAL)
+                    total_main += ch + c.margin_top + c.margin_bottom + pad;
+                else
+                    total_main += cw + c.margin_start + c.margin_end + pad;
+                if (child_expands (i))
+                    exp_count++;
+                vis_count++;
+            }
+            if (vis_count > 1)
+                total_main += (vis_count - 1) * spacing;
+
+            int extra = 0;
+            int homo_slot = 0;
+            if (homogeneous && vis_count > 0) {
+                int avail_main = (orientation == Orientation.VERTICAL) ? height : width;
+                avail_main -= (vis_count - 1) * spacing;
+                if (avail_main < 0) avail_main = 0;
+                homo_slot = avail_main / vis_count;
+            } else if (exp_count > 0) {
+                int avail = (orientation == Orientation.VERTICAL) ? (height - total_main) : (width - total_main);
+                if (avail > 0)
+                    extra = avail / exp_count;
+            }
+
+            int cx = ax;
+            int cy = ay;
+            for (int i = 0; i < n; i++) {
+                var c = children[i];
+                if (!c.visible)
+                    continue;
+                int cw = cws[i];
+                int ch = chs[i];
                 int pad = paddings[i];
-                int bonus = expands[i] ? extra : 0;
+                int bonus = child_expands (i) ? extra : 0;
                 if (orientation == Orientation.VERTICAL) {
-                    int alloc_h = ch + bonus;
-                    int alloc_w = fills[i] ? width : ((cw < width) ? cw : width);
-                    c.allocate (cx, cy + pad, alloc_w, alloc_h);
-                    cy += alloc_h + pad * 2 + spacing;
+                    int slot_h = homogeneous ? homo_slot : (ch + c.margin_top + c.margin_bottom + bonus);
+                    int alloc_h = slot_h - c.margin_top - c.margin_bottom;
+                    if (alloc_h < 0) alloc_h = 0;
+                    int max_w = width - c.margin_start - c.margin_end;
+                    if (max_w < 0) max_w = 0;
+                    int alloc_w = (fills[i] && c.halign == Align.FILL) ? max_w : ((cw < max_w) ? cw : max_w);
+                    int ox = cx + c.margin_start;
+                    if (c.halign == Align.CENTER && max_w > alloc_w)
+                        ox += (max_w - alloc_w) / 2;
+                    else if (c.halign == Align.END && max_w > alloc_w)
+                        ox += (max_w - alloc_w);
+                    c.allocate (ox, cy + pad + c.margin_top, alloc_w, alloc_h);
+                    cy += slot_h + pad * 2 + spacing;
                 } else {
-                    int alloc_w = cw + bonus;
-                    int alloc_h = fills[i] ? height : ((ch < height) ? ch : height);
-                    c.allocate (cx + pad, cy, alloc_w, alloc_h);
-                    cx += alloc_w + pad * 2 + spacing;
+                    int slot_w = homogeneous ? homo_slot : (cw + c.margin_start + c.margin_end + bonus);
+                    int alloc_w = slot_w - c.margin_start - c.margin_end;
+                    if (alloc_w < 0) alloc_w = 0;
+                    int max_h = height - c.margin_top - c.margin_bottom;
+                    if (max_h < 0) max_h = 0;
+                    int alloc_h = (fills[i] && c.valign == Align.FILL) ? max_h : ((ch < max_h) ? ch : max_h);
+                    int oy = cy + c.margin_top;
+                    if (c.valign == Align.CENTER && max_h > alloc_h)
+                        oy += (max_h - alloc_h) / 2;
+                    else if (c.valign == Align.END && max_h > alloc_h)
+                        oy += (max_h - alloc_h);
+                    c.allocate (cx + pad + c.margin_start, oy, alloc_w, alloc_h);
+                    cx += slot_w + pad * 2 + spacing;
                 }
             }
         }
@@ -130,19 +292,8 @@ namespace Gtk {
         }
 
         public override void gather_damage () {
-            for (int i = 0; i < children.length; i++) {
-                children[i].gather_damage ();
-                int n = children[i].damage_rect_count ();
-                for (int j = 0; j < n; j++) {
-                    int x = 0;
-                    int y = 0;
-                    int w = 0;
-                    int h = 0;
-                    if (children[i].damage_rect_at (j, out x, out y, out w, out h))
-                        damage_box (x, y, w, h);
-                }
-                children[i].clear_damage ();
-            }
+            for (int i = 0; i < children.length; i++)
+                hoist_child_damage (children[i]);
         }
 
         public override bool handle_key (int key) {
@@ -211,17 +362,43 @@ namespace Gtk {
         public string? label = null;
         public Widget? child = null;
         public int pad = 8;
+        public float label_xalign = 0.0f;
 
         public Frame (string? title = null) {
             label = title;
         }
 
         public void set_child (Widget? w) {
+            if (child != null)
+                child.unparent ();
             child = w;
+            if (child != null)
+                child.set_parent (this);
+        }
+
+        public Widget? get_child () {
+            return child;
         }
 
         public void set_label (string? title) {
             label = title;
+            damage_self ();
+        }
+
+        public string? get_label () {
+            return label;
+        }
+
+        public void set_label_align (float xalign) {
+            float xa = (xalign < 0.0f) ? 0.0f : ((xalign > 1.0f) ? 1.0f : xalign);
+            if (xa != label_xalign) {
+                label_xalign = xa;
+                damage_self ();
+            }
+        }
+
+        public float get_label_align () {
+            return label_xalign;
         }
 
         private int header_height () {
@@ -276,19 +453,7 @@ namespace Gtk {
         }
 
         public override void gather_damage () {
-            if (child == null)
-                return;
-            child.gather_damage ();
-            int n = child.damage_rect_count ();
-            for (int j = 0; j < n; j++) {
-                int x = 0;
-                int y = 0;
-                int w = 0;
-                int h = 0;
-                if (child.damage_rect_at (j, out x, out y, out w, out h))
-                    damage_box (x, y, w, h);
-            }
-            child.clear_damage ();
+            hoist_child_damage (child);
         }
 
         public override bool handle_key (int key) {

@@ -84,7 +84,7 @@ namespace Planc {
 
     public sealed class Lexer : Object {
 
-        private string source;
+        private unowned string source;
         private int src_len = 0;
         private int pos = 0;
         private int line = 1;
@@ -95,8 +95,16 @@ namespace Planc {
             this.src_len = source.length;
         }
 
+        public void set_range (int start_pos, int end_pos, int start_line, int start_col) {
+            pos = start_pos;
+            src_len = (end_pos < source.length) ? end_pos : source.length;
+            line = start_line;
+            column = start_col;
+        }
+
         public Lexer clone_state () {
             var cp = new Lexer (source);
+            cp.src_len = src_len;
             cp.pos = pos;
             cp.line = line;
             cp.column = column;
@@ -120,6 +128,16 @@ namespace Planc {
 
         public bool at_eof () {
             return pos >= src_len;
+        }
+
+        private string slice (int start, int end) {
+            int len = end - start;
+            if (len <= 0)
+                return "";
+            var buf = new uint8[len];
+            for (int i = 0; i < len; i++)
+                buf[i] = source[start + i];
+            return Host.bytes_to_string (buf, len);
         }
 
         private uint8 current () {
@@ -418,7 +436,7 @@ namespace Planc {
                     advance ();
                 return Token () {
                     kind = TokenKind.IDENTIFIER,
-                    text = source[start:pos],
+                    text = slice (start, pos),
                     line = l, column = c
                 };
             }
@@ -472,7 +490,7 @@ namespace Planc {
                         advance ();
                     return Token () {
                         kind = TokenKind.IDENTIFIER,
-                        text = source[start:pos],
+                        text = slice (start, pos),
                         line = l, column = c,
                         is_escaped = true
                     };
@@ -547,7 +565,7 @@ namespace Planc {
             }
             advance ();
             return Token () {
-                kind = kind, text = source[pos - 1:pos], line = l, column = c
+                kind = kind, text = slice (pos - 1, pos), line = l, column = c
             };
         }
 
@@ -686,11 +704,11 @@ namespace Planc {
         }
 
         private Token two_char (TokenKind kind, int l, int c) {
-            return Token () { kind = kind, text = source[pos - 2:pos], line = l, column = c };
+            return Token () { kind = kind, text = slice (pos - 2, pos), line = l, column = c };
         }
 
         private Token three_char (TokenKind kind, int l, int c) {
-            return Token () { kind = kind, text = source[pos - 3:pos], line = l, column = c };
+            return Token () { kind = kind, text = slice (pos - 3, pos), line = l, column = c };
         }
 
         private void skip_whitespace () throws LexError {

@@ -12,7 +12,12 @@ namespace C2Vala {
         ADDR_TAKEN = 8,
         CAST_TO_OBJ = 16,
         WRITTEN = 32,
-        NULL_CHECKED = 64
+        NULL_CHECKED = 64,
+        STR_INIT = 128,
+        PTR_DIFF = 256,
+        ARROW_ACCESS = 512,
+        FIELD_REF_ASSIGN = 1024,
+        FIELD_REF_LOCAL_ADDR = 2048
     }
 
     public enum PtrKind {
@@ -20,7 +25,10 @@ namespace C2Vala {
         SINGLE_OBJ,
         SLICE_ARR,
         BYTE_BUF,
-        OPAQUE_PTR
+        OPAQUE_PTR,
+        DOUBLE_PTR,
+        CURSOR,
+        FIELD_REF
     }
 
     public class PtrInfo : Object {
@@ -47,6 +55,9 @@ namespace C2Vala {
 
         public string suffix () {
             switch (kind) {
+                case PtrKind.FIELD_REF:  return "_fref";
+                case PtrKind.CURSOR:     return "_cur";
+                case PtrKind.DOUBLE_PTR: return "_pp";
                 case PtrKind.OPAQUE_PTR: return "_ptr";
                 case PtrKind.BYTE_BUF:   return "_buf";
                 case PtrKind.SLICE_ARR:  return "_arr";
@@ -55,14 +66,26 @@ namespace C2Vala {
             }
         }
 
+        public bool is_written () {
+            return (usage & (int) PtrUsage.WRITTEN) != 0;
+        }
+
         public string helper_type () {
             switch (kind) {
+                case PtrKind.FIELD_REF:
+                    return "_c2v_fref<T>";
+                case PtrKind.CURSOR:
+                    return "(T[],int)";
+                case PtrKind.DOUBLE_PTR:
+                    return "C2VBox<T[]>";
                 case PtrKind.OPAQUE_PTR:
                     if (cast_targets.length == 1)
                         return @"$(cast_targets[0]).at";
                     return "C2VPtr";
                 case PtrKind.BYTE_BUF:
-                    return "uint8[]";
+                    if (!is_written () && (usage & (int) PtrUsage.STR_INIT) != 0)
+                        return "string.data";
+                    return is_written () ? "uint8[]" : "uint8[](ro)";
                 case PtrKind.SLICE_ARR:
                     return "T[]";
                 case PtrKind.SINGLE_OBJ:
@@ -84,6 +107,7 @@ namespace C2Vala {
             if ((usage & (int) PtrUsage.CAST_TO_OBJ) != 0) { if (!first) sb.append ("|"); sb.append ("CAST"); first = false; }
             if ((usage & (int) PtrUsage.WRITTEN) != 0) { if (!first) sb.append ("|"); sb.append ("WR"); first = false; }
             if ((usage & (int) PtrUsage.NULL_CHECKED) != 0) { if (!first) sb.append ("|"); sb.append ("NULL"); first = false; }
+            if ((usage & (int) PtrUsage.ARROW_ACCESS) != 0) { if (!first) sb.append ("|"); sb.append ("ARROW"); first = false; }
             if (first) sb.append ("PLAIN");
             if (cast_targets.length > 0) {
                 sb.append ("->");
@@ -116,6 +140,25 @@ namespace C2Vala {
             var pi = new PtrInfo (name, ctype, is_param);
             entries.add (pi);
             return pi;
+        }
+
+        public bool is_ptr_written (string name) {
+            var pi = find (name);
+            if (pi == null)
+                return true;
+            return pi.is_written ();
+        }
+
+        public bool is_field_ref (string name) {
+            var pi = find (name);
+            return pi != null && pi.kind == PtrKind.FIELD_REF;
+        }
+
+        public bool is_field_ref_native (string name) {
+            var pi = find (name);
+            return pi != null && pi.kind == PtrKind.FIELD_REF
+                && !pi.is_param
+                && (pi.usage & (int) PtrUsage.FIELD_REF_LOCAL_ADDR) == 0;
         }
 
         public string format_summary () {
@@ -156,12 +199,28 @@ namespace C2Vala {
                     pi.kind = PtrKind.SLICE_ARR;
                 return;
             }
+            if (pi.ctype.kind == CTypeKind.PTR && pi.ctype.inner != null) {
+                var inn = (CType) pi.ctype.inner;
+                if (inn.is_struct_ptr () && (pi.usage & (int) PtrUsage.FIELD_REF_ASSIGN) != 0
+                    && (pi.usage & (int) (PtrUsage.INDEXED | PtrUsage.ARITH)) == 0) {
+                    pi.kind = PtrKind.FIELD_REF;
+                    return;
+                }
+                if ((inn.kind == CTypeKind.PTR || inn.kind == CTypeKind.ARRAY) && !inn.is_char_ptr ()) {
+                    pi.kind = PtrKind.DOUBLE_PTR;
+                    return;
+                }
+            }
             if ((pi.usage & (int) PtrUsage.CAST_TO_OBJ) != 0 || (pi.ctype.kind == CTypeKind.PTR && pi.ctype.inner != null && ((CType) pi.ctype.inner).is_scalar ("void"))) {
                 pi.kind = PtrKind.OPAQUE_PTR;
                 return;
             }
             if (is_byte_ptr_ct (pi.ctype) && ((pi.usage & ((int) PtrUsage.INDEXED | (int) PtrUsage.ARITH | (int) PtrUsage.WRITTEN)) != 0 || pi.ctype.kind == CTypeKind.ARRAY)) {
                 pi.kind = PtrKind.BYTE_BUF;
+                return;
+            }
+            if ((pi.usage & (int) PtrUsage.PTR_DIFF) != 0 && (pi.usage & (int) PtrUsage.ARITH) != 0) {
+                pi.kind = PtrKind.CURSOR;
                 return;
             }
             if ((pi.usage & ((int) PtrUsage.INDEXED | (int) PtrUsage.ARITH)) != 0 || pi.ctype.kind == CTypeKind.ARRAY) {
@@ -174,8 +233,18 @@ namespace C2Vala {
         private static void scan_stmt (CStmt s, PtrAnalysis pa) {
             if (s is StmtDecl) {
                 var d = (StmtDecl) s;
-                if (d.ctype.kind == CTypeKind.PTR || d.ctype.kind == CTypeKind.ARRAY)
-                    pa.ensure (d.name, d.ctype, false);
+                if (d.ctype.kind == CTypeKind.PTR || d.ctype.kind == CTypeKind.ARRAY) {
+                    var pi = pa.ensure (d.name, d.ctype, false);
+                    if (d.init is ExprStr)
+                        pi.usage |= (int) PtrUsage.STR_INIT;
+                    if (d.init is ExprUnary && ((ExprUnary) d.init).op == "&") {
+                        var op = ((ExprUnary) d.init).operand;
+                        if (op is ExprMember || op is ExprIndex || op is ExprIdent)
+                            pi.usage |= (int) PtrUsage.FIELD_REF_ASSIGN;
+                        if (op is ExprIdent)
+                            pi.usage |= (int) PtrUsage.FIELD_REF_LOCAL_ADDR;
+                    }
+                }
                 if (d.init != null)
                     scan_expr ((CExpr) d.init, pa);
             } else if (s is StmtBlock) {
@@ -227,6 +296,10 @@ namespace C2Vala {
                 return ((ExprIdent) e).name;
             if (e is ExprCast)
                 return root_ident (((ExprCast) e).expr);
+            if (e is ExprUnary && ((ExprUnary) e).op == "*")
+                return root_ident (((ExprUnary) e).operand);
+            if (e is ExprIndex)
+                return root_ident (((ExprIndex) e).array);
             if (e is ExprBinary) {
                 var b = (ExprBinary) e;
                 if (b.op == "+" || b.op == "-")
@@ -256,7 +329,7 @@ namespace C2Vala {
                 if (m.is_arrow) {
                     string? nm = root_ident (m.obj);
                     if (nm != null)
-                        mark_usage (pa, (!) nm, PtrUsage.DEREF);
+                        mark_usage (pa, (!) nm, PtrUsage.DEREF | PtrUsage.ARROW_ACCESS);
                 }
                 scan_expr (m.obj, pa);
             } else if (e is ExprUnary) {
@@ -312,6 +385,13 @@ namespace C2Vala {
                         mark_usage (pa, (!) nm, PtrUsage.DEREF | PtrUsage.WRITTEN);
                 } else if ((a.op == "+=" || a.op == "-=") && a.lvalue is ExprIdent) {
                     mark_usage (pa, ((ExprIdent) a.lvalue).name, PtrUsage.ARITH);
+                } else if (a.op == "=" && a.lvalue is ExprIdent
+                           && a.rvalue is ExprUnary && ((ExprUnary) a.rvalue).op == "&") {
+                    var rop = ((ExprUnary) a.rvalue).operand;
+                    if (rop is ExprMember || rop is ExprIndex || rop is ExprIdent)
+                        mark_usage (pa, ((ExprIdent) a.lvalue).name, PtrUsage.FIELD_REF_ASSIGN);
+                    if (rop is ExprIdent)
+                        mark_usage (pa, ((ExprIdent) a.lvalue).name, PtrUsage.FIELD_REF_LOCAL_ADDR);
                 }
                 scan_expr (a.lvalue, pa);
                 scan_expr (a.rvalue, pa);
@@ -321,6 +401,13 @@ namespace C2Vala {
                     string? lnm = root_ident (b.left);
                     if (lnm != null)
                         mark_usage (pa, (!) lnm, PtrUsage.ARITH);
+                    if (b.op == "-") {
+                        string? rnm = root_ident (b.right);
+                        if (lnm != null && rnm != null) {
+                            mark_usage (pa, (!) lnm, PtrUsage.PTR_DIFF);
+                            mark_usage (pa, (!) rnm, PtrUsage.PTR_DIFF);
+                        }
+                    }
                 } else if (b.op == "==" || b.op == "!=") {
                     string? lnm = root_ident (b.left);
                     if (lnm != null)
@@ -335,6 +422,17 @@ namespace C2Vala {
                 scan_expr (t.if_false, pa);
             } else if (e is ExprCall) {
                 var cal = (ExprCall) e;
+                if (cal.callee is ExprIdent && cal.args.length >= 1) {
+                    string fn = ((ExprIdent) cal.callee).name;
+                    if (fn == "memcpy" || fn == "memmove" || fn == "memset"
+                        || fn == "strcpy" || fn == "strncpy" || fn == "strcat" || fn == "strncat"
+                        || fn == "sprintf" || fn == "snprintf" || fn == "fread" || fn == "fgets"
+                        || fn == "strftime") {
+                        string? nm = root_ident (cal.args[0]);
+                        if (nm != null)
+                            mark_usage (pa, (!) nm, PtrUsage.WRITTEN);
+                    }
+                }
                 scan_expr (cal.callee, pa);
                 for (int i = 0; i < cal.args.length; i++)
                     scan_expr (cal.args[i], pa);

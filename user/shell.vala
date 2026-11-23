@@ -569,11 +569,8 @@ namespace PlanetShell {
             return 0;
         }
         if (cmd == "env" || cmd == "set") {
-            var entries = env_map.entries ();
-            for (int i = 0; i < entries.size; i++) {
-                var e = entries.get (i);
+            foreach (var e in env_map.entries ())
                 print (@"$(e.key)=$(e.value)\n");
-            }
             return 0;
         }
         if (cmd == "pwd") {
@@ -1185,7 +1182,7 @@ namespace PlanetShell {
     int main (string[] args) {
         env_map = new HashMap<string, string> ();
         set_var ("SHELL", "shell.elf");
-        set_var ("PS1", "planet> ");
+        set_var ("PS1", "🪐 : ");
         set_var ("OS", Sys.getenv ("OS"));
         set_var ("ARCH", Sys.getenv ("ARCH"));
         set_var ("TARGET", Sys.getenv ("TARGET"));

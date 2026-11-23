@@ -664,6 +664,7 @@ namespace C2Vala {
                 while (at (TokKind.LBRACKET)) {
                     is_fp_arr = true;
                     advance ();
+                    skip_c99_arr_quals ();
                     if (!at (TokKind.RBRACKET))
                         fp_arr_len = parse_assign ();
                     expect (TokKind.RBRACKET, "']'");
@@ -697,15 +698,19 @@ namespace C2Vala {
                 name = advance ().text;
             }
 
-            // Array suffixes: [N]
+            // Array suffixes: [N][M] -> outer dimension N, inner dimension M
+            var arr_lens = new GenericArray<CExpr?> ();
             while (at (TokKind.LBRACKET)) {
                 advance ();
+                skip_c99_arr_quals ();
                 CExpr? len_e = null;
                 if (!at (TokKind.RBRACKET))
                     len_e = parse_assign ();
                 expect (TokKind.RBRACKET, "']'");
-                ctype = CType.make_array (ctype, len_e);
+                arr_lens.add (len_e);
             }
+            for (int ai = arr_lens.length - 1; ai >= 0; ai--)
+                ctype = CType.make_array (ctype, arr_lens[ai]);
 
             // Function parameter list: (params)
             if (at (TokKind.LPAREN)) {
@@ -1345,6 +1350,17 @@ namespace C2Vala {
             return parse_unary ();
         }
 
+        private void skip_c99_arr_quals () {
+            while (at (TokKind.IDENT)) {
+                string kw = cur ().text;
+                if (kw == "static" || kw == "const" || kw == "restrict"
+                    || kw == "__restrict" || kw == "__restrict__" || kw == "volatile")
+                    advance ();
+                else
+                    break;
+            }
+        }
+
         private CType parse_type_name () throws RefuseError {
             var base_t = parse_base_type (null);
             while (at (TokKind.STAR)) {
@@ -1366,6 +1382,7 @@ namespace C2Vala {
             }
             while (at (TokKind.LBRACKET)) {
                 advance ();
+                skip_c99_arr_quals ();
                 CExpr? len_e = null;
                 if (!at (TokKind.RBRACKET))
                     len_e = parse_assign ();

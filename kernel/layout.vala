@@ -16,8 +16,7 @@
 //     on a broken table. Regions are declared in ascending address order, so a
 //     single cursor proves both the ordering and the disjointness.
 //
-// planc folds `const` initialisers only when they are plain integer literals,
-// hence no BASE + OFFSET arithmetic below.
+// Constants below derive dependent addresses via compile-time const folding.
 
 namespace Planet.Kernel {
 
@@ -27,7 +26,6 @@ namespace Planet.Kernel {
         private static int layout_cursor = 0;
         // Window start (boot page tables) and end (past the FXSAVE area).
         public const int WINDOW_BASE = 0x100000;
-        public const int WINDOW_END = 0x129000;
 
         // The boot stack lives in [STACK_LIMIT, STACK_TOP) and grows down from
         // STACK_TOP, so nothing else may be placed above WINDOW_END.
@@ -43,35 +41,35 @@ namespace Planet.Kernel {
         public const int IMAGE_BASE = 0x400000;
 
         // --- boot asm owns these (addresses appear as literals) ------------
-        public const int PAGE_TABLES = 0x100000;   // PML4 / PDPT / PD / PD3
+        public const int PAGE_TABLES = WINDOW_BASE;   // PML4 / PDPT / PD / PD3
         public const int PAGE_TABLES_SIZE = 0x4000;
-        public const int PDPT = 0x101000;
-        public const int PD = 0x102000;            // 2 MiB PD entries the Vmm splits
-        public const int PD3 = 0x103000;           // Fb framebuffer PD
-        public const int GDT = 0x104000;
-        public const int GDTR = 0x104040;
-        public const int TSS = 0x104100;
-        public const int TSS_RSP0 = 0x104104;      // kernel rsp0, rewritten per exec
+        public const int PDPT = PAGE_TABLES + 0x1000;
+        public const int PD = PAGE_TABLES + 0x2000;   // 2 MiB PD entries the Vmm splits
+        public const int PD3 = PAGE_TABLES + 0x3000;  // Fb framebuffer PD
+        public const int GDT = PAGE_TABLES + PAGE_TABLES_SIZE;
+        public const int GDTR = GDT + 0x40;
+        public const int TSS = GDT + 0x100;
+        public const int TSS_RSP0 = TSS + 4;          // kernel rsp0, rewritten per exec
         public const int GDT_TSS_SIZE = 0x200;
         public const int IDT = 0x105000;
         public const int IDT_SIZE = 0x1000;
-        public const int TICK = 0x106000;          // Hal.tick counter
-        public const int IDTR = 0x106010;
-        public const int CPUID_BUF = 0x106020;     // cpuid vendor scratch
+        public const int TICK = IDT + IDT_SIZE;       // Hal.tick counter
+        public const int IDTR = TICK + 0x10;
+        public const int CPUID_BUF = TICK + 0x20;     // cpuid vendor scratch
         public const int CPU_VARS_SIZE = 0x40;
-        public const int MB_INFO = 0x106040;       // boot asm stores the EBX pointer here
+        public const int MB_INFO = TICK + CPU_VARS_SIZE; // boot asm stores the EBX pointer here
         public const int MB_INFO_SIZE = 0x8;
 
         // --- PS/2 input rings ---------------------------------------------
-        public const int KB_RING = 0x106100;       // 64 scancodes, mask 63
+        public const int KB_RING = 0x106100;          // 64 scancodes, mask 63
         public const int KB_RING_SIZE = 0x40;
-        public const int KB_HEAD = 0x106140;
-        public const int KB_TAIL = 0x106148;
+        public const int KB_HEAD = KB_RING + KB_RING_SIZE;
+        public const int KB_TAIL = KB_HEAD + 8;
         public const int KB_POS_SIZE = 0x10;
-        public const int MOUSE_RING = 0x106300;    // 256 bytes, mask 255
+        public const int MOUSE_RING = 0x106300;       // 256 bytes, mask 255
         public const int MOUSE_RING_SIZE = 0x100;
-        public const int MOUSE_HEAD = 0x106400;
-        public const int MOUSE_TAIL = 0x106408;
+        public const int MOUSE_HEAD = MOUSE_RING + MOUSE_RING_SIZE;
+        public const int MOUSE_TAIL = MOUSE_HEAD + 8;
         public const int MOUSE_POS_SIZE = 0x10;
 
         // --- nested SYS_EXEC bookkeeping ----------------------------------
@@ -79,8 +77,8 @@ namespace Planet.Kernel {
         // ElfLoader.exec_from_xfs keeps the level count inside this region.
         public const int EXEC_SLOTS = 0x106200;
         public const int EXEC_SLOT_SIZE = 0x20;
-        public const int EXEC_SLOTS_SIZE = 0x100;
         public const int EXEC_MAX_DEPTH = 8;
+        public const int EXEC_SLOTS_SIZE = EXEC_SLOT_SIZE * EXEC_MAX_DEPTH;
 
         // Byte buffer for SYS_READ_KEY when stdin is a ramfs file. It used to
         // sit at 0x106210, inside the first EXEC_SLOTS entry.
@@ -97,12 +95,13 @@ namespace Planet.Kernel {
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
         public const int RAMFS_TABLE_SIZE = 0x2000;
         public const int SCHED_CUR = 0x123FF0;     // current tid
-        public const int SCHED_ENABLED = 0x123FF8; // scheduler armed
+        public const int SCHED_ENABLED = SCHED_CUR + 8; // scheduler armed
         public const int SCHED_VARS_SIZE = 0x10;
         public const int TCB_TABLE = 0x124000;     // 16 tasks x 128 bytes
         public const int TCB_TABLE_SIZE = 0x800;
         public const int FXSAVE_AREA = 0x125000;   // 16 tasks x 1024 bytes (XSAVE x87+SSE+AVX)
         public const int FXSAVE_AREA_SIZE = 0x4000;
+        public const int WINDOW_END = FXSAVE_AREA + FXSAVE_AREA_SIZE;
 
         // --- legacy bootstrap stack used by ElfLoader.load_and_run --------
         public const int LEGACY_STACK = 0x1FE000;

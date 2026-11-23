@@ -362,6 +362,7 @@ namespace GioDemo {
 
     private int phase1_changed_events = 0;
     private bool phase1_fired = false;
+    private int phase1_zoom = 0;
 
     private void demo_phase1_models () {
         var kf = new KeyFile ();
@@ -400,6 +401,22 @@ namespace GioDemo {
         grp.add_action (act);
         grp.activate_action ("refresh", null);
         check ("simple-action", phase1_fired);
+
+        var st_act = new SimpleAction.stateful ("zoom", VariantType.INT32 (), Variant.new_int32 (100));
+        phase1_zoom = 0;
+        st_act.activate.connect ((s, p) => {
+            if (p != null) {
+                phase1_zoom = p.get_int32 ();
+                s.set_state (p);
+            }
+        });
+        grp.add_action (st_act);
+        grp.activate_action ("zoom", Variant.new_int32 (150));
+        bool zoom_ok = (phase1_zoom == 150);
+        Variant? st_cur = st_act.get_state ();
+        if (st_cur == null || st_cur.get_int32 () != 150)
+            zoom_ok = false;
+        check ("variant-action", zoom_ok);
 
         var ai = AppInfo.get_default_for_type ("text/plain");
         check ("appinfo-mime", ai != null && ai.get_commandline () == "wc.elf");

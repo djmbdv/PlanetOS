@@ -24,31 +24,42 @@ namespace Planc {
         public static bool recover;
         public static int limit;
         public static string current_file;
+        private static int[] diag_lock;
 
         public static void init (bool do_recover, int max_errors) {
             entries = new GenericArray<Diag> ();
             recover = do_recover;
             limit = (max_errors > 0) ? max_errors : 1;
             current_file = "";
+            diag_lock = new int[1];
         }
 
         public static int count () {
             if (entries == null)
                 return 0;
-            return entries.length;
+            Host.spin_lock (diag_lock);
+            int n = entries.length;
+            Host.spin_unlock (diag_lock);
+            return n;
         }
 
         public static bool is_full () {
             if (entries == null)
                 return false;
-            return entries.length >= limit;
+            Host.spin_lock (diag_lock);
+            bool full = entries.length >= limit;
+            Host.spin_unlock (diag_lock);
+            return full;
         }
 
         public static void add (string file, int line, int column, string kind, string message) {
             if (entries == null)
                 return;
-            if (entries.length >= limit)
+            Host.spin_lock (diag_lock);
+            if (entries.length >= limit) {
+                Host.spin_unlock (diag_lock);
                 return;
+            }
             var d = new Diag () {
                 file = file,
                 line = line,
@@ -57,6 +68,7 @@ namespace Planc {
                 message = strip_position (message)
             };
             entries.add (d);
+            Host.spin_unlock (diag_lock);
         }
 
         // Start of the " at L:C" suffix, or -1 when the message has none.

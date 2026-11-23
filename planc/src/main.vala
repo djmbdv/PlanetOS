@@ -11,6 +11,11 @@
 
 namespace Planc {
 
+    private sealed class ImportAddr : Object {
+        public uint64 addr;
+        public ImportAddr (uint64 a) { addr = a; }
+    }
+
     private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--error-limit N] [--no-error-recovery]";
 
     private static int parse_uint (string s) {
@@ -27,11 +32,53 @@ namespace Planc {
     private static GenericArray<string> mt_defines;
     private static string[] mt_src_out;
     private static string[] mt_src_err;
-    private static int mt_src_nw = 1;
+    private static int mt_src_next = 0;
+    private static int[] mt_src_lock;
+
+    private static GenericArray<ParseChunk> mt_parse_chunks;
+    private static GenericArray<string> mt_parse_sources;
+    private static GenericArray<string> mt_parse_paths;
+    private static Program mt_parse_types_prog;
+    private static bool mt_parse_recover = true;
+    private static int mt_parse_next = 0;
+    private static int[] mt_parse_lock;
+
+    private static void mt_parse_worker (int wid) {
+        int n = mt_parse_chunks.length;
+        while (true) {
+            Host.spin_lock (mt_parse_lock);
+            int ci = mt_parse_next++;
+            Host.spin_unlock (mt_parse_lock);
+            if (ci >= n)
+                break;
+            var ch = mt_parse_chunks[ci];
+            var out_prog = new Program ();
+            var parser = new Parser.for_chunk (
+                mt_parse_sources[ch.file_idx],
+                ch.start_pos, ch.end_pos, ch.start_line, ch.start_col,
+                mt_parse_types_prog, out_prog);
+            parser.recover = mt_parse_recover;
+            try {
+                parser.parse_unit ();
+            } catch (LexError e) {
+                ch.err_kind = "lexical error";
+                ch.err_msg = e.message;
+            } catch (ParseError e) {
+                ch.err_kind = "syntax error";
+                ch.err_msg = e.message;
+            }
+            ch.result = out_prog;
+        }
+    }
 
     private static void mt_preproc_worker (int wid) {
         int n = mt_src_paths.length;
-        for (int i = wid; i < n; i += mt_src_nw) {
+        while (true) {
+            Host.spin_lock (mt_src_lock);
+            int i = mt_src_next++;
+            Host.spin_unlock (mt_src_lock);
+            if (i >= n)
+                break;
             string p = mt_src_paths[i];
             string src;
             try {
@@ -70,6 +117,9 @@ namespace Planc {
         var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
         int emit_format = 0; // 0 = elf, 1 = plan, 2 = dlib
+        var import_dlibs = new GenericArray<string> ();
+        var import_map = new StrIndexMap ();
+        var import_addrs = new GenericArray<ImportAddr> ();
         uint64 image_base = 0;
 
         for (int i = 1; i < args.length; i++) {
@@ -136,6 +186,8 @@ namespace Planc {
                 emit_format = 1;
             } else if (a == "--format=dlib") {
                 emit_format = 2;
+            } else if (a.has_prefix ("--import-dlib=")) {
+                import_dlibs.add (a.substring (14));
             } else if (a.has_prefix ("--image-base=")) {
                 var val_str = a.substring (13);
                 uint64 parsed = 0;
@@ -182,11 +234,50 @@ namespace Planc {
             image_base = (uint64) 0x1800000;
         }
 
+        for (int di = 0; di < import_dlibs.length; di++) {
+            string dpath = import_dlibs[di];
+            uint8[] dbuf;
+            try {
+                dbuf = Host.read_bytes (dpath);
+            } catch (FileError e) {
+                Host.eprintln (@"planc: cannot read dlib '$dpath': $(e.message)");
+                return 1;
+            }
+            if (dbuf.length < 64 || dbuf[0] != 'P' || dbuf[1] != 'L' || dbuf[2] != 'A' || dbuf[3] != 'N') {
+                Host.eprintln (@"planc: '$dpath' is not a valid .dlib");
+                return 1;
+            }
+            int exp_count = (int) ((uint32) dbuf[28] | ((uint32) dbuf[29] << 8)
+                                 | ((uint32) dbuf[30] << 16) | ((uint32) dbuf[31] << 24));
+            uint64 meta_off = 0;
+            for (int k = 0; k < 8; k++)
+                meta_off |= ((uint64) dbuf[40 + k]) << (k * 8);
+            int pos = (int) meta_off;
+            for (int ei = 0; ei < exp_count && pos + 12 <= dbuf.length; ei++) {
+                uint64 saddr = 0;
+                for (int k = 0; k < 8; k++)
+                    saddr |= ((uint64) dbuf[pos + k]) << (k * 8);
+                int nlen = (int) ((uint32) dbuf[pos + 8] | ((uint32) dbuf[pos + 9] << 8)
+                                | ((uint32) dbuf[pos + 10] << 16) | ((uint32) dbuf[pos + 11] << 24));
+                pos += 12;
+                if (nlen <= 0 || pos + nlen > dbuf.length)
+                    break;
+                var nsl = new uint8[nlen];
+                for (int k = 0; k < nlen; k++)
+                    nsl[k] = dbuf[pos + k];
+                string sname = Host.bytes_to_string (nsl, nlen);
+                pos += nlen;
+                if (import_map.lookup (sname) < 0) {
+                    import_addrs.add (new ImportAddr (saddr));
+                    import_map.put (sname, import_addrs.length);
+                }
+            }
+        }
+
         var sources = new GenericArray<string> ();
         int ncpus = Host.cpu_count ();
-        if (source_paths.length >= 4 && ncpus > 1) {
+        if (source_paths.length >= 2 && ncpus > 1) {
             int nw = (ncpus < source_paths.length) ? ncpus : source_paths.length;
-            if (nw > 16) nw = 16;
             mt_src_paths = source_paths;
             mt_defines = defines;
             mt_src_out = new string[source_paths.length];
@@ -195,7 +286,8 @@ namespace Planc {
                 mt_src_out[i] = "";
                 mt_src_err[i] = "";
             }
-            mt_src_nw = nw;
+            mt_src_next = 0;
+            mt_src_lock = new int[1];
             int64[] handles = new int64[nw];
             for (int wi = 1; wi < nw; wi++)
                 handles[wi] = Host.thread_spawn (mt_preproc_worker, wi);
@@ -246,9 +338,48 @@ namespace Planc {
                 for (int k = pc; k < program.classes.length; k++)
                     program.classes[k].file = source_paths[i];
             }
+            program.sync_indexes ();
             for (int i = 0; i < sources.length; i++) {
                 current_parse_file = source_paths[i];
                 Diagnostics.current_file = source_paths[i];
+                if (ncpus > 1 && sources[i].length >= 131072) {
+                    var chunks = new GenericArray<ParseChunk> ();
+                    Parser.split_chunks (sources[i], i, 65536, chunks);
+                    if (chunks.length >= 2) {
+                        int nw = (ncpus < chunks.length) ? ncpus : chunks.length;
+                        mt_parse_chunks = chunks;
+                        mt_parse_sources = sources;
+                        mt_parse_paths = source_paths;
+                        mt_parse_types_prog = program;
+                        mt_parse_recover = error_recovery;
+                        mt_parse_next = 0;
+                        mt_parse_lock = new int[1];
+                        int64[] handles = new int64[nw];
+                        for (int wi = 1; wi < nw; wi++)
+                            handles[wi] = Host.thread_spawn (mt_parse_worker, wi);
+                        mt_parse_worker (0);
+                        for (int wi = 1; wi < nw; wi++)
+                            Host.thread_join (handles[wi]);
+
+                        for (int ci = 0; ci < chunks.length; ci++) {
+                            var ch = chunks[ci];
+                            if (ch.err_msg != "") {
+                                if (!error_recovery) {
+                                    if (ch.err_kind == "lexical error")
+                                        throw new LexError.UNEXPECTED_CHARACTER (ch.err_msg);
+                                    else
+                                        throw new ParseError.UNEXPECTED_TOKEN (ch.err_msg);
+                                }
+                                Diagnostics.add (source_paths[i], Diagnostics.pos_line (ch.err_msg),
+                                                 Diagnostics.pos_column (ch.err_msg), ch.err_kind, ch.err_msg);
+                            } else if (ch.result != null) {
+                                program.merge_from ((!) ch.result, source_paths[i]);
+                            }
+                        }
+                        program.sync_indexes ();
+                        continue;
+                    }
+                }
                 int pf = program.functions.length;
                 int pg = program.globals.length;
                 int pco = program.consts.length;
@@ -270,6 +401,7 @@ namespace Planc {
                     program.structs[k].file = source_paths[i];
                 for (int k = pc; k < program.classes.length; k++)
                     program.classes[k].file = source_paths[i];
+                program.sync_indexes ();
             }
             current_parse_file = "";
             for (int i = 0; i < program.classes.length; i++) {
@@ -348,6 +480,9 @@ namespace Planc {
         codegen.freestanding = freestanding;
         codegen.target_planetos = target_planetos;
         codegen.opt_level = opt_level;
+        if (import_addrs.length > 0)
+            codegen.imported_syms = import_map;
+        codegen.abi_stable_classes = (emit_format == 2) || (import_addrs.length > 0);
         try {
             codegen.generate (program);
         } catch (SemanticError e) {
@@ -405,6 +540,13 @@ namespace Planc {
             if (sym_i > 0) {
                 var s = codegen.symbols[sym_i - 1];
                 delta = (int64) s.offset - (int64) (patch.displacement + 4);
+            } else if (import_addrs.length > 0) {
+                var imp_i = import_map.lookup (patch.callee);
+                if (imp_i > 0) {
+                    uint64 imp_target = import_addrs[imp_i - 1].addr;
+                    uint64 call_next = layout.text_vaddr + (uint64) patch.displacement + 4;
+                    delta = (int64) imp_target - (int64) call_next;
+                }
             }
             if (delta < int32.MIN || delta > int32.MAX) {
                 Host.eprintln (@"planc: call target out of range for $(patch.callee) at 0x$(Host.hex_u32 ((uint32) patch.displacement))");
@@ -443,17 +585,17 @@ namespace Planc {
         foreach (var patch in codegen.emitter.rodata_patches) {
             uint64 target = 0;
             if (patch.is_text) {
-                bool found_sym = false;
-                foreach (var s in codegen.symbols) {
-                    if (s.name == patch.text_symbol) {
-                        target = layout.text_vaddr + (uint64) s.offset;
-                        found_sym = true;
-                        break;
+                var sym_i = sym_index.lookup (patch.text_symbol);
+                if (sym_i > 0) {
+                    target = layout.text_vaddr + (uint64) codegen.symbols[sym_i - 1].offset;
+                } else {
+                    var imp_i = (import_addrs.length > 0) ? import_map.lookup (patch.text_symbol) : -1;
+                    if (imp_i > 0) {
+                        target = import_addrs[imp_i - 1].addr;
+                    } else {
+                        Host.panic (@"unresolved rodata text target '$(patch.text_symbol)'");
+                        return 1;
                     }
-                }
-                if (!found_sym) {
-                    Host.panic (@"unresolved rodata text target '$(patch.text_symbol)'");
-                    return 1;
                 }
             } else {
                 target = layout.rodata_vaddr + (uint64) patch.rodata_target;

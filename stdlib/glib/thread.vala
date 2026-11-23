@@ -142,6 +142,17 @@ namespace GLib {
         }
     }
 
+    [AsmBody(@"
+        # __thread_trylock(lock_arr in rdi) -> al (bool)
+        xor %eax, %eax
+        mov $1, %edx
+        .byte 0xf0, 0x0f, 0xb1, 0x57, 0x10
+        .byte 0x0f, 0x94, 0xc0
+        movzbl %al, %eax
+        ret
+    ")]
+    private extern bool __thread_trylock (int[] lock_arr);
+
     public class RecMutex : Object {
         private int[] _lock = new int[1];
 
@@ -153,10 +164,7 @@ namespace GLib {
         }
 
         public bool trylock () {
-            if (_lock[0] != 0)
-                return false;
-            __planc_host_spin_lock (_lock);
-            return true;
+            return __thread_trylock (_lock);
         }
 
         public void unlock () {
@@ -178,12 +186,113 @@ namespace GLib {
             mutex.@lock ();
         }
 
+        public bool wait_until (RecMutex mutex, int64 end_time) {
+            int seen = _seq;
+            mutex.unlock ();
+            while (_seq == seen) {
+                int64 now_us = (int64) Sys.ticks () * 10000;
+                if (now_us >= end_time) {
+                    mutex.@lock ();
+                    return false;
+                }
+                Sys.yield_cpu ();
+            }
+            mutex.@lock ();
+            return true;
+        }
+
         public void signal () {
             _seq = _seq + 1;
         }
 
         public void broadcast () {
             _seq = _seq + 1;
+        }
+    }
+
+    public class Mutex : Object {
+        private int[] _lock = new int[1];
+
+        public Mutex () {
+        }
+
+        public void @lock () {
+            __planc_host_spin_lock (_lock);
+        }
+
+        public bool trylock () {
+            return __thread_trylock (_lock);
+        }
+
+        public void unlock () {
+            __planc_host_spin_unlock (_lock);
+        }
+    }
+
+    public class RWLock : Object {
+        private int[] _guard = new int[1];
+        private int _readers = 0;
+        private int _writers_waiting = 0;
+        private bool _writer = false;
+
+        public RWLock () {
+        }
+
+        public void reader_lock () {
+            while (true) {
+                __planc_host_spin_lock (_guard);
+                if (!_writer && _writers_waiting == 0) {
+                    _readers++;
+                    __planc_host_spin_unlock (_guard);
+                    return;
+                }
+                __planc_host_spin_unlock (_guard);
+                Sys.yield_cpu ();
+            }
+        }
+
+        public bool reader_trylock () {
+            __planc_host_spin_lock (_guard);
+            bool ok = (!_writer && _writers_waiting == 0);
+            if (ok)
+                _readers++;
+            __planc_host_spin_unlock (_guard);
+            return ok;
+        }
+
+        public void reader_unlock () {
+            __planc_host_spin_lock (_guard);
+            if (_readers > 0)
+                _readers--;
+            __planc_host_spin_unlock (_guard);
+        }
+
+        public void writer_lock () {
+            __planc_host_spin_lock (_guard);
+            _writers_waiting++;
+            while (_writer || _readers > 0) {
+                __planc_host_spin_unlock (_guard);
+                Sys.yield_cpu ();
+                __planc_host_spin_lock (_guard);
+            }
+            _writers_waiting--;
+            _writer = true;
+            __planc_host_spin_unlock (_guard);
+        }
+
+        public bool writer_trylock () {
+            __planc_host_spin_lock (_guard);
+            bool ok = (!_writer && _readers == 0);
+            if (ok)
+                _writer = true;
+            __planc_host_spin_unlock (_guard);
+            return ok;
+        }
+
+        public void writer_unlock () {
+            __planc_host_spin_lock (_guard);
+            _writer = false;
+            __planc_host_spin_unlock (_guard);
         }
     }
 }

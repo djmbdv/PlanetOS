@@ -4,6 +4,13 @@ using Planet;
 
 namespace Gio {
 
+    [AsmBody(@"
+        add $16, %rdi
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __gio_arr_addr (uint8[] a);
+
     public class InputStream : Object {
         protected bool closed = false;
         protected bool pending = false;
@@ -518,11 +525,18 @@ namespace Gio {
             data = new uint8[64];
         }
 
+        [AsmBody(@"
+            add $16, %rdi
+            mov %rdi, %rax
+            ret
+        ")]
+        private static extern int __mis_arr_addr (uint8[] a);
+
         public MemoryInputStream.from_data (uint8[] buf) {
             int cap = (buf.length > 64) ? buf.length : 64;
             data = new uint8[cap];
-            for (int i = 0; i < buf.length; i++)
-                data[i] = buf[i];
+            if (buf.length > 0)
+                Memory.copy (__mis_arr_addr (data), __mis_arr_addr (buf), (size_t) buf.length);
             used = buf.length;
         }
 
@@ -534,12 +548,11 @@ namespace Gio {
                 while (ncap < used + buf.length)
                     ncap = ncap * 2;
                 var ndata = new uint8[ncap];
-                for (int i = 0; i < used; i++)
-                    ndata[i] = data[i];
+                if (used > 0)
+                    Memory.copy (__mis_arr_addr (ndata), __mis_arr_addr (data), (size_t) used);
                 data = ndata;
             }
-            for (int i = 0; i < buf.length; i++)
-                data[used + i] = buf[i];
+            Memory.copy (__mis_arr_addr (data) + used, __mis_arr_addr (buf), (size_t) buf.length);
             used = used + buf.length;
         }
 
@@ -552,8 +565,8 @@ namespace Gio {
             if (avail <= 0 || buffer.length == 0)
                 return 0;
             int n = (buffer.length < avail) ? buffer.length : avail;
-            for (int i = 0; i < n; i++)
-                buffer[i] = data[pos + i];
+            if (n > 0)
+                Memory.copy (__mis_arr_addr (buffer), __mis_arr_addr (data) + pos, (size_t) n);
             pos = pos + n;
             return n;
         }
@@ -613,12 +626,11 @@ namespace Gio {
                 while (ncap < end_pos)
                     ncap = ncap * 2;
                 var ndata = new uint8[ncap];
-                for (int i = 0; i < used; i++)
-                    ndata[i] = data[i];
+                if (used > 0)
+                    Memory.copy (__gio_arr_addr (ndata), __gio_arr_addr (data), (size_t) used);
                 data = ndata;
             }
-            for (int i = 0; i < buffer.length; i++)
-                data[pos + i] = buffer[i];
+            Memory.copy (__gio_arr_addr (data) + pos, __gio_arr_addr (buffer), (size_t) buffer.length);
             pos = end_pos;
             if (pos > used)
                 used = pos;
@@ -627,9 +639,17 @@ namespace Gio {
 
         public uint8[] get_data () {
             var res = new uint8[used];
-            for (int i = 0; i < used; i++)
-                res[i] = data[i];
+            if (used > 0)
+                Memory.copy (__gio_arr_addr (res), __gio_arr_addr (data), (size_t) used);
             return res;
+        }
+
+        public GLib.Bytes steal_as_bytes () {
+            var res = get_data ();
+            data = new uint8[64];
+            used = 0;
+            pos = 0;
+            return new GLib.Bytes.take (res);
         }
 
         public uint8[] steal_data () {
@@ -883,8 +903,7 @@ namespace Gio {
                     }
                 }
             }
-            for (int i = 0; i < buffer.length; i++)
-                wbuf[wpos + i] = buffer[i];
+            Memory.copy (__gio_arr_addr (wbuf) + wpos, __gio_arr_addr (buffer), (size_t) buffer.length);
             wpos = wpos + buffer.length;
             return buffer.length;
         }
@@ -1015,8 +1034,8 @@ namespace Gio {
                         throw new IOError.FAILED ("Line or token exceeds maximum buffer size");
                     int ncap = cap * 2;
                     var nbuf = new uint8[ncap];
-                    for (int i = 0; i < used; i++)
-                        nbuf[i] = buf[i];
+                    if (used > 0)
+                        Memory.copy (__gio_arr_addr (nbuf), __gio_arr_addr (buf), (size_t) used);
                     buf = nbuf;
                     cap = ncap;
                 }
@@ -1072,8 +1091,8 @@ namespace Gio {
                         throw new IOError.FAILED ("Line or token exceeds maximum buffer size");
                     int ncap = cap * 2;
                     var nbuf = new uint8[ncap];
-                    for (int i = 0; i < used; i++)
-                        nbuf[i] = buf[i];
+                    if (used > 0)
+                        Memory.copy (__gio_arr_addr (nbuf), __gio_arr_addr (buf), (size_t) used);
                     buf = nbuf;
                     cap = ncap;
                 }

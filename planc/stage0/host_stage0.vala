@@ -33,6 +33,16 @@ namespace Planc {
             return contents;
         }
 
+        public static uint8[] read_bytes (string path) throws FileError {
+            uint8[] data;
+            try {
+                GLib.FileUtils.get_data (path, out data);
+            } catch (GLib.FileError e) {
+                throw new Planc.FileError.FAILED (e.message);
+            }
+            return data;
+        }
+
         public static void write_file (string path, uint8[] data) throws FileError {
             try {
                 GLib.FileUtils.set_contents (path, (string) data, (ssize_t) data.length);

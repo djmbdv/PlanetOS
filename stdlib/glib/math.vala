@@ -70,6 +70,11 @@ namespace GLib {
             return 0;
         }
 
+        public static int isfinite (double value) {
+            uint64 b = dbl_bits (value) & 0x7FFFFFFFFFFFFFFFUL;
+            return (b < 0x7FF0000000000000UL) ? 1 : 0;
+        }
+
         public static int isinff (float value) {
             return isinf ((double) value);
         }

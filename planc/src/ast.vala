@@ -20,6 +20,7 @@ namespace Planc {
         INTERFACE,
         ERROR,
         TYPE_PARAM,
+        POINTER,
         NULL;
 
         public string label () {
@@ -37,6 +38,7 @@ namespace Planc {
                 case INTERFACE:  return "interface";
                 case ERROR:      return "Error";
                 case TYPE_PARAM: return "type_param";
+                case POINTER:    return "pointer";
                 case NULL:       return "null";
                 default:         return "?";
             }
@@ -92,6 +94,17 @@ namespace Planc {
     public class IndexExpr : Expr {
         public Expr target { get; set; }
         public Expr index { get; set; }
+        public int temp_slot { get; set; default = -1; }
+    }
+
+    public class AddrOfExpr : Expr {
+        public Expr target { get; set; }
+        public int temp_slot { get; set; default = -1; }
+    }
+
+    public class DerefExpr : Expr {
+        public Expr target { get; set; }
+        public int temp_slot { get; set; default = -1; }
     }
 
     public class ArrayNewExpr : Expr {
@@ -278,6 +291,7 @@ namespace Planc {
         public string decl_type_name { get; set; default = ""; }
         public bool infer_type { get; set; default = false; }
         public bool is_weak { get; set; default = false; }
+        public bool is_unowned { get; set; default = false; }
         public string name { get; set; }
         public Expr? init { get; set; }     // null: zero/empty-initialized
     }
@@ -298,6 +312,12 @@ namespace Planc {
         public Expr target { get; set; }
         public Expr index { get; set; }
         public string op { get; set; default = "="; }   // = += -=
+        public Expr value { get; set; }
+    }
+
+    public class DerefAssignStatement : Statement {
+        public Expr target { get; set; }
+        public string op { get; set; default = "="; }
         public Expr value { get; set; }
     }
 
@@ -425,6 +445,7 @@ namespace Planc {
         public ValaType field_type { get; set; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
+        public bool is_unowned { get; set; default = false; }
         public string name { get; set; }
         public int line { get; set; }
         public int column { get; set; }
@@ -435,6 +456,7 @@ namespace Planc {
         public string file { get; set; default = ""; }
         public bool is_defined { get; set; default = false; }
         public bool is_union { get; set; default = false; }
+        public bool is_simple_type { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
         public bool is_delegate { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
@@ -470,6 +492,7 @@ namespace Planc {
         public ValaType param_type { get; set; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
+        public bool is_unowned { get; set; default = false; }
         public string name { get; set; }
         public bool unmanaged { get; set; default = false; }
         public bool is_ref { get; set; default = false; }
@@ -483,6 +506,7 @@ namespace Planc {
         public string name { get; set; }
         public string file { get; set; default = ""; }
         public bool is_compact_free { get; set; default = false; }
+        public bool is_arena { get; set; default = false; }
         public bool is_varargs { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
         public bool is_generic_template { get; set; default = false; }
@@ -558,6 +582,7 @@ namespace Planc {
         public ValaType field_type { get; set; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
+        public bool is_unowned { get; set; default = false; }
         public bool is_static { get; set; default = false; }
         public string name { get; set; }
         public Expr? init { get; set; }
@@ -574,6 +599,7 @@ namespace Planc {
         public bool is_compact { get; set; default = false; }
         public bool is_defined { get; set; default = false; }
         public bool is_union { get; set; default = false; }
+        public bool is_simple_type { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
         public GenericArray<string> iface_names { get; private set; }
@@ -641,6 +667,7 @@ namespace Planc {
         public string file { get; set; default = ""; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
+        public bool is_unowned { get; set; default = false; }
         public string name { get; set; }
         public string owner_type { get; set; default = ""; }
         public int64 int_value { get; set; }
@@ -862,6 +889,14 @@ namespace Planc {
         private int iface_idx_len = 0;
         private StrIndexMap inst_idx = new StrIndexMap ();
         private int inst_idx_len = 0;
+        private StrIndexMap del_idx = new StrIndexMap ();
+        private int del_idx_len = 0;
+        private StrIndexMap err_idx = new StrIndexMap ();
+        private int err_idx_len = 0;
+        private StrIndexMap const_idx = new StrIndexMap ();
+        private int const_idx_len = 0;
+        private StrIndexMap ns_idx = new StrIndexMap ();
+        private int ns_idx_len = 0;
         public GenericArray<Function> functions { get; private set; }
         public GenericArray<GlobalVar> globals { get; private set; }
         public GenericArray<ConstDecl> consts { get; private set; }
@@ -893,11 +928,12 @@ namespace Planc {
         }
 
         public unowned ErrorDomainDecl? find_error_domain (string name) {
-            foreach (unowned var d in error_domains) {
-                if (d.name == name)
-                    return d;
+            while (err_idx_len < error_domains.length) {
+                err_idx.put (error_domains[err_idx_len].name, err_idx_len);
+                err_idx_len++;
             }
-            return null;
+            int i = err_idx.lookup (name);
+            return (i >= 0) ? error_domains[i] : null;
         }
 
         public unowned InterfaceDecl? find_interface (string name) {
@@ -910,12 +946,13 @@ namespace Planc {
         }
 
         public unowned DelegateDecl? find_delegate (string name) {
-            var key = name.has_suffix ("?") ? name.substring (0, name.length - 1) : name;
-            foreach (unowned var d in delegates) {
-                if (d.name == key)
-                    return d;
+            while (del_idx_len < delegates.length) {
+                del_idx.put (delegates[del_idx_len].name, del_idx_len);
+                del_idx_len++;
             }
-            return null;
+            var key = name.has_suffix ("?") ? name.substring (0, name.length - 1) : name;
+            int i = del_idx.lookup (key);
+            return (i >= 0) ? delegates[i] : null;
         }
 
         public void register_delegate_struct (string name) {
@@ -940,11 +977,13 @@ namespace Planc {
         }
 
         public unowned ConstDecl? find_const (string owner, string cname) {
-            foreach (unowned var c in consts) {
-                if (c.owner_type == owner && c.name == cname)
-                    return c;
+            while (const_idx_len < consts.length) {
+                var c = consts[const_idx_len];
+                const_idx.put (@"$(c.owner_type)::$(c.name)", const_idx_len);
+                const_idx_len++;
             }
-            return null;
+            int i = const_idx.lookup (@"$owner::$cname");
+            return (i >= 0) ? consts[i] : null;
         }
 
         public unowned Function? find (string name) {
@@ -982,6 +1021,217 @@ namespace Planc {
             }
             int i = class_idx.lookup (name);
             return (i >= 0) ? classes[i] : null;
+        }
+
+        public void sync_indexes () {
+            while (iface_idx_len < interfaces.length) {
+                iface_idx.put (interfaces[iface_idx_len].name, iface_idx_len);
+                iface_idx_len++;
+            }
+            while (fn_idx_len < functions.length) {
+                fn_idx.put (functions[fn_idx_len].name, fn_idx_len);
+                fn_idx_len++;
+            }
+            while (enum_idx_len < enums.length) {
+                enum_idx.put (enums[enum_idx_len].name, enum_idx_len);
+                enum_idx_len++;
+            }
+            while (struct_idx_len < structs.length) {
+                struct_idx.put (structs[struct_idx_len].name, struct_idx_len);
+                struct_idx_len++;
+            }
+            while (class_idx_len < classes.length) {
+                class_idx.put (classes[class_idx_len].name, class_idx_len);
+                class_idx_len++;
+            }
+            while (inst_idx_len < instantiations.length) {
+                inst_idx.put (instantiations[inst_idx_len].mangled_name, inst_idx_len);
+                inst_idx_len++;
+            }
+            while (del_idx_len < delegates.length) {
+                del_idx.put (delegates[del_idx_len].name, del_idx_len);
+                del_idx_len++;
+            }
+            while (err_idx_len < error_domains.length) {
+                err_idx.put (error_domains[err_idx_len].name, err_idx_len);
+                err_idx_len++;
+            }
+            while (const_idx_len < consts.length) {
+                var c = consts[const_idx_len];
+                const_idx.put (@"$(c.owner_type)::$(c.name)", const_idx_len);
+                const_idx_len++;
+            }
+            while (ns_idx_len < namespaces.length) {
+                ns_idx.put (namespaces[ns_idx_len], ns_idx_len);
+                ns_idx_len++;
+            }
+        }
+
+        public void merge_from (Program chunk, string file_path) {
+            for (int i = 0; i < chunk.functions.length; i++) {
+                var fn = chunk.functions[i];
+                if (fn.file == "") fn.file = file_path;
+                functions.add (fn);
+            }
+            for (int i = 0; i < chunk.globals.length; i++) {
+                var g = chunk.globals[i];
+                if (g.file == "") g.file = file_path;
+                globals.add (g);
+            }
+            for (int i = 0; i < chunk.consts.length; i++) {
+                var c = chunk.consts[i];
+                if (c.file == "") c.file = file_path;
+                consts.add (c);
+            }
+            for (int i = 0; i < chunk.enums.length; i++) {
+                var e = chunk.enums[i];
+                unowned var ex = find_enum (e.name);
+                if (ex != null && !ex.is_defined) {
+                    ex.file = file_path;
+                    ex.is_defined = e.is_defined;
+                    ex.line = e.line;
+                    ex.column = e.column;
+                    for (int j = 0; j < e.members.length; j++) ex.members.add (e.members[j]);
+                    for (int j = 0; j < e.methods.length; j++) ex.methods.add (e.methods[j]);
+                } else if (ex == null) {
+                    if (e.file == "") e.file = file_path;
+                    enums.add (e);
+                }
+            }
+            for (int i = 0; i < chunk.structs.length; i++) {
+                var s = chunk.structs[i];
+                unowned var ex = find_struct (s.name);
+                if (ex != null && !ex.is_defined) {
+                    ex.file = file_path;
+                    ex.is_defined = s.is_defined;
+                    ex.is_union = s.is_union;
+                    ex.is_simple_type = s.is_simple_type;
+                    ex.is_generic_template = s.is_generic_template;
+                    ex.is_delegate = s.is_delegate;
+                    ex.line = s.line;
+                    ex.column = s.column;
+                    if (ex.type_params.length == 0) {
+                        for (int j = 0; j < s.type_params.length; j++) ex.type_params.add (s.type_params[j]);
+                    }
+                    for (int j = 0; j < s.fields.length; j++) ex.fields.add (s.fields[j]);
+                    for (int j = 0; j < s.methods.length; j++) ex.methods.add (s.methods[j]);
+                } else if (ex == null) {
+                    if (s.file == "") s.file = file_path;
+                    structs.add (s);
+                }
+            }
+            for (int i = 0; i < chunk.classes.length; i++) {
+                var c = chunk.classes[i];
+                unowned var ex = find_class (c.name);
+                if (ex != null && !ex.is_defined) {
+                    ex.file = file_path;
+                    ex.base_name = c.base_name;
+                    ex.is_abstract = c.is_abstract;
+                    ex.is_sealed = c.is_sealed;
+                    ex.is_compact = c.is_compact;
+                    ex.is_defined = c.is_defined;
+                    ex.is_union = c.is_union;
+                    ex.is_simple_type = c.is_simple_type;
+                    ex.is_generic_template = c.is_generic_template;
+                    ex.line = c.line;
+                    ex.column = c.column;
+                    if (ex.type_params.length == 0) {
+                        for (int j = 0; j < c.type_params.length; j++) ex.type_params.add (c.type_params[j]);
+                    }
+                    for (int j = 0; j < c.iface_names.length; j++) ex.iface_names.add (c.iface_names[j]);
+                    for (int j = 0; j < c.fields.length; j++) ex.fields.add (c.fields[j]);
+                    for (int j = 0; j < c.methods.length; j++) ex.methods.add (c.methods[j]);
+                    for (int j = 0; j < c.signals.length; j++) ex.signals.add (c.signals[j]);
+                    for (int j = 0; j < c.named_ctors.length; j++) ex.named_ctors.add (c.named_ctors[j]);
+                    ex.ctor = c.ctor;
+                    ex.dtor = c.dtor;
+                } else if (ex == null) {
+                    if (c.file == "") c.file = file_path;
+                    classes.add (c);
+                }
+            }
+            for (int i = 0; i < chunk.interfaces.length; i++) {
+                var it = chunk.interfaces[i];
+                unowned var ex = find_interface (it.name);
+                if (ex != null && !ex.is_defined) {
+                    ex.is_defined = it.is_defined;
+                    ex.is_generic_template = it.is_generic_template;
+                    ex.line = it.line;
+                    ex.column = it.column;
+                    if (ex.type_params.length == 0) {
+                        for (int j = 0; j < it.type_params.length; j++) ex.type_params.add (it.type_params[j]);
+                    }
+                    for (int j = 0; j < it.prereq_names.length; j++) ex.prereq_names.add (it.prereq_names[j]);
+                    for (int j = 0; j < it.methods.length; j++) ex.methods.add (it.methods[j]);
+                    for (int j = 0; j < it.signals.length; j++) ex.signals.add (it.signals[j]);
+                } else if (ex == null) {
+                    it.iface_id = interfaces.length + 1;
+                    interfaces.add (it);
+                }
+            }
+            for (int i = 0; i < chunk.delegates.length; i++) {
+                var d = chunk.delegates[i];
+                unowned var ex = find_delegate (d.name);
+                if (ex != null && !ex.is_defined) {
+                    ex.is_defined = d.is_defined;
+                    ex.is_generic_template = d.is_generic_template;
+                    ex.return_type = d.return_type;
+                    ex.return_type_name = d.return_type_name;
+                    ex.line = d.line;
+                    ex.column = d.column;
+                    if (ex.type_params.length == 0) {
+                        for (int j = 0; j < d.type_params.length; j++) ex.type_params.add (d.type_params[j]);
+                    }
+                    for (int j = 0; j < d.params.length; j++) ex.params.add (d.params[j]);
+                    for (int j = 0; j < d.throws_domains.length; j++) ex.throws_domains.add (d.throws_domains[j]);
+                } else if (ex == null) {
+                    delegates.add (d);
+                }
+            }
+            for (int i = 0; i < chunk.error_domains.length; i++) {
+                var ed = chunk.error_domains[i];
+                unowned var ex = find_error_domain (ed.name);
+                if (ex != null && !ex.is_defined) {
+                    ex.is_defined = ed.is_defined;
+                    ex.line = ed.line;
+                    ex.column = ed.column;
+                    for (int j = 0; j < ed.codes.length; j++) ex.codes.add (ed.codes[j]);
+                } else if (ex == null) {
+                    ed.domain_id = error_domains.length + 1;
+                    error_domains.add (ed);
+                }
+            }
+            for (int i = 0; i < chunk.instantiations.length; i++) {
+                var inst = chunk.instantiations[i];
+                if (find_instantiation_by_mangled (inst.mangled_name) == null)
+                    instantiations.add (inst);
+            }
+        }
+
+        public GenericArray<string> namespaces { get; set; default = new GenericArray<string> (); }
+
+        public void register_namespace (string ns) {
+            if (ns == "")
+                return;
+            string acc = "";
+            int start = 0;
+            for (int i = 0; i <= ns.length; i++) {
+                if (i == ns.length || ns[i] == '.') {
+                    var part = ns.substring (start, i - start);
+                    acc = (acc == "") ? part : @"$acc.$part";
+                    if (!has_namespace (acc))
+                        namespaces.add (acc);
+                    start = i + 1;
+                }
+            }
+        }
+
+        public bool has_namespace (string ns) {
+            while (ns_idx_len < namespaces.length) {
+                ns_idx.put (namespaces[ns_idx_len], ns_idx_len);
+                ns_idx_len++;
+            }
+            return ns_idx.lookup (ns) >= 0;
         }
 
         public unowned GenericInstantiation? find_instantiation_by_mangled (string mangled) {
@@ -1681,6 +1931,379 @@ namespace Planc {
             classes.add (cd);
         }
 
+        private void synthesize_glib_node (GenericInstantiation inst) {
+            string cn = inst.mangled_name;
+            if (find_class (cn) != null)
+                return;
+            var et = inst.arg_types[0];
+            var en = inst.arg_type_names[0];
+            string nq = cn + "?";
+
+            var cd = new ClassDecl () {
+                name = cn,
+                is_defined = true
+            };
+            cd.fields.add (new ClassField () { field_type = et, type_name = en, name = "data" });
+            cd.fields.add (new ClassField () { field_type = ValaType.CLASS, type_name = nq, name = "next" });
+            cd.fields.add (new ClassField () { field_type = ValaType.CLASS, type_name = nq, name = "prev", is_weak = true });
+            cd.fields.add (new ClassField () { field_type = ValaType.CLASS, type_name = nq, name = "parent", is_weak = true });
+            cd.fields.add (new ClassField () { field_type = ValaType.CLASS, type_name = nq, name = "children" });
+
+            var ctor = new Function () {
+                name = "__ctor",
+                return_type = ValaType.VOID,
+                is_ctor = true,
+                owner_class = cn
+            };
+            ctor.params.add (new Param () { param_type = et, type_name = en, name = "data" });
+            ctor.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" },
+                field_name = "data",
+                op = "=",
+                value = new VarRef () { name = "data" }
+            });
+            cd.ctor = ctor;
+
+            // append (Node<G> node) -> Node<G>
+            var append_m = new Function () {
+                name = "append",
+                return_type = ValaType.CLASS,
+                return_type_name = cn,
+                owner_class = cn
+            };
+            append_m.params.add (new Param () { param_type = ValaType.CLASS, type_name = cn, name = "node" });
+            append_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "parent", op = "=",
+                value = new VarRef () { name = "this" }
+            });
+            append_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "next", op = "=",
+                value = new NullLiteral ()
+            });
+            var app_if_then = new BlockStatement ();
+            app_if_then.statements.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "prev", op = "=",
+                value = new NullLiteral ()
+            });
+            app_if_then.statements.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" }, field_name = "children", op = "=",
+                value = new VarRef () { name = "node" }
+            });
+            app_if_then.statements.add (new ReturnStatement () { value = new VarRef () { name = "node" } });
+            append_m.body.add (new IfStatement () {
+                condition = new BinaryExpr () {
+                    op = "==",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" },
+                    right = new NullLiteral ()
+                },
+                then_body = app_if_then
+            });
+            append_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.CLASS, decl_type_name = nq, name = "cur",
+                init = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" }
+            });
+            var app_w_body = new BlockStatement ();
+            app_w_body.statements.add (new AssignStatement () {
+                name = "cur",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "next" }
+            });
+            append_m.body.add (new WhileStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "next" },
+                    right = new NullLiteral ()
+                },
+                body = app_w_body
+            });
+            append_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "cur" }, field_name = "next", op = "=",
+                value = new VarRef () { name = "node" }
+            });
+            append_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "prev", op = "=",
+                value = new VarRef () { name = "cur" }
+            });
+            append_m.body.add (new ReturnStatement () { value = new VarRef () { name = "node" } });
+            cd.methods.add (append_m);
+
+            // prepend (Node<G> node) -> Node<G>
+            var prepend_m = new Function () {
+                name = "prepend",
+                return_type = ValaType.CLASS,
+                return_type_name = cn,
+                owner_class = cn
+            };
+            prepend_m.params.add (new Param () { param_type = ValaType.CLASS, type_name = cn, name = "node" });
+            prepend_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "parent", op = "=",
+                value = new VarRef () { name = "this" }
+            });
+            prepend_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "prev", op = "=",
+                value = new NullLiteral ()
+            });
+            prepend_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "node" }, field_name = "next", op = "=",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" }
+            });
+            var pre_if_then = new BlockStatement ();
+            pre_if_then.statements.add (new FieldAssignStatement () {
+                target = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" },
+                field_name = "prev", op = "=",
+                value = new VarRef () { name = "node" }
+            });
+            prepend_m.body.add (new IfStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" },
+                    right = new NullLiteral ()
+                },
+                then_body = pre_if_then
+            });
+            prepend_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" }, field_name = "children", op = "=",
+                value = new VarRef () { name = "node" }
+            });
+            prepend_m.body.add (new ReturnStatement () { value = new VarRef () { name = "node" } });
+            cd.methods.add (prepend_m);
+
+            // n_children () -> uint
+            var nch_m = new Function () {
+                name = "n_children",
+                return_type = ValaType.INT,
+                return_type_name = "uint",
+                owner_class = cn
+            };
+            nch_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.INT, decl_type_name = "uint", name = "count",
+                init = new IntLiteral () { value = 0 }
+            });
+            nch_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.CLASS, decl_type_name = nq, name = "cur",
+                init = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" }
+            });
+            var nch_w = new BlockStatement ();
+            nch_w.statements.add (new AssignStatement () {
+                name = "count",
+                value = new BinaryExpr () { op = "+", left = new VarRef () { name = "count" }, right = new IntLiteral () { value = 1 } }
+            });
+            nch_w.statements.add (new AssignStatement () {
+                name = "cur",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "next" }
+            });
+            nch_m.body.add (new WhileStatement () {
+                condition = new BinaryExpr () { op = "!=", left = new VarRef () { name = "cur" }, right = new NullLiteral () },
+                body = nch_w
+            });
+            nch_m.body.add (new ReturnStatement () { value = new VarRef () { name = "count" } });
+            cd.methods.add (nch_m);
+
+            // nth_child (uint n) -> Node<G>?
+            var nth_m = new Function () {
+                name = "nth_child",
+                return_type = ValaType.CLASS,
+                return_type_name = nq,
+                owner_class = cn
+            };
+            nth_m.params.add (new Param () { param_type = ValaType.INT, type_name = "uint", name = "n" });
+            nth_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.INT, decl_type_name = "uint", name = "i",
+                init = new IntLiteral () { value = 0 }
+            });
+            nth_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.CLASS, decl_type_name = nq, name = "cur",
+                init = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" }
+            });
+            var nth_w = new BlockStatement ();
+            var nth_if = new BlockStatement ();
+            nth_if.statements.add (new ReturnStatement () { value = new VarRef () { name = "cur" } });
+            nth_w.statements.add (new IfStatement () {
+                condition = new BinaryExpr () { op = "==", left = new VarRef () { name = "i" }, right = new VarRef () { name = "n" } },
+                then_body = nth_if
+            });
+            nth_w.statements.add (new AssignStatement () {
+                name = "i",
+                value = new BinaryExpr () { op = "+", left = new VarRef () { name = "i" }, right = new IntLiteral () { value = 1 } }
+            });
+            nth_w.statements.add (new AssignStatement () {
+                name = "cur",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "next" }
+            });
+            nth_m.body.add (new WhileStatement () {
+                condition = new BinaryExpr () { op = "!=", left = new VarRef () { name = "cur" }, right = new NullLiteral () },
+                body = nth_w
+            });
+            nth_m.body.add (new ReturnStatement () { value = new NullLiteral () });
+            cd.methods.add (nth_m);
+
+            // first_child () -> Node<G>?
+            var first_m = new Function () {
+                name = "first_child",
+                return_type = ValaType.CLASS,
+                return_type_name = nq,
+                owner_class = cn
+            };
+            first_m.body.add (new ReturnStatement () {
+                value = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" }
+            });
+            cd.methods.add (first_m);
+
+            // last_child () -> Node<G>?
+            var last_m = new Function () {
+                name = "last_child",
+                return_type = ValaType.CLASS,
+                return_type_name = nq,
+                owner_class = cn
+            };
+            last_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.CLASS, decl_type_name = nq, name = "cur",
+                init = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "children" }
+            });
+            var lc_if = new BlockStatement ();
+            lc_if.statements.add (new ReturnStatement () { value = new NullLiteral () });
+            last_m.body.add (new IfStatement () {
+                condition = new BinaryExpr () { op = "==", left = new VarRef () { name = "cur" }, right = new NullLiteral () },
+                then_body = lc_if
+            });
+            var lc_w = new BlockStatement ();
+            lc_w.statements.add (new AssignStatement () {
+                name = "cur",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "next" }
+            });
+            last_m.body.add (new WhileStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "next" },
+                    right = new NullLiteral ()
+                },
+                body = lc_w
+            });
+            last_m.body.add (new ReturnStatement () { value = new VarRef () { name = "cur" } });
+            cd.methods.add (last_m);
+
+            // get_root () -> Node<G>
+            var root_m = new Function () {
+                name = "get_root",
+                return_type = ValaType.CLASS,
+                return_type_name = cn,
+                owner_class = cn
+            };
+            root_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.CLASS, decl_type_name = cn, name = "cur",
+                init = new VarRef () { name = "this" }
+            });
+            var rt_w = new BlockStatement ();
+            rt_w.statements.add (new AssignStatement () {
+                name = "cur",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "parent" }
+            });
+            root_m.body.add (new WhileStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "parent" },
+                    right = new NullLiteral ()
+                },
+                body = rt_w
+            });
+            root_m.body.add (new ReturnStatement () { value = new VarRef () { name = "cur" } });
+            cd.methods.add (root_m);
+
+            // depth () -> uint
+            var depth_m = new Function () {
+                name = "depth",
+                return_type = ValaType.INT,
+                return_type_name = "uint",
+                owner_class = cn
+            };
+            depth_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.INT, decl_type_name = "uint", name = "d",
+                init = new IntLiteral () { value = 1 }
+            });
+            depth_m.body.add (new VarDeclStatement () {
+                decl_type = ValaType.CLASS, decl_type_name = nq, name = "cur",
+                init = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "parent" }
+            });
+            var dp_w = new BlockStatement ();
+            dp_w.statements.add (new AssignStatement () {
+                name = "d",
+                value = new BinaryExpr () { op = "+", left = new VarRef () { name = "d" }, right = new IntLiteral () { value = 1 } }
+            });
+            dp_w.statements.add (new AssignStatement () {
+                name = "cur",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "cur" }, member = "parent" }
+            });
+            depth_m.body.add (new WhileStatement () {
+                condition = new BinaryExpr () { op = "!=", left = new VarRef () { name = "cur" }, right = new NullLiteral () },
+                body = dp_w
+            });
+            depth_m.body.add (new ReturnStatement () { value = new VarRef () { name = "d" } });
+            cd.methods.add (depth_m);
+
+            // unlink () -> void
+            var unlink_m = new Function () {
+                name = "unlink",
+                return_type = ValaType.VOID,
+                owner_class = cn
+            };
+            var ul_prev_then = new BlockStatement ();
+            ul_prev_then.statements.add (new FieldAssignStatement () {
+                target = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "prev" },
+                field_name = "next", op = "=",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "next" }
+            });
+            var ul_par_then = new BlockStatement ();
+            ul_par_then.statements.add (new FieldAssignStatement () {
+                target = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "parent" },
+                field_name = "children", op = "=",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "next" }
+            });
+            var ul_par_if = new IfStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "parent" },
+                    right = new NullLiteral ()
+                },
+                then_body = ul_par_then
+            };
+            var ul_else = new BlockStatement ();
+            ul_else.statements.add (ul_par_if);
+            unlink_m.body.add (new IfStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "prev" },
+                    right = new NullLiteral ()
+                },
+                then_body = ul_prev_then,
+                else_body = ul_else
+            });
+            var ul_next_then = new BlockStatement ();
+            ul_next_then.statements.add (new FieldAssignStatement () {
+                target = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "next" },
+                field_name = "prev", op = "=",
+                value = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "prev" }
+            });
+            unlink_m.body.add (new IfStatement () {
+                condition = new BinaryExpr () {
+                    op = "!=",
+                    left = new MemberAccessExpr () { target = new VarRef () { name = "this" }, member = "next" },
+                    right = new NullLiteral ()
+                },
+                then_body = ul_next_then
+            });
+            unlink_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" }, field_name = "parent", op = "=", value = new NullLiteral ()
+            });
+            unlink_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" }, field_name = "prev", op = "=", value = new NullLiteral ()
+            });
+            unlink_m.body.add (new FieldAssignStatement () {
+                target = new VarRef () { name = "this" }, field_name = "next", op = "=", value = new NullLiteral ()
+            });
+            cd.methods.add (unlink_m);
+
+            classes.add (cd);
+        }
+
         private void synthesize_generic_array (GenericInstantiation inst) {
             if (find_class (inst.mangled_name) != null)
                 return;
@@ -2016,6 +2639,11 @@ namespace Planc {
                         synthesize_channel (inst);
                     continue;
                 }
+                if (inst.template_name == "Node") {
+                    if (inst.arg_types.length == 1)
+                        synthesize_glib_node (inst);
+                    continue;
+                }
                 if (inst.is_delegate) {
                     unowned var tmpl_dd = find_delegate (inst.template_name);
                     if (tmpl_dd == null || tmpl_dd.type_params.length != inst.arg_types.length)
@@ -2178,6 +2806,7 @@ namespace Planc {
         public string name { get; set; }
         public int64 value { get; set; }
         public string str_value { get; set; default = ""; }
+        public Expr? init_expr { get; set; default = null; }
         public bool initialized { get; set; }   // false: zero (.bss) for int/bool/enum/struct, "" for string
         public int line { get; set; }
         public int column { get; set; }
@@ -2186,8 +2815,8 @@ namespace Planc {
     // Pure-integer IEEE-754 decimal-to-binary32/binary64 converter so float
     // literal bit patterns are deterministic across stage 0 and self-hosted stages.
     public sealed class Ieee754 : Object {
-        private const int64 LIMB_BASE = 268435456; // 2^28
         private const int LIMB_BITS = 28;
+        private const int64 LIMB_BASE = 1 << LIMB_BITS;
 
         private static int trim_len (int64[] a, int len) {
             while (len > 1 && a[len - 1] == 0)

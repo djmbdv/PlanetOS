@@ -444,6 +444,21 @@ namespace Planet.Kernel {
                 return 0;
             case 51: // SYS_GPU_3D_READBACK(ctx_id, res_id, width, height) -> 0 or -1
                 return VirtioGpu.transfer_from_host_3d (a0, a1, a2, a3) ? 0 : -1;
+            case 52: // SYS_PROTECT_USER_RO(vaddr, size) -> 0 or -1 (read-only .text/.rodata)
+                if (a0 < KernelLayout.RESERVED_END || a1 <= 0 || a1 > 0x800000 || a0 + a1 > 0x40000000)
+                    return -1;
+                int ucr3_52 = Sched.current_cr3 ();
+                if (ucr3_52 != 0)
+                    Vmm.map_user_range_ro (ucr3_52, a0, a1);
+                return 0;
+            case 53: // SYS_MAP_USER_RO_AT(vaddr, size) -> 0 or -1 (shared read-only .dlib mapping)
+                if (a0 < KernelLayout.RESERVED_END || a1 <= 0 || a1 > 0x800000 || a0 + a1 > 0x40000000)
+                    return -1;
+                int ucr3_53 = Sched.current_cr3 ();
+                Pmm.reserve_range (a0, a1);
+                if (ucr3_53 != 0)
+                    Vmm.map_user_range_ro (ucr3_53, a0, a1);
+                return 0;
             default:
                 return -1;
         }

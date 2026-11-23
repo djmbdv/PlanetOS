@@ -9,7 +9,8 @@ namespace Planc {
     private static GenericArray<string> mt_opt_owners;
     private static Program mt_opt_prog;
     private static int mt_opt_level = 0;
-    private static int mt_opt_nw = 1;
+    private static int mt_opt_next = 0;
+    private static int[] mt_opt_lock;
 
     public sealed class Optimizer : Object {
         private int level = 0;
@@ -24,7 +25,12 @@ namespace Planc {
             opt.level = mt_opt_level;
             opt.cur_prog = mt_opt_prog;
             int n = mt_opt_funcs.length;
-            for (int i = wid; i < n; i += mt_opt_nw) {
+            while (true) {
+                Host.spin_lock (mt_opt_lock);
+                int i = mt_opt_next++;
+                Host.spin_unlock (mt_opt_lock);
+                if (i >= n)
+                    break;
                 opt.cur_owner = mt_opt_owners[i];
                 opt.opt_func (mt_opt_funcs[i]);
             }
@@ -69,12 +75,12 @@ namespace Planc {
             int ncpus = Host.cpu_count ();
             if (funcs.length >= 16 && ncpus > 1) {
                 int nw = (ncpus < funcs.length) ? ncpus : funcs.length;
-                if (nw > 16) nw = 16;
                 mt_opt_funcs = funcs;
                 mt_opt_owners = owners;
                 mt_opt_prog = prog;
                 mt_opt_level = opt_level;
-                mt_opt_nw = nw;
+                mt_opt_next = 0;
+                mt_opt_lock = new int[1];
                 int64[] handles = new int64[nw];
                 for (int wi = 1; wi < nw; wi++)
                     handles[wi] = Host.thread_spawn (mt_opt_worker, wi);
@@ -152,11 +158,11 @@ namespace Planc {
         private static bool is_signed_64_int_name (string name) {
             return name == "" || name == "int" || name == "int64"
                 || name == "long" || name == "ssize_t"
-                || name == "intptr_t" || name == "ptrdiff_t";
+                || name == "intptr_t" || name == "intptr" || name == "ptrdiff_t";
         }
 
         private static bool is_unsigned_64_int_name (string name) {
-            return name == "uint64" || name == "ulong" || name == "size_t" || name == "uintptr_t";
+            return name == "uint64" || name == "ulong" || name == "size_t" || name == "uintptr_t" || name == "uintptr";
         }
 
         private static Expr? const_to_literal (ConstDecl cd, int line, int col) {

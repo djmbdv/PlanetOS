@@ -10,9 +10,10 @@
 *.o
 *.a
 *.so
+*.zip
+*.exe
 /build/
 /out/
-
 # Editor and OS files
 *~
 *.swp

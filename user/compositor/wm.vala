@@ -929,6 +929,7 @@ namespace Wm {
             int seq = Sys.peek32 (shm + SharedSurface.OFF_SEQ);
             if (seq == 0 || seq == w.ext_seq)
                 return;
+            __comp_mfence ();
             w.ext_seq = seq;
             int n = Sys.peek32 (shm + SharedSurface.OFF_DCOUNT);
             if (n <= 0 || n > SharedSurface.MAX_RECTS)

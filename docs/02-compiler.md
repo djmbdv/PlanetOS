@@ -561,3 +561,10 @@ Consequences that must be respected:
 | Badly applied relocations | It links, it boots, it fails on the first call | Relocation test with symbols at known distances |
 | Incorrect DWARF | GDB shows the wrong line | Comparison of `bt` and `info locals` against expectation |
 | The bootstrap subset breaks | `planc-0` stops compiling `planc` | Bootstrap lint in CI (TC-09) |
+
+## 17. Recent built-in additions (`uintptr`, `char`, `unichar`, parser/codegen)
+
+- **Pointer-integer conversion (`uintptr`)**: `uintptr.from_pointer (void*)` / `uintptr_t.from_pointer (void*)` extracts the raw address (offset `24` of `__PlancPtr`, or `0` for `null`), and `(uintptr).to_pointer ()` wraps a non-zero integer in a `__PlancPtr` (`ptr:void`). `ValaType.POINTER` equality (`==` / `!=`) compares underlying addresses.
+- **Inline `char` / `unichar` methods**: `isalnum`, `isalpha`, `iscntrl`, `isdigit`, `isgraph`, `islower`, `isprint`, `ispunct`, `isspace`, `isupper`, `isxdigit`, `tolower`, `toupper`, `digit_value`, `xdigit_value`, plus `unichar.validate ()` (rejecting surrogates `0xD800..0xDFFF` and `> 0x10FFFF`) and `unichar.totitle ()`, emitted as inline x86-64 range checks without heap allocations.
+- **Parser & property codegen**: `parser.vala` checks for `]` after `[` before treating a delegate-named identifier as an array type suffix in statements/casts; `codegen.vala` lowers compound assignments (`op=`) on custom properties that define both getter and setter.
+

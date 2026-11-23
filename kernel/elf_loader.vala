@@ -53,8 +53,121 @@ namespace Planet.Kernel {
     ")]
     public extern void exec_return_to_parent (int exit_code, int slot_addr);
 
+    [AsmBody(@"
+        add $16, %rdi
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __el_str_data (string s);
+
     public sealed class ElfLoader : Object {
         public static int exec_depth = 0;
+        private static bool shared_glib_probed = false;
+        private static int shared_glib_ro_vaddr = 0;
+        private static int shared_glib_ro_size = 0;
+        private static int shared_glib_data_vaddr = 0;
+        private static int shared_glib_data_fsz = 0;
+        private static int shared_glib_data_msz = 0;
+        private static int shared_glib_data_tmpl = 0;
+
+        private static void ensure_shared_glib () {
+            if (shared_glib_probed)
+                return;
+            shared_glib_probed = true;
+            int id = Xfs.lookup_root (__el_str_data ("glib.dlib"), 9);
+            if (id <= 0)
+                return;
+            int sz = Xfs.file_size (id);
+            if (sz < 160)
+                return;
+            int pages = (sz + 4095) / 4096;
+            int buf = Pmm.alloc_contiguous (pages);
+            if (buf == 0)
+                return;
+            int got = Xfs.read_file (id, 0, buf, sz);
+            if (got != sz || (mmio_read32 (buf) & 0xFFFFFFFF) != 0x4E414C50 || read_u16 (buf + 6) != 1) {
+                for (int p = 0; p < pages; p++)
+                    Pmm.free_frame (buf + p * 4096);
+                return;
+            }
+            int sec_count = mmio_read32 (buf + 24) & 0xFFFFFFFF;
+            if (sec_count < 3 || 64 + sec_count * 32 > got) {
+                for (int p = 0; p < pages; p++)
+                    Pmm.free_frame (buf + p * 4096);
+                return;
+            }
+            // Section 0 (.text) and Section 1 (.rodata) are loaded once and shared read-only.
+            int s0_va = mmio_read64 (buf + 64);
+            int s0_off = mmio_read64 (buf + 72);
+            int s0_fsz = mmio_read64 (buf + 80);
+            int s1_va = mmio_read64 (buf + 96);
+            int s1_off = mmio_read64 (buf + 104);
+            int s1_fsz = mmio_read64 (buf + 112);
+            int s1_msz = mmio_read64 (buf + 120);
+            int ro_end = s1_va + ((s1_msz > 0) ? s1_msz : 1);
+            int ro_sz = ro_end - s0_va;
+            if (s0_va < 0x800000 || ro_sz <= 0 || s0_off + s0_fsz > got || s1_off + s1_fsz > got) {
+                for (int p = 0; p < pages; p++)
+                    Pmm.free_frame (buf + p * 4096);
+                return;
+            }
+            Pmm.reserve_range (s0_va, ro_sz);
+            for (int b = 0; b < s0_fsz; b++)
+                mmio_write8 (s0_va + b, read_u8 (buf + s0_off + b));
+            for (int b = 0; b < s1_fsz; b++)
+                mmio_write8 (s1_va + b, read_u8 (buf + s1_off + b));
+            shared_glib_ro_vaddr = s0_va;
+            shared_glib_ro_size = ro_sz;
+
+            // Section 2 (.data + .bss) template is kept for private per-process RW copies.
+            int s2_va = mmio_read64 (buf + 128);
+            int s2_off = mmio_read64 (buf + 136);
+            int s2_fsz = mmio_read64 (buf + 144);
+            int s2_msz = mmio_read64 (buf + 152);
+            if (s2_msz > 0 && s2_off + s2_fsz <= got) {
+                Pmm.reserve_range (s2_va, s2_msz);
+                for (int b = 0; b < s2_fsz; b++)
+                    mmio_write8 (s2_va + b, read_u8 (buf + s2_off + b));
+                for (int b = s2_fsz; b < s2_msz; b++)
+                    mmio_write8 (s2_va + b, 0);
+                int dpages = (s2_fsz > 0) ? ((s2_fsz + 4095) / 4096) : 0;
+                if (dpages > 0) {
+                    int tmpl = Pmm.alloc_contiguous (dpages);
+                    if (tmpl != 0) {
+                        for (int b = 0; b < s2_fsz; b++)
+                            mmio_write8 (tmpl + b, read_u8 (buf + s2_off + b));
+                        shared_glib_data_tmpl = tmpl;
+                        shared_glib_data_fsz = s2_fsz;
+                    }
+                }
+                shared_glib_data_vaddr = s2_va;
+                shared_glib_data_msz = s2_msz;
+            }
+            for (int p = 0; p < pages; p++)
+                Pmm.free_frame (buf + p * 4096);
+        }
+
+        private static void map_shared_glib_into (int user_cr3) {
+            ensure_shared_glib ();
+            if (shared_glib_ro_vaddr == 0 || shared_glib_ro_size <= 0)
+                return;
+            Vmm.map_user_range_ro (user_cr3, shared_glib_ro_vaddr, shared_glib_ro_size);
+            if (shared_glib_data_vaddr != 0 && shared_glib_data_msz > 0) {
+                int first = shared_glib_data_vaddr & ~0xFFF;
+                int last = (shared_glib_data_vaddr + shared_glib_data_msz - 1) & ~0xFFF;
+                int dpages = ((last - first) / 4096) + 1;
+                int priv = Pmm.alloc_contiguous (dpages);
+                if (priv == 0)
+                    return;
+                for (int b = 0; b < dpages * 4096; b++)
+                    mmio_write8 (priv + b, 0);
+                int off_in_page = shared_glib_data_vaddr & 0xFFF;
+                for (int b = 0; b < shared_glib_data_fsz; b++)
+                    mmio_write8 (priv + off_in_page + b, read_u8 (shared_glib_data_tmpl + b));
+                for (int i = 0; i < dpages; i++)
+                    Vmm.map_user_4k_phys (user_cr3, first + i * 4096, priv + i * 4096, 0x07);
+            }
+        }
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);
             return (w >> ((addr & 3) * 8)) & 0xFF;
@@ -156,6 +269,7 @@ namespace Planet.Kernel {
             int entry = load_image (buf, size);
             if (entry == 0)
                 return false;
+            ensure_shared_glib ();
             int sp = KernelLayout.LEGACY_STACK;
             int str = KernelLayout.LEGACY_ARGV;
             mmio_write8 (str + 0, 's');
@@ -199,6 +313,7 @@ namespace Planet.Kernel {
                 Vmm.destroy_user_space (user_cr3);
                 return 0;
             }
+            map_shared_glib_into (user_cr3);
 
             int stack_pages = 17; // 1 bottom guard page + 16 usable stack pages
             int child_stack = Pmm.alloc_contiguous (stack_pages);

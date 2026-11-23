@@ -1,5 +1,5 @@
 =mv: cannot move '/test/errors/missing' to '/test/errors/x'
 =cat: not found
-planet> ls test/errors
+🪐 : ls test/errors
 hello.txt
 =sysguard:ok=1

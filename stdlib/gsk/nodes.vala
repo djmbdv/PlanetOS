@@ -1,5 +1,6 @@
 // Pure-Vala GSK RenderNode hierarchy for PlanetOS.
 
+using Planet;
 using Cairo;
 using Spv;
 
@@ -397,40 +398,95 @@ namespace Gsk {
         public override void draw_cairo (Context cr) {
             if (opacity <= 0.0 || child == null)
                 return;
-            child.draw_cairo (cr);
+            if (opacity >= 1.0) {
+                child.draw_cairo (cr);
+                return;
+            }
+            int x0 = cr.clip_left ();
+            int y0 = cr.clip_top ();
+            int x1 = cr.clip_right ();
+            int y1 = cr.clip_bottom ();
+            if (x1 <= x0 || y1 <= y0)
+                return;
+            var tmp = new ImageSurface (Format.ARGB32, x1, y1);
+            if (!tmp.is_valid ()) {
+                tmp.destroy ();
+                child.draw_cairo (cr);
+                return;
+            }
+            var tcr = new Context (tmp);
+            tcr.clear ();
+            tcr.rectangle ((double) x0, (double) y0, (double) (x1 - x0), (double) (y1 - y0));
+            tcr.clip ();
+            child.draw_cairo (tcr);
+            int w = x1 - x0;
+            int h = y1 - y0;
+            var rgba = new uint8[w * h * 4];
+            int alpha_scale = (int) (opacity * 255.0 + 0.5);
+            if (alpha_scale > 255) alpha_scale = 255;
+            for (int py = 0; py < h; py++) {
+                int row_addr = tmp.buf_addr + ((y0 + py) * x1 + x0) * 4;
+                for (int px = 0; px < w; px++) {
+                    int argb = Sys.peek32 (row_addr + px * 4);
+                    int a = (argb >> 24) & 0xFF;
+                    if (a == 0)
+                        continue;
+                    int sa = (a * alpha_scale + 127) / 255;
+                    int off = (py * w + px) * 4;
+                    rgba[off + 0] = (uint8) (argb & 0xFF);
+                    rgba[off + 1] = (uint8) ((argb >> 8) & 0xFF);
+                    rgba[off + 2] = (uint8) ((argb >> 16) & 0xFF);
+                    rgba[off + 3] = (uint8) sa;
+                }
+            }
+            cr.draw_rgba (rgba, w, h, x0, y0);
+            tmp.destroy ();
         }
     }
 
     public class ContainerNode : RenderNode {
-        private GenericArray<RenderNode> children;
+        private GLib.Node<RenderNode?> tree;
 
         public ContainerNode () {
-            children = new GenericArray<RenderNode> ();
+            tree = new GLib.Node<RenderNode?> (null);
         }
 
         public void append (RenderNode? node) {
             if (node != null)
-                children.add (node);
+                tree.append (new GLib.Node<RenderNode?> (node));
+        }
+
+        public void prepend (RenderNode? node) {
+            if (node != null)
+                tree.prepend (new GLib.Node<RenderNode?> (node));
         }
 
         public int count () {
-            return children.length;
+            return (int) tree.n_children ();
         }
 
         public RenderNode? get_child (int idx) {
-            if (idx < 0 || idx >= children.length)
+            if (idx < 0)
                 return null;
-            return children[idx];
+            var ch = tree.nth_child ((uint) idx);
+            return (ch != null) ? ch.data : null;
         }
 
         public void clear () {
-            children.length = 0;
+            var ch = tree.first_child ();
+            while (ch != null) {
+                var nxt = ch.next;
+                ch.unlink ();
+                ch = nxt;
+            }
         }
 
         public override void draw_cairo (Context cr) {
-            for (int i = 0; i < children.length; i++) {
-                if (children[i] != null)
-                    children[i].draw_cairo (cr);
+            unowned var ch = tree.first_child ();
+            while (ch != null) {
+                if (ch.data != null)
+                    ch.data.draw_cairo (cr);
+                ch = ch.next;
             }
         }
     }

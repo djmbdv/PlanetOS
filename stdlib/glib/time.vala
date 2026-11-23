@@ -421,4 +421,80 @@ namespace GLib {
     public int64 get_real_time () {
         return ((int64) Sys.rtc_time ()) * 1000000L;
     }
+
+    public const int64 TIME_SPAN_DAY = 86400000000L;
+    public const int64 TIME_SPAN_HOUR = 3600000000L;
+    public const int64 TIME_SPAN_MINUTE = 60000000L;
+    public const int64 TIME_SPAN_SECOND = 1000000L;
+    public const int64 TIME_SPAN_MILLISECOND = 1000L;
+
+    /**
+     * Immutable UTC date/time with microsecond resolution (GLib.DateTime).
+     */
+    public class DateTime : Object {
+        private int64 usec;
+        private Time tm;
+
+        private DateTime (int64 us) {
+            usec = us;
+            int64 secs = us / TIME_SPAN_SECOND;
+            if (us < 0 && (us % TIME_SPAN_SECOND) != 0)
+                secs--;
+            tm = Time.gm ((int) secs);
+        }
+
+        public static DateTime now_utc () {
+            return new DateTime (get_real_time ());
+        }
+
+        public static DateTime from_unix_utc (int64 t) {
+            return new DateTime (t * TIME_SPAN_SECOND);
+        }
+
+        public int64 to_unix () {
+            int64 secs = usec / TIME_SPAN_SECOND;
+            if (usec < 0 && (usec % TIME_SPAN_SECOND) != 0)
+                secs--;
+            return secs;
+        }
+
+        public int get_year () { return tm.year + 1900; }
+        public int get_month () { return tm.month + 1; }
+        public int get_day_of_month () { return tm.day; }
+        public int get_hour () { return tm.hour; }
+        public int get_minute () { return tm.minute; }
+        public int get_second () { return tm.second; }
+
+        public int get_microsecond () {
+            int64 rem = usec % TIME_SPAN_SECOND;
+            if (rem < 0) rem += TIME_SPAN_SECOND;
+            return (int) rem;
+        }
+
+        public DateTime add (int64 span) {
+            return new DateTime (usec + span);
+        }
+
+        public DateTime add_seconds (double seconds) {
+            return new DateTime (usec + (int64) (seconds * 1000000.0));
+        }
+
+        public int64 difference (DateTime begin) {
+            return usec - begin.usec;
+        }
+
+        public int compare (DateTime other) {
+            if (usec < other.usec) return -1;
+            if (usec > other.usec) return 1;
+            return 0;
+        }
+
+        public bool equal (DateTime other) {
+            return usec == other.usec;
+        }
+
+        public string format_iso8601 () {
+            return tm.format ("%Y-%m-%dT%H:%M:%SZ");
+        }
+    }
 }

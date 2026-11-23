@@ -1,0 +1,119 @@
+// Pure-Vala GLib.Slice lock-free slab/freelist allocator (16..256B) for PlanetOS.
+using Planet;
+
+namespace GLib {
+
+    [AsmBody(@"
+        add $16, %rdi
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __slice_arr_addr (uint8[] a);
+
+    /**
+     * Lock-free magazine/slab allocator for fixed-size blocks (GLib.Slice).
+     */
+    public class Slice : Object {
+        private const int NUM_CLASSES = 16;   // 16, 32, ..., 256 bytes
+        private const int MAX_SLAB_SZ = 256;
+        private const int PAGE_BYTES = 4096;
+
+        // Lock-free head pointers (one 8-byte slot per size class).
+        private static uint8[]? freelists;
+
+        private static uint8[] ensure_freelists () {
+            var cur = freelists;
+            if (cur != null)
+                return cur;
+            var fl = new uint8[NUM_CLASSES * 8];
+            freelists = fl;
+            return fl;
+        }
+
+        private static int size_to_class (size_t sz) {
+            if (sz == 0 || sz > (size_t) MAX_SLAB_SZ)
+                return -1;
+            int cls = (int) ((sz - 1) / 16);
+            if (cls < 0) cls = 0;
+            if (cls >= NUM_CLASSES) return -1;
+            return cls;
+        }
+
+        public static int alloc (size_t block_size) {
+            if (block_size == 0)
+                return 0;
+            int cls = size_to_class (block_size);
+            if (cls < 0)
+                return Memory.malloc (block_size);
+            var fl = ensure_freelists ();
+            int slot_addr = __slice_arr_addr (fl) + cls * 8;
+            while (true) {
+                int head = AtomicPointer.get (slot_addr);
+                if (head == 0) {
+                    int page = Sys.alloc_pages (1);
+                    if (page <= 0)
+                        return 0;
+                    int stride = (cls + 1) * 16;
+                    int count = PAGE_BYTES / stride;
+                    for (int i = 0; i < count; i++) {
+                        int slot = page + i * stride;
+                        int next = (i + 1 < count) ? (slot + stride) : 0;
+                        __mem_poke64 (slot, next);
+                    }
+                    int tail = page + (count - 1) * stride;
+                    int first_next = __mem_peek64 (page);
+                    if (first_next != 0) {
+                        while (true) {
+                            int old_head = AtomicPointer.get (slot_addr);
+                            __mem_poke64 (tail, old_head);
+                            if (AtomicPointer.compare_and_exchange (slot_addr, old_head, first_next))
+                                break;
+                        }
+                    }
+                    return page;
+                }
+                int next_head = __mem_peek64 (head);
+                if (AtomicPointer.compare_and_exchange (slot_addr, head, next_head))
+                    return head;
+            }
+        }
+
+        public static int alloc0 (size_t block_size) {
+            int p = alloc (block_size);
+            if (p != 0)
+                Memory.set (p, 0, block_size);
+            return p;
+        }
+
+        public static void free (size_t block_size, int mem_block) {
+            if (mem_block == 0 || block_size == 0)
+                return;
+            int cls = size_to_class (block_size);
+            if (cls < 0) {
+                Memory.free (mem_block);
+                return;
+            }
+            if (mem_block < 0x100000 || (mem_block & 0xF) != 0)
+                return;
+            var fl = ensure_freelists ();
+            int slot_addr = __slice_arr_addr (fl) + cls * 8;
+            while (true) {
+                int head = AtomicPointer.get (slot_addr);
+                if (head == mem_block)
+                    return; // Guard against immediate double-free.
+                __mem_poke64 (mem_block, head);
+                if (AtomicPointer.compare_and_exchange (slot_addr, head, mem_block))
+                    return;
+            }
+        }
+
+        public static int copy (size_t block_size, int mem_block) {
+            if (mem_block == 0 || block_size == 0)
+                return 0;
+            int p = alloc (block_size);
+            if (p != 0)
+                Memory.copy (p, mem_block, block_size);
+            return p;
+        }
+    }
+}

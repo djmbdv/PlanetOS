@@ -104,25 +104,36 @@ namespace Gio {
 
     public class SimpleAction : Object {
         private string action_name;
+        private VariantType? param_type = null;
         private bool enabled = true;
-        private string? state_val = null;
+        private Variant? state_val = null;
         private bool stateful = false;
 
-        public signal void activate (string? parameter);
-        public signal void change_state (string? value);
+        public signal void activate (Variant? parameter);
+        public signal void change_state (Variant? value);
 
-        public SimpleAction (string name, string? parameter_type = null) {
+        public SimpleAction (string name, VariantType? parameter_type = null) {
             action_name = name;
+            param_type = parameter_type;
         }
 
-        public SimpleAction.stateful (string name, string? parameter_type, string state) {
+        public SimpleAction.stateful (string name, VariantType? parameter_type, Variant state) {
             action_name = name;
+            param_type = parameter_type;
             state_val = state;
             stateful = true;
         }
 
         public string get_name () {
             return action_name;
+        }
+
+        public VariantType? get_parameter_type () {
+            return param_type;
+        }
+
+        public VariantType? get_state_type () {
+            return (state_val != null) ? state_val.get_type () : null;
         }
 
         public bool get_enabled () {
@@ -133,20 +144,23 @@ namespace Gio {
             enabled = e;
         }
 
-        public string? get_state () {
+        public Variant? get_state () {
             return state_val;
         }
 
-        public void set_state (string? val) {
+        public void set_state (Variant value) {
             if (stateful) {
-                state_val = val;
-                change_state (val);
+                state_val = value;
+                change_state (value);
             }
         }
 
-        public void activate_action (string? parameter = null) {
-            if (enabled)
-                activate (parameter);
+        public void activate_action (Variant? parameter = null) {
+            if (!enabled)
+                return;
+            if (param_type != null && (parameter == null || !parameter.is_of_type (param_type)))
+                return;
+            activate (parameter);
         }
     }
 
@@ -184,7 +198,7 @@ namespace Gio {
             return null;
         }
 
-        public void activate_action (string name, string? parameter = null) {
+        public void activate_action (string name, Variant? parameter = null) {
             var a = lookup_action (name);
             if (a != null)
                 a.activate_action (parameter);
@@ -270,7 +284,7 @@ namespace Gio {
             return action_group.lookup_action (name);
         }
 
-        public void activate_action (string name, string? parameter = null) {
+        public void activate_action (string name, Variant? parameter = null) {
             action_group.activate_action (name, parameter);
         }
 

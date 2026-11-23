@@ -32,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CASES_DIR = os.path.join(HERE, "cases")
 
-PROMPT = "planet> "
+PROMPT = "🪐 : "
 
 
 def die(message):

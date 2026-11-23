@@ -8,6 +8,21 @@ namespace Gtk {
         VERTICAL
     }
 
+    public enum Align {
+        FILL,
+        START,
+        END,
+        CENTER,
+        BASELINE
+    }
+
+    public enum PolicyType {
+        ALWAYS,
+        AUTOMATIC,
+        NEVER,
+        EXTERNAL
+    }
+
     public class Widget : Object {
         public int x = 0;
         public int y = 0;
@@ -20,17 +35,52 @@ namespace Gtk {
         public bool hovered = false;
         public bool pressed = false;
         public bool focused = false;
+        public bool hexpand = false;
+        public bool vexpand = false;
+        public Align halign = Align.FILL;
+        public Align valign = Align.FILL;
+        public int margin_top = 0;
+        public int margin_bottom = 0;
+        public int margin_start = 0;
+        public int margin_end = 0;
+        public bool can_focus = true;
+        public bool focusable = true;
+        public double opacity = 1.0;
+        public string name = "";
+        public string? tooltip_text = null;
+
+        private weak Widget? parent_widget = null;
 
         // Single focus owner per window. Clicking the editor must take the
         // arrows away from a focused list, and clicking a toolbar button must not
         // clear the text focus just because the button was pressed.
-        private static Widget? focus_owner;
+        private static weak Widget? focus_owner;
+
+        ~Widget () {
+            drop_focus ();
+            parent_widget = null;
+        }
+
+        public Widget? get_parent () {
+            return parent_widget;
+        }
+
+        public void set_parent (Widget? parent) {
+            parent_widget = parent;
+        }
+
+        public void unparent () {
+            parent_widget = null;
+            drop_focus ();
+        }
 
         public bool has_focus () {
             return focus_owner == this;
         }
 
         public void grab_focus () {
+            if (!can_focus || !focusable || !visible || !sensitive)
+                return;
             var prev = focus_owner;
             if (prev != null && prev != this)
                 prev.drop_focus ();
@@ -147,6 +197,22 @@ namespace Gtk {
         public virtual void gather_damage () {
         }
 
+        protected void hoist_child_damage (Widget? child) {
+            if (child == null)
+                return;
+            child.gather_damage ();
+            int n = child.damage_rect_count ();
+            for (int j = 0; j < n; j++) {
+                int cx = 0;
+                int cy = 0;
+                int cw = 0;
+                int ch = 0;
+                if (child.damage_rect_at (j, out cx, out cy, out cw, out ch))
+                    damage_box (cx, cy, cw, ch);
+            }
+            child.clear_damage ();
+        }
+
         /**
          * Routes a key to the widget that owns focus.
          *
@@ -208,22 +274,117 @@ namespace Gtk {
             req_h = (h < 0) ? 0 : h;
         }
 
+        public void get_size_request (out int w, out int h) {
+            w = req_w;
+            h = req_h;
+        }
+
+        public int get_width () { return width; }
+        public int get_height () { return height; }
+        public int get_allocated_width () { return width; }
+        public int get_allocated_height () { return height; }
+
+        public bool get_visible () { return visible; }
+
+        public void show () { set_visible (true); }
+        public void hide () { set_visible (false); }
+
         public void set_visible (bool v) {
+            if (visible == v)
+                return;
             visible = v;
             if (!v) {
                 hovered = false;
                 pressed = false;
                 drop_focus ();
             }
+            damage_self ();
+        }
+
+        public bool get_sensitive () { return sensitive; }
+
+        public bool is_sensitive () {
+            if (!sensitive)
+                return false;
+            var p = parent_widget;
+            while (p != null) {
+                if (!p.sensitive)
+                    return false;
+                p = p.parent_widget;
+            }
+            return true;
         }
 
         public void set_sensitive (bool s) {
+            if (sensitive == s)
+                return;
             sensitive = s;
             if (!s) {
                 hovered = false;
                 pressed = false;
                 drop_focus ();
             }
+            damage_self ();
+        }
+
+        public void set_hexpand (bool expand) { hexpand = expand; }
+        public bool get_hexpand () { return hexpand; }
+        public void set_vexpand (bool expand) { vexpand = expand; }
+        public bool get_vexpand () { return vexpand; }
+
+        public void set_halign (Align align) { halign = align; }
+        public Align get_halign () { return halign; }
+        public void set_valign (Align align) { valign = align; }
+        public Align get_valign () { return valign; }
+
+        public void set_margin_top (int m) { margin_top = (m < 0) ? 0 : m; }
+        public int get_margin_top () { return margin_top; }
+        public void set_margin_bottom (int m) { margin_bottom = (m < 0) ? 0 : m; }
+        public int get_margin_bottom () { return margin_bottom; }
+        public void set_margin_start (int m) { margin_start = (m < 0) ? 0 : m; }
+        public int get_margin_start () { return margin_start; }
+        public void set_margin_end (int m) { margin_end = (m < 0) ? 0 : m; }
+        public int get_margin_end () { return margin_end; }
+
+        public void set_can_focus (bool cf) {
+            can_focus = cf;
+            if (!cf) drop_focus ();
+        }
+        public bool get_can_focus () { return can_focus; }
+        public void set_focusable (bool f) {
+            focusable = f;
+            if (!f) drop_focus ();
+        }
+        public bool get_focusable () { return focusable; }
+
+        public void set_opacity (double op) {
+            double clamped = (op < 0.0) ? 0.0 : ((op > 1.0) ? 1.0 : op);
+            if (clamped != opacity) {
+                opacity = clamped;
+                damage_self ();
+            }
+        }
+        public double get_opacity () { return opacity; }
+
+        public void set_name (string n) { name = n; }
+        public string get_name () { return name; }
+        public void set_tooltip_text (string? text) { tooltip_text = text; }
+        public string? get_tooltip_text () { return tooltip_text; }
+
+        public void queue_draw () { damage_self (); }
+        public void queue_resize () { damage_self (); }
+
+        // GTK4-compatible orientation-based measurement wrapper.
+        public void measure_for (Orientation orientation, int for_size,
+                                 out int minimum, out int natural,
+                                 out int minimum_baseline, out int natural_baseline) {
+            int mw = 0;
+            int mh = 0;
+            measure (out mw, out mh);
+            minimum = (orientation == Orientation.HORIZONTAL) ? mw : mh;
+            natural = minimum;
+            minimum_baseline = -1;
+            natural_baseline = -1;
         }
 
         public bool contains (int px, int py) {

@@ -3,6 +3,10 @@ using Planet;
 
 namespace GLib {
 
+    private int __core_arr_addr (uint8[] a) {
+        return (int) (uintptr.from_pointer ((void*) a) + (uintptr) 16);
+    }
+
     public void printerr (string s) {
         print (s);
     }
@@ -50,8 +54,8 @@ namespace GLib {
             while (ncap < used + extra)
                 ncap = ncap * 2;
             var nbuf = new uint8[ncap];
-            for (int i = 0; i < used; i++)
-                nbuf[i] = buf[i];
+            if (used > 0)
+                Memory.copy (__core_arr_addr (nbuf), __core_arr_addr (buf), (size_t) used);
             buf = nbuf;
         }
 
@@ -196,6 +200,100 @@ namespace GLib {
                 if (buf[i] >= 'a' && buf[i] <= 'z')
                     buf[i] = buf[i] - 32;
             }
+        }
+    }
+
+    /**
+     * Arena/interning storage for groups of strings (GLib.StringChunk).
+     */
+    public class StringChunk : Object {
+        private string[] items;
+        private int count = 0;
+        private int[] buckets;
+        private int bcap = 0;
+        private size_t chunk_size;
+
+        public StringChunk (size_t size = 4096) {
+            chunk_size = (size == 0) ? 4096 : size;
+            items = new string[16];
+            bcap = 32;
+            buckets = new int[32];
+        }
+
+        private static uint32 hash_str (string s) {
+            uint32 h = 2166136261U;
+            for (int i = 0; i < s.length; i++) {
+                h = (h ^ (uint32) s[i]) * 16777619U;
+            }
+            return h;
+        }
+
+        private void rehash (int new_cap) {
+            int[] nb = new int[new_cap];
+            int mask = new_cap - 1;
+            for (int i = 0; i < count; i++) {
+                int slot = (int) (hash_str (items[i]) & (uint32) mask);
+                while (nb[slot] != 0)
+                    slot = (slot + 1) & mask;
+                nb[slot] = i + 1;
+            }
+            buckets = nb;
+            bcap = new_cap;
+        }
+
+        private unowned string store_new (string s) {
+            if (count >= items.length) {
+                var ni = new string[items.length * 2];
+                for (int i = 0; i < count; i++)
+                    ni[i] = items[i];
+                items = ni;
+            }
+            int idx = count;
+            items[count++] = s;
+            if (count * 10 >= bcap * 7)
+                rehash (bcap * 2);
+            int mask = bcap - 1;
+            int slot = (int) (hash_str (s) & (uint32) mask);
+            while (buckets[slot] != 0)
+                slot = (slot + 1) & mask;
+            buckets[slot] = idx + 1;
+            return items[idx];
+        }
+
+        public unowned string insert (string str) {
+            return insert_len (str, (ssize_t) str.length);
+        }
+
+        public unowned string insert_len (string str, ssize_t len) {
+            int n = (len < 0 || len > (ssize_t) str.length) ? str.length : (int) len;
+            if (n <= 0)
+                return store_new ("");
+            var copy = new uint8[n];
+            Memory.copy (__core_arr_addr (copy), (int) (uintptr.from_pointer ((void*) str) + (uintptr) 16), (size_t) n);
+            return store_new ((string) copy);
+        }
+
+        public unowned string insert_const (string str) {
+            int mask = bcap - 1;
+            int slot = (int) (hash_str (str) & (uint32) mask);
+            while (buckets[slot] != 0) {
+                int idx = buckets[slot] - 1;
+                if (items[idx] == str)
+                    return items[idx];
+                slot = (slot + 1) & mask;
+            }
+            return insert (str);
+        }
+
+        public void clear () {
+            items = new string[16];
+            count = 0;
+            bcap = 32;
+            buckets = new int[32];
+        }
+
+        public void free () {
+            clear ();
         }
     }
 
@@ -592,8 +690,8 @@ namespace GLib {
         public uint8[] data {
             get {
                 var res = new uint8[used];
-                for (int i = 0; i < used; i++)
-                    res[i] = buf[i];
+                if (used > 0)
+                    Memory.copy (__core_arr_addr (res), __core_arr_addr (buf), (size_t) used);
                 return res;
             }
         }
@@ -614,8 +712,8 @@ namespace GLib {
             while (ncap < used + extra)
                 ncap = ncap * 2;
             var nbuf = new uint8[ncap];
-            for (int i = 0; i < used; i++)
-                nbuf[i] = buf[i];
+            if (used > 0)
+                Memory.copy (__core_arr_addr (nbuf), __core_arr_addr (buf), (size_t) used);
             buf = nbuf;
         }
 
@@ -623,8 +721,7 @@ namespace GLib {
             if (bytes.length == 0)
                 return;
             ensure (bytes.length);
-            for (int i = 0; i < bytes.length; i++)
-                buf[used + i] = bytes[i];
+            Memory.copy (__core_arr_addr (buf) + used, __core_arr_addr (bytes), (size_t) bytes.length);
             used = used + bytes.length;
         }
 
@@ -632,18 +729,21 @@ namespace GLib {
             if (bytes.length == 0)
                 return;
             ensure (bytes.length);
-            for (int i = used - 1; i >= 0; i--)
-                buf[i + bytes.length] = buf[i];
-            for (int i = 0; i < bytes.length; i++)
-                buf[i] = bytes[i];
+            int ba = __core_arr_addr (buf);
+            if (used > 0)
+                Memory.move (ba + bytes.length, ba, (size_t) used);
+            Memory.copy (ba, __core_arr_addr (bytes), (size_t) bytes.length);
             used = used + bytes.length;
         }
 
         public void remove_index (int index) {
             if (index < 0 || index >= used)
                 return;
-            for (int i = index; i < used - 1; i++)
-                buf[i] = buf[i + 1];
+            int rem = used - 1 - index;
+            if (rem > 0) {
+                int ba = __core_arr_addr (buf);
+                Memory.move (ba + index, ba + index + 1, (size_t) rem);
+            }
             used = used - 1;
         }
 
@@ -651,8 +751,11 @@ namespace GLib {
             if (index < 0 || index >= used || length <= 0)
                 return;
             int n = (index + length > used) ? (used - index) : length;
-            for (int i = index; i < used - n; i++)
-                buf[i] = buf[i + n];
+            int rem = used - n - index;
+            if (rem > 0) {
+                int ba = __core_arr_addr (buf);
+                Memory.move (ba + index, ba + index + n, (size_t) rem);
+            }
             used = used - n;
         }
 
@@ -661,8 +764,8 @@ namespace GLib {
                 length = 0;
             if (length > buf.length)
                 ensure (length - used);
-            for (int i = used; i < length; i++)
-                buf[i] = 0;
+            if (length > used)
+                Memory.set (__core_arr_addr (buf) + used, 0, (size_t) (length - used));
             used = length;
         }
 
@@ -670,6 +773,111 @@ namespace GLib {
             var res = data;
             used = 0;
             return res;
+        }
+    }
+
+    public class DirUtils : Object {
+        public static int create (string pathname, int mode) {
+            if (pathname.length == 0)
+                return -1;
+            return Sys.mkdir (pathname);
+        }
+
+        public static int create_with_parents (string pathname, int mode) {
+            if (pathname.length == 0)
+                return -1;
+            if (FileUtils.test (pathname, FileTest.IS_DIR))
+                return 0;
+            int n = pathname.length;
+            for (int i = 1; i < n; i++) {
+                if (pathname[i] == '/') {
+                    string sub = pathname.substring (0, i);
+                    if (!FileUtils.test (sub, FileTest.IS_DIR)) {
+                        if (Sys.mkdir (sub) != 0 && !FileUtils.test (sub, FileTest.IS_DIR))
+                            return -1;
+                    }
+                }
+            }
+            return Sys.mkdir (pathname);
+        }
+
+        public static int remove (string filename) {
+            if (filename.length == 0)
+                return -1;
+            return Sys.unlink (filename);
+        }
+    }
+
+    public class Dir : Object {
+        private string _path;
+        private int _pos = 0;
+
+        public Dir (string path) {
+            _path = path;
+        }
+
+        public static Dir? open (string path, uint flags = 0) {
+            if (path.length == 0 || !FileUtils.test (path, FileTest.IS_DIR))
+                return null;
+            return new Dir (path);
+        }
+
+        public string? read_name () {
+            return null;
+        }
+
+        public void rewind () {
+            _pos = 0;
+        }
+    }
+
+    public class Rand : Object {
+        private uint64 _state;
+
+        public Rand () {
+            uint64 t = (uint64) Sys.ticks ();
+            _state = (t != 0) ? (t * 0x9E3779B97F4A7C15UL) : 0x853C49E6748FEA9BUL;
+        }
+
+        public Rand.with_seed (uint32 seed) {
+            set_seed (seed);
+        }
+
+        public void set_seed (uint32 seed) {
+            uint64 s = (uint64) seed;
+            _state = (s != 0) ? s : 0x853C49E6748FEA9BUL;
+        }
+
+        public uint32 next_int () {
+            uint64 x = _state;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            _state = x;
+            uint64 r = x * 0x2545F4914F6CDD1DUL;
+            return (uint32) (r >> 32);
+        }
+
+        public int32 int_range (int32 begin, int32 end) {
+            if (end <= begin)
+                return begin;
+            uint32 span = (uint32) (end - begin);
+            return begin + (int32) (next_int () % span);
+        }
+
+        public double next_double () {
+            uint32 v = next_int ();
+            return ((double) v) / 4294967296.0;
+        }
+
+        public double double_range (double begin, double end) {
+            if (end <= begin)
+                return begin;
+            return begin + next_double () * (end - begin);
+        }
+
+        public bool boolean () {
+            return (next_int () & 1U) != 0;
         }
     }
 
