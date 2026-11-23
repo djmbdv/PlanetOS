@@ -232,7 +232,7 @@ Rules:
 - `sys_llamar_v` carries `abi_version` in the argument structure in order to evolve without breaking binaries.
 - If a handler returns a pointer, the dispatcher checks that it lies in user space.
 - Every resource is named by a **handle with owner, generation and rights**, never by a global slot index ([08](08-io-data-path.md)). `FD_TABLE` is a shared slot pool, but the value handed to userland carries the generation, so a forged or stale value is rejected with `EBADF`. `SYS_MAP_USER_AT` is still transitional and must not be extended.
-- Pointer validation is against the caller's page table and is recoverable (KR-07). Today `user_ok` only bounds the address against `USER_LIMIT`.
+- Pointer validation walks the caller's page table (present, user and, for writes, `RW`). Data copies are guarded: a fault inside `copy_guarded` is recovered and the syscall returns `EINVAL` instead of killing the task (KR-07). Staging uses the low-window `IO_SCRATCH`, which every user `CR3` maps as supervisor pages.
 
 ## 8. VFS
 

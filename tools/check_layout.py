@@ -43,7 +43,9 @@ REGIONS = [
     ("mouse cursors", "MOUSE_HEAD", "MOUSE_POS_SIZE"),
     ("syscall scratch", "SYSCALL_SCRATCH", "SYSCALL_SCRATCH_SIZE"),
     ("fd table", "FD_TABLE", "FD_TABLE_SIZE"),
+    ("guarded copy variables", "COPY_VARS", "COPY_VARS_SIZE"),
     ("kernel log ring", "KLOG_RING", "KLOG_RING_SIZE"),
+    ("io scratch", "IO_SCRATCH", "IO_SCRATCH_SIZE"),
     ("pmm bitmap", "PMM_BITMAP", "PMM_BITMAP_SIZE"),
     ("ramfs table", "RAMFS_TABLE", "RAMFS_TABLE_SIZE"),
     ("scheduler variables", "SCHED_CUR", "SCHED_VARS_SIZE"),
@@ -65,6 +67,7 @@ ASM_REFS = [
     ("kernel/elf_loader.vala", "TSS_RSP0", 0),
     ("kernel/keyboard.vala", "KB_RING", 0),
     ("kernel/keyboard.vala", "KB_HEAD", 0),
+    ("kernel/syscall.vala", "COPY_VARS", 0),
     ("kernel/mouse.vala", "MOUSE_RING", 0),
     ("kernel/mouse.vala", "MOUSE_HEAD", 0),
 ]

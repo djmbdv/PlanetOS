@@ -183,5 +183,24 @@ int main (string[] args) {
         fails++;
     }
 
+    // 11. An unmapped user pointer is refused by the page-table check, and the
+    // task keeps running afterwards.
+    int gfd = Sys.open ("/hello.txt");
+    var gbuf = new uint8[1];
+    int bad = Sys.sys (7, gfd, 0x00F00000, 16);
+    int bad_err = Sys.errno_code ();
+    int badw = Sys.sys (15, gfd, 0x00F00000, 16);
+    int badw_err = Sys.errno_code ();
+    int after = (gfd >= 3) ? Sys.read (gfd, gbuf, 1) : -1;
+    if (gfd >= 3 && bad == -1 && bad_err == Sys.EINVAL
+        && badw == -1 && badw_err == Sys.EINVAL && after > 0)
+        print ("guard=ok\n");
+    else {
+        print ("guard=FAIL\n");
+        fails++;
+    }
+    if (gfd >= 3)
+        Sys.close (gfd);
+
     return fails;
 }

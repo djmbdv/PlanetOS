@@ -31,7 +31,7 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | Device namespace (`/dev`) | [kernel/vfs.vala](../kernel/vfs.vala) | **missing**: `SYS_OPEN` resolves only XFS/RAMFS |
 | Handles with ownership, generation and rights | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A1.1/A1.2): 64 slots, `index \| generation << 8`, per-operation rights |
 | Capability grant | `SYS_MAP_USER_AT`, [kernel/syscall.vala](../kernel/syscall.vala) | **missing**: maps any physical frame above 6 MiB |
-| Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | **missing** |
+| Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A3): PML4 walk with read/write rights, guarded copy that recovers from a fault |
 | Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
 | IOMMU | QEMU command line, [run-qemu.ps1](../run-qemu.ps1) | absent |
 | Protocol stacks | - | absent |
@@ -105,15 +105,22 @@ Rules:
   physical frame above 6 MiB, with `RW|USER` or read-only, without checking
   ownership.
 
-### 4.3 User copies
+### 4.3 User copies (implemented, A3)
 
-- Validate the range against the caller's PML4, not only against a fixed
-  `USER_LIMIT`.
-- Copy through a recoverable path: a page fault inside a registered copy point
-  returns an error and the task survives (KR-07). Today a bad pointer kills the
-  task in the middle of the operation.
-- Ring descriptors are read through a kernel copy, never dereferenced in place,
-  so a racing producer cannot change a validated descriptor (no TOCTOU).
+- `user_range_ok` walks the caller's PML4/PDPT/PD/PT and requires the present
+  and user bits at every level; a write also requires `RW`. Kernel callers
+  (CR3 0) keep the low-window bound check, because their buffers are not user
+  maps.
+- `SYS_READ` and `SYS_WRITE` stage data through `KernelLayout.IO_SCRATCH`, a
+  16 KiB buffer in the low window that every user CR3 maps as supervisor pages.
+  `copy_guarded` records its frame; a kernel-mode page fault inside it is
+  recovered by `copy_recover`, which returns 1 and lets the syscall fail with
+  `EINVAL` instead of killing the task.
+- Paths are validated the same way but are still read in place by the VFS.
+  Copying them through the scratch is A3.1; until then a path buffer is
+  TOCTOU-free only because a single user task owns its address space.
+- Ring descriptors will be read through a kernel copy, never dereferenced in
+  place (Phase C).
 
 ### 4.4 Raw escapes
 
@@ -261,7 +268,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 |---|---|---|
 | **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 19/19 QEMU cases green. A dedicated per-process table remains an optional optimisation |
 | **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | Mapping an unowned frame fails; the compositor still attaches a client surface |
-| **A3** | PML4 validation and recoverable user copies (KR-07) | An invalid user pointer returns an error and the calling task survives |
+| **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`); 19/19 QEMU cases green. Copying path buffers through the scratch remains as A3.1 |
 | **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
 | **B1** | `devfs` and `Gio.File` for `/dev` | `open("/dev/serial0")` returns a stream and `cat` works through it |
 | **B2** | Filter chains and line discipline in userland | A line-discipline case passes; `SYS_READ_KEY` still works |

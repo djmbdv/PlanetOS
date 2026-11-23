@@ -2,5 +2,6 @@
 # enumerates the root, g_log lands in the kernel ring, Mutex/Cond park and wake
 # a real thread, SYS_POLL reports a file as readable, SYS_SLEEP_MS waits for
 # the timer, a handle opened by one task is denied to another, an operation
-# without its right is refused and a closed handle value is stale.
+# without its right is refused, a closed handle value is stale, and an
+# unmapped user pointer is refused without killing the task.
 sys_demo

@@ -38,6 +38,17 @@ namespace Planet.Kernel {
     private const int E_PIPE = 32;
     private const int E_TIMEDOUT = 110;
 
+    // Staging buffer for user data. It sits in the low window (KernelLayout),
+    // which every user CR3 maps as supervisor pages, so the kernel can always
+    // reach it no matter which process is running.
+    public sealed class KernelIo : Object {
+        public const int CHUNK = KernelLayout.IO_SCRATCH_SIZE;
+
+        public static int scratch_addr () {
+            return KernelLayout.IO_SCRATCH;
+        }
+    }
+
     // Records the cause of a failed syscall and returns the -1 the ABI uses.
     private int fail (int err) {
         Sched.set_errno (err);
@@ -60,16 +71,104 @@ namespace Planet.Kernel {
         return mmio_read32 (KernelLayout.KB_HEAD) != mmio_read32 (KernelLayout.KB_TAIL);
     }
 
-    // Userland and the kernel share one address space, so every pointer that
-    // arrives through int 0x80 is checked before the kernel dereferences it.
-    private bool user_ok (int ptr, int len) {
+    // Walks the caller's page table. Every level must be present and
+    // user-accessible; a write also needs the RW bit.
+    private bool page_user_ok (int cr3, int addr, bool write) {
+        int pml4e = mmio_read64 (cr3 + ((addr >> 39) & 0x1FF) * 8);
+        if ((pml4e & 1) == 0 || (pml4e & 4) == 0)
+            return false;
+        int pdpte = mmio_read64 ((pml4e & ~0xFFF) + ((addr >> 30) & 0x1FF) * 8);
+        if ((pdpte & 1) == 0 || (pdpte & 4) == 0)
+            return false;
+        if ((pdpte & 0x80) != 0)
+            return !write || (pdpte & 2) != 0;
+        int pde = mmio_read64 ((pdpte & ~0xFFF) + ((addr >> 21) & 0x1FF) * 8);
+        if ((pde & 1) == 0 || (pde & 4) == 0)
+            return false;
+        if ((pde & 0x80) != 0)
+            return !write || (pde & 2) != 0;
+        int pte = mmio_read64 ((pde & ~0xFFF) + ((addr >> 12) & 0x1FF) * 8);
+        if ((pte & 1) == 0 || (pte & 4) == 0)
+            return false;
+        return !write || (pte & 2) != 0;
+    }
+
+    // Every pointer that arrives through int 0x80 is checked against the
+    // caller's page table before the kernel dereferences it (KR-07). A kernel
+    // caller (CR3 0) keeps the old bound check: its buffers are not user maps.
+    private bool user_range_ok (int ptr, int len, bool write) {
         if (len < 0 || ptr < 0x1000 || len > MAX_XFER)
             return false;
         int end = ptr + len;
         if (end < ptr)
             return false;
-        return end <= USER_LIMIT;
+        int cr3 = Sched.current_cr3 ();
+        if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
+            return end <= USER_LIMIT;
+        if (end > USER_LIMIT)
+            return false;
+        int page = ptr & ~0xFFF;
+        int last = (end - 1) & ~0xFFF;
+        while (true) {
+            if (!page_user_ok (cr3, page, write))
+                return false;
+            if (page >= last)
+                break;
+            page = page + 4096;
+        }
+        return true;
     }
+
+    private bool user_ok (int ptr, int len) {
+        return user_range_ok (ptr, len, false);
+    }
+
+    private bool user_ok_w (int ptr, int len) {
+        return user_range_ok (ptr, len, true);
+    }
+
+    // Guarded copy of up to 64 KiB. The frame is recorded at
+    // KernelLayout.COPY_VARS; if a page fault happens inside the loop,
+    // copy_recover restores that frame and returns 1, so the fault never
+    // reaches the task as a fatal one (KR-07).
+    [AsmBody(@"
+        # int copy_guarded(dst rdi, src rsi, len rdx) -> 0 ok, 1 fault
+        push %rbp
+        mov %rsp, %rbp
+        mov $0x107800, %rax
+        mov %rsp, 8(%rax)
+        mov %rbp, 16(%rax)
+        movq $1, (%rax)
+    cg_loop:
+        cmp $0, %rdx
+        jz cg_done
+        mov (%rsi), %al
+        mov %al, (%rdi)
+        inc %rsi
+        inc %rdi
+        sub $1, %rdx
+        jmp cg_loop
+    cg_done:
+        mov $0x107800, %rax
+        movq $0, (%rax)
+        xor %eax, %eax
+        leave
+        ret
+    ")]
+    public extern int copy_guarded (int dst, int src, int len);
+
+    // Called from fault_dispatch while COPY_VARS is active: restores the frame
+    // saved by copy_guarded and returns 1 from it. Never returns to its caller.
+    [AsmBody(@"
+        mov $0x107800, %rax
+        mov 16(%rax), %rbp
+        mov 8(%rax), %rsp
+        movq $0, (%rax)
+        mov $1, %eax
+        leave
+        ret
+    ")]
+    public extern void copy_recover ();
 
     private bool path_ok (int ptr, int len) {
         return len > 0 && len <= MAX_PATH && user_ok (ptr, len);
@@ -287,7 +386,7 @@ namespace Planet.Kernel {
                 ok ();
                 return fd6;
             case 7: // SYS_READ(fd, buf, len)
-                if (!user_ok (a1, a2))
+                if (!user_ok_w (a1, a2))
                     return fail (E_INVAL);
                 int hc7 = fd_check (a0, R_READ);
                 if (hc7 == 1)
@@ -303,11 +402,18 @@ namespace Planet.Kernel {
                     ok ();
                     return 0;
                 }
-                int n7 = (kind7 == 2) ? Ramfs.read (id7, pos7, a1, a2) : Xfs.read_file (id7, pos7, a1, a2);
-                if (n7 > 0)
-                    mmio_write64 (slot7 + 24, pos7 + n7);
-                else if (n7 < 0)
+                int sc7 = KernelIo.scratch_addr ();
+                if (sc7 == 0)
                     return fail (E_IO);
+                int want7 = (a2 > KernelIo.CHUNK) ? KernelIo.CHUNK : a2;
+                int n7 = (kind7 == 2) ? Ramfs.read (id7, pos7, sc7, want7) : Xfs.read_file (id7, pos7, sc7, want7);
+                if (n7 < 0)
+                    return fail (E_IO);
+                if (n7 > 0) {
+                    if (copy_guarded (a1, sc7, n7) != 0)
+                        return fail (E_INVAL);
+                    mmio_write64 (slot7 + 24, pos7 + n7);
+                }
                 ok ();
                 return n7;
             case 8: // SYS_CLOSE(fd)
@@ -387,7 +493,13 @@ namespace Planet.Kernel {
                     return fail (E_BAD_HANDLE);
                 if (hc15 == 2)
                     return fail (E_ACCES);
-                int w15 = write_fd_data (a0, a1, a2);
+                int sc15 = KernelIo.scratch_addr ();
+                if (sc15 == 0)
+                    return fail (E_IO);
+                int want15 = (a2 > KernelIo.CHUNK) ? KernelIo.CHUNK : a2;
+                if (copy_guarded (sc15, a1, want15) != 0)
+                    return fail (E_INVAL);
+                int w15 = write_fd_data (a0, sc15, want15);
                 if (w15 < 0)
                     return fail (E_IO);
                 return w15;
@@ -398,7 +510,7 @@ namespace Planet.Kernel {
             case 17: // SYS_WAIT(tid) -> exit_code
                 return Sched.wait_tid (a0);
             case 18: // SYS_PS(buf, max_bytes) -> bytes
-                if (!user_ok (a0, a1))
+                if (!user_ok_w (a0, a1))
                     return fail (E_INVAL);
                 return Sched.list_tasks (a0, a1);
             case 19: // SYS_SET_STDIO(in_fd, out_fd)
@@ -438,12 +550,12 @@ namespace Planet.Kernel {
                 Fb.close ();
                 return 0;
             case 24: // SYS_MOUSE_READ(out_buf)
-                if (!user_ok (a0, 56))
+                if (!user_ok_w (a0, 56))
                     return -1;
                 Mouse.poll_state (a0);
                 return 0;
             case 25: // SYS_FB_INFO(out_buf) -> (w<<16)|h
-                if (!user_ok (a0, 8))
+                if (!user_ok_w (a0, 8))
                     return -1;
                 return Fb.info (a0);
             case 26: // SYS_FB_BLIT_RECT(src_buf, (x<<16)|y, (w<<16)|h)
@@ -504,7 +616,7 @@ namespace Planet.Kernel {
                 ok ();
                 return 0;
             case 31: // SYS_READDIR(path_ptr, path_len, buf, max_bytes)
-                if (!path_ok (a0, a1) || !user_ok (a2, a3))
+                if (!path_ok (a0, a1) || !user_ok_w (a2, a3))
                     return fail (E_INVAL);
                 int id31 = -1;
                 int kind31 = Vfs.resolve (a0, a1, out id31);
@@ -538,7 +650,7 @@ namespace Planet.Kernel {
             case 34: // SYS_RTC_TIME() -> packed UTC date/time
                 return Rtc.read_packed ();
             case 35: // SYS_GETENV(k_ptr, k_len, out_buf, max_len) -> len or -1
-                if (!path_ok (a0, a1) || !user_ok (a2, a3))
+                if (!path_ok (a0, a1) || !user_ok_w (a2, a3))
                     return -1;
                 return Env.sys_get (a0, a1, a2, a3);
             case 36: // SYS_SETENV(k_ptr, k_len, v_ptr, v_len) -> 0 or -1
@@ -566,7 +678,7 @@ namespace Planet.Kernel {
             case 43: // SYS_GPU_BLOB_CREATE(ctx_id, res_id, size) -> mapped addr or 0
                 return VirtioGpu.create_blob_mapped (a0, a1, a2);
             case 44: // SYS_KLOG_READ(buf, max_records) -> records copied
-                if (a0 == 0 || a1 <= 0 || a1 > 128 || !user_ok (a0, a1 * 64))
+                if (a0 == 0 || a1 <= 0 || a1 > 128 || !user_ok_w (a0, a1 * 64))
                     return -1;
                 return Klog.read_records (a0, a1);
             case 45: // SYS_KLOG_CTL(op, a, b)
@@ -627,7 +739,7 @@ namespace Planet.Kernel {
             case 54: // SYS_ERRNO() -> last error of this task
                 return Sched.errno_code ();
             case 55: // SYS_STAT_EX(path_ptr, path_len, out16) -> kind or 0
-                if (!path_ok (a0, a1) || !user_ok (a2, 16))
+                if (!path_ok (a0, a1) || !user_ok_w (a2, 16))
                     return fail (E_INVAL);
                 int id55 = -1;
                 int kind55 = Vfs.resolve (a0, a1, out id55);
@@ -764,6 +876,11 @@ namespace Planet.Kernel {
     }
 
     public int fault_dispatch (int vec, int err, int rip, int cr2) {
+        // A kernel-mode fault inside a guarded copy is recoverable: restore the
+        // copy frame and let it return 1 to the syscall handler (KR-07).
+        if (vec == 14 && (err & 4) == 0 && mmio_read64 (KernelLayout.COPY_VARS) == 1) {
+            copy_recover ();
+        }
         int cur_cr3 = Sched.current_cr3 ();
         int tid = Sched.current_tid ();
         if (cur_cr3 != 0)

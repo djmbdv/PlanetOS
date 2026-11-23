@@ -88,8 +88,17 @@ namespace Planet.Kernel {
         // --- kernel tables -------------------------------------------------
         public const int FD_TABLE = 0x107000;      // 64 handles x 32 bytes
         public const int FD_TABLE_SIZE = 0x800;
+        // Guarded user copy: state (0 idle, 1 active), saved rsp and rbp of the
+        // copy frame. Written and read by the asm bodies in kernel/syscall.vala.
+        public const int COPY_VARS = 0x107800;
+        public const int COPY_VARS_SIZE = 0x18;
         public const int KLOG_RING = 0x108000;     // 128 records x 64 bytes
         public const int KLOG_RING_SIZE = 0x2000;
+        // Staging buffer for SYS_READ / SYS_WRITE. It lives in the low window
+        // because that window is present, as supervisor pages, in every user
+        // CR3; a Pmm frame would not be mapped there.
+        public const int IO_SCRATCH = 0x10A000;
+        public const int IO_SCRATCH_SIZE = 0x4000; // 16 KiB
         public const int PMM_BITMAP = 0x110000;    // 64 MiB / 4 KiB frames: Fibonacci buddy meta + tables
         public const int PMM_BITMAP_SIZE = 0x9000;
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
@@ -122,6 +131,8 @@ namespace Planet.Kernel {
         private const int R_SYSCALL_SCRATCH = 11;
         private const int R_FD_TABLE = 12;
         private const int R_KLOG_RING = 18;
+        private const int R_COPY_VARS = 19;
+        private const int R_IO_SCRATCH = 20;
         private const int R_PMM_BITMAP = 13;
         private const int R_RAMFS_TABLE = 14;
         private const int R_SCHED_VARS = 15;
@@ -166,7 +177,11 @@ namespace Planet.Kernel {
             if (r != 0) return r;
             r = step (R_FD_TABLE, FD_TABLE, FD_TABLE_SIZE);
             if (r != 0) return r;
+            r = step (R_COPY_VARS, COPY_VARS, COPY_VARS_SIZE);
+            if (r != 0) return r;
             r = step (R_KLOG_RING, KLOG_RING, KLOG_RING_SIZE);
+            if (r != 0) return r;
+            r = step (R_IO_SCRATCH, IO_SCRATCH, IO_SCRATCH_SIZE);
             if (r != 0) return r;
             r = step (R_PMM_BITMAP, PMM_BITMAP, PMM_BITMAP_SIZE);
             if (r != 0) return r;

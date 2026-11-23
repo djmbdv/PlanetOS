@@ -8,4 +8,5 @@
 =fdguard=ok
 =rights=ok
 =stale=ok
+=guard=ok
 !FAIL
