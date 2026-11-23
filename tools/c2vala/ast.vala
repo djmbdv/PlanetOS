@@ -3,6 +3,9 @@
 namespace C2Vala {
 
     public class NameIndexMap : Object {
+#if PLANC
+        // The in-guest compiler resolves GLib from the SDK prelude; keep the
+        // explicit table so this source also builds in that profile.
         private string[] keys;
         private int[] vals;
         private int cap;
@@ -16,8 +19,7 @@ namespace C2Vala {
 
         private static uint32 hash_str (string s) {
             uint32 h = 2166136261u;
-            int n = s.length;
-            for (int i = 0; i < n; i++) {
+            for (int i = 0; i < s.length; i++) {
                 h ^= (uint32) s[i];
                 h *= 16777619u;
             }
@@ -74,6 +76,33 @@ namespace C2Vala {
             vals[idx] = val + 1;
             count++;
         }
+
+        public bool has (string key) {
+            return get_index (key) >= 0;
+        }
+#else
+        private GLib.HashTable<string, int> map =
+            new GLib.HashTable<string, int> (GLib.str_hash, GLib.str_equal);
+
+        public NameIndexMap (int init_cap = 1024) {
+        }
+
+        public int get_index (string key) {
+            int value = 0;
+            string orig = "";
+            if (!map.lookup_extended (key, out orig, out value))
+                return -1;
+            return value;
+        }
+
+        public void set_index (string key, int val) {
+            map.insert (key, val);
+        }
+
+        public bool has (string key) {
+            return map.contains (key);
+        }
+#endif
     }
 
     public errordomain RefuseError {

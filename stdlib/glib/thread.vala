@@ -235,6 +235,107 @@ namespace GLib {
         }
     }
 
+    /**
+     * Per-task pointer slot (GLib.Private). Each instance is an independent
+     * key; `get`/`set` address the current kernel task through SYS_TID.
+     */
+    public class Private : Object {
+        private const int MAX_TASKS = 256;
+        private int[] values = new int[MAX_TASKS];
+        private bool[] used = new bool[MAX_TASKS];
+
+        public Private () {}
+
+        public int get () {
+            int tid = Sys.tid ();
+            if (tid < 0 || tid >= MAX_TASKS || !used[tid])
+                return 0;
+            return values[tid];
+        }
+
+        public void set (int value) {
+            int tid = Sys.tid ();
+            if (tid < 0 || tid >= MAX_TASKS)
+                return;
+            values[tid] = value;
+            used[tid] = true;
+        }
+
+        public int replace (int value) {
+            int old = get ();
+            set (value);
+            return old;
+        }
+
+        public void destroy () {}
+    }
+
+    public delegate void ThreadPoolFunc (int data);
+
+    private class ThreadPoolJob : Object {
+        public int data;
+        public ThreadPoolJob (int value) { data = value; }
+    }
+
+    /**
+     * Fixed-size worker pool (GLib.ThreadPool) backed by AsyncQueue.
+     */
+    public class ThreadPool : Object {
+        private AsyncQueue<ThreadPoolJob> queue = new AsyncQueue<ThreadPoolJob> ();
+        private GenericArray<Thread> workers = new GenericArray<Thread> ();
+        private ThreadPoolFunc func;
+        private bool stopping = false;
+        private int pending = 0;
+        private int[] _lock = new int[1];
+
+        public ThreadPool (ThreadPoolFunc func, int max_threads = 4, bool exclusive = false) {
+            this.func = func;
+            int count = (max_threads <= 0) ? 1 : max_threads;
+            ThreadFunc body = () => {
+                worker ();
+                return null;
+            };
+            for (int i = 0; i < count; i++)
+                workers.add (new Thread ("thread-pool", body));
+        }
+
+        private void worker () {
+            while (true) {
+                var job = queue.pop ();
+                if (stopping)
+                    return;
+                func (job.data);
+                __planc_host_spin_lock (_lock);
+                if (pending > 0)
+                    pending--;
+                __planc_host_spin_unlock (_lock);
+            }
+        }
+
+        public void push (int data) {
+            __planc_host_spin_lock (_lock);
+            pending++;
+            __planc_host_spin_unlock (_lock);
+            queue.push (new ThreadPoolJob (data));
+        }
+
+        public uint unprocessed () {
+            __planc_host_spin_lock (_lock);
+            int n = pending;
+            __planc_host_spin_unlock (_lock);
+            return (uint) ((n < 0) ? 0 : n);
+        }
+
+        public void stop () {
+            stopping = true;
+            for (int i = 0; i < workers.length; i++)
+                queue.push (new ThreadPoolJob (0));
+            for (int i = 0; i < workers.length; i++)
+                workers[i].join ();
+            workers = new GenericArray<Thread> ();
+        }
+    }
+
     public class RWLock : Object {
         private int[] _guard = new int[1];
         private int _readers = 0;

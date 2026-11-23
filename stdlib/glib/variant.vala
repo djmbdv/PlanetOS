@@ -533,4 +533,140 @@ namespace GLib {
             return sb.str;
         }
     }
+
+    /**
+     * Builds arrays and tuples without hand-constructing the child array.
+     */
+    public class VariantBuilder : Object {
+        private VariantType type;
+        private GenericArray<Variant> values = new GenericArray<Variant> ();
+
+        public VariantBuilder (VariantType type) {
+            this.type = type;
+        }
+
+        public void add_value (Variant value) {
+            values.add (value);
+        }
+
+        public Variant end () {
+            if (type.is_tuple ()) {
+                var items = new Variant[values.length];
+                for (int i = 0; i < values.length; i++)
+                    items[i] = values[i];
+                return Variant.new_tuple (items);
+            }
+            if (type.is_array ()) {
+                var items = new Variant[values.length];
+                for (int i = 0; i < values.length; i++)
+                    items[i] = values[i];
+                return Variant.new_array (type.element (), items);
+            }
+            if (values.length == 1)
+                return values[0];
+            var items = new Variant[values.length];
+            for (int i = 0; i < values.length; i++)
+                items[i] = values[i];
+            return Variant.new_array (null, items);
+        }
+    }
+
+    /**
+     * Mutable view over an `a{sv}` dictionary.
+     */
+    public class VariantDict : Object {
+        private GenericArray<Variant> entries = new GenericArray<Variant> ();
+
+        public VariantDict (Variant? from = null) {
+            if (from == null)
+                return;
+            int n = from.n_children ();
+            for (int i = 0; i < n; i++) {
+                var child = from.get_child_value (i);
+                if (child != null && child.classify () == VariantClass.DICT_ENTRY)
+                    entries.add (child);
+            }
+        }
+
+        public static VariantDict new_from (Variant? from) {
+            return new VariantDict (from);
+        }
+
+        private int find (string key) {
+            for (int i = 0; i < entries.length; i++) {
+                var k = entries[i].get_child_value (0);
+                if (k != null && k.get_string () == key)
+                    return i;
+            }
+            return -1;
+        }
+
+        public bool contains (string key) {
+            return find (key) >= 0;
+        }
+
+        public void insert_value (string key, Variant value) {
+            remove (key);
+            entries.add (Variant.new_dict_entry (Variant.new_string (key), Variant.new_variant (value)));
+        }
+
+        public Variant? lookup_value (string key, VariantType? expected_type = null) {
+            int i = find (key);
+            if (i < 0)
+                return null;
+            var v = entries[i].get_child_value (1);
+            if (v == null)
+                return null;
+            Variant? target = (v.classify () == VariantClass.VARIANT) ? v.get_variant () : v;
+            if (target == null)
+                return null;
+            if (expected_type != null && !target.is_of_type (expected_type))
+                return null;
+            return target;
+        }
+
+        public bool remove (string key) {
+            int i = find (key);
+            if (i < 0)
+                return false;
+            entries.remove_index (i);
+            return true;
+        }
+
+        public void clear () {
+            entries = new GenericArray<Variant> ();
+        }
+
+        public Variant end () {
+            var items = new Variant[entries.length];
+            for (int i = 0; i < entries.length; i++)
+                items[i] = entries[i];
+            return Variant.new_array (VariantType.VARDICT (), items);
+        }
+    }
+
+    /**
+     * Iterates the children of a container variant.
+     */
+    public class VariantIter : Object {
+        private Variant value;
+        private int cursor = 0;
+
+        public VariantIter (Variant value) {
+            this.value = value;
+        }
+
+        public Variant? next_value () {
+            if (cursor >= value.n_children ())
+                return null;
+            var child = value.get_child_value (cursor);
+            cursor = cursor + 1;
+            return child;
+        }
+
+        public int n_remaining () {
+            int left = value.n_children () - cursor;
+            return (left < 0) ? 0 : left;
+        }
+    }
 }

@@ -29,34 +29,64 @@ namespace GLib {
     private class KfGroup : Object {
         public string name;
         public GenericArray<KfEntry> entries;
+        private GLib.HashTable<string, int> index =
+            new GLib.HashTable<string, int> (GLib.str_hash, GLib.str_equal);
 
         public KfGroup (string n) {
             name = n;
             entries = new GenericArray<KfEntry> ();
         }
 
+        private void rebuild_index () {
+            index = new GLib.HashTable<string, int> (GLib.str_hash, GLib.str_equal);
+            for (int i = 0; i < entries.length; i++)
+                index.insert (entries[i].key, i);
+        }
+
         public int find_entry (string key) {
-            for (int i = 0; i < entries.length; i++) {
-                if (entries[i].key == key)
-                    return i;
-            }
-            return -1;
+            if (index.size () != entries.length)
+                rebuild_index ();
+            int i = -1;
+            string orig = "";
+            if (!index.lookup_extended (key, out orig, out i))
+                return -1;
+            return i;
+        }
+
+        public void append (KfEntry entry) {
+            index.insert (entry.key, entries.length);
+            entries.add (entry);
+        }
+
+        public void remove_entry (int i) {
+            entries.remove_index (i);
+            rebuild_index ();
         }
     }
 
     public class KeyFile : Object {
         private GenericArray<KfGroup> groups;
+        private GLib.HashTable<string, int> group_index =
+            new GLib.HashTable<string, int> (GLib.str_hash, GLib.str_equal);
 
         public KeyFile () {
             groups = new GenericArray<KfGroup> ();
         }
 
+        private void rebuild_group_index () {
+            group_index = new GLib.HashTable<string, int> (GLib.str_hash, GLib.str_equal);
+            for (int i = 0; i < groups.length; i++)
+                group_index.insert (groups[i].name, i);
+        }
+
         private int find_group (string group_name) {
-            for (int i = 0; i < groups.length; i++) {
-                if (groups[i].name == group_name)
-                    return i;
-            }
-            return -1;
+            if (group_index.size () != groups.length)
+                rebuild_group_index ();
+            int i = -1;
+            string orig = "";
+            if (!group_index.lookup_extended (group_name, out orig, out i))
+                return -1;
+            return i;
         }
 
         private KfGroup ensure_group (string group_name) {
@@ -64,6 +94,7 @@ namespace GLib {
             if (gi >= 0)
                 return groups[gi];
             var g = new KfGroup (group_name);
+            group_index.insert (group_name, groups.length);
             groups.add (g);
             return g;
         }
@@ -179,7 +210,7 @@ namespace GLib {
                 g.entries[ei].val = value;
                 return;
             }
-            g.entries.add (new KfEntry (key, value));
+            g.append (new KfEntry (key, value));
         }
 
         public int get_integer (string group_name, string key) throws KeyFileError {
@@ -221,7 +252,7 @@ namespace GLib {
             int ei = groups[gi].find_entry (key);
             if (ei < 0)
                 throw new KeyFileError.KEY_NOT_FOUND ("Key not found");
-            groups[gi].entries.remove_index (ei);
+            groups[gi].remove_entry (ei);
             return true;
         }
 
@@ -230,6 +261,7 @@ namespace GLib {
             if (gi < 0)
                 throw new KeyFileError.GROUP_NOT_FOUND ("Group not found");
             groups.remove_index (gi);
+            rebuild_group_index ();
             return true;
         }
     }

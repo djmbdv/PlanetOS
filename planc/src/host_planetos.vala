@@ -40,15 +40,9 @@ namespace Planc {
             var buf = new uint8[sz];
             int got = 0;
             while (got < sz) {
-                int want = sz - got;
-                if (want > Sys.MAX_IO)
-                    want = Sys.MAX_IO;
-                var chunk = new uint8[want];
-                int r = Sys.read (fd, chunk, want);
+                int r = Sys.read_into (fd, buf, got, sz - got);
                 if (r <= 0)
                     break;
-                for (int i = 0; i < r; i++)
-                    buf[got + i] = chunk[i];
                 got = got + r;
             }
             Sys.close (fd);
@@ -73,13 +67,7 @@ namespace Planc {
             // Sys.write rejects a single transfer over Sys.MAX_IO (64 KiB).
             int done = 0;
             while (done < data.length) {
-                int want = data.length - done;
-                if (want > Sys.MAX_IO)
-                    want = Sys.MAX_IO;
-                var chunk = new uint8[want];
-                for (int i = 0; i < want; i++)
-                    chunk[i] = data[done + i];
-                int nw = Sys.write (fd, chunk, want);
+                int nw = Sys.write_from (fd, data, done, data.length - done);
                 if (nw <= 0) {
                     Sys.close (fd);
                     throw new FileError.FAILED (@"short write to '$path'");

@@ -324,7 +324,55 @@ The middle option is viable precisely because there is no ABI: `GLib.StringBuild
 | Disproportionate Unicode tables | Bloated binary | Compressed ranges generated at build time (RT-09) |
 | The `host` profile leaks dependencies into the target | Host symbol in a system binary | Per-directory symbol audit (VE-02) |
 
-## 12. Recent GLib & `c2vala` runtime additions
+## 12. GLib API expansion (runtime quality and throughput)
+
+The compatibility layer now covers the GLib pieces that mapped directly to existing
+hot paths, without importing the C ABI:
+
+- **`GLib.HashTable`** ([stdlib/glib/hashtable.vala](../../stdlib/glib/hashtable.vala)):
+  `HashTableIter`, `lookup_extended`, `steal`, `steal_extended`, `foreach_remove`,
+  `foreach_steal`, `get_keys`/`get_values`, `length`, `@get`/`@set` and
+  `steal_all`. `KeyFile` uses it for group/key lookup and `c2vala`'s host
+  `NameIndexMap` is backed by it.
+- **`GLib.Source` / `MainContext`** ([stdlib/glib/mainloop.vala](../../stdlib/glib/mainloop.vala)):
+  public `Source`, `TimeoutSource`/`IdleSource`/`IOSource` semantics through
+  `Source.attach`, `set_priority`, `destroy`, `find_source_by_id`,
+  `MainContext.invoke`, `push_thread_default`/`pop_thread_default` and
+  `child_watch_add`. Timeouts and fd watches (priority 0) now run before idle
+  sources (priority 200), so a permanently-ready idle callback cannot starve a
+  timer. The fd-watch buffer grows instead of being capped at eight entries.
+- **`GLib.Private`, `GLib.ThreadPool`** ([stdlib/glib/thread.vala](../../stdlib/glib/thread.vala)):
+  per-task slots through `SYS_TID` (syscall 62) and a fixed worker pool over
+  `AsyncQueue`. `AsyncQueue` now parks on `Cond` instead of spinning on
+  `SYS_YIELD`.
+- **`GLib.PathBuf`, `GLib.StrvBuilder`, `GLib.ByteOrder`, `GLib.Aligned`**
+  ([stdlib/glib/core.vala](../../stdlib/glib/core.vala)): path joins in
+  `Gio.File`, argv construction in `Shell.parse_argv`, byte-order helpers in
+  `Gio.DataInputStream`, and explicit 32/64-byte allocations for SIMD users.
+  `Str` gained `strv_length`, `strfreev`, `strsplit_set` and `strescape`;
+  `StringBuilder.append` uses `Memory.copy` and exposes `steal ()`.
+- **`GLib.VariantBuilder`, `VariantDict`, `VariantIter`**
+  ([stdlib/glib/variant.vala](../../stdlib/glib/variant.vala)): container
+  construction and mutation on top of the existing immutable `Variant`.
+- **Allocator and I/O alignment** ([stdlib/glib/memory.vala](../../stdlib/glib/memory.vala),
+  [stdlib/planet_sys.vala](../../stdlib/planet_sys.vala),
+  [stdlib/gio/file.vala](../../stdlib/gio/file.vala)): `Memory.malloc` returns
+  32-byte aligned blocks; `Sys.read_into`/`write_from` fill or drain a buffer
+  slice in place, and `Gio.File.load_contents` no longer allocates a temporary
+  chunk per read. `planc`'s PlanetOS host adapter uses the same primitives.
+- **`DateTime`** ([stdlib/glib/time.vala](../../stdlib/glib/time.vala)): local
+  conversion, day-of-week/day-of-year and custom `strftime` formatting.
+- **`AtomicUint`** ([stdlib/glib/atomic.vala](../../stdlib/glib/atomic.vala)):
+  32-bit atomic get/set/add/decrement/CAS.
+
+Deliberately deferred: `MappedFile` (needs a file-backed mmap syscall), and the
+collection compatibility classes `List`/`SList`/`Sequence`/`Tree`/`PtrArray`/
+`GenericSet` (Gee already provides these containers; `GLib.List`'s
+`[ReturnsModifiedPointer]` and null-receiver idiom do not map cleanly onto the
+`planc` dialect). `TimeZone`/`Date`/`Uri`/`MarkupParseContext` remain available
+as future slices once a consumer needs them.
+
+## 13. Recent GLib & `c2vala` runtime additions
 
 - **`GLib.StringChunk` & `GLib.ByteArray`** ([stdlib/glib/core.vala](../../stdlib/glib/core.vala), [stdlib/glib/bytes.vala](../../stdlib/glib/bytes.vala), [stdlib/gio/streams.vala](../../stdlib/gio/streams.vala)): `StringChunk` provides `insert`, `insert_len`, `insert_const` (FNV-1a deduplication), `clear`, and `free`. `ByteArray` provides `ByteArray.sized`, `ByteArray.take`, `append`, `append_byte`, `get_byte`, `copy_to`, `write_at`, `to_string`, `prepend`, `remove_index`, `remove_index_fast`, `remove_range`, `set_size`, and `steal` (with null/overflow guards), alongside `Bytes.from_byte_array`. `MemoryInputStream`, `MemoryOutputStream`, and `DataInputStream.read_upto`/`read_line` use `ByteArray` internally.
 - **`GLib.FileStream` & `GLib.Error` extensions** ([stdlib/glib/filestream.vala](../../stdlib/glib/filestream.vala), [planc/src/codegen.vala](../../planc/src/codegen.vala)): Pure-Vala `GLib.FileStream` and `GLib.FileSeek` over `Sys.*` syscalls with 4 KiB read buffering, `read_line`/`gets`, and lazy `get_stdin ()`/`get_stdout ()`/`get_stderr ()` accessors. `planc` adds `Error.matches (domain, code)` and `Error.copy ()` on `ValaType.ERROR`, fixes `ThrowStatement` code/message slots, and restores `rdi` (`args`) after `__planc_init_globals` in `_start`.

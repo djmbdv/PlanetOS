@@ -159,7 +159,8 @@ namespace GLib {
      */
     public class Memory : Object {
         private const int ALLOC_MAGIC = 0x4D454D50; // "MEMP"
-        private const int HDR_BYTES = 16;
+        // 32 bytes keeps every returned block aligned for AVX2 loads.
+        private const int HDR_BYTES = 32;
 
         public static void copy (int dest, int src, size_t n) {
             if (dest == 0 || src == 0 || n == 0 || dest == src)
@@ -174,6 +175,15 @@ namespace GLib {
                 __mem_copy_back (dest, src, n);
             else
                 __mem_copy_avx2 (dest, src, n);
+        }
+
+        // Raw 64-bit helpers used by Aligned and other allocators.
+        public static void poke64 (int addr, int val) {
+            __mem_poke64 (addr, val);
+        }
+
+        public static int peek64 (int addr) {
+            return __mem_peek64 (addr);
         }
 
         public static void set (int dest, int val, size_t n) {

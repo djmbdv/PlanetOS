@@ -5,6 +5,54 @@ namespace GLib {
     public delegate uint HashFunc<K> (K key);
     public delegate bool EqualFunc<K> (K a, K b);
     public delegate void HFunc<K, V> (K key, V value);
+    public delegate bool HRFunc<K, V> (K key, V value);
+
+    /**
+     * Iterator over the live slots of a HashTable. Mutation during iteration
+     * is not safe; remove entries with foreach_remove or after collecting keys.
+     */
+    public class HashTableIter<K, V> : Object {
+        private HashTable<K, V> table;
+        private int cursor = 0;
+        private int last = -1;
+
+        public HashTableIter (HashTable<K, V> owner) {
+            table = owner;
+        }
+
+        public bool next (out K key, out V value) {
+            int cap = table.iter_capacity ();
+            while (cursor < cap) {
+                int i = cursor;
+                cursor = cursor + 1;
+                if (table.iter_slot (i, out key, out value)) {
+                    last = i;
+                    return true;
+                }
+            }
+            table.iter_zeros (out key, out value);
+            last = -1;
+            return false;
+        }
+
+        public void remove () {
+            if (last < 0)
+                return;
+            K key;
+            V value;
+            if (table.iter_slot (last, out key, out value))
+                table.remove_at (last);
+            last = -1;
+        }
+
+        public void steal () {
+            remove ();
+        }
+
+        public HashTable<K, V> get_hash_table () {
+            return table;
+        }
+    }
 
     public uint str_hash (string s) {
         uint32 h = 2166136261u;
@@ -187,22 +235,7 @@ namespace GLib {
             int slot = find_slot (key, h);
             if (slot < 0)
                 return false;
-            int mask = _cap - 1;
-            int idx = slot;
-            while (true) {
-                int nxt = (idx + 1) & mask;
-                int nh = hashes[nxt];
-                if (nh < 0 || ((nxt - (nh & mask)) & mask) == 0)
-                    break;
-                hashes[idx] = nh;
-                keys[idx] = keys[nxt];
-                vals[idx] = vals[nxt];
-                idx = nxt;
-            }
-            hashes[idx] = -1;
-            keys[idx] = zero_k;
-            vals[idx] = zero_v;
-            _size--;
+            remove_at (slot);
             return true;
         }
 
@@ -212,6 +245,22 @@ namespace GLib {
 
         public uint size () {
             return (uint) _size;
+        }
+
+        public uint length {
+            get { return (uint) _size; }
+        }
+
+        public V? @get (K key) {
+            return lookup (key);
+        }
+
+        public bool @set (K key, V val) {
+            return insert (key, val);
+        }
+
+        public void steal_all () {
+            remove_all ();
         }
 
         public K[] get_keys_as_array () {
@@ -239,6 +288,126 @@ namespace GLib {
                 if (hashes[i] >= 0)
                     func (keys[i], vals[i]);
             }
+        }
+
+        // --- GLib-compatible API -------------------------------------------
+
+        public bool lookup_extended (K key, out K orig_key, out V value) {
+            int slot = find_slot (key, hash_key (key));
+            if (slot < 0) {
+                orig_key = zero_k;
+                value = zero_v;
+                return false;
+            }
+            orig_key = keys[slot];
+            value = vals[slot];
+            return true;
+        }
+
+        public bool steal (K key) {
+            int h = hash_key (key);
+            int slot = find_slot (key, h);
+            if (slot < 0)
+                return false;
+            remove_at (slot);
+            return true;
+        }
+
+        public bool steal_extended (K key, out K stolen_key, out V stolen_value) {
+            int h = hash_key (key);
+            int slot = find_slot (key, h);
+            if (slot < 0) {
+                stolen_key = zero_k;
+                stolen_value = zero_v;
+                return false;
+            }
+            stolen_key = keys[slot];
+            stolen_value = vals[slot];
+            remove_at (slot);
+            return true;
+        }
+
+        public uint foreach_remove (HRFunc<K, V> func) {
+            var doomed = new GenericArray<K> ();
+            for (int i = 0; i < _cap; i++) {
+                if (hashes[i] >= 0 && func (keys[i], vals[i]))
+                    doomed.add (keys[i]);
+            }
+            for (int i = 0; i < doomed.length; i++)
+                remove (doomed[i]);
+            return (uint) doomed.length;
+        }
+
+        public uint foreach_steal (HRFunc<K, V> func) {
+            var doomed = new GenericArray<K> ();
+            for (int i = 0; i < _cap; i++) {
+                if (hashes[i] >= 0 && func (keys[i], vals[i]))
+                    doomed.add (keys[i]);
+            }
+            for (int i = 0; i < doomed.length; i++)
+                steal (doomed[i]);
+            return (uint) doomed.length;
+        }
+
+        public GenericArray<K> get_keys () {
+            var res = new GenericArray<K> ();
+            for (int i = 0; i < _cap; i++) {
+                if (hashes[i] >= 0)
+                    res.add (keys[i]);
+            }
+            return res;
+        }
+
+        public GenericArray<V> get_values () {
+            var res = new GenericArray<V> ();
+            for (int i = 0; i < _cap; i++) {
+                if (hashes[i] >= 0)
+                    res.add (vals[i]);
+            }
+            return res;
+        }
+
+        public HashTableIter<K, V> get_iter () {
+            return new HashTableIter<K, V> (this);
+        }
+
+        internal void remove_at (int slot) {
+            int mask = _cap - 1;
+            int idx = slot;
+            while (true) {
+                int nxt = (idx + 1) & mask;
+                int nh = hashes[nxt];
+                if (nh < 0 || ((nxt - (nh & mask)) & mask) == 0)
+                    break;
+                hashes[idx] = nh;
+                keys[idx] = keys[nxt];
+                vals[idx] = vals[nxt];
+                idx = nxt;
+            }
+            hashes[idx] = -1;
+            keys[idx] = zero_k;
+            vals[idx] = zero_v;
+            _size--;
+        }
+
+        internal int iter_capacity () {
+            return _cap;
+        }
+
+        internal bool iter_slot (int i, out K key, out V value) {
+            if (i < 0 || i >= _cap || hashes[i] < 0) {
+                key = zero_k;
+                value = zero_v;
+                return false;
+            }
+            key = keys[i];
+            value = vals[i];
+            return true;
+        }
+
+        internal void iter_zeros (out K key, out V value) {
+            key = zero_k;
+            value = zero_v;
         }
     }
 }

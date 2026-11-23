@@ -451,6 +451,34 @@ namespace GLib {
             return new DateTime (t * TIME_SPAN_SECOND);
         }
 
+        public static DateTime from_unix_local (int64 t) {
+            var d = new DateTime (t * TIME_SPAN_SECOND);
+            d.tm = Time.local (t);
+            return d;
+        }
+
+        public DateTime to_local () {
+            var d = new DateTime (usec);
+            d.tm = Time.local (to_unix ());
+            return d;
+        }
+
+        public DateTime to_utc () {
+            return new DateTime (usec);
+        }
+
+        public int get_day_of_week () {
+            return tm.weekday;
+        }
+
+        public int get_day_of_year () {
+            return tm.day_of_year;
+        }
+
+        public string format (string fmt) {
+            return tm.format (fmt);
+        }
+
         public int64 to_unix () {
             int64 secs = usec / TIME_SPAN_SECOND;
             if (usec < 0 && (usec % TIME_SPAN_SECOND) != 0)

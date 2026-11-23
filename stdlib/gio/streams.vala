@@ -914,9 +914,8 @@ namespace Gio {
         public uint16 read_uint16 (Cancellable? cancellable = null) throws IOError {
             uint16 b0 = (uint16) read_byte (cancellable);
             uint16 b1 = (uint16) read_byte (cancellable);
-            if (is_little_endian ())
-                return b0 | (b1 << 8);
-            return (b0 << 8) | b1;
+            uint16 be = (uint16) ((b0 << 8) | b1);
+            return is_little_endian () ? GLib.swap16 (be) : be;
         }
 
         public int16 read_int16 (Cancellable? cancellable = null) throws IOError {
@@ -928,9 +927,8 @@ namespace Gio {
             uint32 b1 = (uint32) read_byte (cancellable);
             uint32 b2 = (uint32) read_byte (cancellable);
             uint32 b3 = (uint32) read_byte (cancellable);
-            if (is_little_endian ())
-                return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-            return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+            uint32 be = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+            return is_little_endian () ? GLib.swap32 (be) : be;
         }
 
         public int32 read_int32 (Cancellable? cancellable = null) throws IOError {
@@ -938,11 +936,10 @@ namespace Gio {
         }
 
         public uint64 read_uint64 (Cancellable? cancellable = null) throws IOError {
-            uint64 lo = (uint64) read_uint32 (cancellable);
-            uint64 hi = (uint64) read_uint32 (cancellable);
-            if (is_little_endian ())
-                return lo | (hi << 32);
-            return (lo << 32) | hi;
+            uint64 be = 0;
+            for (int i = 0; i < 8; i++)
+                be = (be << 8) | (uint64) read_byte (cancellable);
+            return is_little_endian () ? GLib.swap64 (be) : be;
         }
 
         public int64 read_int64 (Cancellable? cancellable = null) throws IOError {

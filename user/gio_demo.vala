@@ -511,6 +511,32 @@ namespace GioDemo {
         check ("appinfo-mime", ai != null && ai.get_commandline () == "wc.elf");
     }
 
+    private void demo_paths_bytes () {
+        var pb = new PathBuf.from_path ("/a/b");
+        pb.push ("c");
+        check ("pathbuf-join", pb.to_path () == "/a/b/c");
+        pb.pop ();
+        check ("pathbuf-pop", pb.to_path () == "/a/b");
+        pb.set_extension ("txt");
+        check ("pathbuf-ext", pb.to_path () == "/a/b.txt");
+
+        check ("byteswap16", GLib.swap16 ((uint16) 0x1234) == (uint16) 0x3412);
+        check ("byteswap32", GLib.swap32 (0x12345678U) == 0x78563412U);
+        check ("byteswap64", GLib.swap64 (0x0102030405060708UL) == 0x0807060504030201UL);
+        check ("format-size", GLib.format_size (1000, FormatSizeFlags.DEFAULT).has_suffix ("kB"));
+
+        var sv = new StrvBuilder ();
+        sv.add ("a");
+        sv.add ("b");
+        var sv_arr = sv.end ();
+        check ("strv-builder", sv_arr.length == 2 && sv_arr[1] == "b");
+
+        var parts = Str.strsplit_set ("a,b;c", ",;");
+        check ("strsplit-set", parts.length == 3 && parts[2] == "c");
+
+
+    }
+
     int main (string[] args) {
         string target = "hello.txt";
         if (args.length > 1)
@@ -532,6 +558,7 @@ namespace GioDemo {
             demo_cancellable (f);
         }
         demo_memory ();
+        demo_paths_bytes ();
         demo_write (at ("gio_demo.tmp"));
         demo_contents (at ("gio_demo2.tmp"));
         demo_directories ();

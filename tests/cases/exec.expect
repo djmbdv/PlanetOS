@@ -1,5 +1,5 @@
 ~test/exec/hello\.txt: lines=1 words=4 bytes=30 chars=30
-=gio:summary checks=80 failures=0
+=gio:summary checks=89 failures=0
 =exec: exit=0
 ~worker: completed after
 =exec: exit=7

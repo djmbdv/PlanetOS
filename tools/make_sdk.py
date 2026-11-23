@@ -27,6 +27,7 @@ SOURCES = [
     "stdlib/glib/memory.vala",
     "stdlib/glib/atomic.vala",
     "stdlib/glib/thread.vala",
+    "stdlib/glib/queue.vala",
     "stdlib/glib/time.vala",
     "tools/c2vala_rt.vala",
 ]

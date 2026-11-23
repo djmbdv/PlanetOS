@@ -168,7 +168,7 @@ namespace GLib {
         }
 
         public static bool parse_argv (string command_line, out string[] argv) throws ShellError {
-            var tokens = new GenericArray<string> ();
+            var tokens = new StrvBuilder ();
             int n = command_line.length;
             int i = 0;
             while (i < n) {
@@ -220,14 +220,11 @@ namespace GLib {
                 }
                 tokens.add (sb.str);
             }
-            if (tokens.length == 0) {
+            if (tokens.length () == 0) {
                 argv = new string[0];
                 throw new ShellError.EMPTY_STRING ("Text was empty");
             }
-            var res = new string[tokens.length];
-            for (int k = 0; k < tokens.length; k++)
-                res[k] = tokens[k];
-            argv = res;
+            argv = tokens.end ();
             return true;
         }
     }

@@ -127,8 +127,7 @@ namespace GLib {
             if (n == 0)
                 return;
             ensure (n);
-            for (int i = 0; i < n; i++)
-                buf[used + i] = s[i];
+            Memory.copy (Sys.byte_arr_addr (buf) + used, Sys.str_addr (s), (size_t) n);
             used = used + n;
         }
 
@@ -137,8 +136,7 @@ namespace GLib {
             if (n <= 0)
                 return;
             ensure (n);
-            for (int i = 0; i < n; i++)
-                buf[used + i] = s[i];
+            Memory.copy (Sys.byte_arr_addr (buf) + used, Sys.str_addr (s), (size_t) n);
             used = used + n;
         }
 
@@ -200,6 +198,18 @@ namespace GLib {
             if (count > used)
                 count = used;
             used = used - count;
+        }
+
+        // Returns the current value and starts a new empty buffer. Unlike
+        // reading `str` in a loop, this makes the ownership transfer explicit.
+        public string steal () {
+            string value = str;
+            used = 0;
+            return value;
+        }
+
+        public string free_to_string () {
+            return steal ();
         }
 
         public void truncate (int new_len = 0) {
@@ -637,6 +647,67 @@ namespace GLib {
         public static bool has_suffix (string str, string suffix) {
             return str.has_suffix (suffix);
         }
+
+        public static int strv_length (string[] strv) {
+            return strv.length;
+        }
+
+        // Strings are reference-counted in this runtime, so freeing a vector is
+        // a no-op for the elements; the array itself is collected. The method
+        // exists so ported GLib code keeps its explicit ownership shape.
+        public static void strfreev (string[]? strv) {
+        }
+
+        public static GenericArray<string> strsplit_set (string s, string delimiters) {
+            var res = new GenericArray<string> ();
+            var token = new StringBuilder ();
+            for (int i = 0; i < s.length; i++) {
+                char c = s[i];
+                bool split = false;
+                for (int j = 0; j < delimiters.length; j++) {
+                    if (delimiters[j] == c) {
+                        split = true;
+                        break;
+                    }
+                }
+                if (split) {
+                    if (token.len > 0)
+                        res.add (token.steal ());
+                } else {
+                    token.append_c (c);
+                }
+            }
+            if (token.len > 0)
+                res.add (token.steal ());
+            return res;
+        }
+
+        private const string HEX = "0123456789abcdef";
+
+        public static string strescape (string s, string exceptions) {
+            var sb = new StringBuilder ();
+            for (int i = 0; i < s.length; i++) {
+                uint8 c = s[i];
+                bool keep = (c >= 'a' && c <= 'z')
+                         || (c >= 'A' && c <= 'Z')
+                         || (c >= '0' && c <= '9');
+                for (int j = 0; j < exceptions.length; j++) {
+                    if ((uint8) exceptions[j] == c) {
+                        keep = true;
+                        break;
+                    }
+                }
+                if (keep) {
+                    sb.append_c ((char) c);
+                } else {
+                    sb.append_c ('\\');
+                    sb.append_c ('x');
+                    sb.append_c (HEX[c >> 4]);
+                    sb.append_c (HEX[c & 0x0F]);
+                }
+            }
+            return sb.steal ();
+        }
     }
 
     public class PathUtils : Object {
@@ -1064,6 +1135,244 @@ namespace GLib {
         public bool boolean () {
             return (next_int () & 1U) != 0;
         }
+    }
+
+    /**
+     * Builds a null-terminated, freshly owned string vector (GLib.StrvBuilder).
+     * `end()` transfers the vector and leaves the builder empty.
+     */
+    public class StrvBuilder : Object {
+        private GenericArray<string> items = new GenericArray<string> ();
+
+        public void add (string value) {
+            items.add (value);
+        }
+
+        public void addv (string[] values) {
+            for (int i = 0; i < values.length; i++)
+                items.add (values[i]);
+        }
+
+        public int length () {
+            return items.length;
+        }
+
+        public string[] end () {
+            var res = new string[items.length];
+            for (int i = 0; i < items.length; i++)
+                res[i] = items[i];
+            items = new GenericArray<string> ();
+            return res;
+        }
+
+        public string[] steal () {
+            return end ();
+        }
+
+        public void unref () {
+            items = new GenericArray<string> ();
+        }
+    }
+
+    /**
+     * Incremental path builder (GLib.PathBuf). Joins with '/', avoids duplicate
+     * separators and supports removing the last element or changing the suffix.
+     */
+    public class PathBuf : Object {
+        private StringBuilder path = new StringBuilder ();
+
+        public PathBuf () {}
+
+        public PathBuf.from_path (string value) {
+            path.assign (value);
+        }
+
+        public void init_from_path (string value) {
+            path.assign (value);
+        }
+
+        public void clear () {
+            path.assign ("");
+        }
+
+        public int size () {
+            return path.len;
+        }
+
+        public void push (string element) {
+            if (element.length == 0)
+                return;
+            if (element[0] == '/') {
+                path.assign (element);
+                return;
+            }
+            string current = path.str;
+            if (current == ".") {
+                path.assign (element);
+                return;
+            }
+            if (current == "/") {
+                path.assign ("/" + element);
+                return;
+            }
+            if (current.length > 0 && current[current.length - 1] != '/')
+                path.append_c ('/');
+            path.append (element);
+        }
+
+        public void pop () {
+            string p = path.str;
+            int n = p.length;
+            if (n == 0)
+                return;
+            int end = n;
+            while (end > 0 && p[end - 1] == '/')
+                end--;
+            while (end > 0 && p[end - 1] != '/')
+                end--;
+            if (end > 0)
+                end--;
+            if (end <= 0) {
+                if (n > 0 && p[0] == '/')
+                    path.assign ("/");
+                else
+                    path.assign ("");
+                return;
+            }
+            path.assign (p.substring (0, end));
+        }
+
+        public void set_extension (string? extension) {
+            string p = path.str;
+            int slash = -1;
+            for (int i = 0; i < p.length; i++) {
+                if (p[i] == '/')
+                    slash = i;
+            }
+            int dot = -1;
+            for (int i = slash + 1; i < p.length; i++) {
+                if (p[i] == '.')
+                    dot = i;
+            }
+            if (dot >= 0)
+                p = p.substring (0, dot);
+            if (extension != null && extension.length > 0)
+                p = p + "." + extension;
+            path.assign (p);
+        }
+
+        public string to_path () {
+            return path.str;
+        }
+
+        public string to_string () {
+            return path.str;
+        }
+    }
+
+    public enum ByteOrder {
+        LITTLE_ENDIAN,
+        BIG_ENDIAN,
+        PDP_ENDIAN
+    }
+
+    public static uint16 swap16 (uint16 v) {
+        return (uint16) ((v >> 8) | (v << 8));
+    }
+
+    public static uint32 swap32 (uint32 v) {
+        return ((v & 0x000000FFU) << 24)
+             | ((v & 0x0000FF00U) << 8)
+             | ((v & 0x00FF0000U) >> 8)
+             | ((v & 0xFF000000U) >> 24);
+    }
+
+    public static uint64 swap64 (uint64 v) {
+        return ((uint64) swap32 ((uint32) (v & 0xFFFFFFFFUL)) << 32)
+             | (uint64) swap32 ((uint32) (v >> 32));
+    }
+
+    // PlanetOS and the supported hosts are little-endian. These wrappers keep
+    // protocol code independent of the host byte order.
+    public static uint16 from_le16 (uint16 v) { return v; }
+    public static uint32 from_le32 (uint32 v) { return v; }
+    public static uint64 from_le64 (uint64 v) { return v; }
+    public static uint16 to_le16 (uint16 v) { return v; }
+    public static uint32 to_le32 (uint32 v) { return v; }
+    public static uint64 to_le64 (uint64 v) { return v; }
+    public static uint16 from_be16 (uint16 v) { return swap16 (v); }
+    public static uint32 from_be32 (uint32 v) { return swap32 (v); }
+    public static uint64 from_be64 (uint64 v) { return swap64 (v); }
+    public static uint16 to_be16 (uint16 v) { return swap16 (v); }
+    public static uint32 to_be32 (uint32 v) { return swap32 (v); }
+    public static uint64 to_be64 (uint64 v) { return swap64 (v); }
+
+    /**
+     * Allocator with an explicit power-of-two alignment (GLib.Aligned).
+     * `Memory.malloc` returns a 16-byte aligned pointer; SIMD and DMA users can
+     * request 32/64 bytes here.
+     */
+    public class Aligned : Object {
+        public static int alloc (size_t n_bytes, size_t alignment) {
+            if (n_bytes == 0)
+                return 0;
+            size_t align = (alignment < 16) ? 16 : alignment;
+            if ((align & (align - 1)) != 0)
+                return 0;
+            uint64 total = (uint64) n_bytes + (uint64) align + 16;
+            if (total > 0x7FFFFFFFUL)
+                return 0;
+            int raw = Memory.malloc ((size_t) total);
+            if (raw == 0)
+                return 0;
+            int mask = (int) align - 1;
+            int aligned = (raw + 16 + mask) & ~mask;
+            Memory.poke64 (aligned - 8, raw);
+            return aligned;
+        }
+
+        public static int alloc0 (size_t n_bytes, size_t alignment) {
+            int p = alloc (n_bytes, alignment);
+            if (p != 0)
+                Memory.set (p, 0, n_bytes);
+            return p;
+        }
+
+        public static void free (int mem) {
+            if (mem <= 0x100000)
+                return;
+            int raw = Memory.peek64 (mem - 8);
+            if (raw == 0)
+                return;
+            Memory.free (raw);
+        }
+    }
+
+    public enum FormatSizeFlags {
+        DEFAULT = 0,
+        LONG_FORMAT = 1,
+        IEC_UNITS = 2,
+        BITS = 4
+    }
+
+    public string format_size (uint64 size, FormatSizeFlags flags = FormatSizeFlags.DEFAULT) {
+        uint64 value = size;
+        if ((flags & FormatSizeFlags.BITS) != 0)
+            value = value * 8;
+        uint64 radix = ((flags & FormatSizeFlags.IEC_UNITS) != 0) ? 1024 : 1000;
+        string[] units = ((flags & FormatSizeFlags.IEC_UNITS) != 0)
+            ? new string[] { "B", "KiB", "MiB", "GiB", "TiB" }
+            : new string[] { "B", "kB", "MB", "GB", "TB" };
+        int unit = 0;
+        uint64 limit = radix;
+        while (unit + 1 < units.length && value >= limit) {
+            unit++;
+            limit = limit * radix;
+        }
+        if (unit == 0)
+            return @"$value $(units[unit])";
+        double scaled = (double) value / (double) (limit / radix);
+        return @"$scaled $(units[unit])";
     }
 
     // --- main loop ---------------------------------------------------------

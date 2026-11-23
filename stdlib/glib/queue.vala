@@ -19,26 +19,28 @@ namespace GLib {
         private AsyncQueueNode<G>? head = null;
         private AsyncQueueNode<G>? tail = null;
         private int _len = 0;
-        private int[] _lock = new int[1];
+        private GLib.RecMutex _mutex = new GLib.RecMutex ();
+        private GLib.Cond _cond = new GLib.Cond ();
 
         public AsyncQueue () {}
 
         public void push (G data) {
             var node = new AsyncQueueNode<G> (data);
-            __planc_host_spin_lock (_lock);
+            _mutex.@lock ();
             if (tail != null)
                 ((!) tail).next = node;
             else
                 head = node;
             tail = node;
             _len++;
-            __planc_host_spin_unlock (_lock);
+            _cond.signal ();
+            _mutex.unlock ();
         }
 
         public G? try_pop () {
-            __planc_host_spin_lock (_lock);
+            _mutex.@lock ();
             if (head == null) {
-                __planc_host_spin_unlock (_lock);
+                _mutex.unlock ();
                 return null;
             }
             var n = (!) head;
@@ -47,32 +49,28 @@ namespace GLib {
             if (head == null)
                 tail = null;
             _len--;
-            __planc_host_spin_unlock (_lock);
+            _mutex.unlock ();
             return val;
         }
 
         public G pop () {
-            while (true) {
-                __planc_host_spin_lock (_lock);
-                if (head != null) {
-                    var n = (!) head;
-                    G val = n.data;
-                    head = n.next;
-                    if (head == null)
-                        tail = null;
-                    _len--;
-                    __planc_host_spin_unlock (_lock);
-                    return val;
-                }
-                __planc_host_spin_unlock (_lock);
-                Sys.yield_cpu ();
-            }
+            _mutex.@lock ();
+            while (head == null)
+                _cond.wait (_mutex);
+            var n = (!) head;
+            G val = n.data;
+            head = n.next;
+            if (head == null)
+                tail = null;
+            _len--;
+            _mutex.unlock ();
+            return val;
         }
 
         public int length () {
-            __planc_host_spin_lock (_lock);
+            _mutex.@lock ();
             int n = _len;
-            __planc_host_spin_unlock (_lock);
+            _mutex.unlock ();
             return n;
         }
     }

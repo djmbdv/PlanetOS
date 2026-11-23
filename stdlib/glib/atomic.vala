@@ -173,6 +173,67 @@ namespace GLib {
     /**
      * Thread-safe atomic integer operations (GLib.AtomicInt).
      */
+    [AsmBody(@"
+        # __atomic_uint_get(ref uint in rdi) -> eax
+        mov (%rdi), %eax
+        ret
+    ")]
+    private extern uint __atomic_uint_get (ref uint atomic);
+
+    [AsmBody(@"
+        # __atomic_uint_set(ref uint in rdi, val in esi)
+        mov %esi, (%rdi)
+        ret
+    ")]
+    private extern void __atomic_uint_set (ref uint atomic, uint newval);
+
+    [AsmBody(@"
+        # __atomic_uint_xadd(ref uint in rdi, val in esi) -> eax (old)
+        mov %esi, %eax
+        .byte 0xf0, 0x0f, 0xc1, 0x07
+        ret
+    ")]
+    private extern uint __atomic_uint_xadd (ref uint atomic, uint val);
+
+    [AsmBody(@"
+        # __atomic_uint_cas(ref uint in rdi, oldv in esi, newv in edx) -> al (bool)
+        mov %esi, %eax
+        .byte 0xf0, 0x0f, 0xb1, 0x17
+        .byte 0x0f, 0x94, 0xc0
+        movzbl %al, %eax
+        ret
+    ")]
+    private extern bool __atomic_uint_cas (ref uint atomic, uint oldval, uint newval);
+
+    /**
+     * Thread-safe 32-bit unsigned atomics (GLib.AtomicUint).
+     */
+    public class AtomicUint : Object {
+        public static uint get (ref uint atomic) {
+            return __atomic_uint_get (ref atomic);
+        }
+
+        public static void set (ref uint atomic, uint newval) {
+            __atomic_uint_set (ref atomic, newval);
+        }
+
+        public static void inc (ref uint atomic) {
+            __atomic_uint_xadd (ref atomic, 1);
+        }
+
+        public static bool dec_and_test (ref uint atomic) {
+            return __atomic_uint_xadd (ref atomic, 0xFFFFFFFFU) == 1;
+        }
+
+        public static uint add (ref uint atomic, uint val) {
+            return __atomic_uint_xadd (ref atomic, val);
+        }
+
+        public static bool compare_and_exchange (ref uint atomic, uint oldval, uint newval) {
+            return __atomic_uint_cas (ref atomic, oldval, newval);
+        }
+    }
+
     public class AtomicInt : Object {
         public static int get (ref int atomic) {
             return __atomic_int_get (ref atomic);

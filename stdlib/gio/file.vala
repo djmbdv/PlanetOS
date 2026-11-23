@@ -197,7 +197,12 @@ namespace Gio {
                 return null;
             string name = names[idx];
             idx = idx + 1;
-            string full = (base_path.length == 0 || base_path == "/" || base_path == ".") ? name : base_path + "/" + name;
+            string full = name;
+            if (base_path.length != 0 && base_path != "/" && base_path != ".") {
+                var pb = new PathBuf.from_path (base_path);
+                pb.push (name);
+                full = pb.to_path ();
+            }
             int kind = Sys.stat (full);
             int sz = 0;
             if (kind == 1) {
@@ -344,11 +349,9 @@ namespace Gio {
         }
 
         public File get_child (string name) {
-            if (path_str.length == 0 || path_str == ".")
-                return new File (name);
-            if (path_str[path_str.length - 1] == '/')
-                return new File (path_str + name);
-            return new File (path_str + "/" + name);
+            var pb = new PathBuf.from_path (path_str);
+            pb.push (name);
+            return new File (pb.to_path ());
         }
 
         private string normalize_fs_path () {
@@ -572,18 +575,10 @@ namespace Gio {
                     throw new IOError.FAILED ("File exceeds maximum load_contents size");
                 var buf = new uint8[sz];
                 int got = 0;
-                if (sz > 0) {
-                    int first = Sys.read (fd, buf, sz);
-                    if (first > 0)
-                        got = first;
-                }
                 while (got < sz) {
-                    int rem = sz - got;
-                    var chunk = new uint8[rem];
-                    int r = Sys.read (fd, chunk, rem);
+                    int r = Sys.read_into (fd, buf, got, sz - got);
                     if (r <= 0)
                         break;
-                    GLib.Memory.copy (Sys.byte_arr_addr (buf) + got, Sys.byte_arr_addr (chunk), (size_t) r);
                     got = got + r;
                 }
                 if (got == sz) {
