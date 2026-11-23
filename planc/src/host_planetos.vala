@@ -25,7 +25,10 @@ namespace Planc {
             exit (134);
         }
 
-        public static uint8[] read_bytes (string path) throws FileError {
+        // Sys.read rejects a single transfer over Sys.MAX_IO (64 KiB), and the
+        // old one-shot read turned that -1 into an empty source for any file
+        // bigger than that, so read in chunks and fail loudly on a short read.
+        private static uint8[] read_all (string path) throws FileError {
             int fd = Sys.open (path);
             if (fd < 0)
                 throw new FileError.FAILED (@"cannot open '$path'");
@@ -37,8 +40,11 @@ namespace Planc {
             var buf = new uint8[sz];
             int got = 0;
             while (got < sz) {
-                var chunk = new uint8[sz - got];
-                int r = Sys.read (fd, chunk, sz - got);
+                int want = sz - got;
+                if (want > Sys.MAX_IO)
+                    want = Sys.MAX_IO;
+                var chunk = new uint8[want];
+                int r = Sys.read (fd, chunk, want);
                 if (r <= 0)
                     break;
                 for (int i = 0; i < r; i++)
@@ -46,41 +52,41 @@ namespace Planc {
                 got = got + r;
             }
             Sys.close (fd);
+            if (got != sz)
+                throw new FileError.FAILED (@"short read on '$path' ($got of $sz bytes)");
             return buf;
         }
 
+        public static uint8[] read_bytes (string path) throws FileError {
+            return read_all (path);
+        }
+
         public static string read_file (string path) throws FileError {
-            int fd = Sys.open (path);
-            if (fd < 0)
-                throw new FileError.FAILED (@"cannot open '$path'");
-            int sz = Sys.file_size (fd);
-            if (sz < 0) {
-                Sys.close (fd);
-                throw new FileError.FAILED (@"cannot stat '$path'");
-            }
-            var buf = new uint8[sz];
-            int got = 0;
-            while (got < sz) {
-                var chunk = new uint8[sz - got];
-                int r = Sys.read (fd, chunk, sz - got);
-                if (r <= 0)
-                    break;
-                for (int i = 0; i < r; i++)
-                    buf[got + i] = chunk[i];
-                got = got + r;
-            }
-            Sys.close (fd);
-            return bytes_to_string (buf, got);
+            var buf = read_all (path);
+            return bytes_to_string (buf, buf.length);
         }
 
         public static void write_file (string path, uint8[] data) throws FileError {
             int fd = Sys.create (path);
             if (fd < 0)
                 throw new FileError.FAILED (@"cannot create '$path'");
-            int nw = Sys.write (fd, data, data.length);
+            // Sys.write rejects a single transfer over Sys.MAX_IO (64 KiB).
+            int done = 0;
+            while (done < data.length) {
+                int want = data.length - done;
+                if (want > Sys.MAX_IO)
+                    want = Sys.MAX_IO;
+                var chunk = new uint8[want];
+                for (int i = 0; i < want; i++)
+                    chunk[i] = data[done + i];
+                int nw = Sys.write (fd, chunk, want);
+                if (nw <= 0) {
+                    Sys.close (fd);
+                    throw new FileError.FAILED (@"short write to '$path'");
+                }
+                done = done + nw;
+            }
             Sys.close (fd);
-            if (nw != data.length)
-                throw new FileError.FAILED (@"short write to '$path'");
         }
 
         public static void chmod_755 (string path) {

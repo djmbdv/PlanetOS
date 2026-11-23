@@ -3,8 +3,75 @@ using Planet;
 
 namespace GLib {
 
+    // GLib-style log levels; the kernel ring (Klog, category CAT_USER) keeps
+    // what userland emits so a failure can be inspected after the fact.
+    public enum LogLevelFlags {
+        ERROR = 4,
+        CRITICAL = 8,
+        WARNING = 16,
+        MESSAGE = 32,
+        INFO = 64,
+        DEBUG = 128
+    }
+
+    private const int KLOG_CAT_USER = 7;
+
+    private static int klog_level_of (LogLevelFlags level) {
+        if (level == LogLevelFlags.ERROR || level == LogLevelFlags.CRITICAL)
+            return 0;
+        if (level == LogLevelFlags.WARNING)
+            return 1;
+        if (level == LogLevelFlags.DEBUG)
+            return 3;
+        return 2;
+    }
+
+    // Mirrors the Linux/GLib default: only warnings and worse reach the console.
+    public bool log_would_print (LogLevelFlags level) {
+        return level == LogLevelFlags.ERROR || level == LogLevelFlags.CRITICAL
+            || level == LogLevelFlags.WARNING;
+    }
+
+    public void log_message (string? domain, LogLevelFlags level, string msg) {
+        string line = (domain != null && domain.length > 0) ? @"$(domain): $(msg)" : msg;
+        Sys.klog_write (KLOG_CAT_USER, klog_level_of (level), line);
+        if (log_would_print (level))
+            printerr (line + "\n");
+    }
+
+    // GLib.g_log_set_level (): forwards the filter to the kernel ring.
+    public void log_set_level (int level) {
+        Sys.klog_set_level (level);
+    }
+
+    public void log_info (string? domain, string msg) {
+        log_message (domain, LogLevelFlags.INFO, msg);
+    }
+
+    public void log_warning (string? domain, string msg) {
+        log_message (domain, LogLevelFlags.WARNING, msg);
+    }
+
+    public void log_critical (string? domain, string msg) {
+        log_message (domain, LogLevelFlags.CRITICAL, msg);
+    }
+
+    public void log_error (string? domain, string msg) {
+        log_message (domain, LogLevelFlags.ERROR, msg);
+    }
+
+    public void log_debug (string? domain, string msg) {
+        log_message (domain, LogLevelFlags.DEBUG, msg);
+    }
+
+    // stderr goes to both the console and the kernel ring (GLib.g_printerr).
     public void printerr (string s) {
         print (s);
+        int n = s.length;
+        while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r'))
+            n--;
+        if (n > 0)
+            Sys.klog_write (KLOG_CAT_USER, 0, s.substring (0, n));
     }
 
     public enum FileTest {
@@ -371,16 +438,34 @@ namespace GLib {
             return off == total;
         }
 
+        public static bool query_exists (string path) {
+            return Sys.stat (path) != 0;
+        }
+
+        public static bool is_dir (string path) {
+            return Sys.stat (path) == 2;
+        }
+
+        public static int64 query_size (string path) {
+            int sz = 0;
+            if (Sys.stat_ex (path, out sz) == 0)
+                return -1;
+            return (int64) sz;
+        }
+
         public static int remove (string filename) {
-            return Sys.unlink (filename);
+            int r = Sys.unlink (filename);
+            return (r < 0) ? -Sys.errno_code () : r;
         }
 
         public static int rename (string oldfilename, string newfilename) {
-            return Sys.rename (oldfilename, newfilename);
+            int r = Sys.rename (oldfilename, newfilename);
+            return (r < 0) ? -Sys.errno_code () : r;
         }
 
         public static int mkdir (string filename, int mode = 493) {
-            return Sys.mkdir (filename);
+            int r = Sys.mkdir (filename);
+            return (r < 0) ? -Sys.errno_code () : r;
         }
     }
 
@@ -876,7 +961,10 @@ namespace GLib {
 
     public class Dir : Object {
         private string _path;
+        private uint8[] _buf;
+        private int _len = 0;
         private int _pos = 0;
+        private bool _loaded = false;
 
         public Dir (string path) {
             _path = path;
@@ -888,12 +976,43 @@ namespace GLib {
             return new Dir (path);
         }
 
+        // SYS_READDIR returns the names NUL- or newline-separated; read them
+        // once and hand them out through read_name ().
+        private void load () {
+            if (_loaded)
+                return;
+            _loaded = true;
+            _buf = new uint8[3584];
+            _len = Sys.readdir_path (_path, _buf, 3584);
+            if (_len < 0)
+                _len = 0;
+        }
+
         public string? read_name () {
+            load ();
+            while (_pos < _len) {
+                int start = _pos;
+                while (_pos < _len && _buf[_pos] != 0 && _buf[_pos] != '\n')
+                    _pos++;
+                int end = _pos;
+                if (_pos < _len)
+                    _pos++;
+                if (end > start) {
+                    var sb = new StringBuilder ();
+                    for (int i = start; i < end; i++)
+                        sb.append_c ((char) _buf[i]);
+                    return sb.str;
+                }
+            }
             return null;
         }
 
         public void rewind () {
             _pos = 0;
+        }
+
+        public void close () {
+            _pos = _len;
         }
     }
 

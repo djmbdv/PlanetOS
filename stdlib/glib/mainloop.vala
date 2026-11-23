@@ -7,11 +7,13 @@ namespace GLib {
 
     private class Source : Object {
         public uint32 id;
-        public uint8 kind;      // 0 = idle, 1 = timeout
+        public uint8 kind;      // 0 = idle, 1 = timeout, 2 = fd watch
         public uint32 interval; // ms
         public int due;       // ms
         public bool removed;
         public SourceFunc func;
+        public int fd = -1;      // kind 2
+        public uint32 condition = 0; // kind 2: 1 = readable, 2 = writable
 
         public Source (uint32 id, uint8 kind, uint32 interval, int due, SourceFunc func) {
             this.id = id;
@@ -31,6 +33,8 @@ namespace GLib {
         private int dead_count = 0;
         private int idle_cursor = 0;
         private int timeout_cursor = 0;
+        // Reused buffer for SYS_POLL; the context supports 8 fd watches.
+        private int[] pollbuf = new int[8];
 
         public MainContext () {
             sources = new GenericArray<Source> ();
@@ -134,8 +138,58 @@ namespace GLib {
             }
             if (iter_depth == 0 && dead_count > 0)
                 compact ();
-            if (may_block)
-                Sys.yield_cpu ();
+            if (!may_block)
+                return false;
+            // Block on the fd watches (if any) up to the next timeout instead
+            // of waking on every tick.
+            int next_ms = -1;
+            for (int i = 0; i < sources.length; i++) {
+                Source s = sources[i];
+                if (s.removed || s.kind != 1)
+                    continue;
+                int d = s.due - now;
+                if (d < 1)
+                    d = 1;
+                if (next_ms < 0 || d < next_ms)
+                    next_ms = d;
+            }
+            int nfd = 0;
+            for (int i = 0; i < sources.length && nfd < pollbuf.length; i++) {
+                Source s = sources[i];
+                if (s.removed || s.kind != 2)
+                    continue;
+                pollbuf[nfd] = s.fd;
+                nfd++;
+            }
+            if (nfd > 0) {
+                int tmo = (next_ms < 0) ? 1000 : next_ms;
+                if (tmo > 1000)
+                    tmo = 1000;
+                int mask = Sys.poll (pollbuf, tmo);
+                if (mask > 0) {
+                    // Dispatch the first ready watch.
+                    int seen = 0;
+                    for (int i = 0; i < sources.length; i++) {
+                        Source s = sources[i];
+                        if (s.removed || s.kind != 2)
+                            continue;
+                        bool ready = ((mask >> seen) & 1) == 1;
+                        seen++;
+                        if (!ready)
+                            continue;
+                        iter_depth++;
+                        bool keep = s.func ();
+                        iter_depth--;
+                        if (!keep && !s.removed) {
+                            s.removed = true;
+                            dead_count++;
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+            Sys.sleep_ms ((next_ms < 0) ? 10 : next_ms);
             return false;
         }
 
@@ -149,6 +203,17 @@ namespace GLib {
             next_id = next_id + 1;
             uint32 interval = (interval_ms == 0) ? 1 : interval_ms;
             sources.add (new Source (next_id, 1, interval, Sys.ticks () * 10 + (int) interval, func));
+            return next_id;
+        }
+
+        // Watches `fd` through SYS_POLL; condition 1 = readable, 2 = writable.
+        // Up to 8 watches per context.
+        public uint32 add_watch (int fd, uint32 condition, SourceFunc func) {
+            next_id = next_id + 1;
+            var s = new Source (next_id, 2, 0, 0, func);
+            s.fd = fd;
+            s.condition = condition;
+            sources.add (s);
             return next_id;
         }
 
@@ -190,6 +255,10 @@ namespace GLib {
         return MainContext.default_ ().add_timeout (interval_ms, func);
     }
 
+    public uint32 io_add_watch (int fd, uint32 condition, SourceFunc func) {
+        return MainContext.default_ ().add_watch (fd, condition, func);
+    }
+
     public bool source_remove (uint32 id) {
         return MainContext.default_ ().remove (id);
     }
@@ -225,12 +294,9 @@ namespace GLib {
                 return;
             running = true;
             while (running) {
-                bool did = context.iteration (false);
-                if (!did) {
-                    if (!context.has_sources ())
-                        break;
-                    Sys.yield_cpu ();
-                }
+                bool did = context.iteration (true);
+                if (!did && !context.has_sources ())
+                    break;
             }
             running = false;
         }

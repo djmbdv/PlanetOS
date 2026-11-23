@@ -130,13 +130,13 @@ namespace GLib {
             } else if (whence == FileSeek.END) {
                 int sz = Sys.file_size (fd);
                 if (sz < 0) {
-                    err_flag = 1;
+                    err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                     return -1;
                 }
                 target = (long) sz + offset;
             }
             if (target < 0 || target > 2147483647L) {
-                err_flag = 1;
+                err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                 return -1;
             }
             pushback = -1;
@@ -144,7 +144,7 @@ namespace GLib {
             rlen = 0;
             int r = Sys.seek (fd, (int) target);
             if (r < 0) {
-                err_flag = 1;
+                err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                 return -1;
             }
             cur_pos = (int) target;
@@ -169,7 +169,7 @@ namespace GLib {
             var b = (!) rbuf;
             int n = Sys.read (fd, b, b.length);
             if (n < 0) {
-                err_flag = 1;
+                err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                 return -1;
             }
             if (n == 0) {
@@ -204,7 +204,7 @@ namespace GLib {
                 if (got == 0) {
                     int n = Sys.read (fd, buf, want);
                     if (n < 0) {
-                        err_flag = 1;
+                        err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                         break;
                     }
                     if (n == 0) {
@@ -218,7 +218,7 @@ namespace GLib {
                 var tmp = new uint8[rem];
                 int n = Sys.read (fd, tmp, rem);
                 if (n < 0) {
-                    err_flag = 1;
+                    err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                     break;
                 }
                 if (n == 0) {
@@ -245,7 +245,7 @@ namespace GLib {
                 }
                 int n = Sys.write (fd, slice, rem);
                 if (n <= 0) {
-                    err_flag = 1;
+                    err_flag = (Sys.errno_code () != 0) ? Sys.errno_code () : Sys.EIO;
                     return (off > 0) ? off : -1;
                 }
                 cur_pos = cur_pos + n;

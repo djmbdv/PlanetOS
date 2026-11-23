@@ -160,53 +160,57 @@ namespace GLib {
         }
 
         public void @lock () {
-            __planc_host_spin_lock (_lock);
+            while (!AtomicPointer.compare_and_exchange (Sys.int_arr_addr (_lock), 0, 1))
+                Sys.wait_addr (_lock, 1, 0);
         }
 
         public bool trylock () {
-            return __thread_trylock (_lock);
+            return AtomicPointer.compare_and_exchange (Sys.int_arr_addr (_lock), 0, 1);
         }
 
         public void unlock () {
-            __planc_host_spin_unlock (_lock);
+            AtomicPointer.set (Sys.int_arr_addr (_lock), 0);
+            Sys.wake_addr (_lock, 1);
         }
     }
 
     public class Cond : Object {
-        private int _seq = 0;
+        private int[] _seq = new int[1];
 
         public Cond () {
         }
 
+        // Parks on the sequence word instead of polling: signal/broadcast bump
+        // it and wake the waiters through SYS_WAKE_ADDR.
         public void wait (RecMutex mutex) {
-            int seen = _seq;
+            int seen = Sys.peek32 (Sys.int_arr_addr (_seq));
             mutex.unlock ();
-            while (_seq == seen)
-                Sys.yield_cpu ();
+            Sys.wait_addr (_seq, seen, 0);
             mutex.@lock ();
         }
 
         public bool wait_until (RecMutex mutex, int64 end_time) {
-            int seen = _seq;
+            int64 now_us = (int64) Sys.ticks () * 10000;
+            if (now_us >= end_time)
+                return false;
+            int seen = Sys.peek32 (Sys.int_arr_addr (_seq));
+            int timeout_ms = (int) ((end_time - now_us) / 1000);
+            if (timeout_ms <= 0)
+                timeout_ms = 1;
             mutex.unlock ();
-            while (_seq == seen) {
-                int64 now_us = (int64) Sys.ticks () * 10000;
-                if (now_us >= end_time) {
-                    mutex.@lock ();
-                    return false;
-                }
-                Sys.yield_cpu ();
-            }
+            bool changed = (Sys.wait_addr (_seq, seen, timeout_ms) == 0);
             mutex.@lock ();
-            return true;
+            return changed;
         }
 
         public void signal () {
-            _seq = _seq + 1;
+            AtomicPointer.add (Sys.int_arr_addr (_seq), 1);
+            Sys.wake_addr (_seq, 1);
         }
 
         public void broadcast () {
-            _seq = _seq + 1;
+            AtomicPointer.add (Sys.int_arr_addr (_seq), 1);
+            Sys.wake_addr (_seq, 16);
         }
     }
 
@@ -217,15 +221,17 @@ namespace GLib {
         }
 
         public void @lock () {
-            __planc_host_spin_lock (_lock);
+            while (!AtomicPointer.compare_and_exchange (Sys.int_arr_addr (_lock), 0, 1))
+                Sys.wait_addr (_lock, 1, 0);
         }
 
         public bool trylock () {
-            return __thread_trylock (_lock);
+            return AtomicPointer.compare_and_exchange (Sys.int_arr_addr (_lock), 0, 1);
         }
 
         public void unlock () {
-            __planc_host_spin_unlock (_lock);
+            AtomicPointer.set (Sys.int_arr_addr (_lock), 0);
+            Sys.wake_addr (_lock, 1);
         }
     }
 

@@ -1717,7 +1717,7 @@ namespace C2Vala {
                     sb.append (@"    $gname = new $(vala_type (g.ctype, false)) ();\n");
                     return;
                 }
-                unowned var gsd = find_struct (g.ctype.name);
+                var gsd = find_struct (g.ctype.name);
                 bool g_union = (gsd != null) && gsd.is_union && !union_needs_class (gsd);
                 if (init is ExprInitList) {
                     sb.append (g_union
@@ -3573,7 +3573,7 @@ namespace C2Vala {
                         sb.append (@"$lhs.$fn = new $vt ();\n");
                 } else if (f.ctype.kind == CTypeKind.UNION) {
                     string vt = vala_type (f.ctype, false);
-                    unowned var usd = find_struct (f.ctype.name);
+                    var usd = find_struct (f.ctype.name);
                     bool u_class = (usd != null) && union_needs_class (usd);
                     sb.append (u_class ? @"$lhs.$fn = new $vt ();\n" : @"$lhs.$fn = $vt ();\n");
                 } else if (f.ctype.kind == CTypeKind.ARRAY && f.ctype.inner != null && f.ctype.array_len != null) {
@@ -3686,7 +3686,10 @@ namespace C2Vala {
             // Fixed-size or init-list array `T name[N];` / `T name[] = { ... };`
             if (d.ctype.kind == CTypeKind.ARRAY && d.ctype.inner != null) {
                 var elem_ct = (CType) d.ctype.inner;
-                string elem_t = vala_type (elem_ct, false);
+                // A C char buffer is a byte buffer, so give it the `uint8[]`
+                // view the runtime shims (c_fgets, c_fread, ...) accept.
+                string elem_t = (elem_ct.is_scalar ("char") || elem_ct.is_scalar ("void"))
+                    ? "uint8" : vala_type (elem_ct, false);
                 if (d.init is ExprInitList) {
                     var il = (ExprInitList) d.init;
                     string len_s = (d.ctype.array_len != null)
@@ -3830,7 +3833,7 @@ namespace C2Vala {
                     else
                         sb.append (@"$vt $dname = new $vt ();\n");
                 } else if (d.ctype.kind == CTypeKind.UNION) {
-                    unowned var usd = find_struct (d.ctype.name);
+                    var usd = find_struct (d.ctype.name);
                     bool u_class = (usd != null) && union_needs_class (usd);
                     sb.append (u_class ? @"$vt $dname = new $vt ();\n" : @"$vt $dname = $vt ();\n");
                 } else if (li.is_array && d.ctype.kind == CTypeKind.PTR && d.ctype.inner != null) {
@@ -4262,9 +4265,28 @@ namespace C2Vala {
             var vt = infer_type (value);
             if (vt == null || vt.kind != CTypeKind.SCALAR)
                 return rt;
-            if (vt.name == target)
+            if (vt.name == target) {
+                // C's char is a byte and a `char *` buffer is a Vala `uint8[]`,
+                // so reading an element into a Vala `char` needs the narrowing
+                // cast valac insists on; planc treats both as the same width.
+                if (target == "char" && is_byte_element_read (value))
+                    return @"(char) $(wrap_operand (rt))";
                 return rt;
+            }
             return @"($target) $(wrap_operand (rt))";
+        }
+
+        private bool is_byte_element_read (CExpr e) throws RefuseError {
+            if (!(e is ExprIndex))
+                return false;
+            var arr_t = infer_type (((ExprIndex) e).array);
+            if (arr_t == null || arr_t.inner == null)
+                return false;
+            if (arr_t.kind != CTypeKind.PTR && arr_t.kind != CTypeKind.ARRAY)
+                return false;
+            var inn_t = (CType) arr_t.inner;
+            return inn_t.kind == CTypeKind.SCALAR
+                && (inn_t.is_scalar ("char") || inn_t.is_scalar ("uint8") || inn_t.is_scalar ("uchar"));
         }
 
         // Pointer to a scalar C type (char/int/...), as opposed to an object.
@@ -4556,7 +4578,7 @@ namespace C2Vala {
                     sb.append (@"$(lh.vtypes[i]) _c2v_a$i");
                 }
                 sb.append (") {\n");
-                unowned StructDef? hsd = find_struct (lh.ctype.name);
+                StructDef? hsd = find_struct (lh.ctype.name);
                 bool is_union = (hsd != null) && hsd.is_union && !union_needs_class (hsd);
                 if (is_union)
                     sb.append (@"    $vt r = $vt ();\n");

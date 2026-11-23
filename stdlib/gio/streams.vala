@@ -353,7 +353,7 @@ namespace Gio {
                 return 0;
             int n = Sys.read (fd, buffer, buffer.length);
             if (n < 0)
-                throw new IOError.FAILED ("Read failed");
+                throw_io_error ("Read");
             pos = pos + n;
             return n;
         }
@@ -444,7 +444,7 @@ namespace Gio {
                 return 0;
             int n = Sys.write (fd, buffer, buffer.length);
             if (n < 0)
-                throw new IOError.FAILED ("Write failed");
+                throw_io_error ("Write");
             pos = pos + n;
             return n;
         }

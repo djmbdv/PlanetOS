@@ -61,6 +61,11 @@ namespace Planet.Kernel {
     private extern int __el_str_data (string s);
 
     public sealed class ElfLoader : Object {
+        // planc.elf is expected to build large programs on-target and its codegen
+        // recurses per expression, so the old 64 KiB of usable stack left no
+        // headroom: compiling the c2vala SDK died writing into the guard page.
+        private const int USER_STACK_PAGES = 257; // 1 guard + 256 usable (1 MiB)
+
         public static int exec_depth = 0;
         private static bool shared_glib_probed = false;
         private static int shared_glib_ro_vaddr = 0;
@@ -90,6 +95,16 @@ namespace Planet.Kernel {
                     Pmm.free_frame (buf + p * 4096);
                 return;
             }
+            // The kernel links against this image by absolute address, so a
+            // header from another ABI generation must be refused instead of
+            // jumping into it.
+            int hdr_ver = read_u16 (buf + 4);
+            if (hdr_ver != 1) {
+                Klog.error (Klog.CAT_EXEC, "glib.dlib: unsupported ABI version (rebuild it)");
+                for (int p = 0; p < pages; p++)
+                    Pmm.free_frame (buf + p * 4096);
+                return;
+            }
             int sec_count = mmio_read32 (buf + 24) & 0xFFFFFFFF;
             if (sec_count < 3 || 64 + sec_count * 32 > got) {
                 for (int p = 0; p < pages; p++)
@@ -106,7 +121,12 @@ namespace Planet.Kernel {
             int s1_msz = mmio_read64 (buf + 120);
             int ro_end = s1_va + ((s1_msz > 0) ? s1_msz : 1);
             int ro_sz = ro_end - s0_va;
-            if (s0_va < 0x800000 || ro_sz <= 0 || s0_off + s0_fsz > got || s1_off + s1_fsz > got) {
+            // 0x1800000..0x1900000 is the window Pmm.init reserves for the
+            // shared dlib; the text section starts a bit past the base (the
+            // .plan header), so check the range and not the exact value.
+            if (s0_va < 0x1800000 || s0_va >= 0x1900000 || ro_sz <= 0
+                || ro_end > 0x1900000 || s0_off + s0_fsz > got || s1_off + s1_fsz > got) {
+                Klog.error (Klog.CAT_EXEC, "glib.dlib: unexpected image base");
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (buf + p * 4096);
                 return;
@@ -315,13 +335,13 @@ namespace Planet.Kernel {
             }
             map_shared_glib_into (user_cr3);
 
-            int stack_pages = 17; // 1 bottom guard page + 16 usable stack pages
+            int stack_pages = USER_STACK_PAGES;
             int child_stack = Pmm.alloc_contiguous (stack_pages);
             if (child_stack == 0) {
                 Vmm.destroy_user_space (user_cr3);
                 return 0;
             }
-            Vmm.map_user_range (user_cr3, child_stack + 4096, 16 * 4096);
+            Vmm.map_user_range (user_cr3, child_stack + 4096, (stack_pages - 1) * 4096);
             Vmm.unmap_user_4k (user_cr3, child_stack);
 
             // Build Linux-compatible argc/argv[] at top of child_stack
@@ -384,7 +404,7 @@ namespace Planet.Kernel {
                 // would run past EXEC_SLOTS into the mouse ring, so refuse the
                 // exec instead of overwriting it.
                 Vmm.destroy_user_space (user_cr3);
-                for (int p = 0; p < 17; p++) {
+                for (int p = 0; p < USER_STACK_PAGES; p++) {
                     Pmm.free_frame (child_stack + p * 4096);
                 }
                 return -1;
@@ -397,7 +417,7 @@ namespace Planet.Kernel {
             int code = exec_trampoline (entry, ptr_base, user_cr3, slot);
             Sched.set_current_exec_ctx (prev_cr3, prev_rsp0);
             Vmm.destroy_user_space (user_cr3);
-            for (int p = 0; p < 17; p++) {
+            for (int p = 0; p < USER_STACK_PAGES; p++) {
                 Pmm.free_frame (child_stack + p * 4096);
             }
             if (exec_depth == 0 && Fb.width () > 0) {
@@ -413,10 +433,10 @@ namespace Planet.Kernel {
             int entry = prepare_process (name_ptr, name_len, cmdline_ptr, out child_stack, out ptr_base, out user_cr3);
             if (entry == 0)
                 return -1;
-            int tid = Sched.spawn_user_ready (entry, ptr_base, child_stack, 17, user_cr3, name_ptr, name_len);
+            int tid = Sched.spawn_user_ready (entry, ptr_base, child_stack, USER_STACK_PAGES, user_cr3, name_ptr, name_len);
             if (tid < 0) {
                 Vmm.destroy_user_space (user_cr3);
-                for (int p = 0; p < 17; p++) {
+                for (int p = 0; p < USER_STACK_PAGES; p++) {
                     Pmm.free_frame (child_stack + p * 4096);
                 }
             }

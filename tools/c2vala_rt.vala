@@ -79,7 +79,12 @@ public void c_memcpy (uint8[] dst, uint8[] src, size_t n) {
     if (limit > dst.length) limit = dst.length;
     if (limit > src.length) limit = src.length;
     if (limit <= 0) return;
+#if PLANC
     GLib.Memory.copy (__c2v_arr_addr (dst), __c2v_arr_addr (src), (size_t) limit);
+#else
+    for (int i = 0; i < limit; i++)
+        dst[i] = src[i];
+#endif
 }
 
 public void c_memmove (uint8[] dst, uint8[] src, size_t n) {
@@ -88,7 +93,16 @@ public void c_memmove (uint8[] dst, uint8[] src, size_t n) {
     if (limit > dst.length) limit = dst.length;
     if (limit > src.length) limit = src.length;
     if (limit <= 0) return;
+#if PLANC
     GLib.Memory.move (__c2v_arr_addr (dst), __c2v_arr_addr (src), (size_t) limit);
+#else
+    // glib-2.0's Memory.move takes void*, so stage the source for the overlap.
+    var tmp = new uint8[limit];
+    for (int i = 0; i < limit; i++)
+        tmp[i] = src[i];
+    for (int i = 0; i < limit; i++)
+        dst[i] = tmp[i];
+#endif
 }
 
 public void c_memset (uint8[] dst, int c, size_t n) {
@@ -96,7 +110,12 @@ public void c_memset (uint8[] dst, int c, size_t n) {
     if (limit <= 0) return;
     if (limit > dst.length) limit = dst.length;
     if (limit <= 0) return;
+#if PLANC
     GLib.Memory.set (__c2v_arr_addr (dst), c, (size_t) limit);
+#else
+    for (int i = 0; i < limit; i++)
+        dst[i] = (uint8) c;
+#endif
 }
 
 public int c_memcmp (uint8[] a, uint8[] b, size_t n) {
@@ -105,9 +124,17 @@ public int c_memcmp (uint8[] a, uint8[] b, size_t n) {
     if (limit > a.length) limit = a.length;
     if (limit > b.length) limit = b.length;
     if (limit <= 0) return 0;
+#if PLANC
     int diff = GLib.Memory.cmp (__c2v_arr_addr (a), __c2v_arr_addr (b), (size_t) limit);
     if (diff == 0) return 0;
     return (diff < 0) ? -1 : 1;
+#else
+    for (int i = 0; i < limit; i++) {
+        if (a[i] != b[i])
+            return (a[i] < b[i]) ? -1 : 1;
+    }
+    return 0;
+#endif
 }
 
 public uint8[] c_realloc_u8 (uint8[]? old, size_t new_len) {
@@ -610,9 +637,28 @@ public int c_toupper (int c) {
     return (int) ((char) c).toupper ();
 }
 
+#if PLANC
 public FileStream? stdin;
 public FileStream? stdout;
 public FileStream? stderr;
+#else
+// stdio.h brings stdin/stdout/stderr in as macros, so the host build gives
+// these globals C names of their own while keeping the Vala identifiers the
+// translated code uses.
+[CCode (cname = "c2v_stdin")]
+public FileStream? stdin;
+[CCode (cname = "c2v_stdout")]
+public FileStream? stdout;
+[CCode (cname = "c2v_stderr")]
+public FileStream? stderr;
+#endif
+
+#if !PLANC
+// valac's glib-2.0 binds FileStream as [Compact] with fclose as its free
+// function and exposes no close (), so call fclose by its C name on the host.
+[CCode (cname = "fclose", cheader_filename = "stdio.h")]
+private extern int c2v_file_close (FileStream s);
+#endif
 
 public void c_init_stdio () {
     if (stdin == null)
@@ -626,7 +672,11 @@ public void c_init_stdio () {
 public int c_fclose (ref FileStream? s) {
     if (s == null)
         return -1;
+#if PLANC
     int r = s.close_now ();
+#else
+    int r = c2v_file_close ((!) s);
+#endif
     s = null;
     return r;
 }
@@ -634,7 +684,11 @@ public int c_fclose (ref FileStream? s) {
 public int c_fclose_val (FileStream? s) {
     if (s == null)
         return -1;
+#if PLANC
     return s.close_now ();
+#else
+    return c2v_file_close ((!) s);
+#endif
 }
 
 public size_t c_fread (uint8[] buf, size_t size, size_t nmemb, FileStream? s) {
@@ -976,6 +1030,10 @@ public int64 c_time (int64[] tloc) {
     return t;
 }
 
+#if PLANC
+// The thread shims are written against the PlanetOS GLib.Thread/Mutex/Cond
+// (stdlib/glib/thread.vala). valac's glib-2.0 spells those types differently
+// (generic Thread<T>, Cond.wait takes Mutex), so the host build omits them.
 public int c_pthread_create (out Thread? tid, PthreadFunc fn, uint8[] arg) {
     tid = new Thread.with_arg (null, fn, arg);
     return 0;
@@ -1030,6 +1088,19 @@ public int c_pthread_cond_broadcast (Cond? c) {
         ((!) c).broadcast ();
     return 0;
 }
+#endif
+
+#if !PLANC
+// Host counterparts of the c2vala_rt_posix.vala shims, which only the PlanetOS
+// build compiles (they wrap int 0x80 and a private FileStream).
+public int c_remove (string path) {
+    return FileUtils.remove (path);
+}
+
+public int c_rename (string oldpath, string newpath) {
+    return FileUtils.rename (oldpath, newpath);
+}
+#endif
 
 // POSIX -> GLib compatibility helpers
 public int c_usleep (uint32 usec) {

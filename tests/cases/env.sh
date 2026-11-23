@@ -7,5 +7,5 @@ export FOO=bar
 echo $FOO
 unset FOO
 c2vala test/env/arith.c -o test/env/arith.vala
-planc test/env/arith.vala -o test/env/arith.elf
+planc test/env/arith.vala c2vala_sdk.vala -o test/env/arith.elf
 test/env/arith.elf

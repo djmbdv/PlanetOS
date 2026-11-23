@@ -1,0 +1,8 @@
+=errno=ok
+=dir=ok
+=klog=ok
+=cond=ok
+=poll=ok
+=sleep=ok
+=wait=ok
+!FAIL

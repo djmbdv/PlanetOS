@@ -7,15 +7,17 @@ Usage:
               <gio_demo.elf> <utf8.vala> <class_basic.vala>
               <gobject_demo.elf> <gmodule_demo.elf> <mainloop_demo.elf> <compositor.elf> <pango_demo.elf> <jsmn_demo.elf> <c2vala.elf> <arith.c> <frag_pattern.spv>
               <gtk_demo.elf> <vk_demo.elf> <LiberationSans-Regular.ttf> <LiberationMono-Regular.ttf> <cursor.svg>
+              <glib.dlib> <c2vala_sdk.vala> <sys_demo.elf>
 
 Shared by run-qemu.sh and run-qemu.ps1 so both launchers produce the same
-image layout.
+image layout. `c2vala_sdk.vala` is the concatenated SDK prelude built by
+tools/make_sdk.py; in-guest translates of C code compile against it.
 """
 
 import struct
 import sys
 
-ARG_COUNT = 34  # image + 33 files
+ARG_COUNT = 36  # image + 35 files
 
 
 def blk(b):
@@ -60,6 +62,8 @@ def main():
     sat_b = open(sys.argv[31], "rb").read()
     jm_b = open(sys.argv[32], "rb").read()
     gl_b = open(sys.argv[33], "rb").read()
+    sdk_b = open(sys.argv[34], "rb").read()
+    sysd_b = open(sys.argv[35], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -94,7 +98,9 @@ def main():
     b_sat = b_plu + blk(plu_b)
     b_jm = b_sat + blk(sat_b)
     b_gl = b_jm + blk(jm_b)
-    INO_BLK = max(1000, b_gl + blk(gl_b) + 4)
+    b_sdk = b_gl + blk(gl_b)
+    b_sysd = b_sdk + blk(sdk_b)
+    INO_BLK = max(1000, b_sysd + blk(sysd_b) + 4)
     total_blocks = INO_BLK + 264 # 8 inode blocks (128 inodes) + 256 free data blocks (1 MiB)
     img = bytearray(total_blocks * 4096)
 
@@ -149,6 +155,8 @@ def main():
         (b"saturn.elf", sat_b, b_sat, 0x81ED),
         (b"jsmn_demo.elf", jm_b, b_jm, 0x81ED),
         (b"glib.dlib", gl_b, b_gl, 0x81A4),
+        (b"c2vala_sdk.vala", sdk_b, b_sdk, 0x81A4),
+        (b"sys_demo.elf", sysd_b, b_sysd, 0x81ED),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0

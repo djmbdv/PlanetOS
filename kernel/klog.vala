@@ -18,7 +18,7 @@ namespace Planet.Kernel {
         private const int REC_SLOTS = 128;
 
         // Runtime filter state.
-        private static int klog_mask = 0x7F;   // all categories on
+        private static int klog_mask = 0xFF;   // all categories on
         private static int klog_level = 2;     // Klog.LVL_INFO
         private static int klog_head = 0;
         private static int klog_total = 0;
@@ -31,7 +31,8 @@ namespace Planet.Kernel {
         public const int CAT_VFS   = 4;
         public const int CAT_SCHED = 5;
         public const int CAT_EXEC  = 6;
-        public const int CAT_MAX   = 7;
+        public const int CAT_USER  = 7;
+        public const int CAT_MAX   = 8;
 
         // Levels: records above the current level are dropped.
         public const int LVL_ERROR = 0;
@@ -67,6 +68,30 @@ namespace Planet.Kernel {
             if ((klog_mask & (1 << cat)) == 0 || level > klog_level)
                 return;
             store (cat, level, msg);
+        }
+
+        // Same as write (), but copies the text straight from a user buffer so
+        // SYS_KLOG_WRITE does not have to build a Vala string first.
+        public static void write_bytes (int cat, int level, int ptr, int len) {
+            if (cat < 0 || cat >= CAT_MAX || level < 0 || level > LVL_DEBUG)
+                return;
+            if ((klog_mask & (1 << cat)) == 0 || level > klog_level)
+                return;
+            if (ptr == 0 || len <= 0)
+                return;
+            int rec = slot_addr (klog_head);
+            int n = (len > REC_TEXT) ? REC_TEXT : len;
+            mmio_write32 (rec + 0, cat);
+            mmio_write32 (rec + 4, level);
+            mmio_write32 (rec + 8, n);
+            mmio_write32 (rec + 12, 0);
+            mmio_write32 (rec + 16, Hal.ticks ());
+            for (int i = 0; i < REC_TEXT; i++)
+                mmio_write8 (rec + 24 + i, 0);
+            for (int i = 0; i < n; i++)
+                mmio_write8 (rec + 24 + i, mmio_read32 ((ptr + i) & ~3) >> ((ptr + i) & 3) * 8);
+            klog_head = (klog_head + 1) % REC_SLOTS;
+            klog_total = klog_total + 1;
         }
 
         public static void error (int cat, string msg) { write (cat, LVL_ERROR, msg); }

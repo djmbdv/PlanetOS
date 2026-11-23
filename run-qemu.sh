@@ -52,6 +52,9 @@ COMPOSITOR_SRCS=("$ROOT/user/compositor/apps.vala" "$ROOT/user/compositor/win.va
 
 "$PLANC" $OPT --target=planetos --format=dlib --image-base=0x1800000 "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" -o "$OUT/glib.dlib"
 GLIB_IMP="--import-dlib=$OUT/glib.dlib"
+# In-guest compiles need the GLib declarations (the .dlib carries no types),
+# packed into one file because the guest shell line buffer is only 480 bytes.
+python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
 "$PLANC" $OPT --target=planetos "$ROOT/user/init.vala" -o "$OUT/init.elf"
 "$PLANC" $OPT --target=planetos --image-base=0x900000 "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/worker.vala" -o "$OUT/worker.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
@@ -73,6 +76,7 @@ GLIB_IMP="--import-dlib=$OUT/glib.dlib"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/pluto.vala" -o "$OUT/pluto.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "${GEE_SRCS[@]}" "${GIO_SRCS[@]}" "$ROOT/stdlib/spirv_compat.vala" "$ROOT/stdlib/venus_compat.vala" "${CAIRO_SRCS[@]}" "${GDK_SRCS[@]}" "${GSK_SRCS[@]}" "$ROOT/stdlib/schrift.vala" "${GTK_SRCS[@]}" "$ROOT/user/saturn.vala" -o "$OUT/saturn.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
+"$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/stdlib/planet_sys.vala" "${GLIB_SRCS[@]}" "$ROOT/user/sys_demo.vala" -o "$OUT/sys_demo.elf"
 "$PLANC" $OPT --target=planetos "$GLIB_IMP" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/stdlib/planet_sys.vala" \
     "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
     "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/ptr_analyzer.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
@@ -132,7 +136,7 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
     "$OUT/spv_demo.elf" "$OUT/gio_demo.elf" \
     "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" \
-    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/vk_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$ROOT/assets/LiberationSans-Regular.ttf" "$ROOT/assets/LiberationMono-Regular.ttf" "$ROOT/cursor.svg" "$OUT/pcm4.elf" "$OUT/mathlib.dlib" "$OUT/plan_demo.plan" "$OUT/vte_sh.elf" "$OUT/pluto.elf" "$OUT/saturn.elf" "$OUT/jsmn_demo.elf" "$OUT/glib.dlib"
+    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/vk_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$ROOT/assets/LiberationSans-Regular.ttf" "$ROOT/assets/LiberationMono-Regular.ttf" "$ROOT/cursor.svg" "$OUT/pcm4.elf" "$OUT/mathlib.dlib" "$OUT/plan_demo.plan"     "$OUT/vte_sh.elf" "$OUT/pluto.elf" "$OUT/saturn.elf" "$OUT/jsmn_demo.elf" "$OUT/glib.dlib" "$OUT/c2vala_sdk.vala" "$OUT/sys_demo.elf"
 
 # --headless forces the serial-only mode; --display forces a window. Without a
 # flag: window when a display server exists, headless otherwise. Windows/MSYS2

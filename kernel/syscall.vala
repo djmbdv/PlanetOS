@@ -12,6 +12,42 @@ namespace Planet.Kernel {
     private const int MAX_PATH = 512;
     private const int MAX_XFER = 1048576;
 
+    // errno values reported through SYS_ERRNO (mirrored by Planet.Sys).
+    private const int E_OK = 0;
+    private const int E_PERM = 1;
+    private const int E_NOENT = 2;
+    private const int E_IO = 5;
+    private const int E_ACCES = 13;
+    private const int E_EXIST = 17;
+    private const int E_NOTDIR = 20;
+    private const int E_ISDIR = 21;
+    private const int E_INVAL = 22;
+    private const int E_NOSPC = 28;
+    private const int E_PIPE = 32;
+    private const int E_TIMEDOUT = 110;
+
+    // Records the cause of a failed syscall and returns the -1 the ABI uses.
+    private int fail (int err) {
+        Sched.set_errno (err);
+        return -1;
+    }
+
+    private void ok () {
+        Sched.set_errno (E_OK);
+    }
+
+    // Readiness of the console/stdin source used by SYS_POLL.
+    private bool console_input_ready () {
+        int in_fd = Sched.get_stdio_in ();
+        if (in_fd >= 3 && in_fd < MAX_FDS) {
+            int slot = KernelLayout.FD_TABLE + in_fd * 32;
+            int kind = mmio_read64 (slot);
+            if (kind == 1 || kind == 2)
+                return mmio_read64 (slot + 24) < mmio_read64 (slot + 16);
+        }
+        return mmio_read32 (KernelLayout.KB_HEAD) != mmio_read32 (KernelLayout.KB_TAIL);
+    }
+
     // Userland and the kernel share one address space, so every pointer that
     // arrives through int 0x80 is checked before the kernel dereferences it.
     private bool user_ok (int ptr, int len) {
@@ -130,7 +166,7 @@ namespace Planet.Kernel {
                 return serial_try_read ();
             case 6: // SYS_OPEN(name_ptr, name_len)
                 if (!path_ok (a0, a1))
-                    return -1;
+                    return fail (E_INVAL);
                 int id = -1;
                 int kind = Vfs.resolve (a0, a1, out id);
                 int fd_kind = 0;
@@ -141,8 +177,10 @@ namespace Planet.Kernel {
                 } else if (kind == Vfs.KIND_FILE) {
                     fd_kind = 2;
                     fsz = Ramfs.file_size (id);
+                } else if (kind == Vfs.KIND_DIR) {
+                    return fail (E_ISDIR);
                 } else {
-                    return -1;
+                    return fail (E_NOENT);
                 }
                 for (int fd = 3; fd < MAX_FDS; fd++) {
                     int slot = KernelLayout.FD_TABLE + fd * 32;
@@ -151,40 +189,47 @@ namespace Planet.Kernel {
                         mmio_write64 (slot + 8, id);
                         mmio_write64 (slot + 16, fsz);
                         mmio_write64 (slot + 24, 0);
+                        ok ();
                         return fd;
                     }
                 }
-                return -1;
+                return fail (E_NOSPC);
             case 7: // SYS_READ(fd, buf, len)
                 if (!user_ok (a1, a2))
-                    return -1;
+                    return fail (E_INVAL);
                 if (a0 < 3 || a0 >= MAX_FDS)
-                    return -1;
+                    return fail (E_INVAL);
                 int slot7 = KernelLayout.FD_TABLE + a0 * 32;
                 int kind7 = mmio_read64 (slot7);
                 if (kind7 == 0)
-                    return -1;
+                    return fail (E_INVAL);
                 int id7 = mmio_read64 (slot7 + 8);
                 int fsz7 = mmio_read64 (slot7 + 16);
                 int pos7 = mmio_read64 (slot7 + 24);
-                if (pos7 >= fsz7)
+                if (pos7 >= fsz7) {
+                    ok ();
                     return 0;
+                }
                 int n7 = (kind7 == 2) ? Ramfs.read (id7, pos7, a1, a2) : Xfs.read_file (id7, pos7, a1, a2);
                 if (n7 > 0)
                     mmio_write64 (slot7 + 24, pos7 + n7);
+                else if (n7 < 0)
+                    return fail (E_IO);
+                ok ();
                 return n7;
             case 8: // SYS_CLOSE(fd)
                 if (a0 < 3 || a0 >= MAX_FDS)
-                    return -1;
+                    return fail (E_INVAL);
                 int slot8 = KernelLayout.FD_TABLE + a0 * 32;
                 mmio_write64 (slot8, 0);
+                ok ();
                 return 0;
             case 9: // SYS_FILE_SIZE(fd)
                 if (a0 < 3 || a0 >= MAX_FDS)
-                    return -1;
+                    return fail (E_INVAL);
                 int slot9 = KernelLayout.FD_TABLE + a0 * 32;
                 if (mmio_read64 (slot9) == 0)
-                    return -1;
+                    return fail (E_INVAL);
                 return mmio_read64 (slot9 + 16);
             case 10: // SYS_YIELD()
                 cpu_sti ();
@@ -212,12 +257,12 @@ namespace Planet.Kernel {
                 return ElfLoader.exec_from_xfs (a0, a1, a2);
             case 14: // SYS_CREATE(path_ptr, path_len) -> fd
                 if (!path_ok (a0, a1))
-                    return -1;
+                    return fail (E_INVAL);
                 int base_ptr14 = 0;
                 int base_len14 = 0;
                 int parent14 = Vfs.resolve_parent (a0, a1, out base_ptr14, out base_len14);
                 if (parent14 < -1 || Vfs.reserved_name (base_ptr14, base_len14))
-                    return -1;
+                    return fail (E_ACCES);
                 int fd_kind14 = 2;
                 int fid14 = -1;
                 if (parent14 == -1 && Xfs.is_mounted ()) {
@@ -228,7 +273,7 @@ namespace Planet.Kernel {
                 if (fd_kind14 == 2) {
                     fid14 = Ramfs.create_in (parent14, base_ptr14, base_len14, 1);
                     if (fid14 < 0)
-                        return -1;
+                        return fail (E_NOSPC);
                 }
                 for (int fd = 3; fd < MAX_FDS; fd++) {
                     int slot14 = KernelLayout.FD_TABLE + fd * 32;
@@ -237,37 +282,41 @@ namespace Planet.Kernel {
                         mmio_write64 (slot14 + 8, fid14);
                         mmio_write64 (slot14 + 16, 0);
                         mmio_write64 (slot14 + 24, 0);
+                        ok ();
                         return fd;
                     }
                 }
-                return -1;
+                return fail (E_NOSPC);
             case 15: // SYS_WRITE(fd, buf, len)
                 if (!user_ok (a1, a2))
-                    return -1;
+                    return fail (E_INVAL);
                 if (a0 == 1 || a0 == 2)
                     return write_console_or_stdio (a1, a2);
-                return write_fd_data (a0, a1, a2);
+                int w15 = write_fd_data (a0, a1, a2);
+                if (w15 < 0)
+                    return fail (E_IO);
+                return w15;
             case 16: // SYS_SPAWN(name_ptr, name_len, cmdline_ptr) -> tid
                 if (!path_ok (a0, a1) || (a2 != 0 && !user_ok (a2, 1)))
-                    return -1;
+                    return fail (E_INVAL);
                 return ElfLoader.spawn_from_xfs (a0, a1, a2);
             case 17: // SYS_WAIT(tid) -> exit_code
                 return Sched.wait_tid (a0);
             case 18: // SYS_PS(buf, max_bytes) -> bytes
                 if (!user_ok (a0, a1))
-                    return -1;
+                    return fail (E_INVAL);
                 return Sched.list_tasks (a0, a1);
             case 19: // SYS_SET_STDIO(in_fd, out_fd)
                 if (!fd_ok (a0) || !fd_ok (a1))
-                    return -1;
+                    return fail (E_INVAL);
                 Sched.set_stdio (a0, a1);
                 return 0;
             case 20: // SYS_SEEK(fd, offset; -1 = end)
                 if (a0 < 3 || a0 >= MAX_FDS)
-                    return -1;
+                    return fail (E_INVAL);
                 int slot20 = KernelLayout.FD_TABLE + a0 * 32;
                 if (mmio_read64 (slot20) == 0)
-                    return -1;
+                    return fail (E_INVAL);
                 int sz20 = mmio_read64 (slot20 + 16);
                 int target20 = (a1 < 0) ? sz20 : a1;
                 mmio_write64 (slot20 + 24, target20);
@@ -315,40 +364,44 @@ namespace Planet.Kernel {
                 return -1;
             case 29: // SYS_RENAME(old_ptr, old_len, new_ptr, new_len)
                 if (!path_ok (a0, a1) || !path_ok (a2, a3))
-                    return -1;
+                    return fail (E_INVAL);
                 int id29 = -1;
                 int kind29 = Vfs.resolve (a0, a1, out id29);
                 if (kind29 != Vfs.KIND_FILE && kind29 != Vfs.KIND_DIR)
-                    return -1;
+                    return fail (E_NOENT);
                 if (id29 < 0)
-                    return -1; // the root cannot be renamed
+                    return fail (E_ACCES); // the root cannot be renamed
                 int base_ptr29 = 0;
                 int base_len29 = 0;
                 int parent29 = Vfs.resolve_parent (a2, a3, out base_ptr29, out base_len29);
                 if (parent29 < -1 || Vfs.reserved_name (base_ptr29, base_len29))
-                    return -1;
+                    return fail (E_ACCES);
                 if (kind29 == Vfs.KIND_DIR && Vfs.is_descendant (parent29, id29))
-                    return -1;
-                return Ramfs.rename_to (id29, parent29, base_ptr29, base_len29);
+                    return fail (E_INVAL);
+                int rn29 = Ramfs.rename_to (id29, parent29, base_ptr29, base_len29);
+                return (rn29 < 0) ? fail (E_EXIST) : rn29;
             case 30: // SYS_MKDIR(path_ptr, path_len)
                 if (!path_ok (a0, a1))
-                    return -1;
+                    return fail (E_INVAL);
                 int base_ptr30 = 0;
                 int base_len30 = 0;
                 int parent30 = Vfs.resolve_parent (a0, a1, out base_ptr30, out base_len30);
                 if (parent30 < -1 || Vfs.reserved_name (base_ptr30, base_len30))
-                    return -1;
+                    return fail (E_ACCES);
                 if (parent30 == -1 && Xfs.lookup_root (base_ptr30, base_len30) > 0)
-                    return -1;
+                    return fail (E_EXIST);
                 int rslot30 = Ramfs.create_in (parent30, base_ptr30, base_len30, 2);
-                return (rslot30 < 0) ? -1 : 0;
+                if (rslot30 < 0)
+                    return fail (E_EXIST);
+                ok ();
+                return 0;
             case 31: // SYS_READDIR(path_ptr, path_len, buf, max_bytes)
                 if (!path_ok (a0, a1) || !user_ok (a2, a3))
-                    return -1;
+                    return fail (E_INVAL);
                 int id31 = -1;
                 int kind31 = Vfs.resolve (a0, a1, out id31);
                 if (kind31 != Vfs.KIND_DIR)
-                    return -1;
+                    return fail (E_NOTDIR);
                 int n31_1 = Ramfs.list_children (id31, a2, a3);
                 if (n31_1 < 0)
                     n31_1 = 0;
@@ -359,14 +412,18 @@ namespace Planet.Kernel {
                     n31_2 = 0;
                 return n31_1 + n31_2;
             case 32: // SYS_STAT(path_ptr, path_len) -> 0 none, 1 file, 2 dir
-                if (!path_ok (a0, a1))
+                if (!path_ok (a0, a1)) {
+                    Sched.set_errno (E_INVAL);
                     return 0;
+                }
                 int id32 = -1;
                 int kind32 = Vfs.resolve (a0, a1, out id32);
                 if (kind32 == Vfs.KIND_DIR)
                     return 2;
                 if (kind32 == Vfs.KIND_FILE || kind32 == Vfs.KIND_XFS)
                     return 1;
+                // The ABI keeps 0 = "does not exist"; the cause is in errno.
+                Sched.set_errno (E_NOENT);
                 return 0;
             case 33: // SYS_KEY_MODS() -> shift|ctrl<<1|alt<<2|super<<3
                 return Keyboard.modifiers ();
@@ -459,6 +516,110 @@ namespace Planet.Kernel {
                 if (ucr3_53 != 0)
                     Vmm.map_user_range_ro (ucr3_53, a0, a1);
                 return 0;
+            case 54: // SYS_ERRNO() -> last error of this task
+                return Sched.errno_code ();
+            case 55: // SYS_STAT_EX(path_ptr, path_len, out16) -> kind or 0
+                if (!path_ok (a0, a1) || !user_ok (a2, 16))
+                    return fail (E_INVAL);
+                int id55 = -1;
+                int kind55 = Vfs.resolve (a0, a1, out id55);
+                int sz55 = 0;
+                int k55 = 0;
+                if (kind55 == Vfs.KIND_XFS) {
+                    k55 = 1;
+                    sz55 = Xfs.file_size (id55);
+                } else if (kind55 == Vfs.KIND_FILE) {
+                    k55 = 1;
+                    sz55 = Ramfs.file_size (id55);
+                } else if (kind55 == Vfs.KIND_DIR) {
+                    k55 = 2;
+                } else {
+                    return fail (E_NOENT);
+                }
+                for (int b55 = 0; b55 < 16; b55++)
+                    mmio_write8 (a2 + b55, 0);
+                mmio_write8 (a2 + 0, k55);
+                mmio_write8 (a2 + 4, sz55 & 0xFF);
+                mmio_write8 (a2 + 5, (sz55 >> 8) & 0xFF);
+                mmio_write8 (a2 + 6, (sz55 >> 16) & 0xFF);
+                mmio_write8 (a2 + 7, (sz55 >> 24) & 0xFF);
+                ok ();
+                return k55;
+            case 56: // SYS_KLOG_WRITE(cat, level, msg_ptr, msg_len)
+                if (a3 <= 0 || !user_ok (a2, a3))
+                    return fail (E_INVAL);
+                Klog.write_bytes (a0, a1, a2, a3);
+                return 0;
+            case 57: // SYS_WAIT_ADDR(addr, expected, timeout_ms)
+                if (a0 < 0x1000 || a0 + 4 > USER_LIMIT)
+                    return fail (E_INVAL);
+                if (mmio_read32 (a0) != a1) {
+                    ok ();
+                    return 0;
+                }
+                int deadline57 = 0;
+                if (a2 > 0)
+                    deadline57 = (int) (mmio_read64 (KernelLayout.TICK) + (a2 + 9) / 10);
+                while (true) {
+                    Sched.block_on (a0, deadline57);
+                    cpu_sti ();
+                    cpu_hlt ();
+                    Sched.unblock_self ();
+                    if (mmio_read32 (a0) != a1) {
+                        ok ();
+                        return 0;
+                    }
+                    if (deadline57 != 0 && (int) mmio_read64 (KernelLayout.TICK) >= deadline57)
+                        return fail (E_TIMEDOUT);
+                }
+            case 58: // SYS_WAKE_ADDR(addr, count) -> tasks woken
+                return Sched.wake_word (a0, (a1 > 0) ? a1 : 1);
+            case 59: // SYS_POLL(fds_ptr, nfds, timeout_ms) -> ready bitmask
+                if (a1 <= 0 || a1 > 15 || !user_ok (a0, a1 * 4))
+                    return fail (E_INVAL);
+                int deadline59 = (a2 > 0)
+                    ? (int) (mmio_read64 (KernelLayout.TICK) + (a2 + 9) / 10) : 0;
+                while (true) {
+                    int mask59 = 0;
+                    for (int i59 = 0; i59 < a1; i59++) {
+                        int fd59 = mmio_read32 (a0 + i59 * 4);
+                        bool rd59 = false;
+                        if (fd59 == 0) {
+                            rd59 = console_input_ready ();
+                        } else if (fd59 == 1 || fd59 == 2) {
+                            rd59 = true;
+                        } else if (fd59 >= 3 && fd59 < MAX_FDS) {
+                            rd59 = mmio_read64 (KernelLayout.FD_TABLE + fd59 * 32) != 0;
+                        }
+                        if (rd59)
+                            mask59 = mask59 | (1 << i59);
+                    }
+                    if (mask59 != 0) {
+                        ok ();
+                        return mask59;
+                    }
+                    if (a2 == 0) {
+                        ok ();
+                        return 0;
+                    }
+                    if (deadline59 != 0 && (int) mmio_read64 (KernelLayout.TICK) >= deadline59) {
+                        ok ();
+                        return 0;
+                    }
+                    cpu_sti ();
+                    cpu_hlt ();
+                }
+            case 60: // SYS_SLEEP_MS(ms)
+                if (a0 <= 0)
+                    return 0;
+                int deadline60 = (int) (mmio_read64 (KernelLayout.TICK) + (a0 + 9) / 10);
+                while ((int) mmio_read64 (KernelLayout.TICK) < deadline60) {
+                    cpu_sti ();
+                    cpu_hlt ();
+                }
+                return 0;
+            case 61: // SYS_ABI_VERSION() -> integer compared by dlib consumers
+                return 2;
             default:
                 return -1;
         }

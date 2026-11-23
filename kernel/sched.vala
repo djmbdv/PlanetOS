@@ -35,6 +35,7 @@ namespace Planet.Kernel {
     private const int TASK_READY   = 1;
     private const int TASK_RUNNING = 2;
     private const int TASK_ZOMBIE  = 3;
+    private const int TASK_BLOCKED = 4;
 
     // TCB layout (128 bytes):
     // +0:  state (8B)
@@ -70,6 +71,10 @@ namespace Planet.Kernel {
 
         if (mmio_read64 (cur_tcb) == TASK_RUNNING)
             mmio_write64 (cur_tcb, TASK_READY);
+
+        // A blocked task is resumed on its deadline; the waker side
+        // (SYS_WAKE_ADDR) clears it earlier when the futex word changes.
+        Sched.sweep_deadlines ();
 
         int next = cur;
         for (int off = 1; off <= MAX_TASKS; off++) {
@@ -148,12 +153,21 @@ namespace Planet.Kernel {
     public extern int addr_isr_sched_irq0 ();
 
     public sealed class Sched : Object {
+        // Per-task errno (SYS_ERRNO) and futex wait bookkeeping. Kept out of
+        // the TCB because its 128 bytes are fully allocated.
+        private static int[] task_errno;
+        private static int[] wait_word;
+        private static int[] wait_deadline;
+
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);
             return (w >> ((addr & 3) * 8)) & 0xFF;
         }
 
         public static void init () {
+            task_errno = new int[MAX_TASKS];
+            wait_word = new int[MAX_TASKS];
+            wait_deadline = new int[MAX_TASKS];
             for (int i = 0; i < (MAX_TASKS * TCB_SIZE) / 8; i++) {
                 mmio_write64 (KernelLayout.TCB_TABLE + i * 8, 0);
             }
@@ -178,6 +192,85 @@ namespace Planet.Kernel {
             if (mmio_read64 (KernelLayout.SCHED_ENABLED) == 0)
                 return 0;
             return mmio_read64 (KernelLayout.SCHED_CUR);
+        }
+
+        // --- errno ----------------------------------------------------------
+
+        public static void set_errno (int err) {
+            if (task_errno == null)
+                return;
+            int cur = current_tid ();
+            if (cur >= 0 && cur < MAX_TASKS)
+                task_errno[cur] = err;
+        }
+
+        public static int errno_code () {
+            if (task_errno == null)
+                return 0;
+            int cur = current_tid ();
+            if (cur < 0 || cur >= MAX_TASKS)
+                return 0;
+            return task_errno[cur];
+        }
+
+        // --- futex-style blocking -------------------------------------------
+
+        // Parks the current task until SYS_WAKE_ADDR matches `addr` or the
+        // absolute tick deadline (0 = none) is reached by the timer.
+        public static void block_on (int addr, int deadline_tick) {
+            if (wait_word == null)
+                return;
+            int cur = current_tid ();
+            if (cur <= 0 || cur >= MAX_TASKS)
+                return;
+            wait_word[cur] = addr;
+            wait_deadline[cur] = deadline_tick;
+            mmio_write64 (KernelLayout.TCB_TABLE + cur * TCB_SIZE, TASK_BLOCKED);
+        }
+
+        // Ends the park: called by the woken task once its wait returns.
+        public static void unblock_self () {
+            if (wait_word == null)
+                return;
+            int cur = current_tid ();
+            if (cur <= 0 || cur >= MAX_TASKS)
+                return;
+            wait_word[cur] = 0;
+            wait_deadline[cur] = 0;
+        }
+
+        // Called from the timer: resumes tasks whose deadline expired.
+        public static void sweep_deadlines () {
+            if (wait_deadline == null)
+                return;
+            int now = mmio_read64 (KernelLayout.TICK);
+            for (int w = 1; w < MAX_TASKS; w++) {
+                int wtcb = KernelLayout.TCB_TABLE + w * TCB_SIZE;
+                if (mmio_read64 (wtcb) != TASK_BLOCKED)
+                    continue;
+                int dl = wait_deadline[w];
+                if (dl != 0 && now >= dl) {
+                    wait_deadline[w] = 0;
+                    wait_word[w] = 0;
+                    mmio_write64 (wtcb, TASK_READY);
+                }
+            }
+        }
+
+        // Wakes up to `count` tasks parked on `addr`; returns how many.
+        public static int wake_word (int addr, int count) {            if (wait_word == null || addr == 0)
+                return 0;
+            int woken = 0;
+            for (int t = 1; t < MAX_TASKS && woken < count; t++) {
+                int tcb = KernelLayout.TCB_TABLE + t * TCB_SIZE;
+                if (mmio_read64 (tcb) != TASK_BLOCKED || wait_word[t] != addr)
+                    continue;
+                wait_word[t] = 0;
+                wait_deadline[t] = 0;
+                mmio_write64 (tcb, TASK_READY);
+                woken = woken + 1;
+            }
+            return woken;
         }
 
         public static int spawn_ready (int entry, int arg_sp, int stack_base, int name_ptr, int name_len) {
@@ -408,6 +501,11 @@ namespace Planet.Kernel {
             mmio_write64 (tcb + 112, 0);
             mmio_write64 (tcb + 120, 1);
             mmio_write64 (tcb + 0, TASK_FREE);
+            if (wait_word != null && tid >= 0 && tid < MAX_TASKS) {
+                wait_word[tid] = 0;
+                wait_deadline[tid] = 0;
+                task_errno[tid] = 0;
+            }
             return code;
         }
 
@@ -495,6 +593,7 @@ namespace Planet.Kernel {
                 pos = append_str (buf, pos, max_b, "   ");
                 if (st == TASK_READY) pos = append_str (buf, pos, max_b, "READY   ");
                 else if (st == TASK_RUNNING) pos = append_str (buf, pos, max_b, "RUNNING ");
+                else if (st == TASK_BLOCKED) pos = append_str (buf, pos, max_b, "BLOCKED ");
                 else pos = append_str (buf, pos, max_b, "ZOMBIE  ");
                 pos = append_int (buf, pos, max_b, mmio_read64 (tcb + 40));
                 pos = append_str (buf, pos, max_b, "     ");

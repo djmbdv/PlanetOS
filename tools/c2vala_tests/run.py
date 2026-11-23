@@ -128,7 +128,7 @@ def compile_c(case_dir, work, verbose):
     outs = []
     for name in sources:
         exe = os.path.join(work, name[:-2] + ".c.exe")
-        cmd = 'gcc -std=c99 -O0 -I"%s" "%s" -o "%s" -lm' % (
+        cmd = 'gcc -std=c99 -D_GNU_SOURCE -O0 -I"%s" "%s" -o "%s" -lm' % (
             posix(case_dir), posix(os.path.join(case_dir, name)), posix(exe))
         proc = sh(cmd)
         if proc.returncode != 0:

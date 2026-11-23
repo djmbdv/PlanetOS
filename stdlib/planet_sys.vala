@@ -39,6 +39,14 @@ namespace Planet {
     private extern int __arr_data (uint8[] a);
 
     [AsmBody(@"
+        # data pointer of an int[] (header is 16 bytes)
+        add $16, %rdi
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __iarr_data (int[] a);
+
+    [AsmBody(@"
         # __call_ptr2(fn in rdi, a0 in rsi, a1 in rdx) -> rax
         mov %rdi, %rax
         mov %rsi, %rdi
@@ -114,11 +122,25 @@ namespace Planet {
 
     public class Sys : Object {
         public const int MAX_PATH = 512;
+        // One int 0x80 transfer; Sys.read/write chunk larger requests behind it
+        // so no caller has to know about this limit.
         public const int MAX_IO = 65536;
         public const int MAX_FDS = 16;
         public const int USER_MIN_ADDR = 0x1000;
         public const int USER_MAX_ADDR = 0x40000000;
         public const int MAX_KLOG_RECORDS = 1024;
+
+        // errno values, mirrored from the kernel (SYS_ERRNO).
+        public const int EIO = 5;
+        public const int ENOENT = 2;
+        public const int EACCES = 13;
+        public const int EEXIST = 17;
+        public const int ENOTDIR = 20;
+        public const int EISDIR = 21;
+        public const int EINVAL = 22;
+        public const int ENOSPC = 28;
+        public const int EPIPE = 32;
+        public const int ETIMEDOUT = 110;
 
         // --- raw forms -----------------------------------------------------
 
@@ -247,27 +269,142 @@ namespace Planet {
         }
 
         public static int read (int fd, uint8[] buf, int count) {
-            if (fd < 0 || !range_ok (buf, count))
+            if (fd < 0 || count < 0 || count > buf.length)
                 return -1;
-            return __sys4 (7, fd, __arr_data (buf), count, 0);
+            if (count == 0)
+                return 0;
+            int buf_addr = __arr_data (buf);
+            int done = 0;
+            while (done < count) {
+                int want = count - done;
+                if (want > MAX_IO)
+                    want = MAX_IO;
+                int r = __sys4 (7, fd, buf_addr + done, want, 0);
+                if (r <= 0) {
+                    if (done > 0)
+                        break;
+                    return r;
+                }
+                done = done + r;
+                if (r < want)
+                    break;
+            }
+            return done;
         }
 
         public static int write (int fd, uint8[] buf, int count) {
-            if (fd < 0 || !range_ok (buf, count))
+            if (fd < 0 || count < 0 || count > buf.length)
                 return -1;
-            return __sys4 (15, fd, __arr_data (buf), count, 0);
+            if (count == 0)
+                return 0;
+            int buf_addr = __arr_data (buf);
+            int done = 0;
+            while (done < count) {
+                int want = count - done;
+                if (want > MAX_IO)
+                    want = MAX_IO;
+                int w = __sys4 (15, fd, buf_addr + done, want, 0);
+                if (w <= 0) {
+                    if (done > 0)
+                        break;
+                    return w;
+                }
+                done = done + w;
+                if (w < want)
+                    break;
+            }
+            return done;
         }
 
         public static int write_str (int fd, string s, int count) {
-            if (fd < 0 || count < 0 || count > s.length || count > MAX_IO)
+            if (fd < 0 || count < 0 || count > s.length)
                 return -1;
-            return __sys4 (15, fd, __str_data (s), count, 0);
+            if (count == 0)
+                return 0;
+            int str_addr = __str_data (s);
+            int done = 0;
+            while (done < count) {
+                int want = count - done;
+                if (want > MAX_IO)
+                    want = MAX_IO;
+                int w = __sys4 (15, fd, str_addr + done, want, 0);
+                if (w <= 0) {
+                    if (done > 0)
+                        break;
+                    return w;
+                }
+                done = done + w;
+                if (w < want)
+                    break;
+            }
+            return done;
         }
 
         public static int file_size (int fd) {
             if (fd < 3)
                 return -1;
             return __sys4 (9, fd, 0, 0, 0);
+        }
+
+        // --- errors and metadata --------------------------------------------
+
+        // Last error of this process, set by the kernel on a failing syscall.
+        public static int errno_code () {
+            return __sys4 (54, 0, 0, 0, 0);
+        }
+
+        public static string strerror (int err) {
+            if (err == ENOENT) return "no such file or directory";
+            if (err == EACCES) return "permission denied";
+            if (err == EEXIST) return "already exists";
+            if (err == ENOTDIR) return "not a directory";
+            if (err == EISDIR) return "is a directory";
+            if (err == EINVAL) return "invalid argument";
+            if (err == ENOSPC) return "no space left on device";
+            if (err == EPIPE) return "broken pipe";
+            if (err == ETIMEDOUT) return "timed out";
+            if (err == EIO) return "input/output error";
+            return "error";
+        }
+
+        // Kind (0 none, 1 file, 2 dir) and byte size, with errno on failure.
+        public static int stat_ex (string path, out int size) {
+            size = 0;
+            if (!path_ok (path))
+                return 0;
+            var buf = new uint8[16];
+            int r = __sys4 (55, __str_data (path), path.length, __arr_data (buf), 0);
+            if (r < 0)
+                return 0;
+            size = (int) ((uint32) buf[4] | ((uint32) buf[5] << 8)
+                          | ((uint32) buf[6] << 16) | ((uint32) buf[7] << 24));
+            return buf[0];
+        }
+
+        // --- waiting --------------------------------------------------------
+
+        // Blocks until *addr != expected or the timeout elapses (0 = forever).
+        // Returns 0 when the value changed, -1 on error (ETIMEDOUT).
+        public static int wait_addr (int[] word, int expected, int timeout_ms) {
+            return __sys4 (57, __iarr_data (word), expected, timeout_ms, 0);
+        }
+
+        public static int wake_addr (int[] word, int count) {
+            return __sys4 (58, __iarr_data (word), count, 0, 0);
+        }
+
+        public static int sleep_ms (int ms) {
+            return __sys4 (60, ms, 0, 0, 0);
+        }
+
+        // Waits until one of `fds` is ready; returns a bitmask of ready
+        // entries (bit i = fds[i]), 0 on timeout, -1 on error.
+        public static int poll (int[] fds, int timeout_ms) {
+            return __sys4 (59, __iarr_data (fds), fds.length, timeout_ms, 0);
+        }
+
+        public static int int_arr_addr (int[] a) {
+            return __iarr_data (a);
         }
 
         public static int seek (int fd, int offset) {
@@ -515,6 +652,20 @@ namespace Planet {
 
         public static int klog_total () {
             return __sys4 (45, 4, 0, 0, 0);
+        }
+
+        // Appends a record to the kernel ring: category (0..7), level
+        // (0 error, 1 warn, 2 info, 3 debug) and the message bytes.
+        public static int klog_write (int cat, int level, string msg) {
+            return __sys4 (56, cat, level, __str_data (msg), msg.length);
+        }
+
+        // Version of the syscall ABI this binary was built against; compared
+        // with SYS_ABI_VERSION at load time by the dlib users.
+        public const int ABI_VERSION = 2;
+
+        public static int abi_version () {
+            return __sys4 (61, 0, 0, 0, 0);
         }
     }
 }

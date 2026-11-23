@@ -38,6 +38,29 @@ namespace Gio {
         MOUNTABLE
     }
 
+    // Converts the kernel errno (SYS_ERRNO) into the closest IOError member.
+    public static void throw_io_error (string what) throws IOError {
+        int e = Sys.errno_code ();
+        string msg = @"$what: $(Sys.strerror (e))";
+        if (e == Sys.ENOENT)
+            throw new IOError.NOT_FOUND (msg);
+        if (e == Sys.EACCES)
+            throw new IOError.PERMISSION_DENIED (msg);
+        if (e == Sys.EEXIST)
+            throw new IOError.EXISTS (msg);
+        if (e == Sys.EISDIR)
+            throw new IOError.IS_DIRECTORY (msg);
+        if (e == Sys.ENOTDIR)
+            throw new IOError.NOT_DIRECTORY (msg);
+        if (e == Sys.EINVAL)
+            throw new IOError.INVALID_ARGUMENT (msg);
+        if (e == Sys.ETIMEDOUT)
+            throw new IOError.TIMED_OUT (msg);
+        if (e == Sys.EPIPE)
+            throw new IOError.BROKEN_PIPE (msg);
+        throw new IOError.FAILED (msg);
+    }
+
     public enum FileQueryInfoFlags {
         NONE,
         NOFOLLOW_SYMLINKS
