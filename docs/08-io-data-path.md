@@ -35,6 +35,7 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A3): PML4 walk with read/write rights, guarded copy that recovers from a fault |
 | Frame ownership and grants | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A2): `SYS_ALLOC_PAGE` records the owner, `SYS_GRANT`/`SYS_GRANT_SHARE` hand out a capability, `SYS_FREE_PAGE` and `SYS_MAP_USER_AT` check it |
 | Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
+| VirtIO-BLK queue and request path | [kernel/virtio_blk.vala](../kernel/virtio_blk.vala) | implemented (C2): queue 0 over the modern transport, 3-descriptor chain (header/data/status), completion word the task parks on |
 | IOMMU | QEMU command line, [run-qemu.ps1](../run-qemu.ps1) | absent |
 | Protocol stacks | - | absent |
 
@@ -314,7 +315,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 | **B1** | `devfs` and `Gio.File` for `/dev` | **Done for the namespace**: `gio_demo` opens `/dev/console`, checks `PollableInputStream`/`FileDescriptorBased`/`PollableOutputStream`/`is_writable` and closes the pair as one `IOStream` (`dev=ok` in `system`). Remaining: `cat` through `/dev/serial0` and a readiness-driven read |
 | **B2** | Filter chains and line discipline in userland | A line-discipline case passes; `SYS_READ_KEY` still works |
 | **C1** | Ring ABI, validation, `SYS_RING_KICK` | **Done for the ABI and the validator**: `SYS_RING_ATTACH` binds a `KIND_RING` handle to a granted block whose header matches the documented layout, and `SYS_RING_KICK` validates every ready descriptor against that block (op, length, range) before running it, marking `RING_ST_ERROR` and returning `EINVAL` when one is malformed. `system` proves it (`ring=ok`): a valid echo completes, an out-of-block descriptor is rejected untouched. Remaining: a real device op (virtio-blk in C2) and the completion path through `wait_addr` on the ring sequence |
-| **C2** | IRQ-driven block I/O (virtio-blk) | No spin loop in the block path; throughput case passes |
+| **C2** | IRQ-driven block I/O (virtio-blk) | **Done for the queue and the request path**: `kernel/virtio_blk.vala` finds the transitional/modern device, negotiates `VIRTIO_F_VERSION_1`, sets up queue 0 and reads sector 0 through it (`blk=ok`, magic verified against the image). Completion is *parked*, not spun on: the task sleeps on a completion word with 20 ms timer slices and the handler also sets it from the IRQ. **Not yet IRQ-driven in practice**: QEMU assigns no legacy line to this device (`interrupt_line` reads 0, the queue is MSI-X), so the true wake-up needs MSI-X programming or the legacy `0.9.5` transport with its ISR byte. ATA stays as the fallback |
 | **C3** | `virtio-net` and a minimal LibOS stack | ARP/ICMP echo over the ring |
 | **D** | Buffer leases and revocation | Cancelling a request quarantines the ring and frees no DEVICE buffer |
 | **E** | IOMMU + userland drivers + reincarnation | Deferred; see D-15 |
