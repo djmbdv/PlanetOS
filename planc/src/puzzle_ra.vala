@@ -118,6 +118,24 @@ namespace Planc {
         private int tre_loop_bb = -1;
         private int tre_acc_vreg = -1;
 
+        // Compile-time Bounds Check Elimination (BCE) state
+        private GenericArray<int> bce_arr_vregs = new GenericArray<int> ();
+        private GenericArray<int> bce_arr_const = new GenericArray<int> ();
+        private GenericArray<int> bce_arr_var = new GenericArray<int> ();
+        private GenericArray<int> bce_arr_off = new GenericArray<int> ();
+        private GenericArray<int> bce_arr_ma = new GenericArray<int> ();
+        private GenericArray<int> bce_arr_mb = new GenericArray<int> ();
+        private GenericArray<int> bce_nonneg = new GenericArray<int> ();
+        private GenericArray<int> bce_mul_v = new GenericArray<int> ();
+        private GenericArray<int> bce_mul_a = new GenericArray<int> ();
+        private GenericArray<int> bce_mul_b = new GenericArray<int> ();
+        private GenericArray<int> bce_bnd_vreg = new GenericArray<int> ();
+        private GenericArray<int> bce_bnd_min = new GenericArray<int> ();
+        private GenericArray<int> bce_bnd_max_c = new GenericArray<int> ();
+        private GenericArray<int> bce_bnd_max_v = new GenericArray<int> ();
+        private GenericArray<int> bce_bnd_max_off = new GenericArray<int> ();
+        private GenericArray<int> bce_bnd_max_arr = new GenericArray<int> ();
+
         private PuzzleRA (Emitter emitter, Program program, bool bounds_check,
                           bool program_uses_heap, Label bounds_panic_label) {
             this.emitter = emitter;
@@ -404,8 +422,9 @@ namespace Planc {
                 int av = var_vregs[lookup_var (((VarRef) ix.target).name)];
                 int iv = lower_expr (ix.index);
                 int d = new_vreg ();
+                bool bc = !bce_is_safe (av, ix.index);
                 emit_ir (new IRInst () {
-                    op = IROp.ARR_LOAD, dst = d, lhs = av, rhs = iv, bounds_check = bounds_check
+                    op = IROp.ARR_LOAD, dst = d, lhs = av, rhs = iv, bounds_check = bc
                 });
                 return d;
             }
@@ -469,6 +488,359 @@ namespace Planc {
             blocks[cur_bb].succs.add (target_bb);
         }
 
+        private bool bce_has_nonneg (int v) {
+            for (int i = 0; i < bce_nonneg.length; i++) {
+                if (bce_nonneg[i] == v) return true;
+            }
+            return false;
+        }
+
+        private void bce_set_nonneg (int v, bool on) {
+            for (int i = 0; i < bce_nonneg.length; i++) {
+                if (bce_nonneg[i] == v) {
+                    if (!on) bce_nonneg.remove_index (i);
+                    return;
+                }
+            }
+            if (on) bce_nonneg.add (v);
+        }
+
+        private void bce_invalidate_var (int v) {
+            for (int i = bce_arr_vregs.length - 1; i >= 0; i--) {
+                if (bce_arr_vregs[i] == v || bce_arr_var[i] == v || bce_arr_ma[i] == v || bce_arr_mb[i] == v) {
+                    bce_arr_vregs.remove_index (i);
+                    bce_arr_const.remove_index (i);
+                    bce_arr_var.remove_index (i);
+                    bce_arr_off.remove_index (i);
+                    bce_arr_ma.remove_index (i);
+                    bce_arr_mb.remove_index (i);
+                }
+            }
+            for (int i = bce_mul_v.length - 1; i >= 0; i--) {
+                if (bce_mul_v[i] == v || bce_mul_a[i] == v || bce_mul_b[i] == v) {
+                    bce_mul_v.remove_index (i);
+                    bce_mul_a.remove_index (i);
+                    bce_mul_b.remove_index (i);
+                }
+            }
+        }
+
+        private void bce_record_arr (int av, Expr len_e) {
+            int lc = -1;
+            int lv = -1;
+            int lo = 0;
+            int ma = -1;
+            int mb = -1;
+            if (len_e is IntLiteral) {
+                int64 v64 = ((IntLiteral) len_e).value;
+                if (v64 >= 0 && v64 <= 1073741824) lc = (int) v64;
+            } else if (len_e is VarRef) {
+                int idx = lookup_var (((VarRef) len_e).name);
+                if (idx >= 0) lv = var_vregs[idx];
+            } else if (len_e is BinaryExpr) {
+                var b = (BinaryExpr) len_e;
+                if ((b.op == "+" || b.op == "-") && b.left is VarRef && b.right is IntLiteral) {
+                    int idx = lookup_var (((VarRef) b.left).name);
+                    int64 rv = ((IntLiteral) b.right).value;
+                    if (idx >= 0 && rv >= -1073741824 && rv <= 1073741824) {
+                        lv = var_vregs[idx];
+                        lo = (b.op == "+") ? (int) rv : (int) (-rv);
+                    }
+                } else if (b.op == "*" && b.left is VarRef && b.right is VarRef) {
+                    int ia = lookup_var (((VarRef) b.left).name);
+                    int ib = lookup_var (((VarRef) b.right).name);
+                    if (ia >= 0 && ib >= 0) {
+                        ma = var_vregs[ia];
+                        mb = var_vregs[ib];
+                    }
+                }
+            }
+            if (lc >= 0 || lv >= 0 || ma >= 0) {
+                bce_arr_vregs.add (av);
+                bce_arr_const.add (lc);
+                bce_arr_var.add (lv);
+                bce_arr_off.add (lo);
+                bce_arr_ma.add (ma);
+                bce_arr_mb.add (mb);
+            }
+        }
+
+        private bool bce_stmt_modifies (Statement? s, string vname) {
+            if (s == null) return false;
+            if (s is AssignStatement) {
+                if (((AssignStatement) s).name == vname) return true;
+                return bce_expr_modifies (((AssignStatement) s).value, vname);
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return bce_expr_modifies (ia.target, vname) || bce_expr_modifies (ia.index, vname) || bce_expr_modifies (ia.value, vname);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return bce_expr_modifies (fa.target, vname) || bce_expr_modifies (fa.value, vname);
+            }
+            if (s is ExprStatement) return bce_expr_modifies (((ExprStatement) s).expr, vname);
+            if (s is VarDeclStatement) return bce_expr_modifies (((VarDeclStatement) s).init, vname);
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return bce_expr_modifies (ifs.condition, vname) || bce_stmt_modifies (ifs.then_body, vname) || bce_stmt_modifies (ifs.else_body, vname);
+            }
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (bce_stmt_modifies (blk.statements[i], vname)) return true;
+                }
+                return false;
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                return bce_expr_modifies (ws.condition, vname) || bce_stmt_modifies (ws.body, vname);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return bce_stmt_modifies (fs.init, vname) || bce_expr_modifies (fs.condition, vname)
+                    || bce_stmt_modifies (fs.step, vname) || bce_stmt_modifies (fs.body, vname);
+            }
+            return false;
+        }
+
+        private bool bce_expr_modifies (Expr? e, string vname) {
+            if (e == null) return false;
+            if (e is IncDecExpr) {
+                var inc = (IncDecExpr) e;
+                return (inc.target is VarRef && ((VarRef) inc.target).name == vname);
+            }
+            if (e is UnaryExpr) return bce_expr_modifies (((UnaryExpr) e).operand, vname);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return bce_expr_modifies (b.left, vname) || bce_expr_modifies (b.right, vname);
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return bce_expr_modifies (ix.target, vname) || bce_expr_modifies (ix.index, vname);
+            }
+            return false;
+        }
+
+        private bool bce_stmt_only_inc (Statement? s, string vname) {
+            if (s == null) return true;
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                if (a.name != vname) return !bce_expr_modifies (a.value, vname);
+                if (a.value is BinaryExpr) {
+                    var b = (BinaryExpr) a.value;
+                    if (b.op == "+" && b.left is VarRef && ((VarRef) b.left).name == vname
+                        && b.right is IntLiteral && ((IntLiteral) b.right).value >= 0)
+                        return true;
+                }
+                return false;
+            }
+            if (s is ExprStatement) {
+                var es = (ExprStatement) s;
+                if (es.expr is IncDecExpr) {
+                    var inc = (IncDecExpr) es.expr;
+                    if (inc.target is VarRef && ((VarRef) inc.target).name == vname)
+                        return inc.op == "++";
+                }
+                return !bce_expr_modifies (es.expr, vname);
+            }
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (!bce_stmt_only_inc (blk.statements[i], vname)) return false;
+                }
+                return true;
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return !bce_expr_modifies (ifs.condition, vname)
+                    && bce_stmt_only_inc (ifs.then_body, vname)
+                    && bce_stmt_only_inc (ifs.else_body, vname);
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                return !bce_expr_modifies (ws.condition, vname) && bce_stmt_only_inc (ws.body, vname);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return bce_stmt_only_inc (fs.init, vname) && !bce_expr_modifies (fs.condition, vname)
+                    && bce_stmt_only_inc (fs.step, vname) && bce_stmt_only_inc (fs.body, vname);
+            }
+            return !bce_stmt_modifies (s, vname);
+        }
+
+        private bool bce_try_push_cond (Expr? cond, Statement? body, string? init_var, int64 init_min) {
+            if (!(cond is BinaryExpr)) return false;
+            var cb = (BinaryExpr) cond;
+            if (cb.op != "<" && cb.op != "<=") return false;
+            if (!(cb.left is VarRef)) return false;
+            string vname = ((VarRef) cb.left).name;
+            int vi = lookup_var (vname);
+            if (vi < 0) return false;
+            int vv = var_vregs[vi];
+
+            bool min_ok = (init_var != null && init_var == vname && init_min >= 0) || bce_has_nonneg (vv);
+            if (!min_ok) return false;
+            if (!bce_stmt_only_inc (body, vname)) return false;
+
+            int extra = (cb.op == "<=") ? 1 : 0;
+            int mc = -1;
+            int mv = -1;
+            int moff = 0;
+            int marr = -1;
+            if (cb.right is IntLiteral) {
+                int64 mc64 = ((IntLiteral) cb.right).value + extra;
+                if (mc64 < 0 || mc64 > 1073741824) return false;
+                mc = (int) mc64;
+            } else if (cb.right is VarRef) {
+                string rname = ((VarRef) cb.right).name;
+                if (bce_stmt_modifies (body, rname)) return false;
+                int ri = lookup_var (rname);
+                if (ri < 0) return false;
+                mv = var_vregs[ri];
+                moff = extra;
+            } else if (cb.right is BinaryExpr) {
+                var rb = (BinaryExpr) cb.right;
+                if ((rb.op == "+" || rb.op == "-") && rb.left is VarRef && rb.right is IntLiteral) {
+                    string rname = ((VarRef) rb.left).name;
+                    if (bce_stmt_modifies (body, rname)) return false;
+                    int ri = lookup_var (rname);
+                    if (ri < 0) return false;
+                    mv = var_vregs[ri];
+                    int64 rv = ((IntLiteral) rb.right).value;
+                    if (rv < -1073741824 || rv > 1073741824) return false;
+                    moff = ((rb.op == "+") ? (int) rv : (int) (-rv)) + extra;
+                } else {
+                    return false;
+                }
+            } else if (cb.right is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) cb.right;
+                if (ma.member == "length" && ma.target is VarRef) {
+                    string aname = ((VarRef) ma.target).name;
+                    if (bce_stmt_modifies (body, aname)) return false;
+                    int ai = lookup_var (aname);
+                    if (ai < 0) return false;
+                    marr = var_vregs[ai];
+                    moff = extra;
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+
+            int bmin = (init_var != null && init_var == vname && init_min <= 1073741824) ? (int) init_min : 0;
+            bce_bnd_vreg.add (vv);
+            bce_bnd_min.add (bmin);
+            bce_bnd_max_c.add (mc);
+            bce_bnd_max_v.add (mv);
+            bce_bnd_max_off.add (moff);
+            bce_bnd_max_arr.add (marr);
+            return true;
+        }
+
+        private void bce_pop_bnd () {
+            int n = bce_bnd_vreg.length - 1;
+            bce_bnd_vreg.length = n;
+            bce_bnd_min.length = n;
+            bce_bnd_max_c.length = n;
+            bce_bnd_max_v.length = n;
+            bce_bnd_max_off.length = n;
+            bce_bnd_max_arr.length = n;
+        }
+
+        private bool bce_var_lt_var (int vv, int target_v, int64 k) {
+            for (int i = bce_bnd_vreg.length - 1; i >= 0; i--) {
+                if (bce_bnd_vreg[i] == vv && bce_bnd_min[i] >= 0
+                    && bce_bnd_max_v[i] == target_v && k + bce_bnd_max_off[i] <= 0)
+                    return true;
+            }
+            return false;
+        }
+
+        private bool bce_decompose_var_off (Expr e, out int vv, out int64 off) {
+            vv = -1;
+            off = 0;
+            if (e is VarRef) {
+                int idx = lookup_var (((VarRef) e).name);
+                if (idx >= 0) { vv = var_vregs[idx]; return true; }
+                return false;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                if ((b.op == "+" || b.op == "-") && b.left is VarRef && b.right is IntLiteral) {
+                    int idx = lookup_var (((VarRef) b.left).name);
+                    if (idx >= 0) {
+                        vv = var_vregs[idx];
+                        off = (b.op == "+") ? ((IntLiteral) b.right).value : -((IntLiteral) b.right).value;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private bool bce_is_safe (int av, Expr idx_e) {
+            if (!bounds_check) return true;
+            int aidx = -1;
+            for (int i = bce_arr_vregs.length - 1; i >= 0; i--) {
+                if (bce_arr_vregs[i] == av) { aidx = i; break; }
+            }
+            if (idx_e is IntLiteral) {
+                int64 k = ((IntLiteral) idx_e).value;
+                return k >= 0 && aidx >= 0 && bce_arr_const[aidx] > k;
+            }
+            int iv = -1;
+            int64 koff = 0;
+            if (bce_decompose_var_off (idx_e, out iv, out koff) && koff >= 0) {
+                for (int i = bce_bnd_vreg.length - 1; i >= 0; i--) {
+                    if (bce_bnd_vreg[i] != iv || bce_bnd_min[i] < 0) continue;
+                    if (bce_bnd_max_arr[i] == av && koff + bce_bnd_max_off[i] <= 0)
+                        return true;
+                    if (aidx >= 0 && bce_arr_const[aidx] > 0 && bce_bnd_max_c[i] >= 0
+                        && koff + bce_bnd_max_c[i] <= bce_arr_const[aidx])
+                        return true;
+                    if (aidx >= 0 && bce_arr_var[aidx] >= 0 && bce_bnd_max_v[i] == bce_arr_var[aidx]
+                        && koff + bce_bnd_max_off[i] <= bce_arr_off[aidx])
+                        return true;
+                }
+            }
+            // Case 3: arr[r * n + c] where arr has length n * n (e.g. matmul_256)
+            if (aidx >= 0 && bce_arr_ma[aidx] >= 0 && bce_arr_ma[aidx] == bce_arr_mb[aidx]
+                && idx_e is BinaryExpr && ((BinaryExpr) idx_e).op == "+") {
+                var b = (BinaryExpr) idx_e;
+                int nv = bce_arr_ma[aidx];
+                int rv = -1;
+                if (b.left is BinaryExpr) {
+                    var mb = (BinaryExpr) b.left;
+                    if (mb.op == "*" && mb.left is VarRef && mb.right is VarRef) {
+                        int i1 = lookup_var (((VarRef) mb.left).name);
+                        int i2 = lookup_var (((VarRef) mb.right).name);
+                        if (i1 >= 0 && i2 >= 0 && var_vregs[i2] == nv)
+                            rv = var_vregs[i1];
+                    }
+                } else if (b.left is VarRef) {
+                    int li = lookup_var (((VarRef) b.left).name);
+                    if (li >= 0) {
+                        int lv = var_vregs[li];
+                        for (int mi = bce_mul_v.length - 1; mi >= 0; mi--) {
+                            if (bce_mul_v[mi] == lv && bce_mul_b[mi] == nv) {
+                                rv = bce_mul_a[mi];
+                                break;
+                            }
+                        }
+                    }
+                }
+                int cv = -1;
+                int64 ck = 0;
+                if (rv >= 0 && bce_decompose_var_off (b.right, out cv, out ck) && ck >= 0) {
+                    if (bce_var_lt_var (rv, nv, 0) && bce_var_lt_var (cv, nv, ck))
+                        return true;
+                }
+            }
+            return false;
+        }
+
         private void lower_stmt (Statement? s) {
             if (s == null) return;
             if (s is BlockStatement) {
@@ -499,6 +871,22 @@ namespace Planc {
                 var_vregs.add (v);
                 var_types.add (is_arr ? ValaType.ARRAY : d.decl_type);
                 var_tnames.add (d.decl_type_name);
+                if (d.init is ArrayNewExpr) {
+                    bce_record_arr (v, ((ArrayNewExpr) d.init).length_expr);
+                } else if (d.init == null || (d.init is IntLiteral && ((IntLiteral) d.init).value >= 0) || is_u) {
+                    bce_set_nonneg (v, true);
+                } else if (d.init is BinaryExpr) {
+                    var db = (BinaryExpr) d.init;
+                    if (db.op == "*" && db.left is VarRef && db.right is VarRef) {
+                        int i1 = lookup_var (((VarRef) db.left).name);
+                        int i2 = lookup_var (((VarRef) db.right).name);
+                        if (i1 >= 0 && i2 >= 0) {
+                            bce_mul_v.add (v);
+                            bce_mul_a.add (var_vregs[i1]);
+                            bce_mul_b.add (var_vregs[i2]);
+                        }
+                    }
+                }
                 return;
             }
             if (s is AssignStatement) {
@@ -506,6 +894,27 @@ namespace Planc {
                 int v = var_vregs[lookup_var (a.name)];
                 int rv = lower_expr (a.value);
                 emit_ir (new IRInst () { op = IROp.MOV, dst = v, lhs = rv });
+                bce_invalidate_var (v);
+                bool keep_nonneg = false;
+                if (a.value is IntLiteral && ((IntLiteral) a.value).value >= 0) {
+                    keep_nonneg = true;
+                } else if (a.value is BinaryExpr) {
+                    var ab = (BinaryExpr) a.value;
+                    if (ab.op == "+" && ab.left is VarRef && ((VarRef) ab.left).name == a.name
+                        && ab.right is IntLiteral && ((IntLiteral) ab.right).value >= 0
+                        && bce_has_nonneg (v)) {
+                        keep_nonneg = true;
+                    } else if (ab.op == "*" && ab.left is VarRef && ab.right is VarRef) {
+                        int i1 = lookup_var (((VarRef) ab.left).name);
+                        int i2 = lookup_var (((VarRef) ab.right).name);
+                        if (i1 >= 0 && i2 >= 0) {
+                            bce_mul_v.add (v);
+                            bce_mul_a.add (var_vregs[i1]);
+                            bce_mul_b.add (var_vregs[i2]);
+                        }
+                    }
+                }
+                bce_set_nonneg (v, keep_nonneg);
                 return;
             }
             if (s is IndexAssignStatement) {
@@ -513,9 +922,10 @@ namespace Planc {
                 int av = var_vregs[lookup_var (((VarRef) ia.target).name)];
                 int iv = lower_expr (ia.index);
                 int vv = lower_expr (ia.value);
+                bool bc = !bce_is_safe (av, ia.index);
                 emit_ir (new IRInst () {
                     op = IROp.ARR_STORE, dst = av, lhs = iv, rhs = vv,
-                    sop = ia.op, bounds_check = bounds_check
+                    sop = ia.op, bounds_check = bc
                 });
                 return;
             }
@@ -667,7 +1077,9 @@ namespace Planc {
                 break_bbs.add (bb_end);
                 continue_bbs.add (bb_cond);
                 cur_bb = bb_body;
+                bool pushed_w = bce_try_push_cond (ws.condition, ws.body, null, 0);
                 lower_stmt (ws.body);
+                if (pushed_w) bce_pop_bnd ();
                 if (!bb_ends_with_term (cur_bb)) {
                     emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_cond });
                     blocks[cur_bb].succs.add (bb_cond);
@@ -683,6 +1095,18 @@ namespace Planc {
                 int mark = var_names.length;
                 if (fs.init != null)
                     lower_stmt (fs.init);
+                string? init_v = null;
+                int64 init_min = 0;
+                if (fs.init is VarDeclStatement) {
+                    var fvd = (VarDeclStatement) fs.init;
+                    if (fvd.init == null) {
+                        init_v = fvd.name; init_min = 0;
+                    } else if (fvd.init is IntLiteral && ((IntLiteral) fvd.init).value >= 0) {
+                        init_v = fvd.name; init_min = ((IntLiteral) fvd.init).value;
+                    }
+                }
+                if (init_v != null && !bce_stmt_only_inc (fs.step, init_v))
+                    init_v = null;
                 int bb_cond = new_bb ();
                 int bb_body = new_bb ();
                 int bb_step = new_bb ();
@@ -704,7 +1128,9 @@ namespace Planc {
                 break_bbs.add (bb_end);
                 continue_bbs.add (bb_step);
                 cur_bb = bb_body;
+                bool pushed_f = bce_try_push_cond (fs.condition, fs.body, init_v, init_min);
                 lower_stmt (fs.body);
+                if (pushed_f) bce_pop_bnd ();
                 if (!bb_ends_with_term (cur_bb)) {
                     emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_step });
                     blocks[cur_bb].succs.add (bb_step);
