@@ -20,6 +20,7 @@ namespace Planc {
         private Function? cur_func = null;
         private GenericArray<string> active_locals = new GenericArray<string> ();
         private int licm_counter = 0;
+        private int sra_counter = 0;
 
         private static void mt_opt_worker (int wid) {
             var opt = new Optimizer ();
@@ -47,7 +48,7 @@ namespace Planc {
 
         private static unowned Function? find_class_method_opt (ClassDecl cd, string mname) {
             for (int i = 0; i < cd.methods.length; i++) {
-                if (cd.methods[i].name == mname)
+                if (cd.methods[i].method_name == mname || cd.methods[i].name == mname)
                     return cd.methods[i];
             }
             return null;
@@ -286,12 +287,13 @@ namespace Planc {
                         unowned var cd = prog.find_class (cname);
                         if (cd != null && cd.base_name == "") {
                             unowned var fn = find_class_method_opt (cd, mc.method_name);
-                            if (fn != null && !fn.is_static && fn.params.length >= 1 && fn.params[0].name == "this"
+                            int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
+                            if (fn != null && !fn.is_static
                                 && fn.body != null && fn.body.length == 1 && fn.body[0] is ReturnStatement) {
                                 var rs = (ReturnStatement) fn.body[0];
-                                if (rs.value != null && can_inline_fn (fn, mc.args.length, 1, mc.args, rs.value, cd)) {
+                                if (rs.value != null && can_inline_fn (fn, mc.args.length, poff, mc.args, rs.value, cd)) {
                                     var pnames = new GenericArray<string> ();
-                                    for (int i = 1; i < fn.params.length; i++)
+                                    for (int i = poff; i < fn.params.length; i++)
                                         pnames.add (fn.params[i].name);
                                     var cloned = prog.clone_expr_plain (rs.value);
                                     return subst_inline_expr (prog, cloned, pnames, mc.args, cd, obj);
@@ -370,13 +372,13 @@ namespace Planc {
                             unowned var cd = prog.find_class (cname);
                             if (cd != null && cd.base_name == "") {
                                 unowned var fn = find_class_method_opt (cd, mc.method_name);
+                                int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
                                 if (fn != null && !fn.is_static && fn.return_type == ValaType.VOID
-                                    && fn.params.length >= 1 && fn.params[0].name == "this"
                                     && fn.body != null && fn.body.length == 1 && fn.body[0] is AssignStatement) {
                                     var asg = (AssignStatement) fn.body[0];
-                                    if (cd_has_field (cd, asg.name) && can_inline_fn (fn, mc.args.length, 1, mc.args, asg.value, cd)) {
+                                    if (cd_has_field (cd, asg.name) && can_inline_fn (fn, mc.args.length, poff, mc.args, asg.value, cd)) {
                                         var pnames = new GenericArray<string> ();
-                                        for (int i = 1; i < fn.params.length; i++)
+                                        for (int i = poff; i < fn.params.length; i++)
                                             pnames.add (fn.params[i].name);
                                         var cloned = prog.clone_expr_plain (asg.value);
                                         var rhs = subst_inline_expr (prog, cloned, pnames, mc.args, cd, obj);
@@ -553,12 +555,457 @@ namespace Planc {
             cur_owner = "";
         }
 
+        private static int sra_field_idx (GenericArray<string> fnames, string fn) {
+            for (int i = 0; i < fnames.length; i++) {
+                if (fnames[i] == fn) return i;
+            }
+            return -1;
+        }
+
+        private bool sra_expr_safe (Expr? e, string vname, ClassDecl cd) {
+            if (e == null) return true;
+            if (e is IntLiteral || e is BoolLiteral || e is StringLiteral || e is NullLiteral) return true;
+            if (e is VarRef) return ((VarRef) e).name != vname;
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                if (ma.target is VarRef && ((VarRef) ma.target).name == vname)
+                    return cd_has_field (cd, ma.member);
+                return sra_expr_safe (ma.target, vname, cd);
+            }
+            if (e is UnaryExpr) return sra_expr_safe (((UnaryExpr) e).operand, vname, cd);
+            if (e is IncDecExpr) {
+                var inc = (IncDecExpr) e;
+                if (inc.target is VarRef && ((VarRef) inc.target).name == vname) return false;
+                return sra_expr_safe (inc.target, vname, cd);
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return sra_expr_safe (b.left, vname, cd) && sra_expr_safe (b.right, vname, cd);
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return sra_expr_safe (te.condition, vname, cd)
+                    && sra_expr_safe (te.then_expr, vname, cd)
+                    && sra_expr_safe (te.else_expr, vname, cd);
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return sra_expr_safe (ix.target, vname, cd) && sra_expr_safe (ix.index, vname, cd);
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (!sra_expr_safe (c.args[i], vname, cd)) return false;
+                }
+                return true;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (!sra_expr_safe (mc.target, vname, cd)) return false;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (!sra_expr_safe (mc.args[i], vname, cd)) return false;
+                }
+                return true;
+            }
+            if (e is TemplateExpr) {
+                var te = (TemplateExpr) e;
+                for (int i = 0; i < te.parts.length; i++) {
+                    if (!sra_expr_safe (te.parts[i], vname, cd)) return false;
+                }
+                return true;
+            }
+            if (e is ArrayNewExpr) {
+                var an = (ArrayNewExpr) e;
+                return sra_expr_safe (an.length_expr, vname, cd);
+            }
+            if (e is ClassNewExpr) {
+                var cn = (ClassNewExpr) e;
+                for (int i = 0; i < cn.args.length; i++) {
+                    if (!sra_expr_safe (cn.args[i], vname, cd)) return false;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        private bool sra_stmt_safe (Statement? s, string vname, ClassDecl cd) {
+            if (s == null || s is BreakStatement || s is ContinueStatement) return true;
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                if (d.name == vname) return false;
+                return sra_expr_safe (d.init, vname, cd);
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                if (a.name == vname) return false;
+                return sra_expr_safe (a.value, vname, cd);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                if (fa.target is VarRef && ((VarRef) fa.target).name == vname)
+                    return (fa.op == "=" || fa.op == "+=" || fa.op == "-=")
+                        && cd_has_field (cd, fa.field_name) && sra_expr_safe (fa.value, vname, cd);
+                return sra_expr_safe (fa.target, vname, cd) && sra_expr_safe (fa.value, vname, cd);
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return sra_expr_safe (ia.target, vname, cd)
+                    && sra_expr_safe (ia.index, vname, cd)
+                    && sra_expr_safe (ia.value, vname, cd);
+            }
+            if (s is ExprStatement) return sra_expr_safe (((ExprStatement) s).expr, vname, cd);
+            if (s is ReturnStatement) return sra_expr_safe (((ReturnStatement) s).value, vname, cd);
+            if (s is PrintStatement) return sra_expr_safe (((PrintStatement) s).value, vname, cd);
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (!sra_stmt_safe (blk.statements[i], vname, cd)) return false;
+                }
+                return true;
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return sra_expr_safe (ifs.condition, vname, cd)
+                    && sra_stmt_safe (ifs.then_body, vname, cd)
+                    && sra_stmt_safe (ifs.else_body, vname, cd);
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                return sra_expr_safe (ws.condition, vname, cd) && sra_stmt_safe (ws.body, vname, cd);
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                return sra_expr_safe (dw.condition, vname, cd) && sra_stmt_safe (dw.body, vname, cd);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return sra_stmt_safe (fs.init, vname, cd)
+                    && sra_expr_safe (fs.condition, vname, cd)
+                    && sra_stmt_safe (fs.step, vname, cd)
+                    && sra_stmt_safe (fs.body, vname, cd);
+            }
+            return false;
+        }
+
+        private Expr? sra_rewrite_expr_opt (Expr? e, string vname, GenericArray<string> fnames, GenericArray<string> sra_names) {
+            if (e == null) return null;
+            return sra_rewrite_expr (e, vname, fnames, sra_names);
+        }
+
+        private Expr sra_rewrite_expr (Expr e, string vname, GenericArray<string> fnames, GenericArray<string> sra_names) {
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                if (ma.target is VarRef && ((VarRef) ma.target).name == vname) {
+                    int fi = sra_field_idx (fnames, ma.member);
+                    if (fi >= 0)
+                        return new VarRef () { name = sra_names[fi], line = ma.line, column = ma.column };
+                }
+                ma.target = sra_rewrite_expr (ma.target, vname, fnames, sra_names);
+                return ma;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = sra_rewrite_expr (u.operand, vname, fnames, sra_names);
+                return u;
+            }
+            if (e is IncDecExpr) {
+                var inc = (IncDecExpr) e;
+                inc.target = sra_rewrite_expr (inc.target, vname, fnames, sra_names);
+                return inc;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                b.left = sra_rewrite_expr (b.left, vname, fnames, sra_names);
+                b.right = sra_rewrite_expr (b.right, vname, fnames, sra_names);
+                return b;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = sra_rewrite_expr (te.condition, vname, fnames, sra_names);
+                te.then_expr = sra_rewrite_expr (te.then_expr, vname, fnames, sra_names);
+                te.else_expr = sra_rewrite_expr (te.else_expr, vname, fnames, sra_names);
+                return te;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                ix.target = sra_rewrite_expr (ix.target, vname, fnames, sra_names);
+                ix.index = sra_rewrite_expr (ix.index, vname, fnames, sra_names);
+                return ix;
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++)
+                    c.args[i] = sra_rewrite_expr (c.args[i], vname, fnames, sra_names);
+                return c;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                mc.target = sra_rewrite_expr_opt (mc.target, vname, fnames, sra_names);
+                for (int i = 0; i < mc.args.length; i++)
+                    mc.args[i] = sra_rewrite_expr (mc.args[i], vname, fnames, sra_names);
+                return mc;
+            }
+            if (e is TemplateExpr) {
+                var te = (TemplateExpr) e;
+                for (int i = 0; i < te.parts.length; i++)
+                    te.parts[i] = sra_rewrite_expr (te.parts[i], vname, fnames, sra_names);
+                return te;
+            }
+            if (e is ArrayNewExpr) {
+                var an = (ArrayNewExpr) e;
+                an.length_expr = sra_rewrite_expr (an.length_expr, vname, fnames, sra_names);
+                return an;
+            }
+            if (e is ClassNewExpr) {
+                var cn = (ClassNewExpr) e;
+                for (int i = 0; i < cn.args.length; i++)
+                    cn.args[i] = sra_rewrite_expr (cn.args[i], vname, fnames, sra_names);
+                return cn;
+            }
+            return e;
+        }
+
+        private Statement? sra_rewrite_stmt_opt (Statement? s, string vname, GenericArray<string> fnames, GenericArray<string> sra_names) {
+            if (s == null) return null;
+            return sra_rewrite_stmt (s, vname, fnames, sra_names);
+        }
+
+        private Statement sra_rewrite_stmt (Statement s, string vname, GenericArray<string> fnames, GenericArray<string> sra_names) {
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                d.init = sra_rewrite_expr_opt (d.init, vname, fnames, sra_names);
+                return d;
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                a.value = sra_rewrite_expr (a.value, vname, fnames, sra_names);
+                return a;
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                fa.value = sra_rewrite_expr (fa.value, vname, fnames, sra_names);
+                if (fa.target is VarRef && ((VarRef) fa.target).name == vname) {
+                    int fi = sra_field_idx (fnames, fa.field_name);
+                    if (fi >= 0) {
+                        Expr new_v = fa.value;
+                        if (fa.op == "+=" || fa.op == "-=") {
+                            new_v = new BinaryExpr () {
+                                op = (fa.op == "+=") ? "+" : "-",
+                                left = new VarRef () { name = sra_names[fi], line = fa.line, column = fa.column },
+                                right = fa.value,
+                                line = fa.line,
+                                column = fa.column
+                            };
+                        }
+                        return new AssignStatement () {
+                            name = sra_names[fi],
+                            value = new_v,
+                            line = fa.line,
+                            column = fa.column
+                        };
+                    }
+                }
+                fa.target = sra_rewrite_expr (fa.target, vname, fnames, sra_names);
+                return fa;
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                ia.target = sra_rewrite_expr (ia.target, vname, fnames, sra_names);
+                ia.index = sra_rewrite_expr (ia.index, vname, fnames, sra_names);
+                ia.value = sra_rewrite_expr (ia.value, vname, fnames, sra_names);
+                return ia;
+            }
+            if (s is ExprStatement) {
+                var es = (ExprStatement) s;
+                es.expr = sra_rewrite_expr (es.expr, vname, fnames, sra_names);
+                return es;
+            }
+            if (s is ReturnStatement) {
+                var r = (ReturnStatement) s;
+                r.value = sra_rewrite_expr_opt (r.value, vname, fnames, sra_names);
+                return r;
+            }
+            if (s is PrintStatement) {
+                var p = (PrintStatement) s;
+                p.value = sra_rewrite_expr (p.value, vname, fnames, sra_names);
+                return p;
+            }
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++)
+                    blk.statements[i] = sra_rewrite_stmt (blk.statements[i], vname, fnames, sra_names);
+                return blk;
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                ifs.condition = sra_rewrite_expr (ifs.condition, vname, fnames, sra_names);
+                ifs.then_body = sra_rewrite_stmt (ifs.then_body, vname, fnames, sra_names);
+                ifs.else_body = sra_rewrite_stmt_opt (ifs.else_body, vname, fnames, sra_names);
+                return ifs;
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                ws.condition = sra_rewrite_expr (ws.condition, vname, fnames, sra_names);
+                ws.body = sra_rewrite_stmt (ws.body, vname, fnames, sra_names);
+                return ws;
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                dw.condition = sra_rewrite_expr (dw.condition, vname, fnames, sra_names);
+                dw.body = sra_rewrite_stmt (dw.body, vname, fnames, sra_names);
+                return dw;
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                fs.init = sra_rewrite_stmt_opt (fs.init, vname, fnames, sra_names);
+                fs.condition = sra_rewrite_expr_opt (fs.condition, vname, fnames, sra_names);
+                fs.step = sra_rewrite_stmt_opt (fs.step, vname, fnames, sra_names);
+                fs.body = sra_rewrite_stmt (fs.body, vname, fnames, sra_names);
+                return fs;
+            }
+            return s;
+        }
+
+        private void sra_stmt_list (GenericArray<Statement> stmts) {
+            var out_stmts = new GenericArray<Statement> ();
+            bool changed = false;
+            for (int i = 0; i < stmts.length; i++) {
+                var s = stmts[i];
+                if (s is VarDeclStatement) {
+                    var d = (VarDeclStatement) s;
+                    if (d.init is ClassNewExpr) {
+                        var ne = (ClassNewExpr) d.init;
+                        if (ne.ctor_name == "" && ne.args.length == 0 && ne.init_names.length == 0) {
+                            unowned var cd = cur_prog.find_class (ne.class_name);
+                            bool ctor_ok = false;
+                            if (cd != null && cd.base_name == "" && !cd.is_abstract
+                                && cd.dtor == null && cd.fields.length > 0 && cd.fields.length <= 8) {
+                                if (cd.ctor == null) {
+                                    ctor_ok = true;
+                                } else if ((cd.ctor.params.length == 0
+                                            || (cd.ctor.params.length == 1 && cd.ctor.params[0].name == "this"))
+                                           && cd.ctor.body != null) {
+                                    ctor_ok = true;
+                                    for (int ci = 0; ci < cd.ctor.body.length; ci++) {
+                                        var cs = cd.ctor.body[ci];
+                                        if (cs is AssignStatement) {
+                                            var ca = (AssignStatement) cs;
+                                            if (!cd_has_field (cd, ca.name)
+                                                || !(ca.value is IntLiteral || ca.value is BoolLiteral)) {
+                                                ctor_ok = false; break;
+                                            }
+                                        } else if (cs is FieldAssignStatement) {
+                                            var cfa = (FieldAssignStatement) cs;
+                                            if (cfa.op != "=" || !(cfa.target is VarRef)
+                                                || ((VarRef) cfa.target).name != "this"
+                                                || !cd_has_field (cd, cfa.field_name)
+                                                || !(cfa.value is IntLiteral || cfa.value is BoolLiteral)) {
+                                                ctor_ok = false; break;
+                                            }
+                                        } else {
+                                            ctor_ok = false; break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (ctor_ok) {
+                                bool fields_ok = true;
+                                for (int fi = 0; fi < cd.fields.length; fi++) {
+                                    var cf = cd.fields[fi];
+                                    if (cf.is_static
+                                        || (cf.field_type != ValaType.INT && cf.field_type != ValaType.BOOL)
+                                        || (cf.init != null && !(cf.init is IntLiteral) && !(cf.init is BoolLiteral))) {
+                                        fields_ok = false;
+                                        break;
+                                    }
+                                }
+                                if (fields_ok) {
+                                    bool safe = true;
+                                    for (int j = i + 1; j < stmts.length; j++) {
+                                        if (!sra_stmt_safe (stmts[j], d.name, (ClassDecl) cd)) {
+                                            safe = false;
+                                            break;
+                                        }
+                                    }
+                                    if (safe) {
+                                        int sid = sra_counter++;
+                                        var fnames = new GenericArray<string> ();
+                                        var sra_names = new GenericArray<string> ();
+                                        for (int fi = 0; fi < cd.fields.length; fi++) {
+                                            var cf = cd.fields[fi];
+                                            string sn = "__sra_" + d.name + "_" + cf.name + "_" + sid.to_string ();
+                                            fnames.add (cf.name);
+                                            sra_names.add (sn);
+                                            Expr init_e = (cf.init != null)
+                                                ? cur_prog.clone_expr_plain (cf.init)
+                                                : ((cf.field_type == ValaType.BOOL)
+                                                    ? (Expr) new BoolLiteral () { value = false, line = d.line, column = d.column }
+                                                    : (Expr) new IntLiteral () { value = 0, line = d.line, column = d.column });
+                                            out_stmts.add (new VarDeclStatement () {
+                                                decl_type = cf.field_type,
+                                                decl_type_name = cf.type_name,
+                                                name = sn,
+                                                init = init_e,
+                                                line = d.line,
+                                                column = d.column
+                                            });
+                                        }
+                                        if (cd.ctor != null && cd.ctor.body != null) {
+                                            for (int ci = 0; ci < cd.ctor.body.length; ci++) {
+                                                var cs = cd.ctor.body[ci];
+                                                if (cs is AssignStatement) {
+                                                    var ca = (AssignStatement) cs;
+                                                    int cfi = sra_field_idx (fnames, ca.name);
+                                                    if (cfi >= 0) {
+                                                        out_stmts.add (new AssignStatement () {
+                                                            name = sra_names[cfi],
+                                                            value = cur_prog.clone_expr_plain (ca.value),
+                                                            line = d.line,
+                                                            column = d.column
+                                                        });
+                                                    }
+                                                } else if (cs is FieldAssignStatement) {
+                                                    var cfa = (FieldAssignStatement) cs;
+                                                    int cfi = sra_field_idx (fnames, cfa.field_name);
+                                                    if (cfi >= 0) {
+                                                        out_stmts.add (new AssignStatement () {
+                                                            name = sra_names[cfi],
+                                                            value = cur_prog.clone_expr_plain (cfa.value),
+                                                            line = d.line,
+                                                            column = d.column
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        for (int j = i + 1; j < stmts.length; j++)
+                                            stmts[j] = sra_rewrite_stmt (stmts[j], d.name, fnames, sra_names);
+                                        changed = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                out_stmts.add (s);
+            }
+            if (changed) {
+                stmts.length = 0;
+                for (int i = 0; i < out_stmts.length; i++)
+                    stmts.add (out_stmts[i]);
+            }
+        }
+
         private void opt_func (Function f) {
             cur_func = f;
             cur_file = f.file;
             active_locals = new GenericArray<string> ();
-            if (f.body != null)
+            if (f.body != null) {
+                if (level >= 2 && cur_prog != null)
+                    sra_stmt_list (f.body);
                 opt_stmt_list (f.body);
+            }
             cur_func = null;
         }
 
