@@ -6162,6 +6162,40 @@ namespace Planc {
             return false;
         }
 
+        private void check_unreachable_stmt (string file, Statement? s) {
+            if (s == null) return;
+            if (s is BlockStatement) {
+                check_unreachable_stmts (file, ((BlockStatement) s).statements);
+            } else if (s is IfStatement) {
+                var i = (IfStatement) s;
+                check_unreachable_stmt (file, i.then_body);
+                check_unreachable_stmt (file, i.else_body);
+            } else if (s is WhileStatement) {
+                check_unreachable_stmt (file, ((WhileStatement) s).body);
+            } else if (s is ForStatement) {
+                check_unreachable_stmt (file, ((ForStatement) s).body);
+            } else if (s is ForeachStatement) {
+                check_unreachable_stmt (file, ((ForeachStatement) s).body);
+            }
+        }
+
+        private void check_unreachable_stmts (string file, GenericArray<Statement>? stmts) {
+            if (stmts == null) return;
+            bool terminated = false;
+            bool warned = false;
+            for (int i = 0; i < stmts.length; i++) {
+                var st = stmts[i];
+                if (terminated && !warned && st.line > 0) {
+                    string loc = file != "" ? @"$file:$(st.line):$(st.column)" : @"$(st.line):$(st.column)";
+                    Host.eprintln (@"planc: warning: unreachable code at $loc");
+                    warned = true;
+                }
+                check_unreachable_stmt (file, st);
+                if (st is ReturnStatement || st is BreakStatement || st is ContinueStatement)
+                    terminated = true;
+            }
+        }
+
         private void generate_function (Function f) throws SemanticError {
             if (imported_syms != null && imported_syms.lookup (f.name) >= 0)
                 return;
@@ -6179,6 +6213,7 @@ namespace Planc {
                 generate_async_function (f);
                 return;
             }
+            check_unreachable_stmts (f.file, f.body);
             if (opt_level >= 2) {
                 bool p_ws = false;
                 bool p_wi = false;
@@ -12098,6 +12133,25 @@ namespace Planc {
                 }
             } else if (e is ArrayNewExpr) {
                 var an = (ArrayNewExpr) e;
+                if (opt_level == 0) {
+                    int64 neg_len = 0;
+                    bool is_neg = false;
+                    if (an.length_expr is IntLiteral && ((IntLiteral) an.length_expr).value < 0) {
+                        neg_len = ((IntLiteral) an.length_expr).value;
+                        is_neg = true;
+                    } else if (an.length_expr is UnaryExpr && ((UnaryExpr) an.length_expr).op == "-"
+                        && ((UnaryExpr) an.length_expr).operand is IntLiteral) {
+                        int64 v = ((IntLiteral) ((UnaryExpr) an.length_expr).operand).value;
+                        if (v > 0) {
+                            neg_len = -v;
+                            is_neg = true;
+                        }
+                    }
+                    if (is_neg) {
+                        string loc = current_file != "" ? @"$current_file:$(an.line):$(an.column)" : @"$(an.line):$(an.column)";
+                        Host.eprintln (@"planc: warning: negative array size $(neg_len) in 'new' at $loc");
+                    }
+                }
                 bool elem_ref = is_ref_type (an.elem_type);
                 bool byte_arr = (an.elem_type == ValaType.INT)
                     && (an.elem_type_name == "uint8" || an.elem_type_name == "int8");
@@ -13087,6 +13141,36 @@ namespace Planc {
                 var is_str_cmp = (b.op == "==" || b.op == "!=")
                               && lt == ValaType.STRING
                               && rt == ValaType.STRING;
+                if (!is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER) {
+                    if ((b.op == "<<" || b.op == ">>") && b.right is IntLiteral) {
+                        bool opt_handled = (opt_level >= 1 && b.left is IntLiteral
+                            && (((IntLiteral) b.left).is_unsigned == ((IntLiteral) b.right).is_unsigned
+                                || (((IntLiteral) b.left).is_unsigned && !((IntLiteral) b.right).is_unsigned)));
+                        if (!opt_handled) {
+                            int64 sh = ((IntLiteral) b.right).value;
+                            int max_bits = is_unsigned_32 (lt_name) ? 32 : (lt_name == "int32" ? 32 : 64);
+                            if (sh < 0 || sh >= max_bits) {
+                                string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
+                                Host.eprintln (@"planc: warning: shift count $(sh) out of range for $(lt_name != "" ? lt_name : "int64") in '$(b.op)' at $loc");
+                            }
+                        }
+                    }
+                    if (is_unsigned_int_type (lt_name) && !(b.left is IntLiteral)
+                        && b.right is IntLiteral && ((IntLiteral) b.right).value == 0) {
+                        if (b.op == "<" || b.op == ">=") {
+                            string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
+                            string res_s = (b.op == "<") ? "false" : "true";
+                            Host.eprintln (@"planc: warning: comparison of unsigned expression '$(b.op) 0' is always $res_s at $loc");
+                        }
+                    } else if (is_unsigned_int_type (rt_name) && !(b.right is IntLiteral)
+                        && b.left is IntLiteral && ((IntLiteral) b.left).value == 0) {
+                        if (b.op == ">" || b.op == "<=") {
+                            string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
+                            string res_s = (b.op == ">") ? "false" : "true";
+                            Host.eprintln (@"planc: warning: comparison '0 $(b.op)' unsigned expression is always $res_s at $loc");
+                        }
+                    }
+                }
                 if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
                     && b.op != "/" && b.op != "%" && b.right is IntLiteral) {
                     int64 imm = ((IntLiteral) b.right).value;

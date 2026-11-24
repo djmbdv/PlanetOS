@@ -3085,6 +3085,16 @@ namespace Planc {
                         if (b.op == "<=") return new BoolLiteral () { value = (l <= r), line = e.line, column = e.column };
                         if (b.op == ">")  return new BoolLiteral () { value = (l > r),  line = e.line, column = e.column };
                         if (b.op == ">=") return new BoolLiteral () { value = (l >= r), line = e.line, column = e.column };
+                    } else if (ll.is_unsigned && !rl.is_unsigned && (b.op == "<<" || b.op == ">>")) {
+                        int bits = ll.is_long ? 64 : 32;
+                        if (r < 0 || r >= bits) {
+                            Host.eprintln (@"planc: warning: shift count out of range in '$(b.op)' at $(loc_str (e.line, e.column))");
+                            return b;
+                        }
+                        uint64 ul = (uint64) l;
+                        uint64 res = (b.op == "<<") ? (ul << (int) r) : (ul >> (int) r);
+                        int64 fv = ll.is_long ? (int64) res : (int64) (uint64) (uint32) res;
+                        return new IntLiteral () { value = fv, is_unsigned = true, is_long = ll.is_long, line = e.line, column = e.column };
                     }
                 }
 
@@ -3282,6 +3292,17 @@ namespace Planc {
                 var tc = (TypeCheckExpr) e;
                 tc.operand = opt_expr (tc.operand);
                 return tc;
+            }
+
+            if (e is ArrayNewExpr) {
+                var an = (ArrayNewExpr) e;
+                an.length_expr = opt_expr (an.length_expr);
+                if (an.length_expr is IntLiteral) {
+                    int64 len_v = ((IntLiteral) an.length_expr).value;
+                    if (len_v < 0)
+                        Host.eprintln (@"planc: warning: negative array size $(len_v) in 'new' at $(loc_str (an.line, an.column))");
+                }
+                return an;
             }
 
             return e;
