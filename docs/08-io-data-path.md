@@ -237,6 +237,19 @@ Ordering: the producer writes descriptors, executes a full fence, then
 increments `tail`. The consumer reads `tail` with acquire semantics. `seq` is
 published with release. Single producer and single consumer per ring.
 
+**Implemented in C1** (`kernel/syscall.vala`): the header above, descriptors
+with `address`/`length`/`flags`/`lease`/`status` (reserved words untouched), and
+status values `1 READY`, `2 DONE`, `3 ERROR`. `SYS_RING_ATTACH(grant, entries)`
+accepts a `KIND_RING` handle only when the magic, the version, the entry count
+and the entry size match and the whole ring fits inside the grant.
+`SYS_RING_KICK` consumes `head..tail`, validates each `READY` descriptor
+(flags must be a known combination, `0 < length <= 16 KiB`, and the whole
+`[address, address+length)` range inside the ring block), and only then runs it:
+C1's stand-in operation fills the buffer with `0xA5` when `WRITE` is set. A
+rejected descriptor gets `ERROR`, the syscall returns `EINVAL` and the device is
+never touched. `seq` is incremented and `SYS_WAKE_ADDR` is applied to it, so a
+completion can be awaited without polling. Leases are not implemented yet.
+
 ### 6.2 Validation and doorbell
 
 `SYS_RING_KICK(handle, count)` is the only doorbell path:
@@ -300,7 +313,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 | **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
 | **B1** | `devfs` and `Gio.File` for `/dev` | **Done for the namespace**: `gio_demo` opens `/dev/console`, checks `PollableInputStream`/`FileDescriptorBased`/`PollableOutputStream`/`is_writable` and closes the pair as one `IOStream` (`dev=ok` in `system`). Remaining: `cat` through `/dev/serial0` and a readiness-driven read |
 | **B2** | Filter chains and line discipline in userland | A line-discipline case passes; `SYS_READ_KEY` still works |
-| **C1** | Ring ABI, validation, `SYS_RING_KICK` | A malformed descriptor is rejected without touching the device |
+| **C1** | Ring ABI, validation, `SYS_RING_KICK` | **Done for the ABI and the validator**: `SYS_RING_ATTACH` binds a `KIND_RING` handle to a granted block whose header matches the documented layout, and `SYS_RING_KICK` validates every ready descriptor against that block (op, length, range) before running it, marking `RING_ST_ERROR` and returning `EINVAL` when one is malformed. `system` proves it (`ring=ok`): a valid echo completes, an out-of-block descriptor is rejected untouched. Remaining: a real device op (virtio-blk in C2) and the completion path through `wait_addr` on the ring sequence |
 | **C2** | IRQ-driven block I/O (virtio-blk) | No spin loop in the block path; throughput case passes |
 | **C3** | `virtio-net` and a minimal LibOS stack | ARP/ICMP echo over the ring |
 | **D** | Buffer leases and revocation | Cancelling a request quarantines the ring and frees no DEVICE buffer |
