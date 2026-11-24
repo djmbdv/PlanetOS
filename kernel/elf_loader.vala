@@ -75,11 +75,23 @@ namespace Planet.Kernel {
         private static int shared_glib_data_msz = 0;
         private static int shared_glib_data_tmpl = 0;
 
-        private static void ensure_shared_glib () {
-            if (shared_glib_probed)
+        private static bool shared_pango_probed = false;
+        private static int shared_pango_ro_vaddr = 0;
+        private static int shared_pango_ro_size = 0;
+        private static int shared_pango_data_vaddr = 0;
+        private static int shared_pango_data_fsz = 0;
+        private static int shared_pango_data_msz = 0;
+        private static int shared_pango_data_tmpl = 0;
+
+        // Either .dlib is loaded once into the window Pmm.init reserves, and each
+        // process maps the same read-only pages.
+        private static void ensure_shared_dlib_one (int name_ptr, int name_len,
+                                                    ref bool probed, ref int ro_vaddr, ref int ro_size,
+                                                    ref int data_vaddr, ref int data_fsz, ref int data_msz, ref int data_tmpl) {
+            if (probed)
                 return;
-            shared_glib_probed = true;
-            int id = Xfs.lookup_root (__el_str_data ("glib.dlib"), 9);
+            probed = true;
+            int id = Xfs.lookup_root (name_ptr, name_len);
             if (id <= 0)
                 return;
             int sz = Xfs.file_size (id);
@@ -95,12 +107,11 @@ namespace Planet.Kernel {
                     Pmm.free_frame (buf + p * 4096);
                 return;
             }
-            // The kernel links against this image by absolute address, so a
-            // header from another ABI generation must be refused instead of
-            // jumping into it.
             int hdr_ver = read_u16 (buf + 4);
             if (hdr_ver != 1) {
-                Klog.error (Klog.CAT_EXEC, "glib.dlib: unsupported ABI version (rebuild it)");
+                // The kernel links against these images by absolute address, so a
+                // header from another ABI generation is refused instead of jumped into.
+                Klog.error (Klog.CAT_EXEC, "shared dlib: unsupported ABI version (rebuild it)");
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (buf + p * 4096);
                 return;
@@ -111,7 +122,6 @@ namespace Planet.Kernel {
                     Pmm.free_frame (buf + p * 4096);
                 return;
             }
-            // Section 0 (.text) and Section 1 (.rodata) are loaded once and shared read-only.
             int s0_va = mmio_read64 (buf + 64);
             int s0_off = mmio_read64 (buf + 72);
             int s0_fsz = mmio_read64 (buf + 80);
@@ -122,11 +132,11 @@ namespace Planet.Kernel {
             int ro_end = s1_va + ((s1_msz > 0) ? s1_msz : 1);
             int ro_sz = ro_end - s0_va;
             // 0x1800000..0x1900000 is the window Pmm.init reserves for the
-            // shared dlib; the text section starts a bit past the base (the
-            // .plan header), so check the range and not the exact value.
+            // shared dlibs; a section starts a bit past the base (the .plan
+            // header), so check the range and not the exact value.
             if (s0_va < 0x1800000 || s0_va >= 0x1900000 || ro_sz <= 0
                 || ro_end > 0x1900000 || s0_off + s0_fsz > got || s1_off + s1_fsz > got) {
-                Klog.error (Klog.CAT_EXEC, "glib.dlib: unexpected image base");
+                Klog.error (Klog.CAT_EXEC, "shared dlib: unexpected image base");
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (buf + p * 4096);
                 return;
@@ -136,14 +146,16 @@ namespace Planet.Kernel {
                 mmio_write8 (s0_va + b, read_u8 (buf + s0_off + b));
             for (int b = 0; b < s1_fsz; b++)
                 mmio_write8 (s1_va + b, read_u8 (buf + s1_off + b));
-            shared_glib_ro_vaddr = s0_va;
-            shared_glib_ro_size = ro_sz;
+            ro_vaddr = s0_va;
+            ro_size = ro_sz;
 
-            // Section 2 (.data + .bss) template is kept for private per-process RW copies.
             int s2_va = mmio_read64 (buf + 128);
             int s2_off = mmio_read64 (buf + 136);
             int s2_fsz = mmio_read64 (buf + 144);
             int s2_msz = mmio_read64 (buf + 152);
+            // Sections 0/1 are .text and .rodata, shared read-only. Section 2 is
+            // .data + .bss: its image is kept as a template so each process gets a
+            // private copy.
             if (s2_msz > 0 && s2_off + s2_fsz <= got) {
                 Pmm.reserve_range (s2_va, s2_msz);
                 for (int b = 0; b < s2_fsz; b++)
@@ -156,37 +168,54 @@ namespace Planet.Kernel {
                     if (tmpl != 0) {
                         for (int b = 0; b < s2_fsz; b++)
                             mmio_write8 (tmpl + b, read_u8 (buf + s2_off + b));
-                        shared_glib_data_tmpl = tmpl;
-                        shared_glib_data_fsz = s2_fsz;
+                        data_tmpl = tmpl;
+                        data_fsz = s2_fsz;
                     }
                 }
-                shared_glib_data_vaddr = s2_va;
-                shared_glib_data_msz = s2_msz;
+                data_vaddr = s2_va;
+                data_msz = s2_msz;
             }
             for (int p = 0; p < pages; p++)
                 Pmm.free_frame (buf + p * 4096);
         }
 
-        private static void map_shared_glib_into (int user_cr3) {
-            ensure_shared_glib ();
-            if (shared_glib_ro_vaddr == 0 || shared_glib_ro_size <= 0)
+        private static void ensure_shared_glib () {
+            ensure_shared_dlib_one (__el_str_data ("glib.dlib"), 9,
+                ref shared_glib_probed, ref shared_glib_ro_vaddr, ref shared_glib_ro_size,
+                ref shared_glib_data_vaddr, ref shared_glib_data_fsz, ref shared_glib_data_msz, ref shared_glib_data_tmpl);
+            ensure_shared_dlib_one (__el_str_data ("pango.dlib"), 10,
+                ref shared_pango_probed, ref shared_pango_ro_vaddr, ref shared_pango_ro_size,
+                ref shared_pango_data_vaddr, ref shared_pango_data_fsz, ref shared_pango_data_msz, ref shared_pango_data_tmpl);
+        }
+
+        private static void map_shared_dlib_one (int user_cr3, int ro_vaddr, int ro_size,
+                                                 int data_vaddr, int data_fsz, int data_msz, int data_tmpl) {
+            if (ro_vaddr == 0 || ro_size <= 0)
                 return;
-            Vmm.map_user_range_ro (user_cr3, shared_glib_ro_vaddr, shared_glib_ro_size);
-            if (shared_glib_data_vaddr != 0 && shared_glib_data_msz > 0) {
-                int first = shared_glib_data_vaddr & ~0xFFF;
-                int last = (shared_glib_data_vaddr + shared_glib_data_msz - 1) & ~0xFFF;
+            Vmm.map_user_range_ro (user_cr3, ro_vaddr, ro_size);
+            if (data_vaddr != 0 && data_msz > 0) {
+                int first = data_vaddr & ~0xFFF;
+                int last = (data_vaddr + data_msz - 1) & ~0xFFF;
                 int dpages = ((last - first) / 4096) + 1;
                 int priv = Pmm.alloc_contiguous (dpages);
                 if (priv == 0)
                     return;
                 for (int i = 0; i < dpages; i++)
                     zero_page_4k (priv + i * 4096);
-                int off_in_page = shared_glib_data_vaddr & 0xFFF;
-                for (int b = 0; b < shared_glib_data_fsz; b++)
-                    mmio_write8 (priv + off_in_page + b, read_u8 (shared_glib_data_tmpl + b));
+                int off_in_page = data_vaddr & 0xFFF;
+                for (int b = 0; b < data_fsz; b++)
+                    mmio_write8 (priv + off_in_page + b, read_u8 (data_tmpl + b));
                 for (int i = 0; i < dpages; i++)
                     Vmm.map_user_4k_phys (user_cr3, first + i * 4096, priv + i * 4096, 0x07);
             }
+        }
+
+        private static void map_shared_glib_into (int user_cr3) {
+            ensure_shared_glib ();
+            map_shared_dlib_one (user_cr3, shared_glib_ro_vaddr, shared_glib_ro_size,
+                shared_glib_data_vaddr, shared_glib_data_fsz, shared_glib_data_msz, shared_glib_data_tmpl);
+            map_shared_dlib_one (user_cr3, shared_pango_ro_vaddr, shared_pango_ro_size,
+                shared_pango_data_vaddr, shared_pango_data_fsz, shared_pango_data_msz, shared_pango_data_tmpl);
         }
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);

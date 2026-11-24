@@ -191,6 +191,27 @@ int main (string[] args) {
     check (!has_red (cr7, 40, 4, 12, 14), "no-color-bleed");
     lay.clear_attributes ();
 
+    // TrueType (libschrift) + UTF-8 multibyte integration
+    bool ttf_ok = FontRegistry.load_ttf ("LiberationSans-Regular.ttf");
+    check (ttf_ok, "ttf-load");
+    if (ttf_ok) {
+        var tlay = new Layout (ctx);
+        tlay.set_text ("Hola\u0020mundo\u0020\u00C3\u00B1");
+        int tw = 0;
+        int th = 0;
+        tlay.get_pixel_size (out tw, out th);
+        check (tw > 0 && th >= 16, "ttf-measure");
+        tlay.set_width (60);
+        check (tlay.line_count () >= 2, "ttf-wrap");
+        var tsurf = new ImageSurface (Format.ARGB32, 120, 60);
+        var tcr = new Context (tsurf);
+        tcr.set_source_rgb (0.0, 0.0, 0.0);
+        tcr.paint ();
+        tcr.set_source_rgb (1.0, 1.0, 1.0);
+        show_layout_at (tcr, tlay, 4, 4);
+        check (tcr.pixel_at (0, 0) == (255 << 24), "ttf-bg-intact");
+    }
+
     print (@"pango:summary checks=$pd_checks failures=$pd_fails\n");
     return (pd_fails == 0) ? 0 : 1;
 }

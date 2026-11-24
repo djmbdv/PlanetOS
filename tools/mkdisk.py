@@ -17,7 +17,7 @@ tools/make_sdk.py; in-guest translates of C code compile against it.
 import struct
 import sys
 
-ARG_COUNT = 36  # image + 35 files
+ARG_COUNT = 37  # image + 36 files
 
 
 def blk(b):
@@ -64,6 +64,7 @@ def main():
     gl_b = open(sys.argv[33], "rb").read()
     sdk_b = open(sys.argv[34], "rb").read()
     sysd_b = open(sys.argv[35], "rb").read()
+    pango_b = open(sys.argv[36], "rb").read()
 
     b_hello = 5
     b_init = 6
@@ -100,7 +101,8 @@ def main():
     b_gl = b_jm + blk(jm_b)
     b_sdk = b_gl + blk(gl_b)
     b_sysd = b_sdk + blk(sdk_b)
-    INO_BLK = max(1000, b_sysd + blk(sysd_b) + 4)
+    b_pango = b_sysd + blk(sysd_b)
+    INO_BLK = max(1000, b_pango + blk(pango_b) + 4)
     total_blocks = INO_BLK + 264 # 8 inode blocks (128 inodes) + 256 free data blocks (1 MiB)
     img = bytearray(total_blocks * 4096)
 
@@ -157,6 +159,7 @@ def main():
         (b"glib.dlib", gl_b, b_gl, 0x81A4),
         (b"c2vala_sdk.vala", sdk_b, b_sdk, 0x81A4),
         (b"sys_demo.elf", sysd_b, b_sysd, 0x81ED),
+        (b"pango.dlib", pango_b, b_pango, 0x81A4),
     ]
     img[df + 0] = len(entries)
     img[df + 1] = 0
