@@ -3998,6 +3998,210 @@ namespace Planc {
             }
         }
 
+        private bool expr_escapes_var (Expr? e, string vname, ClassDecl? cd, bool is_this_check) {
+            if (e == null) return false;
+            if (e is VarRef)
+                return ((VarRef) e).name == vname;
+            if (e is LambdaExpr || e is AddrOfExpr) return true;
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                if (ma.target is VarRef && ((VarRef) ma.target).name == vname)
+                    return false;
+                return expr_escapes_var (ma.target, vname, cd, is_this_check);
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (expr_escapes_var (mc.args[i], vname, cd, is_this_check)) return true;
+                }
+                if (mc.target is VarRef && ((VarRef) mc.target).name == vname) {
+                    if (is_this_check || cd == null) return true;
+                    unowned var m = find_class_method (cd, mc.method_name);
+                    if (m == null || m.is_static || m.is_virtual || m.is_override || m.is_abstract || m.is_async || m.can_throw)
+                        return true;
+                    return method_escapes_this (m, cd);
+                }
+                return expr_escapes_var (mc.target, vname, cd, is_this_check);
+            }
+            if (e is UnaryExpr) return expr_escapes_var (((UnaryExpr) e).operand, vname, cd, is_this_check);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_escapes_var (b.left, vname, cd, is_this_check)
+                    || expr_escapes_var (b.right, vname, cd, is_this_check);
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return expr_escapes_var (ix.target, vname, cd, is_this_check)
+                    || expr_escapes_var (ix.index, vname, cd, is_this_check);
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (expr_escapes_var (c.args[i], vname, cd, is_this_check)) return true;
+                }
+                return false;
+            }
+            if (e is ClassNewExpr) {
+                var cn = (ClassNewExpr) e;
+                for (int i = 0; i < cn.args.length; i++) {
+                    if (expr_escapes_var (cn.args[i], vname, cd, is_this_check)) return true;
+                }
+                return false;
+            }
+            if (e is ArrayNewExpr) return expr_escapes_var (((ArrayNewExpr) e).length_expr, vname, cd, is_this_check);
+            if (e is ArrayLiteralExpr) {
+                var al = (ArrayLiteralExpr) e;
+                for (int i = 0; i < al.elements.length; i++) {
+                    if (expr_escapes_var (al.elements[i], vname, cd, is_this_check)) return true;
+                }
+                return false;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_escapes_var (te.condition, vname, cd, is_this_check)
+                    || expr_escapes_var (te.then_expr, vname, cd, is_this_check)
+                    || expr_escapes_var (te.else_expr, vname, cd, is_this_check);
+            }
+            if (e is CoalesceExpr) {
+                var ce = (CoalesceExpr) e;
+                return expr_escapes_var (ce.left, vname, cd, is_this_check)
+                    || expr_escapes_var (ce.right, vname, cd, is_this_check);
+            }
+            if (e is TypeCheckExpr) return expr_escapes_var (((TypeCheckExpr) e).operand, vname, cd, is_this_check);
+            if (e is TemplateExpr) {
+                var te = (TemplateExpr) e;
+                for (int i = 0; i < te.parts.length; i++) {
+                    if (expr_escapes_var (te.parts[i], vname, cd, is_this_check)) return true;
+                }
+                return false;
+            }
+            return false;
+        }
+
+        private bool stmt_escapes_var (Statement? s, string vname, ClassDecl? cd, bool is_this_check) {
+            if (s == null) return false;
+            if (s is TryStatement || s is ForeachStatement || s is SwitchStatement) return true;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (stmt_escapes_var (blk.statements[i], vname, cd, is_this_check)) return true;
+                }
+                return false;
+            }
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                if (!is_this_check && d.name == vname) return false; // self declaration
+                return expr_escapes_var (d.init, vname, cd, is_this_check);
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                if (a.name == vname) return true;
+                return expr_escapes_var (a.value, vname, cd, is_this_check);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                if (expr_escapes_var (fa.value, vname, cd, is_this_check)) return true;
+                if (fa.target is VarRef && ((VarRef) fa.target).name == vname) return false;
+                return expr_escapes_var (fa.target, vname, cd, is_this_check);
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return expr_escapes_var (ia.target, vname, cd, is_this_check)
+                    || expr_escapes_var (ia.index, vname, cd, is_this_check)
+                    || expr_escapes_var (ia.value, vname, cd, is_this_check);
+            }
+            if (s is ReturnStatement) return expr_escapes_var (((ReturnStatement) s).value, vname, cd, is_this_check);
+            if (s is ExprStatement) return expr_escapes_var (((ExprStatement) s).expr, vname, cd, is_this_check);
+            if (s is PrintStatement) return expr_escapes_var (((PrintStatement) s).value, vname, cd, is_this_check);
+            if (s is ExitStatement) return expr_escapes_var (((ExitStatement) s).value, vname, cd, is_this_check);
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return expr_escapes_var (ifs.condition, vname, cd, is_this_check)
+                    || stmt_escapes_var (ifs.then_body, vname, cd, is_this_check)
+                    || stmt_escapes_var (ifs.else_body, vname, cd, is_this_check);
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                return expr_escapes_var (ws.condition, vname, cd, is_this_check)
+                    || stmt_escapes_var (ws.body, vname, cd, is_this_check);
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                return stmt_escapes_var (dw.body, vname, cd, is_this_check)
+                    || expr_escapes_var (dw.condition, vname, cd, is_this_check);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return stmt_escapes_var (fs.init, vname, cd, is_this_check)
+                    || expr_escapes_var (fs.condition, vname, cd, is_this_check)
+                    || stmt_escapes_var (fs.step, vname, cd, is_this_check)
+                    || stmt_escapes_var (fs.body, vname, cd, is_this_check);
+            }
+            return false;
+        }
+
+        private bool method_escapes_this (Function m, ClassDecl cd) {
+            if (m.body == null || m.is_async || m.can_throw)
+                return true;
+            for (int i = 0; i < m.body.length; i++) {
+                if (stmt_escapes_var (m.body[i], "this", cd, true))
+                    return true;
+            }
+            return false;
+        }
+
+        private bool can_stack_alloc_var (Function f, VarDeclStatement d) {
+            if (opt_level < 2 || f.is_async || f.from_lambda != null || d.is_weak || d.is_unowned)
+                return false;
+            if (!(d.init is ClassNewExpr))
+                return false;
+            var cn = (ClassNewExpr) d.init;
+            if (cn.class_name == "Mutex" || cn.class_name.has_prefix ("Channel__") || cn.init_names.length > 0)
+                return false;
+            unowned var cd = program.find_class (cn.class_name);
+            if (cd == null || cd.is_compact || cd.is_abstract || !cd.has_trivial_init || cd.base_name != "")
+                return false;
+            if (cd.dtor != null && !cd.dtor.name.has_prefix ("__planc_dtor_"))
+                return false;
+            if (!d.infer_type && (d.decl_type != ValaType.CLASS || strip_null (d.decl_type_name) != cd.name))
+                return false;
+            unowned Function? ctor_fn = (cn.ctor_name != "") ? cd.find_own_named_ctor (cn.ctor_name) : cd.ctor;
+            if (ctor_fn != null && (ctor_fn.can_throw || method_escapes_this (ctor_fn, cd)))
+                return false;
+            for (int i = 0; i < cn.args.length; i++) {
+                if (expr_escapes_var (cn.args[i], d.name, cd, false))
+                    return false;
+            }
+            if (f.body == null) return false;
+            for (int i = 0; i < f.body.length; i++) {
+                if (stmt_escapes_var (f.body[i], d.name, cd, false))
+                    return false;
+            }
+            return true;
+        }
+
+        private void mark_stack_alloc_stmt (Function f, Statement? s) {
+            if (s == null) return;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++)
+                    mark_stack_alloc_stmt (f, blk.statements[i]);
+            } else if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                d.stack_alloc = can_stack_alloc_var (f, d);
+            } else if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                mark_stack_alloc_stmt (f, ifs.then_body);
+                mark_stack_alloc_stmt (f, ifs.else_body);
+            } else if (s is WhileStatement) {
+                mark_stack_alloc_stmt (f, ((WhileStatement) s).body);
+            } else if (s is DoWhileStatement) {
+                mark_stack_alloc_stmt (f, ((DoWhileStatement) s).body);
+            } else if (s is ForStatement) {
+                mark_stack_alloc_stmt (f, ((ForStatement) s).body);
+            }
+        }
+
         private int prepare_function (Function f, out int ref_temp_start) throws SemanticError {
             current = f;
             current_file = f.file;
@@ -4010,6 +4214,10 @@ namespace Planc {
             current_class = (f.owner_class != "") ? program.find_class (f.owner_class) : null;
             current_struct = (f.owner_class != "") ? program.find_struct (f.owner_class) : null;
             current_enum = (f.owner_class != "") ? program.find_enum (f.owner_class) : null;
+            if (opt_level >= 2 && !f.is_async && f.from_lambda == null && f.body != null) {
+                for (int i = 0; i < f.body.length; i++)
+                    mark_stack_alloc_stmt (f, f.body[i]);
+            }
             foreach (var d in f.throws_domains)
                 check_domain_exists (d, f.line, f.column);
             pending_struct_exprs = new GenericArray<Expr> ();
@@ -4115,8 +4323,15 @@ namespace Planc {
                         @"duplicate variable: $(d.name) at $(d.line):$(d.column)");
                 if (!d.infer_type && d.init != null)
                     bind_delegate_target (d.init, d.decl_type, d.decl_type_name);
-                if (d.init != null)
-                    prepare_expr (d.init, ref struct_temps, ref ref_temps);
+                if (d.init != null) {
+                    if (d.stack_alloc && d.init is ClassNewExpr) {
+                        var cn_p = (ClassNewExpr) d.init;
+                        for (int ci = 0; ci < cn_p.args.length; ci++)
+                            prepare_expr (cn_p.args[ci], ref struct_temps, ref ref_temps);
+                    } else {
+                        prepare_expr (d.init, ref struct_temps, ref ref_temps);
+                    }
+                }
                 ValaType vt = d.decl_type;
                 string vtname = d.decl_type_name;
                 ValaType init_t = ValaType.NULL;
@@ -4146,6 +4361,11 @@ namespace Planc {
                 var n = type_slots (vt, vtname);
                 var slot = next_var_slot;
                 next_var_slot += n;
+                if (d.stack_alloc && d.init is ClassNewExpr) {
+                    unowned var scd = program.find_class (((ClassNewExpr) d.init).class_name);
+                    if (scd != null)
+                        next_var_slot += 2 + class_total_field_slots (scd);
+                }
                 push_local (d.name, vt, vtname, slot, false, false, d.is_weak);
                 int uidx = locals.length - 1;
                 local_is_user[uidx] = (!d.name.has_prefix ("_") && !d.name.has_prefix ("#"));
@@ -5171,6 +5391,10 @@ namespace Planc {
             current_class = (f.owner_class != "") ? program.find_class (f.owner_class) : null;
             current_struct = (f.owner_class != "") ? program.find_struct (f.owner_class) : null;
             current_enum = (f.owner_class != "") ? program.find_enum (f.owner_class) : null;
+            if (opt_level >= 2 && !f.is_async && f.from_lambda == null && f.body != null) {
+                for (int i = 0; i < f.body.length; i++)
+                    mark_stack_alloc_stmt (f, f.body[i]);
+            }
             cur_ref_temp_start = ref_temp_start;
             cur_total_slots = total_slots;
             cur_func_throw_label = emitter.new_label ();
@@ -5717,6 +5941,20 @@ namespace Planc {
                 generate_async_function (f);
                 return;
             }
+            if (opt_level >= 2) {
+                bool p_ws = false;
+                bool p_wi = false;
+                bool p_bp = false;
+                if (PuzzleRA.try_compile_function (emitter, program, f, symbols,
+                                                   bounds_check, check_overflow,
+                                                   program_uses_heap, bounds_panic_label,
+                                                   out p_ws, out p_wi, out p_bp)) {
+                    if (p_ws) need_write_str = true;
+                    if (p_wi) need_write_int = true;
+                    if (p_bp) need_bounds_panic = true;
+                    return;
+                }
+            }
             current = f;
             current_file = f.file;
             int ref_temp_start = 0;
@@ -5725,6 +5963,10 @@ namespace Planc {
             current_class = (f.owner_class != "") ? program.find_class (f.owner_class) : null;
             current_struct = (f.owner_class != "") ? program.find_struct (f.owner_class) : null;
             current_enum = (f.owner_class != "") ? program.find_enum (f.owner_class) : null;
+            if (opt_level >= 2 && !f.is_async && f.from_lambda == null && f.body != null) {
+                for (int i = 0; i < f.body.length; i++)
+                    mark_stack_alloc_stmt (f, f.body[i]);
+            }
             cur_ref_temp_start = ref_temp_start;
             cur_total_slots = total_slots;
             cur_func_throw_label = emitter.new_label ();
@@ -9647,7 +9889,35 @@ namespace Planc {
                 if (nslots == 1 && vtype != ValaType.STRUCT)
                     try_alloc_reg_slot (slot, vtype, d.name);
 
-                if (vtype == ValaType.STRUCT) {
+                if (d.stack_alloc && d.init is ClassNewExpr) {
+                    var cn_s = (ClassNewExpr) d.init;
+                    unowned var scd = program.find_class (cn_s.class_name);
+                    if (scd == null)
+                        throw new SemanticError.TYPE_MISMATCH (@"unknown class '$(cn_s.class_name)'");
+                    int obj_slots = 2 + class_total_field_slots (scd);
+                    var obj_slot = next_var_slot;
+                    next_var_slot += obj_slots;
+                    int base_disp = struct_base_disp (obj_slot, obj_slots);
+                    if (obj_slots > 2) {
+                        emitter.xor_eax ();
+                        for (int k = 2; k < obj_slots; k++)
+                            emitter.store_rbp_disp (base_disp + 8 * k);
+                    }
+                    emitter.mov_rax_imm ((int64) 0x504C000300000001);
+                    emitter.store_rbp_disp (base_disp);
+                    emitter.lea_rax_space (scd.vtable_rodata_offset, PatchSpace.RODATA);
+                    emitter.store_rbp_disp (base_disp + 8);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                    emitter.store_local (slot);
+                    unowned Function? ctor_fn = (cn_s.ctor_name != "")
+                        ? scd.find_own_named_ctor (cn_s.ctor_name)
+                        : scd.ctor;
+                    if (ctor_fn != null)
+                        emit_instance_call_from_slot (slot, ctor_fn, cn_s.args);
+                    for (int ci = 0; ci < cn_s.args.length; ci++)
+                        cleanup_expr_temps (cn_s.args[ci]);
+                    push_local (d.name, vtype, vtname, slot, true, false, d.is_weak);
+                } else if (vtype == ValaType.STRUCT) {
                     var base_disp = struct_base_disp (slot, nslots);
                     unowned var sd = program.find_struct (vtname);
                     if (d.init != null && init_t != ValaType.NULL) {
@@ -9695,7 +9965,8 @@ namespace Planc {
                         emitter.zero_local (slot);
                     }
                 }
-                push_local (d.name, vtype, vtname, slot, false, false, d.is_weak);
+                if (!d.stack_alloc)
+                    push_local (d.name, vtype, vtname, slot, false, false, d.is_weak);
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else

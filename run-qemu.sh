@@ -97,6 +97,7 @@ python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
     "$ROOT/planc/src/dwarf.vala" \
     "$ROOT/planc/src/spirv.vala" \
     "$ROOT/planc/src/opt.vala" \
+    "$ROOT/planc/src/puzzle_ra.vala" \
     "$ROOT/planc/src/codegen.vala" \
     "$ROOT/planc/src/main.vala" \
     -o "$OUT/planc.elf"

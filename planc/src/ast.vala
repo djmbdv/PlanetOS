@@ -292,6 +292,7 @@ namespace Planc {
         public bool infer_type { get; set; default = false; }
         public bool is_weak { get; set; default = false; }
         public bool is_unowned { get; set; default = false; }
+        public bool stack_alloc { get; set; default = false; }
         public string name { get; set; }
         public Expr? init { get; set; }     // null: zero/empty-initialized
     }
@@ -446,6 +447,7 @@ namespace Planc {
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
         public bool is_unowned { get; set; default = false; }
+        public bool stack_alloc { get; set; default = false; }
         public string name { get; set; }
         public int line { get; set; }
         public int column { get; set; }
@@ -493,6 +495,7 @@ namespace Planc {
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
         public bool is_unowned { get; set; default = false; }
+        public bool stack_alloc { get; set; default = false; }
         public string name { get; set; }
         public bool unmanaged { get; set; default = false; }
         public bool is_ref { get; set; default = false; }
@@ -668,6 +671,7 @@ namespace Planc {
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
         public bool is_unowned { get; set; default = false; }
+        public bool stack_alloc { get; set; default = false; }
         public string name { get; set; }
         public string owner_type { get; set; default = ""; }
         public int64 int_value { get; set; }

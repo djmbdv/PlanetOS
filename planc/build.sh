@@ -26,6 +26,7 @@ valac \
     "$HERE"/src/elf.vala \
     "$HERE"/src/spirv.vala \
     "$HERE"/src/opt.vala \
+    "$HERE"/src/puzzle_ra.vala \
     "$HERE"/src/codegen.vala \
     "$HERE"/src/main.vala \
     "$HERE"/stage0/host_stage0.vala \
