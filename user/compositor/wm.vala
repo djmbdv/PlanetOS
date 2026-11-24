@@ -1034,6 +1034,10 @@ namespace Wm {
                     Sys.setenv ("PLANET_WIN_EV", win.ext_ev_file);
                 }
                 win.ext_tid = Sys.spawn (exec_path, "");
+                // A2: the client may map the surface only because this grant
+                // lists it; the address in PLANET_WIN_SHM is just a hint.
+                if (win.ext_tid > 0 && win.ext_grant > 0)
+                    Sys.grant_share (win.ext_grant, win.ext_tid);
             }
             return id;
         }
@@ -1072,6 +1076,11 @@ namespace Wm {
             win.ext_shm = shm;
             win.ext_shm_px = shm + SharedSurface.pixel_offset ();
             win.ext_shm_pages = pages;
+            // A2: the frames are ours, so they can be granted. The client maps
+            // them through the ACL instead of naming a physical address.
+            win.ext_grant = Sys.grant (shm, bytes);
+            if (win.ext_grant > 0 && win.ext_tid > 0)
+                Sys.grant_share (win.ext_grant, win.ext_tid);
             win.ext_shm_surf = new ImageSurface.wrap (win.ext_shm_px, w, h);
             win.ext_seq = 0;
             return true;
@@ -1080,6 +1089,11 @@ namespace Wm {
         // Frees the frames of a window that no longer draws. The client must be
         // gone first: it keeps the same physical pages mapped in its own CR3.
         private void release_shared (Win w) {
+            // The grant goes first: the kernel refuses to free frames a live
+            // capability still covers.
+            if (w.ext_grant > 0)
+                Sys.close (w.ext_grant);
+            w.ext_grant = 0;
             for (int p = 0; p < w.ext_shm_pages; p++)
                 Sys.free_page (w.ext_shm + p * 4096);
             w.ext_shm = 0;

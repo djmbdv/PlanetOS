@@ -111,6 +111,9 @@ namespace Wm {
         public int ext_shm = 0;
         public int ext_shm_px = 0;
         public int ext_shm_pages = 0;
+        // A2: capability over the block above, shared with the client task so it
+        // can map frames the compositor owns.
+        public int ext_grant = 0;
         public ImageSurface? ext_shm_surf = null;
         // Frames the client published and the pixels those frames damaged.
         public int ext_rects = 0;
