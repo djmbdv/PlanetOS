@@ -2248,9 +2248,24 @@ namespace Planc {
                 }
                 if (b.left is BoolLiteral) {
                     bool lv = ((BoolLiteral) b.left).value;
-                    if (b.op == "&&" && lv) return b.right;
+                    if ((b.op == "&&" && lv) || (b.op == "||" && !lv)) {
+                        bool rb = (b.right is BoolLiteral)
+                            || (b.right is UnaryExpr && ((UnaryExpr) b.right).op == "!");
+                        if (!rb && b.right is BinaryExpr) {
+                            string rop = ((BinaryExpr) b.right).op;
+                            rb = (rop == "==" || rop == "!=" || rop == "<" || rop == "<="
+                                  || rop == ">" || rop == ">=" || rop == "&&" || rop == "||");
+                        }
+                        if (rb) return b.right;
+                        return new BinaryExpr () {
+                            op = "!=",
+                            left = b.right,
+                            right = new IntLiteral () { value = 0, line = b.right.line, column = b.right.column },
+                            line = e.line,
+                            column = e.column
+                        };
+                    }
                     if (b.op == "&&" && !lv) return new BoolLiteral () { value = false, line = e.line, column = e.column };
-                    if (b.op == "||" && !lv) return b.right;
                     if (b.op == "||" && lv) return new BoolLiteral () { value = true, line = e.line, column = e.column };
                     if (level >= 2) {
                         if ((b.op == "==" && lv) || (b.op == "!=" && !lv)) return b.right;

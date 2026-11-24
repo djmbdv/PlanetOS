@@ -386,7 +386,18 @@ namespace Planc {
                     blocks[cur_bb].succs.add (bb_short);
                     cur_bb = bb_rhs;
                     int rv = lower_expr (b.right);
-                    emit_ir (new IRInst () { op = IROp.MOV, dst = d, lhs = rv });
+                    bool rhs_is_bool = (b.right is BoolLiteral)
+                        || (b.right is UnaryExpr && ((UnaryExpr) b.right).op == "!");
+                    if (!rhs_is_bool && b.right is BinaryExpr) {
+                        string rop = ((BinaryExpr) b.right).op;
+                        rhs_is_bool = (rop == "==" || rop == "!=" || rop == "<" || rop == "<="
+                                       || rop == ">" || rop == ">=" || rop == "&&" || rop == "||");
+                    }
+                    if (rhs_is_bool) {
+                        emit_ir (new IRInst () { op = IROp.MOV, dst = d, lhs = rv });
+                    } else {
+                        emit_ir (new IRInst () { op = IROp.BIN_IMM, sop = "!=", dst = d, lhs = rv, imm = 0 });
+                    }
                     emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_join });
                     blocks[cur_bb].succs.add (bb_join);
                     cur_bb = bb_short;
