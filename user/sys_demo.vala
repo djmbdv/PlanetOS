@@ -354,30 +354,39 @@ int main (string[] args) {
         fails++;
     }
 
-    // 17. C2: block I/O over virtio-blk, completed by its IRQ.
+    // 17. C2: block I/O over virtio-blk, completed by its MSI-X interrupt.
     int blk_buf = Sys.alloc_pages (1);
-    int blk_bytes = (blk_buf > 0) ? Sys.sys (67, blk_buf, 0, 1) : -1;
-    int blk_magic = (blk_buf > 0) ? Sys.peek32 (blk_buf) : 0;
-    int blk_stats = Sys.sys (68, 0, 0, 0);
-    int blk_irqs = (blk_stats >> 16) & 0xFFFF; // completions delivered by the IRQ
+    int blk_bytes = -1;
+    int blk_magic = 0;
+    int blk_wakes = 0;
+    int blk_prev = 0;
+    int blk_i = 0;
+    // Four reads so an intermittent delivery shows up inside one boot.
+    while (blk_i < 4) {
+        int blk_got = Sys.sys (67, blk_buf, blk_i, 1);
+        int blk_stats = Sys.sys (68, 0, 0, 0);
+        int wakes = (blk_stats >> 16) & 0xFFFF;
+        if (blk_i == 0) {
+            blk_bytes = blk_got;
+            if (blk_buf > 0)
+                blk_magic = Sys.peek32 (blk_buf);
+        }
+        if (wakes > blk_prev)
+            blk_wakes++;
+        blk_prev = wakes;
+        blk_i++;
+    }
     if (blk_buf > 0)
         Sys.free_page (blk_buf);
-    // Sector 0 carries the XFS magic. The IRQ wake count is printed, not
-    // asserted: MSI-X is programmed but delivery is still unverified (C2).
-    // One test per `if`: a three-term `&&` over int comparisons still flips on
-    // roughly one run in four with planc c0d89b2 (R-35 residual).
-    bool blk_ok = true;
-    if (blk_buf <= 0)
-        blk_ok = false;
-    if (blk_bytes != 512)
-        blk_ok = false;
-    if (blk_magic != 0x42534658)
-        blk_ok = false;
-    print (@"blk:irq=$blk_irqs\n");
+    // Sector 0 carries the XFS magic, and every completion has to come from the
+    // MSI-X interrupt rather than from the timer watchdog (C2).
+    bool blk_ok = blk_buf > 0 && blk_bytes == 512 && blk_magic == 0x42534658
+        && blk_wakes == 4;
+    print (@"blk:irq=$blk_wakes/4\n");
     if (blk_ok)
         print ("blk=ok\n");
     else {
-        print (@"blkdbg buf=$blk_buf bytes=$blk_bytes magic=$blk_magic stats=$blk_stats\n");
+        print (@"blkdbg buf=$blk_buf bytes=$blk_bytes magic=$blk_magic wakes=$blk_wakes\n");
         print ("blk=FAIL\n");
         fails++;
     }

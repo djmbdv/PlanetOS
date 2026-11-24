@@ -1,8 +1,9 @@
 // VirtIO-BLK PCI driver (Modern VirtIO 1.0 MMIO transport, queue 0).
 // C2: the block path is IRQ-driven. A request is a 16-byte header, the data
-// buffer and a status byte published on the avail ring; the device raises its
-// PIC line, the handler drains the used ring, publishes the completion word
-// and wakes the waiting task, so no caller spins on the hardware.
+// buffer and a status byte published on the avail ring; the device sends its
+// MSI-X message for queue 0, the handler drains the used ring, publishes the
+// completion word and wakes the waiting task, so no caller spins on the
+// hardware.
 
 namespace Planet.Kernel {
 
@@ -186,10 +187,12 @@ namespace Planet.Kernel {
                 blk_irq_line = 11;
 
             // MSI-X: point table entry 0 at this LAPIC and enable the capability.
+            // Table offset/BIR share one dword (bits 2:0 are the BAR, the rest
+            // the offset); the PBA has its own at +8.
             if (msix_cap != 0) {
                 int tbl = pci_cfg_read32 (cfg_addr (found_dev, msix_cap + 4));
-                int bir = cfg_read8 (found_dev, msix_cap + 8);
-                int tbl_off = tbl & 0xFFFFF800;
+                int bir = tbl & 0x7;
+                int tbl_off = tbl & 0xFFFFFFF8;
                 int msix_bar = read_bar_addr (found_dev, bir);
                 if (msix_bar != 0) {
                     Vmm.map_mmio_2m (msix_bar + tbl_off);
@@ -198,10 +201,22 @@ namespace Planet.Kernel {
                     mmio_write32 (entry + 0, msg_addr);
                     mmio_write32 (entry + 4, 0);
                     mmio_write32 (entry + 8, BLK_VECTOR);
+                    // Vector control: bit 0 masks this entry, so 0 leaves it live.
                     mmio_write32 (entry + 12, 0);
+                    // Message Control sits in bytes 2..3 of the capability dword:
+                    // bit 15 enables MSI-X, bit 14 masks the whole function, and
+                    // bits 10:0 carry the table size (read-only).
                     int ctrl = pci_cfg_read32 (cfg_addr (found_dev, msix_cap));
-                    pci_cfg_write32 (cfg_addr (found_dev, msix_cap), ctrl | 0x80000000);
-                    blk_msix_ready = 1;
+                    int tsize = (ctrl >> 16) & 0x7FF;
+                    ctrl = (ctrl & 0xFFFF) | ((tsize | 0x8000) << 16);
+                    pci_cfg_write32 (cfg_addr (found_dev, msix_cap), ctrl);
+                    ctrl = pci_cfg_read32 (cfg_addr (found_dev, msix_cap));
+                    if ((ctrl & 0x80000000) != 0) {
+                        blk_msix_ready = 1;
+                        // A function that delivers MSI-X must not also drive INTx.
+                        int cmd_msix = pci_cfg_read32 (cfg_addr (found_dev, 0x04));
+                        pci_cfg_write32 (cfg_addr (found_dev, 0x04), cmd_msix | 0x400);
+                    }
                 }
             }
             Hal.set_idt_gate_dpl (BLK_VECTOR, addr_isr_blk (), 0);
@@ -268,7 +283,10 @@ namespace Planet.Kernel {
                     blk_capacity = 0x7FFFFFFF;
             }
 
-            pic_unmask (blk_irq_line);
+            // Only the legacy fallback needs the 8259 line; with MSI-X enabled
+            // INTx is disabled and the line stays quiet.
+            if (blk_msix_ready == 0)
+                pic_unmask (blk_irq_line);
 
             blk_found = 1;
             return true;
@@ -312,11 +330,10 @@ namespace Planet.Kernel {
             // The used ring lives at `used`; keep the reference explicit.
         }
 
-        // Waits for completion. The IRQ handler sets the word when the device
-        // raises its line; QEMU exposes this queue as MSI-X and assigns no
-        // legacy line (interrupt_line reads 0), so the task also parks on a
-        // short timer slice and re-checks the used ring. Either way the task
-        // sleeps: no caller spins on the device (IO-06).
+        // Waits for completion. The IRQ handler sets the word when the device's
+        // MSI-X message arrives; a parked timer slice is kept as a watchdog for
+        // a device that never signals, so no caller spins on the hardware
+        // (IO-06). `blk_irq_wakes` is what the test reads to tell the two apart.
         private static bool await_completion (int deadline) {
             int addr = blk_req_page + 20;
             int used = blk_vq_page + 1024;
@@ -335,7 +352,10 @@ namespace Planet.Kernel {
                     if (now >= deadline)
                         return false;
                 }
-                int slice = (int) mmio_read64 (KernelLayout.TICK) + 2;
+                // A one-second watchdog: delivery lands in microseconds, so the
+                // timer only wins when the device never signals, and the caller
+                // still returns instead of hanging.
+                int slice = (int) mmio_read64 (KernelLayout.TICK) + 100;
                 Sched.block_on (addr, slice);
                 cpu_sti ();
                 cpu_hlt ();

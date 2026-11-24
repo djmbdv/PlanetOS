@@ -14,5 +14,6 @@
 =dev=ok
 =memguard=ok
 =ring=ok
+=blk:irq=4/4
 =blk=ok
 !FAIL

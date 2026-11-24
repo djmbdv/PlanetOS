@@ -412,6 +412,28 @@ namespace Planet.Kernel {
             mmio_write32 (lapic_base + 0xB0, 0);
         }
 
+        // Delivery diagnostics: a latched request sits in IRR, a taken interrupt
+        // sits in ISR. `/ 32` and `* 16` pick the dword and the bit inside it.
+        public static int lapic_irr (int vec) {
+            if (lapic_base == 0)
+                return 0;
+            int word = mmio_read32 (lapic_base + 0x280 + (vec / 32) * 16);
+            return (word >> (vec % 32)) & 1;
+        }
+
+        public static int lapic_isr (int vec) {
+            if (lapic_base == 0)
+                return 0;
+            int word = mmio_read32 (lapic_base + 0x100 + (vec / 32) * 16);
+            return (word >> (vec % 32)) & 1;
+        }
+
+        public static int lapic_tpr () {
+            if (lapic_base == 0)
+                return 0;
+            return mmio_read32 (lapic_base + 0x80) & 0xFF;
+        }
+
         public static void init_interrupts () {
             init_gdt_tss ();
             mmio_write64 (KernelLayout.TICK, 0);

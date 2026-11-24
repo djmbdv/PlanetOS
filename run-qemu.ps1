@@ -309,9 +309,36 @@ if (-not $NoBuild) {
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + $GioSrcs + @((Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf')))
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf')))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_planet.vala'), '-o', (Out-Path 'frag.spv'))
+    Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_pattern.vala'), '-o', (Out-Path 'frag_pattern.spv'))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys, (Join-Path $StdDir 'glib\math.vala'), (Join-Path $StdDir 'spirv_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys, (Join-Path $StdDir 'glib\math.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $UserDir 'vk_demo.vala'), '-o', (Out-Path 'vk_demo.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, '--image-base=0xE00000', $GlibImp, $PangoImp, $PlanetSys) + $GlibSrcs + $GioSrcs + @((Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'gsk\path.vala')) + $GskSrcs + $GtkSrcs + $CompositorSrcs + @('-o', (Out-Path 'compositor.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PangoImp, $PlanetSys) + $CairoSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PangoImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + $GioSrcs + @((Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala')) + $GtkSrcs + @((Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + @((Join-Path $UserDir 'pluto.vala'), '-o', (Out-Path 'pluto.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PangoImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + $GioSrcs + @((Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala')) + $GtkSrcs + @((Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + @((Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf')))
+    # sys_demo carries the `system` case checks (handles, grants, rings, blk):
+    # without this line the suite runs whatever stale binary the image had.
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + @((Join-Path $UserDir 'sys_demo.vala'), '-o', (Out-Path 'sys_demo.elf')))
+
     # c2vala.elf is skipped while tools/c2vala is work in progress: its
     # sources do not compile yet. Re-enable this unit once they do.
-#     ))
+    # $C2valaDir = Join-Path $Root 'tools\c2vala'
+    # Invoke-Planc (@(
+    #     '--target=planetos', $Opt, $GlibImp,
+    #     (Join-Path $SrcDir 'buffer.vala'),
+    #     (Join-Path $SrcDir 'host_planetos.vala'),
+    #     $PlanetSys,
+    #     (Join-Path $C2valaDir 'ast.vala'),
+    #     (Join-Path $C2valaDir 'preproc.vala'),
+    #     (Join-Path $C2valaDir 'lexer.vala'),
+    #     (Join-Path $C2valaDir 'parser.vala'),
+    #     (Join-Path $C2valaDir 'ptr_analyzer.vala'),
+    #     (Join-Path $C2valaDir 'translator.vala'),
+    #     (Join-Path $C2valaDir 'main.vala'),
+    #     '-o', (Out-Path 'c2vala.elf')
+    # ))
 
     Invoke-Planc (@('--target=planetos', $Opt, '--image-base=0xA00000', $GlibImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf')))
     Invoke-Planc (@('--target=planetos', $Opt, '--image-base=0xB00000', $GlibImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + @((Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'vte_sh.elf')))
