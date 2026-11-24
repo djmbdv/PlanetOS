@@ -116,6 +116,7 @@ namespace Planc {
         var error_limit = 200;
         var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
+        var target_windows = false;
         int emit_format = 0; // 0 = elf, 1 = plan, 2 = dlib
         var import_dlibs = new GenericArray<string> ();
         var import_map = new StrIndexMap ();
@@ -178,6 +179,8 @@ namespace Planc {
                 freestanding = true;
             } else if (a == "--target=planetos") {
                 target_planetos = true;
+            } else if (a == "--target=windows") {
+                target_windows = true;
             } else if (a == "--target=spirv") {
                 target_spirv = true;
             } else if (a == "--format=elf") {
@@ -479,6 +482,7 @@ namespace Planc {
         codegen.check_leaks = check_leaks;
         codegen.freestanding = freestanding;
         codegen.target_planetos = target_planetos;
+        codegen.target_windows = target_windows;
         codegen.opt_level = opt_level;
         if (import_addrs.length > 0)
             codegen.imported_syms = import_map;
@@ -495,26 +499,49 @@ namespace Planc {
         var text = codegen.emitter.code.to_array ();
         var rodata = codegen.emitter.data.to_array ();
         var data = codegen.emitter.init_data.to_array ();
+        uint64 text_vaddr = 0;
+        uint64 rodata_vaddr = 0;
+        uint64 data_vaddr = 0;
+        uint64 iat_vaddr = 0;
+        int data_layout_size = data.length;
         uint64 base_addr = target_planetos ? (uint64) 0x800000 : Elf.BASE_ADDRESS;
         if (image_base != 0)
             base_addr = image_base;
         var layout = Elf.compute (text.length, rodata.length, data.length,
                                   codegen.emitter.bss_size, codegen.symbols, base_addr);
+        var pe_layout = PeLayout ();
+        if (target_windows) {
+            pe_layout = Pe.compute (text.length, rodata.length, data.length,
+                                    codegen.emitter.bss_size, image_base);
+            text_vaddr = pe_layout.text_vaddr;
+            rodata_vaddr = pe_layout.rodata_vaddr;
+            data_vaddr = pe_layout.data_vaddr;
+            iat_vaddr = pe_layout.iat_vaddr;
+            data_layout_size = pe_layout.data_size;
+        } else {
+            text_vaddr = layout.text_vaddr;
+            rodata_vaddr = layout.rodata_vaddr;
+            data_vaddr = layout.data_vaddr;
+            data_layout_size = layout.data_size;
+        }
 
         // Relocation pass 1: .text -> allocated data references.
         // disp32 = target - (address of the next instruction)
         foreach (var patch in codegen.emitter.patches) {
-            var next = layout.text_vaddr + (uint64) patch.displacement + 4;
+            var next = text_vaddr + (uint64) patch.displacement + 4;
             uint64 target;
             switch (patch.space) {
                 case PatchSpace.RODATA:
-                    target = layout.rodata_vaddr + (uint64) patch.target;
+                    target = rodata_vaddr + (uint64) patch.target;
                     break;
                 case PatchSpace.DATA:
-                    target = layout.data_vaddr + (uint64) patch.target;
+                    target = data_vaddr + (uint64) patch.target;
+                    break;
+                case PatchSpace.IAT:
+                    target = iat_vaddr + (uint64) patch.target;
                     break;
                 default: // BSS: zeroed memory right after .data
-                    target = layout.data_vaddr + (uint64) layout.data_size
+                    target = data_vaddr + (uint64) data_layout_size
                            + (uint64) patch.target;
                     break;
             }
@@ -544,7 +571,7 @@ namespace Planc {
                 var imp_i = import_map.lookup (patch.callee);
                 if (imp_i > 0) {
                     uint64 imp_target = import_addrs[imp_i - 1].addr;
-                    uint64 call_next = layout.text_vaddr + (uint64) patch.displacement + 4;
+                    uint64 call_next = text_vaddr + (uint64) patch.displacement + 4;
                     delta = (int64) imp_target - (int64) call_next;
                 }
             }
@@ -576,7 +603,7 @@ namespace Planc {
 
         // Relocation pass 4: .data -> .rodata absolute 64-bit pointers (R_X86_64_64).
         foreach (var patch in codegen.emitter.data_patches) {
-            uint64 target = layout.rodata_vaddr + (uint64) patch.rodata_target;
+            uint64 target = rodata_vaddr + (uint64) patch.rodata_target;
             for (int k = 0; k < 8; k++)
                 data[patch.data_offset + k] = (uint8) ((target >> (8 * k)) & 0xff);
         }
@@ -587,7 +614,7 @@ namespace Planc {
             if (patch.is_text) {
                 var sym_i = sym_index.lookup (patch.text_symbol);
                 if (sym_i > 0) {
-                    target = layout.text_vaddr + (uint64) codegen.symbols[sym_i - 1].offset;
+                    target = text_vaddr + (uint64) codegen.symbols[sym_i - 1].offset;
                 } else {
                     var imp_i = (import_addrs.length > 0) ? import_map.lookup (patch.text_symbol) : -1;
                     if (imp_i > 0) {
@@ -598,7 +625,7 @@ namespace Planc {
                     }
                 }
             } else {
-                target = layout.rodata_vaddr + (uint64) patch.rodata_target;
+                target = rodata_vaddr + (uint64) patch.rodata_target;
             }
             for (int k = 0; k < 8; k++)
                 rodata[patch.rodata_offset + k] = (uint8) ((target >> (8 * k)) & 0xff);
@@ -611,14 +638,6 @@ namespace Planc {
             Host.eprintln (@".rodata: $(rodata.length) bytes");
         }
 
-        uint8[] debug_line;
-        uint8[] debug_abbrev;
-        uint8[] debug_info;
-        Dwarf.build (source_paths[0], layout.text_vaddr, text.length,
-                     codegen.debug_lines, codegen.debug_funcs,
-                     out debug_line, out debug_abbrev, out debug_info);
-        Elf.set_dwarf_sizes (ref layout, debug_line.length, debug_abbrev.length, debug_info.length);
-
         string entry_sym = "_start";
         if (freestanding) {
             foreach (var sym in codegen.symbols) {
@@ -629,12 +648,28 @@ namespace Planc {
             }
         }
         uint8[] image;
-        if (emit_format > 0) {
-            image = Elf.build_plan (text, rodata, data, codegen.symbols, layout,
-                                    entry_sym, emit_format == 2);
+        if (target_windows) {
+            int entry_off = 0;
+            var ei = sym_index.lookup (entry_sym);
+            if (ei > 0)
+                entry_off = codegen.symbols[ei - 1].offset;
+            image = Pe.build (pe_layout, text, rodata, data, entry_off);
         } else {
-            image = Elf.build (text, rodata, data, codegen.symbols, layout,
-                               debug_line, debug_abbrev, debug_info, entry_sym);
+            uint8[] debug_line;
+            uint8[] debug_abbrev;
+            uint8[] debug_info;
+            Dwarf.build (source_paths[0], layout.text_vaddr, text.length,
+                         codegen.debug_lines, codegen.debug_funcs,
+                         out debug_line, out debug_abbrev, out debug_info);
+            Elf.set_dwarf_sizes (ref layout, debug_line.length, debug_abbrev.length, debug_info.length);
+
+            if (emit_format > 0) {
+                image = Elf.build_plan (text, rodata, data, codegen.symbols, layout,
+                                        entry_sym, emit_format == 2);
+            } else {
+                image = Elf.build (text, rodata, data, codegen.symbols, layout,
+                                   debug_line, debug_abbrev, debug_info, entry_sym);
+            }
         }
 
         try {

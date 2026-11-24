@@ -111,6 +111,7 @@ namespace Planc {
         public string current_file { get; private set; default = ""; }
         public bool freestanding { get; set; default = false; }
         public bool target_planetos { get; set; default = false; }
+        public bool target_windows { get; set; default = false; }
         public StrIndexMap? imported_syms { get; set; default = null; }
         public bool abi_stable_classes { get; set; default = false; }
 
@@ -468,6 +469,7 @@ namespace Planc {
                 }
             }
 
+            emitter.target_windows = target_windows;
             emit_start ();
             emit_runtime ();
         }
@@ -500,6 +502,7 @@ namespace Planc {
             check_overflow = m.check_overflow;
             freestanding = m.freestanding;
             target_planetos = m.target_planetos;
+            target_windows = m.target_windows;
             program_uses_heap = m.program_uses_heap;
             program_has_string_slots = m.program_has_string_slots;
             main_takes_args = m.main_takes_args;
@@ -2664,7 +2667,9 @@ namespace Planc {
             } else {
                 emitter.mov_edi_eax ();
             }
-            if (target_planetos) {
+            if (target_windows) {
+                emitter.emit_win32_exit_edi ();
+            } else if (target_planetos) {
                 emitter.mov_eax (11);
                 emitter.int80 ();
             } else {
@@ -10018,6 +10023,9 @@ namespace Planc {
                 if (freestanding) {
                     emitter.code.u8 (0xFA); emitter.code.u8 (0xF4); // cli; hlt
                     emitter.code.u8 (0xEB); emitter.code.u8 (0xFD); // jmp -3
+                } else if (target_windows) {
+                    emitter.mov_edi_eax ();
+                    emitter.emit_win32_exit_edi ();
                 } else if (target_planetos) {
                     emitter.mov_edi_eax ();
                     emitter.mov_eax (11);

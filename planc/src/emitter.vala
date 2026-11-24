@@ -25,7 +25,8 @@ namespace Planc {
     public enum PatchSpace {
         RODATA,   // string literals
         DATA,     // initialized globals
-        BSS       // zero-initialized globals
+        BSS,      // zero-initialized globals
+        IAT       // Windows PE32+ Import Address Table slots
     }
 
     // Pending 64-bit absolute pointer in .data pointing into .rodata
@@ -110,6 +111,45 @@ namespace Planc {
         private GenericArray<int> string_offsets;
         private StrIndexMap string_index = new StrIndexMap ();
         public int rodata_bias { get; set; default = 0; }
+        public bool target_windows { get; set; default = false; }
+
+        public void emit_iat_call (int slot) {
+            code.u8 (0xFF);
+            code.u8 (0x15);
+            record_rip (slot * 8, PatchSpace.IAT);
+        }
+
+        public void emit_win32_exit_edi () {
+            code.u8 (0x89); code.u8 (0xF9);                         // mov ecx, edi
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xE4); code.u8 (0xF0); // and rsp, -16
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xEC); code.u8 (0x20); // sub rsp, 32
+            emit_iat_call (Pe.IAT_EXIT_PROCESS);
+            code.u8 (0xF4);                                         // hlt
+        }
+
+        public void emit_win32_write_buf (int fd) {
+            // Input: rsi = buf, rdx = len. Preserves rbx, r12, rbp.
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54);                         // push r12
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xE4); code.u8 (0xF0); // and rsp, -16
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xEC); code.u8 (0x30); // sub rsp, 48
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xF3);         // mov rbx, rsi
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xD4);         // mov r12, rdx
+            code.u8 (0xB9); code.u32le ((fd == 2) ? 0xFFFFFFF4u : 0xFFFFFFF5u); // mov ecx, STD_HANDLE
+            emit_iat_call (Pe.IAT_GET_STD_HANDLE);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xC1);         // mov rcx, rax
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xDA);         // mov rdx, rbx
+            code.u8 (0x45); code.u8 (0x89); code.u8 (0xE0);         // mov r8d, r12d
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x4C); code.u8 (0x24); code.u8 (0x28); // lea r9, [rsp+40]
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (0); // mov qword [rsp+32], 0
+            emit_iat_call (Pe.IAT_WRITE_FILE);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x65); code.u8 (0xF0); // lea rsp, [rbp-16]
+            code.u8 (0x41); code.u8 (0x5C);                         // pop r12
+            pop_reg (Reg.RBX);
+            pop_rbp ();
+        }
 
         public Emitter () {
             code = new Buffer (1024);
@@ -1430,6 +1470,13 @@ namespace Planc {
                 ret ();
                 return;
             }
+            if (target_windows) {
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x57); code.u8 (0x08); // mov rdx, [rdi+8]
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x77); code.u8 (0x10); // lea rsi, [rdi+16]
+                emit_win32_write_buf (1);
+                ret ();
+                return;
+            }
             // mov rdx, [rdi + 8]              48 8B 57 08
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x57); code.u8 (0x08);
             // lea rsi, [rdi + 16]             48 8D 77 10
@@ -1485,6 +1532,14 @@ namespace Planc {
 
         // Writes panic message to stderr and exits 134.
         public void emit_rt_panic (int msg_rodata_offset, int msg_len, bool freestanding = false, bool target_planetos = false) {
+            if (target_windows) {
+                lea_rsi_rip (msg_rodata_offset + 16);
+                mov_edx ((uint32) msg_len);
+                emit_win32_write_buf (2);
+                mov_edi (134);
+                emit_win32_exit_edi ();
+                return;
+            }
             if (target_planetos) {
                 code.u8 (0x48); code.u8 (0x8D); code.u8 (0x3D);
                 record_rip (msg_rodata_offset + 16, PatchSpace.RODATA);
@@ -1567,6 +1622,15 @@ namespace Planc {
             mov_rsp_to_rbp ();
             sub_rsp (32);
             emit_format_int_to_stack (is_unsigned);
+            if (target_windows) {
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xCE); // mov rsi, rcx
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xEA); // mov rdx, rbp
+                code.u8 (0x48); code.u8 (0x29); code.u8 (0xCA); // sub rdx, rcx
+                emit_win32_write_buf (1);
+                leave ();
+                ret ();
+                return;
+            }
             if (target_planetos) {
                 code.u8 (0x48); code.u8 (0x89); code.u8 (0xCF);
                 code.u8 (0x48); code.u8 (0x89); code.u8 (0xEE);
@@ -1785,15 +1849,17 @@ namespace Planc {
             branch (BranchKind.JS, mem_panic_lbl);
             // mov r12, rax                    49 89 C4
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4);
-            // mprotect(r12 + r14, 4096, PROT_NONE)
-            // mov rdi, r12; add rdi, r14
-            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
-            code.u8 (0x4C); code.u8 (0x01); code.u8 (0xF7);
-            mov_esi_imm (4096);
-            // xor edx, edx; mov eax, 10; syscall
-            code.u8 (0x31); code.u8 (0xD2);
-            mov_eax (10);
-            syscall ();
+            if (!target_windows) {
+                // mprotect(r12 + r14, 4096, PROT_NONE)
+                // mov rdi, r12; add rdi, r14
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
+                code.u8 (0x4C); code.u8 (0x01); code.u8 (0xF7);
+                mov_esi_imm (4096);
+                // xor edx, edx; mov eax, 10; syscall
+                code.u8 (0x31); code.u8 (0xD2);
+                mov_eax (10);
+                syscall ();
+            }
             // mov rax, r12; mov cl, 255; jmp l_init_header
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
             code.u8 (0xB1); code.u8 (0xFF);
@@ -1948,6 +2014,24 @@ namespace Planc {
         }
 
         private void emit_mmap_anon_rw () {
+            if (target_windows) {
+                var l_ok = new_label ();
+                push_rbp ();
+                mov_rsp_to_rbp ();
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xE4); code.u8 (0xF0); // and rsp, -16
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xEC); code.u8 (0x20); // sub rsp, 32
+                code.u8 (0x31); code.u8 (0xC9);                                 // xor ecx, ecx
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xF2);                 // mov rdx, rsi
+                code.u8 (0x41); code.u8 (0xB8); code.u32le (0x3000);            // mov r8d, MEM_COMMIT|MEM_RESERVE
+                code.u8 (0x41); code.u8 (0xB9); code.u32le (0x04);              // mov r9d, PAGE_READWRITE
+                emit_iat_call (Pe.IAT_VIRTUAL_ALLOC);
+                test_rax_rax ();
+                branch (BranchKind.JNE, l_ok);
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC8);                 // dec rax
+                bind (l_ok);
+                leave ();
+                return;
+            }
             zero_edi ();
             mov_edx (3);
             // mov r10d, 0x22                  41 BA 22 00 00 00
