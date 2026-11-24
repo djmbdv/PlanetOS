@@ -11,4 +11,5 @@
 =guard=ok
 =thread=ok
 =pool=ok
+=dev=ok
 !FAIL

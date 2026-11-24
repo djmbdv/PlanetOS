@@ -65,7 +65,9 @@ namespace Planet.Kernel {
         if (in_fd > 2 && fd_check (in_fd, R_READ) == 0) {
             int slot = handle_slot (in_fd);
             int kind = fd_kind_of (slot);
-            if (kind == 1 || kind == 2)
+            if (kind == 1)
+                return mmio_read64 (slot + 24) < mmio_read64 (slot + 16);
+            if (kind == 2)
                 return mmio_read64 (slot + 24) < mmio_read64 (slot + 16);
         }
         return mmio_read32 (KernelLayout.KB_HEAD) != mmio_read32 (KernelLayout.KB_TAIL);
@@ -73,37 +75,68 @@ namespace Planet.Kernel {
 
     // Walks the caller's page table. Every level must be present and
     // user-accessible; a write also needs the RW bit.
+    // Flags are tested one at a time on purpose: planc miscompiles some
+    // `a || b` chains over int comparisons (R-35), and a validation routine
+    // must not depend on that.
     private bool page_user_ok (int cr3, int addr, bool write) {
         int pml4e = mmio_read64 (cr3 + ((addr >> 39) & 0x1FF) * 8);
-        if ((pml4e & 1) == 0 || (pml4e & 4) == 0)
+        if ((pml4e & 1) == 0)
+            return false;
+        if ((pml4e & 4) == 0)
             return false;
         int pdpte = mmio_read64 ((pml4e & ~0xFFF) + ((addr >> 30) & 0x1FF) * 8);
-        if ((pdpte & 1) == 0 || (pdpte & 4) == 0)
+        if ((pdpte & 1) == 0)
             return false;
-        if ((pdpte & 0x80) != 0)
-            return !write || (pdpte & 2) != 0;
+        if ((pdpte & 4) == 0)
+            return false;
+        if ((pdpte & 0x80) != 0) {
+            if (write) {
+                if ((pdpte & 2) == 0)
+                    return false;
+            }
+            return true;
+        }
         int pde = mmio_read64 ((pdpte & ~0xFFF) + ((addr >> 21) & 0x1FF) * 8);
-        if ((pde & 1) == 0 || (pde & 4) == 0)
+        if ((pde & 1) == 0)
             return false;
-        if ((pde & 0x80) != 0)
-            return !write || (pde & 2) != 0;
+        if ((pde & 4) == 0)
+            return false;
+        if ((pde & 0x80) != 0) {
+            if (write) {
+                if ((pde & 2) == 0)
+                    return false;
+            }
+            return true;
+        }
         int pte = mmio_read64 ((pde & ~0xFFF) + ((addr >> 12) & 0x1FF) * 8);
-        if ((pte & 1) == 0 || (pte & 4) == 0)
+        if ((pte & 1) == 0)
             return false;
-        return !write || (pte & 2) != 0;
+        if ((pte & 4) == 0)
+            return false;
+        if (write) {
+            if ((pte & 2) == 0)
+                return false;
+        }
+        return true;
     }
 
     // Every pointer that arrives through int 0x80 is checked against the
     // caller's page table before the kernel dereferences it (KR-07). A kernel
     // caller (CR3 0) keeps the old bound check: its buffers are not user maps.
     private bool user_range_ok (int ptr, int len, bool write) {
-        if (len < 0 || ptr < 0x1000 || len > MAX_XFER)
+        if (len < 0)
+            return false;
+        if (ptr < 0x1000)
+            return false;
+        if (len > MAX_XFER)
             return false;
         int end = ptr + len;
         if (end < ptr)
             return false;
         int cr3 = Sched.current_cr3 ();
-        if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
+        if (cr3 == 0)
+            return end <= USER_LIMIT;
+        if (cr3 == KernelLayout.PAGE_TABLES)
             return end <= USER_LIMIT;
         if (end > USER_LIMIT)
             return false;
@@ -188,7 +221,9 @@ namespace Planet.Kernel {
     // change to the user buffer cannot alter a path that was already checked.
     // Two paths fit: offsets 0 and MAX_PATH.
     private int copy_path (int ptr, int len, int off) {
-        if (len <= 0 || len > MAX_PATH)
+        if (len <= 0)
+            return -1;
+        if (len > MAX_PATH)
             return -1;
         if (!user_range_ok (ptr, len, false))
             return -1;
@@ -220,13 +255,19 @@ namespace Planet.Kernel {
 
     private static int handle_slot (int h) {
         int index = h & 0xFF;
-        if (index < 3 || index >= MAX_FDS)
+        if (index < 3)
+            return -1;
+        if (index >= MAX_FDS)
             return -1;
         return KernelLayout.FD_TABLE + index * 32;
     }
 
     private static bool fd_inherited_stdio (int h) {
-        return h == Sched.get_stdio_in () || h == Sched.get_stdio_out ();
+        if (h == Sched.get_stdio_in ())
+            return true;
+        if (h == Sched.get_stdio_out ())
+            return true;
+        return false;
     }
 
     // 0 = usable, 1 = invalid (forged, stale or foreign), 2 = missing rights.
@@ -247,7 +288,11 @@ namespace Planet.Kernel {
 
     private static bool fd_owned (int h) {
         int slot = handle_slot (h);
-        if (slot < 0 || fd_kind_of (slot) == 0 || fd_gen_of (slot) != handle_gen (h))
+        if (slot < 0)
+            return false;
+        if (fd_kind_of (slot) == 0)
+            return false;
+        if (fd_gen_of (slot) != handle_gen (h))
             return false;
         return fd_owner_of (slot) == Sched.current_tid ();
     }
@@ -289,11 +334,45 @@ namespace Planet.Kernel {
         }
     }
 
+    // Blocks until one byte arrives from the PS/2 keyboard or COM1.
+    private int read_console_byte () {
+        while (true) {
+            int sc = Keyboard.poll_scancode ();
+            while (sc != -1) {
+                int ch = Keyboard.scancode_to_ascii (sc);
+                if (ch != 0)
+                    return ch;
+                sc = Keyboard.poll_scancode ();
+            }
+            int sr = serial_try_read ();
+            if (sr >= 0)
+                return sr;
+            cpu_sti ();
+            cpu_hlt ();
+        }
+    }
+
+    private void console_out (int buf, int len) {
+        __planet_console_write (buf, len);
+        for (int i = 0; i < len; i++) {
+            int w = mmio_read32 ((buf + i) & ~3);
+            int b = (w >> (((buf + i) & 3) * 8)) & 0xFF;
+            Vga.write_byte (b);
+        }
+    }
+
     private int write_fd_data (int h, int buf, int len) {
         int slot = handle_slot (h);
         if (slot < 0)
             return -1;
         int fkind = fd_kind_of (slot);
+        if (fkind == 3) {
+            int dev = mmio_read64 (slot + 8);
+            if (dev == Vfs.DEV_NULL)
+                return len;
+            console_out (buf, len);
+            return len;
+        }
         if (fkind != 1 && fkind != 2)
             return -1;
         int rslot = mmio_read64 (slot + 8);
@@ -314,12 +393,7 @@ namespace Planet.Kernel {
             if (nw >= 0)
                 return nw;
         }
-        __planet_console_write (buf, len);
-        for (int i = 0; i < len; i++) {
-            int w = mmio_read32 ((buf + i) & ~3);
-            int b = (w >> (((buf + i) & 3) * 8)) & 0xFF;
-            Vga.write_byte (b);
-        }
+        console_out (buf, len);
         return len;
     }
 
@@ -364,7 +438,10 @@ namespace Planet.Kernel {
                 if (in_fd > 2 && fd_check (in_fd, R_READ) == 0) {
                     int slot = handle_slot (in_fd);
                     int fkind = fd_kind_of (slot);
-                    if (fkind == 1 || fkind == 2) {
+                    bool is_file = (fkind == 1);
+                    if (fkind == 2)
+                        is_file = true;
+                    if (is_file) {
                         int rslot = mmio_read64 (slot + 8);
                         int pos = mmio_read64 (slot + 24);
                         int bbuf = KernelLayout.SYSCALL_SCRATCH;
@@ -402,12 +479,19 @@ namespace Planet.Kernel {
                 } else if (kind == Vfs.KIND_FILE) {
                     fd_kind = 2;
                     fsz = Ramfs.file_size (id);
+                } else if (kind == Vfs.KIND_DEV) {
+                    fd_kind = 3;
+                    fsz = 0;
                 } else if (kind == Vfs.KIND_DIR) {
                     return fail (E_ISDIR);
                 } else {
                     return fail (E_NOENT);
                 }
-                int fd6 = fd_alloc (fd_kind, R_READ | R_WRITE | R_SEEK | R_POLL | R_CLOSE, id, fsz);
+                // A byte device has no position: seek is not a right it holds.
+                int rights6 = (fd_kind == 3)
+                    ? (R_READ | R_WRITE | R_POLL | R_CLOSE)
+                    : (R_READ | R_WRITE | R_SEEK | R_POLL | R_CLOSE);
+                int fd6 = fd_alloc (fd_kind, rights6, id, fsz);
                 if (fd6 < 0)
                     return fail (E_NOSPC);
                 ok ();
@@ -423,6 +507,25 @@ namespace Planet.Kernel {
                 int slot7 = handle_slot (a0);
                 int kind7 = fd_kind_of (slot7);
                 int id7 = mmio_read64 (slot7 + 8);
+                if (kind7 == 3) {
+                    if (a2 <= 0) {
+                        ok ();
+                        return 0;
+                    }
+                    if (id7 == Vfs.DEV_NULL) {
+                        ok ();
+                        return 0;
+                    }
+                    int ch7 = read_console_byte ();
+                    if (ch7 < 0)
+                        return fail (E_IO);
+                    int b7 = KernelLayout.SYSCALL_SCRATCH;
+                    mmio_write8 (b7, ch7);
+                    if (copy_guarded (a1, b7, 1) != 0)
+                        return fail (E_INVAL);
+                    ok ();
+                    return 1;
+                }
                 int fsz7 = mmio_read64 (slot7 + 16);
                 int pos7 = mmio_read64 (slot7 + 24);
                 if (pos7 >= fsz7) {
@@ -498,6 +601,8 @@ namespace Planet.Kernel {
                 int base_len14 = 0;
                 int parent14 = Vfs.resolve_parent (kp14, a1, out base_ptr14, out base_len14);
                 if (parent14 < -1 || Vfs.reserved_name (base_ptr14, base_len14))
+                    return fail (E_ACCES);
+                if (parent14 == Vfs.DEV_DIR)
                     return fail (E_ACCES);
                 int fd_kind14 = 2;
                 int fid14 = -1;
@@ -639,6 +744,8 @@ namespace Planet.Kernel {
                 int parent29 = Vfs.resolve_parent (kp29b, a3, out base_ptr29, out base_len29);
                 if (parent29 < -1 || Vfs.reserved_name (base_ptr29, base_len29))
                     return fail (E_ACCES);
+                if (parent29 == Vfs.DEV_DIR)
+                    return fail (E_ACCES);
                 if (kind29 == Vfs.KIND_DIR && Vfs.is_descendant (parent29, id29))
                     return fail (E_INVAL);
                 int rn29 = Ramfs.rename_to (id29, parent29, base_ptr29, base_len29);
@@ -653,6 +760,8 @@ namespace Planet.Kernel {
                 int base_len30 = 0;
                 int parent30 = Vfs.resolve_parent (kp30, a1, out base_ptr30, out base_len30);
                 if (parent30 < -1 || Vfs.reserved_name (base_ptr30, base_len30))
+                    return fail (E_ACCES);
+                if (parent30 == Vfs.DEV_DIR)
                     return fail (E_ACCES);
                 if (parent30 == -1 && Xfs.lookup_root (base_ptr30, base_len30) > 0)
                     return fail (E_EXIST);
@@ -673,6 +782,15 @@ namespace Planet.Kernel {
                     return fail (E_NOTDIR);
                 int sc31 = KernelIo.scratch_addr ();
                 int want31 = (a3 > KernelIo.CHUNK) ? KernelIo.CHUNK : a3;
+                if (id31 == Vfs.DEV_DIR) {
+                    string names31 = "console\nserial0\nnull\n";
+                    int n31d = (names31.length > want31) ? want31 : names31.length;
+                    for (int i31 = 0; i31 < n31d; i31++)
+                        mmio_write8 (sc31 + i31, (int) names31[i31]);
+                    if (n31d > 0 && copy_guarded (a2, sc31, n31d) != 0)
+                        return fail (E_INVAL);
+                    return n31d;
+                }
                 int n31_1 = Ramfs.list_children (id31, sc31, want31);
                 if (n31_1 < 0)
                     n31_1 = 0;
@@ -699,7 +817,7 @@ namespace Planet.Kernel {
                 int kind32 = Vfs.resolve (kp32, a1, out id32);
                 if (kind32 == Vfs.KIND_DIR)
                     return 2;
-                if (kind32 == Vfs.KIND_FILE || kind32 == Vfs.KIND_XFS)
+                if (kind32 == Vfs.KIND_FILE || kind32 == Vfs.KIND_XFS || kind32 == Vfs.KIND_DEV)
                     return 1;
                 // The ABI keeps 0 = "does not exist"; the cause is in errno.
                 Sched.set_errno (E_NOENT);
@@ -815,6 +933,8 @@ namespace Planet.Kernel {
                     sz55 = Ramfs.file_size (id55);
                 } else if (kind55 == Vfs.KIND_DIR) {
                     k55 = 2;
+                } else if (kind55 == Vfs.KIND_DEV) {
+                    k55 = 1;
                 } else {
                     return fail (E_NOENT);
                 }
@@ -876,8 +996,13 @@ namespace Planet.Kernel {
                         } else if (fd_check (fd59, R_POLL) == 0) {
                             int slot59 = handle_slot (fd59);
                             int kind59 = fd_kind_of (slot59);
-                            rd59 = (kind59 == 1 || kind59 == 2)
-                                && mmio_read64 (slot59 + 24) < mmio_read64 (slot59 + 16);
+                            if (kind59 == 3) {
+                                int dev59 = mmio_read64 (slot59 + 8);
+                                rd59 = (dev59 != Vfs.DEV_NULL) && console_input_ready ();
+                            } else {
+                                rd59 = (kind59 == 1 || kind59 == 2)
+                                    && mmio_read64 (slot59 + 24) < mmio_read64 (slot59 + 16);
+                            }
                         }
                         if (rd59)
                             mask59 = mask59 | (1 << i59);

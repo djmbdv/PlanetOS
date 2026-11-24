@@ -255,5 +255,25 @@ int main (string[] args) {
         fails++;
     }
 
+    // 14. /dev is a virtual device namespace with byte handles.
+    int dev_kind = Sys.stat ("/dev/console");
+    int dev_fd = Sys.open ("/dev/console");
+    int dev_w = (dev_fd >= 3) ? Sys.write_str (dev_fd, "[dev]\n", 6) : -1;
+    int dev_size = (dev_fd >= 3) ? Sys.file_size (dev_fd) : -1;
+    int dev_seek = (dev_fd >= 3) ? Sys.seek (dev_fd, 0) : 0;
+    var dev_list = new uint8[64];
+    int dev_n = Sys.readdir_path ("/dev", dev_list, 64);
+    int dev_null = Sys.open ("/dev/null");
+    int dev_null_w = (dev_null >= 3) ? Sys.write_str (dev_null, "x", 1) : -1;
+    if (dev_kind == 1 && dev_fd >= 3 && dev_w == 6 && dev_size == 0
+        && dev_seek == -1 && dev_n > 0 && dev_null_w == 1)
+        print ("dev=ok\n");
+    else {
+        print ("dev=FAIL\n");
+        fails++;
+    }
+    if (dev_fd >= 3) Sys.close (dev_fd);
+    if (dev_null >= 3) Sys.close (dev_null);
+
     return fails;
 }
