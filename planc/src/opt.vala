@@ -866,6 +866,23 @@ namespace Planc {
             return s;
         }
 
+        private void sra_recurse_stmt (Statement? s) {
+            if (s == null) return;
+            if (s is BlockStatement) {
+                sra_stmt_list (((BlockStatement) s).statements);
+            } else if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                sra_recurse_stmt (ifs.then_body);
+                sra_recurse_stmt (ifs.else_body);
+            } else if (s is WhileStatement) {
+                sra_recurse_stmt (((WhileStatement) s).body);
+            } else if (s is DoWhileStatement) {
+                sra_recurse_stmt (((DoWhileStatement) s).body);
+            } else if (s is ForStatement) {
+                sra_recurse_stmt (((ForStatement) s).body);
+            }
+        }
+
         private void sra_stmt_list (GenericArray<Statement> stmts) {
             var out_stmts = new GenericArray<Statement> ();
             bool changed = false;
@@ -875,35 +892,39 @@ namespace Planc {
                     var d = (VarDeclStatement) s;
                     if (d.init is ClassNewExpr) {
                         var ne = (ClassNewExpr) d.init;
-                        if (ne.ctor_name == "" && ne.args.length == 0 && ne.init_names.length == 0) {
+                        if (ne.ctor_name == "" && ne.args.length <= 6 && ne.init_names.length == 0) {
                             unowned var cd = cur_prog.find_class (ne.class_name);
                             bool ctor_ok = false;
+                            int ctor_poff = 0;
                             if (cd != null && (cd.base_name == "" || cd.base_name == "Object") && !cd.is_abstract
                                 && cd.dtor == null && cd.fields.length > 0 && cd.fields.length <= 8) {
                                 if (cd.ctor == null) {
-                                    ctor_ok = true;
-                                } else if ((cd.ctor.params.length == 0
-                                            || (cd.ctor.params.length == 1 && cd.ctor.params[0].name == "this"))
-                                           && cd.ctor.body != null) {
-                                    ctor_ok = true;
-                                    for (int ci = 0; ci < cd.ctor.body.length; ci++) {
-                                        var cs = cd.ctor.body[ci];
-                                        if (cs is AssignStatement) {
-                                            var ca = (AssignStatement) cs;
-                                            if (!cd_has_field (cd, ca.name)
-                                                || !(ca.value is IntLiteral || ca.value is BoolLiteral)) {
+                                    ctor_ok = (ne.args.length == 0);
+                                } else if (cd.ctor.body != null) {
+                                    ctor_poff = (cd.ctor.params.length >= 1 && cd.ctor.params[0].name == "this") ? 1 : 0;
+                                    if (cd.ctor.params.length == ne.args.length + ctor_poff) {
+                                        ctor_ok = true;
+                                        for (int ci = 0; ci < cd.ctor.body.length; ci++) {
+                                            var cs = cd.ctor.body[ci];
+                                            Expr? cval = null;
+                                            if (cs is AssignStatement) {
+                                                var ca = (AssignStatement) cs;
+                                                if (!cd_has_field (cd, ca.name)) { ctor_ok = false; break; }
+                                                cval = ca.value;
+                                            } else if (cs is FieldAssignStatement) {
+                                                var cfa = (FieldAssignStatement) cs;
+                                                if (cfa.op != "=" || !(cfa.target is VarRef)
+                                                    || ((VarRef) cfa.target).name != "this"
+                                                    || !cd_has_field (cd, cfa.field_name)) {
+                                                    ctor_ok = false; break;
+                                                }
+                                                cval = cfa.value;
+                                            } else {
                                                 ctor_ok = false; break;
                                             }
-                                        } else if (cs is FieldAssignStatement) {
-                                            var cfa = (FieldAssignStatement) cs;
-                                            if (cfa.op != "=" || !(cfa.target is VarRef)
-                                                || ((VarRef) cfa.target).name != "this"
-                                                || !cd_has_field (cd, cfa.field_name)
-                                                || !(cfa.value is IntLiteral || cfa.value is BoolLiteral)) {
+                                            if (cval == null || !can_inline_fn (cd.ctor, ne.args.length, ctor_poff, ne.args, cval, cd)) {
                                                 ctor_ok = false; break;
                                             }
-                                        } else {
-                                            ctor_ok = false; break;
                                         }
                                     }
                                 }
@@ -951,15 +972,21 @@ namespace Planc {
                                             });
                                         }
                                         if (cd.ctor != null && cd.ctor.body != null) {
+                                            var pnames = new GenericArray<string> ();
+                                            for (int pi = ctor_poff; pi < cd.ctor.params.length; pi++)
+                                                pnames.add (cd.ctor.params[pi].name);
                                             for (int ci = 0; ci < cd.ctor.body.length; ci++) {
                                                 var cs = cd.ctor.body[ci];
                                                 if (cs is AssignStatement) {
                                                     var ca = (AssignStatement) cs;
                                                     int cfi = sra_field_idx (fnames, ca.name);
                                                     if (cfi >= 0) {
+                                                        var cloned = cur_prog.clone_expr_plain (ca.value);
+                                                        var sub = subst_inline_expr ((Program) cur_prog, cloned, pnames, ne.args, cd, d.name);
+                                                        sub = sra_rewrite_expr (sub, d.name, fnames, sra_names);
                                                         out_stmts.add (new AssignStatement () {
                                                             name = sra_names[cfi],
-                                                            value = cur_prog.clone_expr_plain (ca.value),
+                                                            value = sub,
                                                             line = d.line,
                                                             column = d.column
                                                         });
@@ -968,9 +995,12 @@ namespace Planc {
                                                     var cfa = (FieldAssignStatement) cs;
                                                     int cfi = sra_field_idx (fnames, cfa.field_name);
                                                     if (cfi >= 0) {
+                                                        var cloned = cur_prog.clone_expr_plain (cfa.value);
+                                                        var sub = subst_inline_expr ((Program) cur_prog, cloned, pnames, ne.args, cd, d.name);
+                                                        sub = sra_rewrite_expr (sub, d.name, fnames, sra_names);
                                                         out_stmts.add (new AssignStatement () {
                                                             name = sra_names[cfi],
-                                                            value = cur_prog.clone_expr_plain (cfa.value),
+                                                            value = sub,
                                                             line = d.line,
                                                             column = d.column
                                                         });
@@ -988,6 +1018,7 @@ namespace Planc {
                         }
                     }
                 }
+                sra_recurse_stmt (s);
                 out_stmts.add (s);
             }
             if (changed) {
