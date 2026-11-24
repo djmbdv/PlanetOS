@@ -514,5 +514,10 @@ namespace Gtk {
         public virtual bool on_scroll (int mx, int my, int dx, int dy) {
             return false;
         }
+
+        public virtual void collect_focusables (GenericArray<Widget> out_list) {
+            if (visible && sensitive && can_focus && focusable)
+                out_list.add (this);
+        }
     }
 }

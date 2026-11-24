@@ -129,6 +129,30 @@ namespace Gtk {
             }
         }
 
+        private bool focus_next (bool backward) {
+            var flist = new GenericArray<Widget> ();
+            if (titlebar != null)
+                titlebar.collect_focusables (flist);
+            if (child != null)
+                child.collect_focusables (flist);
+            if (flist.length == 0)
+                return false;
+            int cur = -1;
+            for (int i = 0; i < flist.length; i++) {
+                if (flist[i].has_focus ()) {
+                    cur = i;
+                    break;
+                }
+            }
+            int next = 0;
+            if (cur >= 0)
+                next = backward ? ((cur + flist.length - 1) % flist.length) : ((cur + 1) % flist.length);
+            else if (backward)
+                next = flist.length - 1;
+            flist[next].grab_focus ();
+            return true;
+        }
+
         public void destroy () {
             if (child != null) {
                 child.unparent ();
@@ -315,6 +339,11 @@ namespace Gtk {
                             close ();
                             break;
                         }
+                        if (ev.keyval == 9 || ev.keyval == 0xFF09) {
+                            if (focus_next ((ev.state & 1) != 0))
+                                dirty = true;
+                            continue;
+                        }
                         if (child != null && child.handle_key (ev.keyval))
                             dirty = true;
                     } else if (ev.type == EventType.BUTTON_PRESS) {
@@ -368,6 +397,12 @@ namespace Gtk {
                 }
                 if (!gtk_running)
                     break;
+                if (gdk_win.width != width || gdk_win.height != height) {
+                    width = gdk_win.width;
+                    height = gdk_win.height;
+                    allocate_children ();
+                    dirty = true;
+                }
                 if (take_layout_dirty ()) {
                     allocate_children ();
                     dirty = true;

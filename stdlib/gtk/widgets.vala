@@ -99,12 +99,74 @@ namespace Gtk {
             return label;
         }
 
+        private static int hex_val (uint8 c) {
+            if (c >= '0' && c <= '9') return (int) (c - '0');
+            if (c >= 'a' && c <= 'f') return 10 + (int) (c - 'a');
+            if (c >= 'A' && c <= 'F') return 10 + (int) (c - 'A');
+            return -1;
+        }
+
+        private static bool parse_hex_color (string s, int pos, out double r, out double g, out double b) {
+            r = 0.0; g = 0.0; b = 0.0;
+            if (pos + 7 > s.length || s[pos] != '#')
+                return false;
+            int r0 = hex_val ((uint8) s[pos + 1]);
+            int r1 = hex_val ((uint8) s[pos + 2]);
+            int g0 = hex_val ((uint8) s[pos + 3]);
+            int g1 = hex_val ((uint8) s[pos + 4]);
+            int b0 = hex_val ((uint8) s[pos + 5]);
+            int b1 = hex_val ((uint8) s[pos + 6]);
+            if (r0 < 0 || r1 < 0 || g0 < 0 || g1 < 0 || b0 < 0 || b1 < 0)
+                return false;
+            r = (double) ((r0 << 4) | r1) / 255.0;
+            g = (double) ((g0 << 4) | g1) / 255.0;
+            b = (double) ((b0 << 4) | b1) / 255.0;
+            return true;
+        }
+
         public void set_markup (string str) {
-            try {
-                set_label (GLib.Markup.strip_tags (str));
-            } catch (MarkupError e) {
-                set_label (str);
+            var l = ensure_layout ();
+            l.clear_attributes ();
+            var plain = new StringBuilder ();
+            double cur_r = 0.0;
+            double cur_g = 0.0;
+            double cur_b = 0.0;
+            bool in_span = false;
+            int span_start = 0;
+            int i = 0;
+            while (i < str.length) {
+                if (str[i] == '<') {
+                    int close = -1;
+                    for (int k = i + 1; k < str.length; k++) {
+                        if (str[k] == '>') { close = k; break; }
+                    }
+                    if (close > i) {
+                        string tag = str.substring (i + 1, close - i - 1);
+                        if (tag.has_prefix ("span ") && !in_span) {
+                            int hp = -1;
+                            for (int k = 0; k < tag.length; k++) {
+                                if (tag[k] == '#') { hp = k; break; }
+                            }
+                            if (hp >= 0 && parse_hex_color (tag, hp, out cur_r, out cur_g, out cur_b)) {
+                                in_span = true;
+                                span_start = plain.str.length;
+                            }
+                        } else if (tag == "/span" && in_span) {
+                            l.add_color_attribute (span_start, plain.str.length, cur_r, cur_g, cur_b);
+                            in_span = false;
+                        }
+                        i = close + 1;
+                        continue;
+                    }
+                }
+                plain.append_c (str[i]);
+                i++;
             }
+            if (in_span)
+                l.add_color_attribute (span_start, plain.str.length, cur_r, cur_g, cur_b);
+            label = plain.str;
+            l.set_text (label);
+            queue_resize ();
         }
 
         public void set_wrap (bool w) {
@@ -585,8 +647,11 @@ namespace Gtk {
 
         public void set_max_length (int max_len) {
             max_length = (max_len < 0) ? 0 : max_len;
-            if (max_length > 0 && text.length > max_length) {
-                text = text.substring (0, max_length);
+            if (max_length > 0 && utf8_count (text) > max_length) {
+                text = utf8_truncate (text, max_length);
+                if (cursor_pos > text.length)
+                    cursor_pos = text.length;
+                clear_selection ();
                 damage_self ();
                 changed ();
             }
@@ -728,12 +793,16 @@ namespace Gtk {
             cr.save ();
             cr.rectangle ((double) (x + 6), (double) (y + 2), (double) (width - 12), (double) (height - 4));
             cr.clip ();
-            if (disp.length > 0 && sel_start >= 0 && sel_end > sel_start && sel_end <= disp.length) {
-                int sx0 = FontRegistry.measure_string_px (slot, disp, 0, sel_start, px_sz);
-                int sx1 = FontRegistry.measure_string_px (slot, disp, 0, sel_end, px_sz);
-                cr.set_source_rgba (0.220, 0.592, 0.941, 0.35);
-                cr.rectangle ((double) (x + 10 + sx0 - scroll_x), (double) (y + 5), (double) (sx1 - sx0), (double) (height - 10));
-                cr.fill ();
+            if (disp.length > 0 && sel_start >= 0 && sel_end > sel_start && sel_end <= text.length) {
+                int ds = visibility ? sel_start : utf8_count (text.substring (0, sel_start));
+                int de = visibility ? sel_end : utf8_count (text.substring (0, sel_end));
+                if (de <= disp.length && de > ds) {
+                    int sx0 = FontRegistry.measure_string_px (slot, disp, 0, ds, px_sz);
+                    int sx1 = FontRegistry.measure_string_px (slot, disp, 0, de, px_sz);
+                    cr.set_source_rgba (0.220, 0.592, 0.941, 0.35);
+                    cr.rectangle ((double) (x + 10 + sx0 - scroll_x), (double) (y + 5), (double) (sx1 - sx0), (double) (height - 10));
+                    cr.fill ();
+                }
             }
             if (disp.length > 0) {
                 // Lunar White (#F0F4F8)
@@ -771,6 +840,17 @@ namespace Gtk {
             return true;
         }
 
+        private bool delete_selection () {
+            if (sel_start < 0 || sel_end <= sel_start || sel_end > text.length)
+                return false;
+            string before = text.substring (0, sel_start);
+            string after = (sel_end < text.length) ? text.substring (sel_end) : "";
+            text = before + after;
+            cursor_pos = sel_start;
+            clear_selection ();
+            return true;
+        }
+
         public override bool on_key_press (int key) {
             if (!focused || !visible || !sensitive)
                 return false;
@@ -780,6 +860,7 @@ namespace Gtk {
                 return true;
             }
             if (key == 0x83) { // Left
+                clear_selection ();
                 if (cursor_pos > 0) {
                     cursor_pos = utf8_prev (text, cursor_pos);
                     damage_self ();
@@ -787,6 +868,7 @@ namespace Gtk {
                 return true;
             }
             if (key == 0x84) { // Right
+                clear_selection ();
                 if (cursor_pos < text.length) {
                     cursor_pos = utf8_next (text, cursor_pos);
                     damage_self ();
@@ -794,6 +876,7 @@ namespace Gtk {
                 return true;
             }
             if (key == 0x85) { // Home
+                clear_selection ();
                 if (cursor_pos != 0) {
                     cursor_pos = 0;
                     damage_self ();
@@ -801,6 +884,7 @@ namespace Gtk {
                 return true;
             }
             if (key == 0x86) { // End
+                clear_selection ();
                 if (cursor_pos != text.length) {
                     cursor_pos = text.length;
                     damage_self ();
@@ -810,7 +894,10 @@ namespace Gtk {
             if (!editable)
                 return false;
             if (key == 8 || key == 127) {
-                if (cursor_pos > 0 && text.length > 0) {
+                if (delete_selection ()) {
+                    damage_self ();
+                    changed ();
+                } else if (cursor_pos > 0 && text.length > 0) {
                     int prev_p = utf8_prev (text, cursor_pos);
                     string before = text.substring (0, prev_p);
                     string after = (cursor_pos < text.length) ? text.substring (cursor_pos) : "";
@@ -822,7 +909,10 @@ namespace Gtk {
                 return true;
             }
             if (key == 0xFFFF) { // Delete
-                if (cursor_pos < text.length) {
+                if (delete_selection ()) {
+                    damage_self ();
+                    changed ();
+                } else if (cursor_pos < text.length) {
                     int next_p = utf8_next (text, cursor_pos);
                     string before = text.substring (0, cursor_pos);
                     string after = (next_p < text.length) ? text.substring (next_p) : "";
@@ -833,8 +923,11 @@ namespace Gtk {
                 return true;
             }
             if (key >= 32 && key < 127) {
-                if (max_length > 0 && utf8_count (text) >= max_length)
+                bool had_sel = delete_selection ();
+                if (max_length > 0 && utf8_count (text) >= max_length) {
+                    if (had_sel) { damage_self (); changed (); }
                     return true;
+                }
                 string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
                 string ch = ascii.substring (key - 32, 1);
                 string before = text.substring (0, cursor_pos);

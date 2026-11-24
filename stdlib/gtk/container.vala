@@ -372,6 +372,13 @@ namespace Gtk {
                 hoist_child_damage (children[i]);
         }
 
+        public override void collect_focusables (GenericArray<Widget> out_list) {
+            if (!visible || !sensitive)
+                return;
+            for (int i = 0; i < children.length; i++)
+                children[i].collect_focusables (out_list);
+        }
+
         public override bool handle_key (int key) {
             if (!visible || !sensitive)
                 return false;
@@ -567,6 +574,11 @@ namespace Gtk {
 
         public override void gather_damage () {
             hoist_child_damage (child);
+        }
+
+        public override void collect_focusables (GenericArray<Widget> out_list) {
+            if (visible && sensitive && child != null)
+                child.collect_focusables (out_list);
         }
 
         public override bool handle_key (int key) {

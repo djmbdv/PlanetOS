@@ -325,6 +325,13 @@ namespace Gtk {
                 hoist_child_damage (rows[i]);
         }
 
+        public override void collect_focusables (GenericArray<Widget> out_list) {
+            if (!visible || !sensitive)
+                return;
+            for (int i = 0; i < rows.length; i++)
+                rows[i].collect_focusables (out_list);
+        }
+
         public override bool handle_key (int key) {
             for (int i = 0; i < rows.length; i++) {
                 if (rows[i].handle_key (key))
