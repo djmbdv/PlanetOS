@@ -3464,7 +3464,8 @@ namespace Planc {
                 if (name == "foreach") {
                     advance ();
                     expect (TokenKind.LPAREN, "'('");
-                    parse_ownership_weak ();
+                    bool fe_unowned = false;
+                    parse_ownership (out fe_unowned);
                     bool infer_v = false;
                     ValaType vt = ValaType.VOID;
                     string vt_name = "";
@@ -3494,6 +3495,7 @@ namespace Planc {
                         elem_type = vt,
                         elem_type_name = vt_name,
                         infer_type = infer_v,
+                        is_unowned = fe_unowned,
                         var_name = vname,
                         collection = col_expr,
                         body = body

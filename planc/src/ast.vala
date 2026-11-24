@@ -369,10 +369,12 @@ namespace Planc {
         public Statement body { get; set; }
     }
 
-    public class ForeachStatement : Statement {        public ValaType elem_type { get; set; default = ValaType.INT; }
+    public class ForeachStatement : Statement {
+        public ValaType elem_type { get; set; default = ValaType.INT; }
         public string elem_type_name { get; set; default = ""; }
         public bool is_varargs_pack { get; set; default = false; }
         public bool infer_type { get; set; default = false; }
+        public bool is_unowned { get; set; default = false; }
         public string var_name { get; set; }
         public Expr collection { get; set; }
         public Statement body { get; set; }
