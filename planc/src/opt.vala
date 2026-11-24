@@ -285,7 +285,7 @@ namespace Planc {
                     string? cname = lookup_var_class (vnames, vclasses, obj);
                     if (cname != null && !class_has_subclasses (prog, cname)) {
                         unowned var cd = prog.find_class (cname);
-                        if (cd != null && cd.base_name == "") {
+                        if (cd != null && (cd.base_name == "" || cd.base_name == "Object")) {
                             unowned var fn = find_class_method_opt (cd, mc.method_name);
                             int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
                             if (fn != null && !fn.is_static
@@ -370,7 +370,7 @@ namespace Planc {
                         string? cname = lookup_var_class (vnames, vclasses, obj);
                         if (cname != null && !class_has_subclasses (prog, cname)) {
                             unowned var cd = prog.find_class (cname);
-                            if (cd != null && cd.base_name == "") {
+                            if (cd != null && (cd.base_name == "" || cd.base_name == "Object")) {
                                 unowned var fn = find_class_method_opt (cd, mc.method_name);
                                 int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
                                 if (fn != null && !fn.is_static && fn.return_type == ValaType.VOID
@@ -878,7 +878,7 @@ namespace Planc {
                         if (ne.ctor_name == "" && ne.args.length == 0 && ne.init_names.length == 0) {
                             unowned var cd = cur_prog.find_class (ne.class_name);
                             bool ctor_ok = false;
-                            if (cd != null && cd.base_name == "" && !cd.is_abstract
+                            if (cd != null && (cd.base_name == "" || cd.base_name == "Object") && !cd.is_abstract
                                 && cd.dtor == null && cd.fields.length > 0 && cd.fields.length <= 8) {
                                 if (cd.ctor == null) {
                                     ctor_ok = true;
