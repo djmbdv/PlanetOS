@@ -64,6 +64,8 @@ namespace Planet.Kernel {
         private static int blk_last_used = 0;
         private static int blk_irqs = 0;
         private static int blk_irq_wakes = 0;
+        private static int blk_irq_late = 0;
+        private static int blk_issue_tick = 0;
         private static int blk_status = 0;
         private static int blk_capacity = 0;
         private static int blk_irq_line = 255;
@@ -122,6 +124,7 @@ namespace Planet.Kernel {
         public static int capacity_sectors () { return blk_capacity; }
         public static int irq_count () { return blk_irqs; }
         public static int irq_wakes () { return blk_irq_wakes; }
+        public static int irq_late () { return blk_irq_late; }
 
         public static bool init () {
             int found_dev = -1;
@@ -298,6 +301,7 @@ namespace Planet.Kernel {
             int avail = blk_vq_page + 512;
             int used = blk_vq_page + 1024;
             int req = blk_req_page;
+            blk_issue_tick = (int) mmio_read64 (KernelLayout.TICK);
 
             mmio_write32 (req + 0, BLK_T_IN);   // type
             mmio_write32 (req + 4, 0);          // reserved
@@ -330,16 +334,27 @@ namespace Planet.Kernel {
             // The used ring lives at `used`; keep the reference explicit.
         }
 
-        // Waits for completion. The IRQ handler sets the word when the device's
-        // MSI-X message arrives; a parked timer slice is kept as a watchdog for
-        // a device that never signals, so no caller spins on the hardware
-        // (IO-06). `blk_irq_wakes` is what the test reads to tell the two apart.
+        // Waits for completion. The device publishes it through the MSI-X
+        // message, whose handler sets `word`; the parked timer is only a
+        // watchdog for a device that never signals. The used ring is read on a
+        // watchdog expiry alone, never on a spurious wake, so a slow interrupt
+        // can only lose the race to a one-second timeout and no caller ever
+        // spins on the hardware (IO-06).
         private static bool await_completion (int deadline) {
             int addr = blk_req_page + 20;
             int used = blk_vq_page + 1024;
             while (true) {
                 if (mmio_read32 (addr) != 0)
                     return true;
+                int slice = (int) mmio_read64 (KernelLayout.TICK) + 100;
+                Sched.block_on (addr, slice);
+                cpu_sti ();
+                cpu_hlt ();
+                Sched.unblock_self ();
+                if (mmio_read32 (addr) != 0)
+                    return true;
+                if ((int) mmio_read64 (KernelLayout.TICK) < slice)
+                    continue;
                 int uidx = read_u16 (used + 2);
                 if (uidx != blk_last_used) {
                     blk_last_used = uidx;
@@ -347,19 +362,8 @@ namespace Planet.Kernel {
                     mmio_write32 (addr, 1);
                     return true;
                 }
-                if (deadline != 0) {
-                    int now = (int) mmio_read64 (KernelLayout.TICK);
-                    if (now >= deadline)
-                        return false;
-                }
-                // A one-second watchdog: delivery lands in microseconds, so the
-                // timer only wins when the device never signals, and the caller
-                // still returns instead of hanging.
-                int slice = (int) mmio_read64 (KernelLayout.TICK) + 100;
-                Sched.block_on (addr, slice);
-                cpu_sti ();
-                cpu_hlt ();
-                Sched.unblock_self ();
+                if (deadline != 0 && (int) mmio_read64 (KernelLayout.TICK) >= deadline)
+                    return false;
             }
         }
 
@@ -388,8 +392,16 @@ namespace Planet.Kernel {
                 return;
             int used = blk_vq_page + 1024;
             int used_idx = read_u16 (used + 2);
-            if (used_idx == blk_last_used)
+            if (used_idx == blk_last_used) {
+                // The waiter already took this completion through the watchdog,
+                // so this interrupt has nothing to wake. `now - issue` is the
+                // delivery delay in ticks: that number is the only way to tell a
+                // slow host from a message that never came.
+                blk_irq_late = blk_irq_late + 1;
+                int late_now = (int) mmio_read64 (KernelLayout.TICK) - blk_issue_tick;
+                print (@"blk:lateirq delay=$late_now\n");
                 return;
+            }
             blk_last_used = used_idx;
             blk_status = read_u8 (blk_req_page + 16);
             blk_irq_wakes = blk_irq_wakes + 1;

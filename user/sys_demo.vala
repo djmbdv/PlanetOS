@@ -359,30 +359,33 @@ int main (string[] args) {
     int blk_bytes = -1;
     int blk_magic = 0;
     int blk_wakes = 0;
+    int blk_late = 0;
     int blk_prev = 0;
     int blk_i = 0;
     // Four reads so an intermittent delivery shows up inside one boot.
     while (blk_i < 4) {
         int blk_got = Sys.sys (67, blk_buf, blk_i, 1);
         int blk_stats = Sys.sys (68, 0, 0, 0);
-        int wakes = (blk_stats >> 16) & 0xFFFF;
+        int wakes = (blk_stats >> 16) & 0xFF;
         if (blk_i == 0) {
             blk_bytes = blk_got;
             if (blk_buf > 0)
                 blk_magic = Sys.peek32 (blk_buf);
         }
-        if (wakes > blk_prev)
-            blk_wakes++;
+        blk_wakes = blk_wakes + (wakes - blk_prev);
         blk_prev = wakes;
+        blk_late = (blk_stats >> 24) & 0xFF;
         blk_i++;
     }
     if (blk_buf > 0)
         Sys.free_page (blk_buf);
-    // Sector 0 carries the XFS magic, and every completion has to come from the
-    // MSI-X interrupt rather than from the timer watchdog (C2).
+    // Sector 0 carries the XFS magic, and each completion has to be delivered
+    // by an MSI-X interrupt: four reads, four interrupts, none of them left for
+    // the one-second watchdog to pick up.
     bool blk_ok = blk_buf > 0 && blk_bytes == 512 && blk_magic == 0x42534658
-        && blk_wakes == 4;
+        && blk_wakes == 4 && blk_late == 0;
     print (@"blk:irq=$blk_wakes/4\n");
+    print (@"blk:late=$blk_late\n");
     if (blk_ok)
         print ("blk=ok\n");
     else {

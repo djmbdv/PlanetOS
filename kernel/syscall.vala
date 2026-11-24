@@ -1426,8 +1426,9 @@ namespace Planet.Kernel {
                     return fail (E_IO);
                 ok ();
                 return a2 * 512;
-            case 68: // SYS_BLK_STATS() -> irqs << 16 | capacity in MiB
-                return (VirtioBlk.irq_wakes () << 16)
+            case 68: // SYS_BLK_STATS() -> late << 24 | wakes << 16 | capacity in MiB
+                return (VirtioBlk.irq_late () << 24)
+                    | ((VirtioBlk.irq_wakes () << 16) & 0xFF0000)
                     | ((VirtioBlk.capacity_sectors () / 2048) & 0xFFFF);
             default:
                 return -1;
