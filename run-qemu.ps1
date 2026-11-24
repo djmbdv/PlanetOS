@@ -332,6 +332,7 @@ if (-not $NoBuild) {
         (Join-Path $SrcDir 'dwarf.vala'),
         (Join-Path $SrcDir 'spirv.vala'),
         (Join-Path $SrcDir 'opt.vala'),
+        (Join-Path $SrcDir 'pe.vala'),
         (Join-Path $SrcDir 'puzzle_ra.vala'),
         (Join-Path $SrcDir 'codegen.vala'),
         (Join-Path $SrcDir 'main.vala'),
