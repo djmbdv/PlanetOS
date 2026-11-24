@@ -166,6 +166,12 @@ namespace Planc {
                 te.else_expr = subst_inline_expr (prog, te.else_expr, pnames, pargs, cd, this_var);
                 return te;
             }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++)
+                    c.args[i] = subst_inline_expr (prog, c.args[i], pnames, pargs, cd, this_var);
+                return c;
+            }
             return e;
         }
 
@@ -937,6 +943,288 @@ namespace Planc {
             return s;
         }
 
+        private static int count_self_calls_rec (Expr? e, string fn_name) {
+            if (e == null) return 0;
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                int n = (c.callee == fn_name) ? 1 : 0;
+                for (int i = 0; i < c.args.length; i++)
+                    n += count_self_calls_rec (c.args[i], fn_name);
+                return n;
+            }
+            if (e is UnaryExpr) return count_self_calls_rec (((UnaryExpr) e).operand, fn_name);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return count_self_calls_rec (b.left, fn_name) + count_self_calls_rec (b.right, fn_name);
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return count_self_calls_rec (te.condition, fn_name)
+                    + count_self_calls_rec (te.then_expr, fn_name)
+                    + count_self_calls_rec (te.else_expr, fn_name);
+            }
+            return 0;
+        }
+
+        private static bool expr_is_self_rec_pure (Expr? e, Function fn) {
+            if (e == null) return false;
+            if (e is IntLiteral || e is BoolLiteral) return true;
+            if (e is VarRef) {
+                string name = ((VarRef) e).name;
+                for (int i = 0; i < fn.params.length; i++) {
+                    if (fn.params[i].name == name) return true;
+                }
+                return false;
+            }
+            if (e is UnaryExpr) return expr_is_self_rec_pure (((UnaryExpr) e).operand, fn);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_is_self_rec_pure (b.left, fn) && expr_is_self_rec_pure (b.right, fn);
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_is_self_rec_pure (te.condition, fn)
+                    && expr_is_self_rec_pure (te.then_expr, fn)
+                    && expr_is_self_rec_pure (te.else_expr, fn);
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                if (c.callee != fn.name || c.args.length != fn.params.length) return false;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (!expr_is_self_rec_pure (c.args[i], fn)) return false;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        private static Expr unroll_self_step (Program prog, Expr e, Function fn,
+                                              GenericArray<string> pnames, Expr tmpl) {
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                if (c.callee == fn.name && c.args.length == pnames.length) {
+                    var cloned = prog.clone_expr_plain (tmpl);
+                    return subst_inline_expr (prog, cloned, pnames, c.args, null, null);
+                }
+                return e;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = unroll_self_step (prog, u.operand, fn, pnames, tmpl);
+                return u;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                b.left = unroll_self_step (prog, b.left, fn, pnames, tmpl);
+                b.right = unroll_self_step (prog, b.right, fn, pnames, tmpl);
+                return b;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = unroll_self_step (prog, te.condition, fn, pnames, tmpl);
+                te.then_expr = unroll_self_step (prog, te.then_expr, fn, pnames, tmpl);
+                te.else_expr = unroll_self_step (prog, te.else_expr, fn, pnames, tmpl);
+                return te;
+            }
+            return e;
+        }
+
+        private static int cse_seq = 0;
+
+        private static Expr simplify_offset_expr (Expr e) {
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = simplify_offset_expr (u.operand);
+                return u;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                b.left = simplify_offset_expr (b.left);
+                b.right = simplify_offset_expr (b.right);
+                if ((b.op == "+" || b.op == "-") && b.right is IntLiteral && b.left is BinaryExpr) {
+                    var lb = (BinaryExpr) b.left;
+                    if ((lb.op == "+" || lb.op == "-") && lb.right is IntLiteral) {
+                        int64 d1 = (lb.op == "+") ? ((IntLiteral) lb.right).value : -((IntLiteral) lb.right).value;
+                        int64 d2 = (b.op == "+") ? ((IntLiteral) b.right).value : -((IntLiteral) b.right).value;
+                        int64 sum = d1 + d2;
+                        if (sum == 0) return lb.left;
+                        if (sum > 0)
+                            return new BinaryExpr () { op = "+", left = lb.left, right = new IntLiteral () { value = sum, line = e.line, column = e.column }, line = e.line, column = e.column };
+                        return new BinaryExpr () { op = "-", left = lb.left, right = new IntLiteral () { value = -sum, line = e.line, column = e.column }, line = e.line, column = e.column };
+                    }
+                }
+                return b;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = simplify_offset_expr (te.condition);
+                te.then_expr = simplify_offset_expr (te.then_expr);
+                te.else_expr = simplify_offset_expr (te.else_expr);
+                return te;
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++)
+                    c.args[i] = simplify_offset_expr (c.args[i]);
+                return c;
+            }
+            return e;
+        }
+
+        private static bool expr_struct_eq (Expr? a, Expr? b) {
+            if (a == null || b == null) return a == b;
+            if (a is IntLiteral && b is IntLiteral) return ((IntLiteral) a).value == ((IntLiteral) b).value;
+            if (a is BoolLiteral && b is BoolLiteral) return ((BoolLiteral) a).value == ((BoolLiteral) b).value;
+            if (a is VarRef && b is VarRef) return ((VarRef) a).name == ((VarRef) b).name;
+            if (a is UnaryExpr && b is UnaryExpr) {
+                var ua = (UnaryExpr) a; var ub = (UnaryExpr) b;
+                return ua.op == ub.op && expr_struct_eq (ua.operand, ub.operand);
+            }
+            if (a is BinaryExpr && b is BinaryExpr) {
+                var ba = (BinaryExpr) a; var bb = (BinaryExpr) b;
+                return ba.op == bb.op && expr_struct_eq (ba.left, bb.left) && expr_struct_eq (ba.right, bb.right);
+            }
+            if (a is CallExpr && b is CallExpr) {
+                var ca = (CallExpr) a; var cb = (CallExpr) b;
+                if (ca.callee != cb.callee || ca.args.length != cb.args.length) return false;
+                for (int i = 0; i < ca.args.length; i++) {
+                    if (!expr_struct_eq (ca.args[i], cb.args[i])) return false;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        private static void collect_uncond_calls (Expr? e, GenericArray<CallExpr> out_calls) {
+            if (e == null) return;
+            if (e is CallExpr) {
+                out_calls.add ((CallExpr) e);
+                return;
+            }
+            if (e is UnaryExpr) { collect_uncond_calls (((UnaryExpr) e).operand, out_calls); return; }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                collect_uncond_calls (b.left, out_calls);
+                collect_uncond_calls (b.right, out_calls);
+            }
+        }
+
+        private static Expr replace_call_var (Program prog, Expr e, CallExpr target, string vname) {
+            if (e is CallExpr && expr_struct_eq (e, target))
+                return new VarRef () { name = vname, line = e.line, column = e.column };
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = replace_call_var (prog, u.operand, target, vname);
+                return u;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                b.left = replace_call_var (prog, b.left, target, vname);
+                b.right = replace_call_var (prog, b.right, target, vname);
+                return b;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = replace_call_var (prog, te.condition, target, vname);
+                te.then_expr = replace_call_var (prog, te.then_expr, target, vname);
+                te.else_expr = replace_call_var (prog, te.else_expr, target, vname);
+                return te;
+            }
+            return e;
+        }
+
+        private static void unroll_self_rec_func (Program prog, Function f) {
+            if (f.owner_class != "" || f.is_async || f.is_asm_body || f.can_throw || f.is_varargs)
+                return;
+            if (f.params.length < 1 || f.params.length > 2)
+                return;
+            if (f.return_type != ValaType.INT && f.return_type != ValaType.BOOL)
+                return;
+            for (int i = 0; i < f.params.length; i++) {
+                if (f.params[i].is_ref || f.params[i].is_out || f.params[i].param_type == ValaType.STRUCT)
+                    return;
+            }
+            if (f.body == null || f.body.length != 2 || !(f.body[0] is IfStatement) || !(f.body[1] is ReturnStatement))
+                return;
+            var tmpl = try_extract_inline_ret_expr (f);
+            if (tmpl == null || count_self_calls_rec (tmpl, f.name) != 2 || !expr_is_self_rec_pure (tmpl, f))
+                return;
+            var rs = (ReturnStatement) f.body[1];
+            if (rs.value == null || count_self_calls_rec (rs.value, f.name) != 2)
+                return;
+            var pnames = new GenericArray<string> ();
+            for (int i = 0; i < f.params.length; i++)
+                pnames.add (f.params[i].name);
+            var frozen = prog.clone_expr_plain (tmpl);
+            Expr cur = unroll_self_step (prog, (Expr) rs.value, f, pnames, frozen);
+            cur = simplify_offset_expr (cur);
+
+            // Check if cur is `Ternary(c1, t1, e1) <op> Ternary(c2, t2, e2)` with a shared call in e1 and e2
+            if (cur is BinaryExpr) {
+                var cb = (BinaryExpr) cur;
+                if (cb.left is TernaryExpr && cb.right is TernaryExpr) {
+                    var tl = (TernaryExpr) cb.left;
+                    var tr = (TernaryExpr) cb.right;
+                    var lcalls = new GenericArray<CallExpr> ();
+                    var rcalls = new GenericArray<CallExpr> ();
+                    collect_uncond_calls (tl.else_expr, lcalls);
+                    collect_uncond_calls (tr.else_expr, rcalls);
+                    CallExpr? shared = null;
+                    for (int i = 0; i < lcalls.length && shared == null; i++) {
+                        for (int j = 0; j < rcalls.length; j++) {
+                            if (expr_struct_eq (lcalls[i], rcalls[j])) {
+                                shared = lcalls[i];
+                                break;
+                            }
+                        }
+                    }
+                    if (shared != null) {
+                        cse_seq++;
+                        string vname = @"__cse_$(cse_seq)";
+                        var cond_both = new BinaryExpr () {
+                            op = "&&",
+                            left = new UnaryExpr () { op = "!", operand = prog.clone_expr_plain (tl.condition), line = rs.line, column = rs.column },
+                            right = new UnaryExpr () { op = "!", operand = prog.clone_expr_plain (tr.condition), line = rs.line, column = rs.column },
+                            line = rs.line,
+                            column = rs.column
+                        };
+                        var cse_decl = new VarDeclStatement () {
+                            name = vname,
+                            decl_type = f.return_type,
+                            decl_type_name = f.return_type_name,
+                            infer_type = false,
+                            init = prog.clone_expr_plain (shared),
+                            line = rs.line,
+                            column = rs.column
+                        };
+                        var fast_ret_expr = new BinaryExpr () {
+                            op = cb.op,
+                            left = replace_call_var (prog, prog.clone_expr_plain (tl.else_expr), shared, vname),
+                            right = replace_call_var (prog, prog.clone_expr_plain (tr.else_expr), shared, vname),
+                            line = rs.line,
+                            column = rs.column
+                        };
+                        var fast_blk = new BlockStatement () { line = rs.line, column = rs.column };
+                        fast_blk.statements.add (cse_decl);
+                        fast_blk.statements.add (new ReturnStatement () { value = fast_ret_expr, line = rs.line, column = rs.column });
+                        var guard_if = new IfStatement () {
+                            condition = cond_both,
+                            then_body = fast_blk,
+                            line = rs.line,
+                            column = rs.column
+                        };
+                        rs.value = cur;
+                        var s1 = f.body[1];
+                        f.body[1] = guard_if;
+                        f.body.add (s1);
+                        return;
+                    }
+                }
+            }
+            cur = unroll_self_step (prog, cur, f, pnames, frozen);
+            rs.value = simplify_offset_expr (cur);
+        }
+
         private static void inline_func (Program prog, Function f) {
             if (f.body == null)
                 return;
@@ -950,6 +1238,7 @@ namespace Planc {
             }
             for (int i = 0; i < f.body.length; i++)
                 f.body[i] = inline_stmt (prog, f.body[i], vnames, vclasses);
+            unroll_self_rec_func (prog, f);
         }
 
         private static void inline_program (Program prog) {
@@ -2819,6 +3108,19 @@ namespace Planc {
                     int64 r = ((IntLiteral) b.right).value;
                     if ((b.op == "+" || b.op == "-" || b.op == "|" || b.op == "^" || b.op == "<<" || b.op == ">>") && r == 0)
                         return b.left;
+                    if ((b.op == "+" || b.op == "-") && b.left is BinaryExpr) {
+                        var lb = (BinaryExpr) b.left;
+                        if ((lb.op == "+" || lb.op == "-") && lb.right is IntLiteral) {
+                            int64 c1 = ((IntLiteral) lb.right).value;
+                            int64 d1 = (lb.op == "+") ? c1 : -c1;
+                            int64 d2 = (b.op == "+") ? r : -r;
+                            int64 sum = d1 + d2;
+                            if (sum == 0) return lb.left;
+                            if (sum > 0)
+                                return new BinaryExpr () { op = "+", left = lb.left, right = new IntLiteral () { value = sum, line = e.line, column = e.column }, line = e.line, column = e.column };
+                            return new BinaryExpr () { op = "-", left = lb.left, right = new IntLiteral () { value = -sum, line = e.line, column = e.column }, line = e.line, column = e.column };
+                        }
+                    }
                     if ((b.op == "*" || b.op == "/") && r == 1)
                         return b.left;
                     if (b.op == "*" && r == 0 && is_pure_atom (b.left))

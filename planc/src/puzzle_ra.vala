@@ -24,6 +24,7 @@ namespace Planc {
         ARR_LOAD,
         ARR_STORE,
         ARR_LEN,
+        SIMD_ARR_REDUCE,
         PRINT_STR,
         PRINT_INT
     }
@@ -193,7 +194,8 @@ namespace Planc {
                     || tname == "ulong" || tname == "int32" || tname == "uint32";
             }
             if (t == ValaType.ARRAY) {
-                return tname == "int[]" || tname == "int64[]" || tname == "long[]";
+                return tname == "" || tname == "int" || tname == "int64" || tname == "long"
+                    || tname == "int[]" || tname == "int64[]" || tname == "long[]";
             }
             return false;
         }
@@ -918,6 +920,123 @@ namespace Planc {
             return false;
         }
 
+        private bool try_lower_simd_for (ForStatement fs) {
+            if (!(fs.init is VarDeclStatement) || !(fs.condition is BinaryExpr))
+                return false;
+            var vd = (VarDeclStatement) fs.init;
+            if (vd.init == null || !(vd.init is IntLiteral) || ((IntLiteral) vd.init).value != 0)
+                return false;
+            string idx_name = vd.name;
+            var cb = (BinaryExpr) fs.condition;
+            if (cb.op != "<" || !(cb.left is VarRef) || ((VarRef) cb.left).name != idx_name)
+                return false;
+            if (!bce_stmt_only_inc (fs.step, idx_name))
+                return false;
+
+            int arr_v = -1;
+            string arr_name = "";
+            if (cb.right is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) cb.right;
+                if (ma.member == "length" && ma.target is VarRef) {
+                    arr_name = ((VarRef) ma.target).name;
+                    int ai = lookup_var (arr_name);
+                    if (ai >= 0 && var_types[ai] == ValaType.ARRAY) {
+                        string etn = var_tnames[ai];
+                        if (etn == "" || etn == "int" || etn == "int64" || etn == "int[]" || etn == "int64[]")
+                            arr_v = var_vregs[ai];
+                    }
+                }
+            } else if (cb.right is VarRef) {
+                string rname = ((VarRef) cb.right).name;
+                int ri = lookup_var (rname);
+                if (ri >= 0) {
+                    int rv = var_vregs[ri];
+                    for (int li = bce_len_alias_v.length - 1; li >= 0; li--) {
+                        if (bce_len_alias_v[li] == rv) {
+                            arr_v = bce_len_alias_arr[li];
+                            break;
+                        }
+                    }
+                    if (arr_v >= 0) {
+                        for (int vi = var_vregs.length - 1; vi >= 0; vi--) {
+                            if (var_vregs[vi] == arr_v) {
+                                arr_name = var_names[vi];
+                                string etn = var_tnames[vi];
+                                if (!(etn == "" || etn == "int" || etn == "int64" || etn == "int[]" || etn == "int64[]"))
+                                    arr_v = -1;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (arr_v < 0) return false;
+
+            AssignStatement? asg = null;
+            string? elem_name = null;
+            if (fs.body is AssignStatement) {
+                asg = (AssignStatement) fs.body;
+            } else if (fs.body is BlockStatement) {
+                var blk = (BlockStatement) fs.body;
+                if (blk.statements.length == 1 && blk.statements[0] is AssignStatement) {
+                    asg = (AssignStatement) blk.statements[0];
+                } else if (blk.statements.length == 2
+                           && blk.statements[0] is VarDeclStatement
+                           && blk.statements[1] is AssignStatement) {
+                    var evd = (VarDeclStatement) blk.statements[0];
+                    if (evd.init is IndexExpr) {
+                        var ix = (IndexExpr) evd.init;
+                        if (ix.target is VarRef && ((VarRef) ix.target).name == arr_name
+                            && ix.index is VarRef && ((VarRef) ix.index).name == idx_name) {
+                            elem_name = evd.name;
+                            asg = (AssignStatement) blk.statements[1];
+                        }
+                    }
+                }
+            }
+            if (asg == null || !(asg.value is BinaryExpr)) return false;
+            string s_name = asg.name;
+            if (s_name == idx_name || s_name == arr_name || (elem_name != null && s_name == elem_name))
+                return false;
+            int si = lookup_var (s_name);
+            if (si < 0 || var_types[si] != ValaType.INT) return false;
+            string stn = var_tnames[si];
+            if (stn != "" && stn != "int" && stn != "int64") return false;
+            int sv = var_vregs[si];
+
+            var ab = (BinaryExpr) asg.value;
+            if (ab.op != "+" && ab.op != "^" && ab.op != "|" && ab.op != "&")
+                return false;
+
+            Expr? other = null;
+            if (ab.left is VarRef && ((VarRef) ab.left).name == s_name)
+                other = ab.right;
+            else if (ab.right is VarRef && ((VarRef) ab.right).name == s_name)
+                other = ab.left;
+            else
+                return false;
+
+            if (elem_name != null) {
+                if (!(other is VarRef) || ((VarRef) other).name != elem_name)
+                    return false;
+            } else {
+                if (!(other is IndexExpr)) return false;
+                var ix = (IndexExpr) other;
+                if (!(ix.target is VarRef) || ((VarRef) ix.target).name != arr_name
+                    || !(ix.index is VarRef) || ((VarRef) ix.index).name != idx_name)
+                    return false;
+            }
+
+            emit_ir (new IRInst () {
+                op = IROp.SIMD_ARR_REDUCE,
+                sop = ab.op,
+                dst = sv,
+                lhs = arr_v,
+                rhs = sv
+            });
+            return true;
+        }
+
         private void lower_stmt (Statement? s) {
             if (s == null) return;
             if (s is BlockStatement) {
@@ -1179,6 +1298,8 @@ namespace Planc {
             }
             if (s is ForStatement) {
                 var fs = (ForStatement) s;
+                if (try_lower_simd_for (fs))
+                    return;
                 int mark = var_names.length;
                 if (fs.init != null)
                     lower_stmt (fs.init);
@@ -2382,6 +2503,78 @@ namespace Planc {
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
                             emit_load_disp8 (d, av, 8);
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
+                            break;
+                        }
+                        case IROp.SIMD_ARR_REDUCE: {
+                            Reg av = read_vreg (ins.lhs, Reg.R10);
+                            if (av != Reg.R10) emit_mov_rr (Reg.R10, av);
+                            emit_load_disp8 (Reg.R11, Reg.R10, 8); // len
+                            emit_alu_ri (0, Reg.R10, 16);          // ptr = &arr[0]
+                            uint8 vec_op = 0xD4; // paddq
+                            uint8 sca_op = 0x03; // add
+                            if (ins.sop == "^") { vec_op = 0xEF; sca_op = 0x33; }
+                            else if (ins.sop == "|") { vec_op = 0xEB; sca_op = 0x0B; }
+                            else if (ins.sop == "&") { vec_op = 0xDB; sca_op = 0x23; }
+                            if (ins.sop == "&") {
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x76); code.u8 (0xC0); // pcmpeqd xmm0, xmm0
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x76); code.u8 (0xC9); // pcmpeqd xmm1, xmm1
+                            } else {
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0xEF); code.u8 (0xC0); // pxor xmm0, xmm0
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0xEF); code.u8 (0xC9); // pxor xmm1, xmm1
+                            }
+                            var l_vec = emitter.new_label ();
+                            var l_tail_prep = emitter.new_label ();
+                            emit_alu_ri (7, Reg.R11, 4); // cmp r11, 4
+                            emitter.branch (BranchKind.JL, l_tail_prep);
+                            emitter.bind (l_vec);
+                            code.u8 (0xF3); code.u8 (0x41); code.u8 (0x0F); code.u8 (0x6F); code.u8 (0x12); // movdqu xmm2, [r10]
+                            code.u8 (0x66); code.u8 (0x0F); code.u8 (vec_op); code.u8 (0xC2); // op xmm0, xmm2
+                            code.u8 (0xF3); code.u8 (0x41); code.u8 (0x0F); code.u8 (0x6F); code.u8 (0x52); code.u8 (0x10); // movdqu xmm2, [r10+16]
+                            code.u8 (0x66); code.u8 (0x0F); code.u8 (vec_op); code.u8 (0xCA); // op xmm1, xmm2
+                            emit_alu_ri (0, Reg.R10, 32); // add r10, 32
+                            emit_alu_ri (5, Reg.R11, 4);  // sub r11, 4
+                            emit_alu_ri (7, Reg.R11, 4);  // cmp r11, 4
+                            emitter.branch (BranchKind.JGE, l_vec);
+
+                            emitter.bind (l_tail_prep);
+                            code.u8 (0x66); code.u8 (0x0F); code.u8 (vec_op); code.u8 (0xC1); // op xmm0, xmm1
+                            code.u8 (0x66); code.u8 (0x0F); code.u8 (0x70); code.u8 (0xC8); code.u8 (0x4E); // pshufd xmm1, xmm0, 0x4E
+                            code.u8 (0x66); code.u8 (0x0F); code.u8 (vec_op); code.u8 (0xC1); // op xmm0, xmm1
+
+                            bool spilled = (vreg_phys[ins.dst] < 0);
+                            Reg acc = spilled ? Reg.RAX : phys_to_reg (vreg_phys[ins.dst]);
+                            if (spilled) {
+                                emitter.push_reg (Reg.RAX);
+                                emit_load_rbp (Reg.RAX, spill_disp (vreg_spill[ins.dst]));
+                            }
+                            // movq xmm2, acc
+                            code.u8 (0x66);
+                            code.u8 ((uint8) (0x48 | (Reg.is_extended (acc) ? 1 : 0)));
+                            code.u8 (0x0F); code.u8 (0x6E);
+                            code.u8 ((uint8) (0xD0 | ((int) acc & 7)));
+                            code.u8 (0x66); code.u8 (0x0F); code.u8 (vec_op); code.u8 (0xC2); // op xmm0, xmm2
+                            // movq acc, xmm0
+                            code.u8 (0x66);
+                            code.u8 ((uint8) (0x48 | (Reg.is_extended (acc) ? 1 : 0)));
+                            code.u8 (0x0F); code.u8 (0x7E);
+                            code.u8 ((uint8) (0xC0 | ((int) acc & 7)));
+
+                            var l_tail = emitter.new_label ();
+                            var l_done = emitter.new_label ();
+                            emit_test_rr (Reg.R11, Reg.R11);
+                            emitter.branch (BranchKind.JLE, l_done);
+                            emitter.bind (l_tail);
+                            emit_rex (true, acc, Reg.R10);
+                            code.u8 (sca_op);
+                            code.u8 ((uint8) (0x02 | (((int) acc & 7) << 3))); // op acc, [r10]
+                            emit_alu_ri (0, Reg.R10, 8);
+                            emit_alu_ri (5, Reg.R11, 1);
+                            emitter.branch (BranchKind.JG, l_tail);
+                            emitter.bind (l_done);
+                            if (spilled) {
+                                emit_store_rbp (spill_disp (vreg_spill[ins.dst]), Reg.RAX);
+                                emitter.pop_reg (Reg.RAX);
+                            }
                             break;
                         }
                         case IROp.ARR_LOAD: {
