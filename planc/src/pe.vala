@@ -51,7 +51,15 @@ namespace Planc {
         public const int IAT_GET_STD_HANDLE = 1;
         public const int IAT_WRITE_FILE = 2;
         public const int IAT_VIRTUAL_ALLOC = 3;
-        public const int IAT_COUNT = 4;
+        public const int IAT_GET_COMMAND_LINE_A = 4;
+        public const int IAT_CREATE_FILE_A = 5;
+        public const int IAT_READ_FILE = 6;
+        public const int IAT_GET_FILE_SIZE_EX = 7;
+        public const int IAT_CLOSE_HANDLE = 8;
+        public const int IAT_GET_SYSTEM_INFO = 9;
+        public const int IAT_CREATE_THREAD = 10;
+        public const int IAT_WAIT_FOR_SINGLE_OBJECT = 11;
+        public const int IAT_COUNT = 12;
 
         private static uint32 align_u32 (uint32 v, uint32 a) {
             uint32 r = v % a;
@@ -63,7 +71,15 @@ namespace Planc {
                 "ExitProcess",
                 "GetStdHandle",
                 "WriteFile",
-                "VirtualAlloc"
+                "VirtualAlloc",
+                "GetCommandLineA",
+                "CreateFileA",
+                "ReadFile",
+                "GetFileSizeEx",
+                "CloseHandle",
+                "GetSystemInfo",
+                "CreateThread",
+                "WaitForSingleObject"
             };
         }
 

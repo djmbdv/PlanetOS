@@ -276,11 +276,7 @@ namespace Planet.Kernel {
 
     private static int handle_slot (int h) {
         int index = h & 0xFF;
-        // One test per `if`: the `index < 3 || index >= MAX_FDS` form still
-        // miscompiles under planc 13:49 and leaves the shell unloaded (R-35).
-        if (index < 3)
-            return -1;
-        if (index >= MAX_FDS)
+        if (index < 3 || index >= MAX_FDS)
             return -1;
         return KernelLayout.FD_TABLE + index * 32;
     }

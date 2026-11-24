@@ -31,6 +31,8 @@ namespace Gsk {
         public GpuDevice vk { get; private set; }
         private CairoRenderer fallback;
         private bool realized = true;
+        private Spv.Module? cached_mod = null;
+        private int cached_pipe_id = 0;
 
         public VulkanRenderer (int ctx_id = 1) {
             vk = new GpuDevice (ctx_id);
@@ -51,12 +53,56 @@ namespace Gsk {
             return "vulkan-fallback-cairo";
         }
 
+        private void encode_venus_shaders (RenderNode node) {
+            if (node is ShaderNode) {
+                var sn = (ShaderNode) node;
+                if (sn.valid () && sn.shader.raw_size () > 0) {
+                    if (cached_mod != sn.shader || cached_pipe_id <= 0) {
+                        int mod_id = vk.create_shader_module (sn.shader.raw_bytes (), sn.shader.raw_size ());
+                        cached_pipe_id = vk.create_pipeline (mod_id);
+                        cached_mod = sn.shader;
+                    }
+                    vk.draw_fullscreen (cached_pipe_id);
+                    vk.ctx.submit (vk.enc);
+                    vk.enc.reset ();
+                }
+                return;
+            }
+            if (node is ContainerNode) {
+                var cn = (ContainerNode) node;
+                int n = cn.count ();
+                for (int i = 0; i < n; i++) {
+                    var ch = cn.get_child (i);
+                    if (ch != null)
+                        encode_venus_shaders (ch);
+                }
+                return;
+            }
+            if (node is ClipNode) {
+                var cl = (ClipNode) node;
+                if (cl.child != null)
+                    encode_venus_shaders (cl.child);
+                return;
+            }
+            if (node is OpacityNode) {
+                var op = (OpacityNode) node;
+                if (op.child != null)
+                    encode_venus_shaders (op.child);
+                return;
+            }
+            if (node is ShadowNode) {
+                var sh = (ShadowNode) node;
+                if (sh.child != null)
+                    encode_venus_shaders (sh.child);
+            }
+        }
+
         public override void render (RenderNode root, ImageSurface target) {
             if (root == null || target == null || target.buf_addr == 0)
                 return;
             if (realized && vk != null) {
                 if (vk.using_hw_venus) {
-                    vk.draw_fullscreen (1);
+                    encode_venus_shaders (root);
                 } else if (vk.using_hw_virgl && root is ColorNode) {
                     var cn = (ColorNode) root;
                     if (cn.bounds != null && cn.bounds.x <= 0.0 && cn.bounds.y <= 0.0

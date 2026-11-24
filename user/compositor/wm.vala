@@ -83,10 +83,8 @@ namespace Wm {
         private int last_mx = -100;
         private int last_my = -100;
         private Module pattern;
+        private ShaderNode? pattern_node = null;
         private bool pattern_ok = false;
-        private int[] pat;
-        private int pat_w = 0;
-        private int pat_h = 0;
         private int pat_step = PAT_STEP;
         private bool anim_on = false;
         private int anim_period_ms = 400;
@@ -142,7 +140,7 @@ namespace Wm {
             notes_lay.set_text ("notes\nopenbox interaction model\ngala style shadows + dock\n100% vala, no mutter\ngdk + cairo framebuffer\nspir-v accent pipeline");
             // highlight the last line ("spir-v accent pipeline")
             notes_lay.add_color_attribute (103, 125, 0.220, 0.592, 0.941);
-            pat = new int[1];
+            pattern_node = null;
             zone = TimeZone.new_local ();
             places = new BookmarkFile ();
             load_places ();
@@ -1569,16 +1567,12 @@ namespace Wm {
             return true;
         }
 
-        // Bakes the per-pixel shader into coarse PAT_STEP blocks. The fragment
-        // stage runs on the CPU (no ICD), so evaluating 100x75 samples once is
-        // the practical equivalent of a full-screen Vulkan draw.
+        // Bakes the per-pixel shader into coarse PAT_STEP blocks via Gsk.ShaderNode.
         public bool load_pattern (string path) {
             pattern = Module.load (path);
             if (!pattern.valid || !pattern.has_input ())
                 return false;
-            pat_w = (SCREEN_W + pat_step - 1) / pat_step;
-            pat_h = (SCREEN_H + pat_step - 1) / pat_step;
-            pat = new int[pat_w * pat_h];
+            pattern_node = new ShaderNode (new Gsk.Rect (0, 0, SCREEN_W, SCREEN_H), pattern, pat_step);
             pattern_ok = true;
             bake_pattern (0.0);
             damage_full ();
@@ -1588,18 +1582,10 @@ namespace Wm {
         // Runs the fragment stage over every block sample with the current
         // push-constant values.
         public void bake_pattern (double time) {
-            if (!pattern_ok)
+            if (!pattern_ok || pattern_node == null)
                 return;
-            pattern.set_uniforms (time, (double) SCREEN_W, (double) SCREEN_H);
-            for (int by = 0; by < pat_h; by++) {
-                for (int bx = 0; bx < pat_w; bx++) {
-                    pattern.pixel (bx * pat_step + pat_step / 2, by * pat_step + pat_step / 2);
-                    int rr = pattern.ir ();
-                    int gg = pattern.ig ();
-                    int bb = pattern.ib ();
-                    pat[by * pat_w + bx] = (rr << 16) | (gg << 8) | bb;
-                }
-            }
+            pattern_node.set_time (time);
+            pattern_node.bake ();
         }
 
         // Re-bakes the background with a new time uniform. Only meaningful for
@@ -1619,6 +1605,8 @@ namespace Wm {
         // Coarser blocks trade detail for a cheaper bake (animated backgrounds).
         public void set_pattern_step (int step) {
             pat_step = (step < 2) ? 2 : ((step > 32) ? 32 : step);
+            if (pattern_node != null)
+                pattern_node.set_step (pat_step);
         }
         public int animation_count () { return anim_count; }
 
@@ -1628,16 +1616,12 @@ namespace Wm {
         }
 
         public bool has_pattern () { return pattern_ok; }
-        public int pattern_samples () { return pattern_ok ? (pat_w * pat_h) : 0; }
+        public int pattern_samples () { return (pattern_ok && pattern_node != null) ? pattern_node.baked_blocks () : 0; }
 
         public int pattern_at (int x, int y) {
-            if (!pattern_ok)
+            if (!pattern_ok || pattern_node == null)
                 return 0;
-            int bx = x / pat_step;
-            int by = y / pat_step;
-            if (bx < 0 || by < 0 || bx >= pat_w || by >= pat_h)
-                return 0;
-            return pat[by * pat_w + bx];
+            return pattern_node.color_at_pixel (x, y);
         }
 
         // --- scene ----------------------------------------------------
@@ -1746,31 +1730,11 @@ namespace Wm {
             cr.fill ();
         }
 
-        // Blits the baked shader pattern, visiting only the blocks that fall
-        // inside the current clip (a damage rect) instead of the whole screen.
+        // Blits the baked shader pattern via Gsk.ShaderNode, visiting only
+        // the blocks that fall inside the current clip (a damage rect).
         private void draw_pattern (Context cr) {
-            int x0 = cr.clip_left ();
-            int y0 = cr.clip_top ();
-            int x1 = cr.clip_right ();
-            int y1 = cr.clip_bottom ();
-            int by = y0 / pat_step;
-            while (by * pat_step < y1) {
-                if (by >= 0 && by < pat_h) {
-                    int bx = x0 / pat_step;
-                    while (bx * pat_step < x1) {
-                        if (bx >= 0 && bx < pat_w) {
-                            int col = pat[by * pat_w + bx];
-                            cr.set_source_rgb ((double) ((col >> 16) & 0xFF) / 255.0,
-                                               (double) ((col >> 8) & 0xFF) / 255.0,
-                                               (double) (col & 0xFF) / 255.0);
-                            cr.rectangle (bx * pat_step, by * pat_step, pat_step, pat_step);
-                            cr.fill ();
-                        }
-                        bx = bx + 1;
-                    }
-                }
-                by = by + 1;
-            }
+            if (pattern_node != null)
+                pattern_node.draw_cairo (cr);
             cr.set_source_rgba (acc_r, acc_g, acc_b, 0.14);
             cr.rectangle (0, TOP_H, SCREEN_W, 2);
             cr.fill ();
@@ -1945,15 +1909,12 @@ namespace Wm {
             return rad;
         }
 
-        // Pango layout cache: reflow only when the text or the width changes.
         private void draw_title (Context cr, Win w, int x, int y) {
             int tw = w.w - 96;
             if (tw < 40)
                 tw = 40;
-            if (title_lay.current_width () != tw)
-                title_lay.set_width (tw);
-            if (title_lay.current_text () != w.title)
-                title_lay.set_text (w.title);
+            title_lay.set_width (tw);
+            title_lay.set_text (w.title);
             show_layout_at (cr, title_lay, x, y);
         }
 

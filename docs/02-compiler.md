@@ -569,3 +569,21 @@ Consequences that must be respected:
 - **Parser & property codegen**: `parser.vala` checks for `]` after `[` before treating a delegate-named identifier as an array type suffix in statements/casts; `codegen.vala` lowers compound assignments (`op=`) on custom properties that define both getter and setter.
 - **Static-field `++` / `--`**: `codegen.vala` detects `Klass.field++` (the member target is a bare type name) with `is_type_name ()` and lowers it through the static-global lvalue path instead of calling `expr_type_full ()` on the type name. Using `is_type_name ()` rather than a plain `find_class ()` lookup keeps locals, globals, fields and consts that shadow a type name on the instance-field/property path (a local `Foo Foo` with a property `n` still goes through the getter/setter).
 
+## 18. Windows PE32+ Target, Native Self-Hosting, and SPIR-V/GSK Updates
+
+- **Windows PE32+ backend (`--target=windows`)**: [pe.vala](../planc/src/pe.vala) emits 4-section PE32+ executables (`.text`, `.rdata`, `.data`, `.idata`) importing `KERNEL32.dll` (`ExitProcess`, `GetStdHandle`, `WriteFile`, `VirtualAlloc`, `GetCommandLineA`, `CreateFileA`, `ReadFile`, `GetFileSizeEx`, `CloseHandle`, `GetSystemInfo`, `CreateThread`, `WaitForSingleObject`) with fixed `ImageBase` (`0x140000000`) and `NX_COMPAT`.
+- **Win64 host runtime (`emitter.vala` + `host_native.vala`)**:
+  - `emit_rt_build_args_win32()` parses `GetCommandLineA()` (with quoted-argument handling) into a `planc` `string[]` for `main(string[] args)`.
+  - `emit_rt_read_file_win32()`, `emit_rt_write_file_win32()`, and `emit_rt_eprint()` implement `Host` file I/O and stderr output via Win32 handles.
+  - `emit_rt_cpu_count()`, `emit_rt_thread_spawn()`, and `emit_rt_thread_join()` provide Win32 `CreateThread` / `WaitForSingleObject` / `CloseHandle` support while keeping `cpu_count()` at `1` on Windows for deterministic single-threaded self-hosting.
+- **Native Windows self-hosting**: `planc.exe` (stage 0 via `valac`) compiles `planc2.exe` (`--target=windows` + `host_native.vala`), which compiles `planc3.exe`, which compiles `planc4.exe` with bit-for-bit fixed point (`sha256(planc3.exe) == sha256(planc4.exe)`), with no dependency on GLib, `valac`, or WSL.
+- **Cross-platform compiler test runner (`planc/tests/run.sh`)**: Auto-detects Windows (`MINGW*`/`MSYS*`/`CYGWIN*`), selects `planc.exe`, defaults to `RUN_MODE=windows` (`--target=windows`, PE header verification, no WSL required), and supports `PLANC_TEST_TARGET=linux` for WSL ELF verification. QEMU integration tests on Windows are run through `tests/qemu.py`.
+- **Semantic & register allocator fixes**:
+  - `PuzzleRA.emit_setcc()` encodes `setcc`/`movzx` directly into the destination register without clobbering `%rax` when `%rax` holds a live value across short-circuit `||` / `&&` (R-35).
+  - `check_struct_cycles()` checks struct-typed fields before full type resolution, and `expr_type_full()` preserves `elem_type_name` for `ValaType.STRUCT` and `ValaType.DELEGATE` in `ArrayNewExpr` (`new Pair[n]`).
+- **SPIR-V & GSK (`spirv.vala`, `spirv_compat.vala`, `gsk/nodes.vala`, `gsk/renderer.vala`)**:
+  - `SpirvBackend` registers `gl_FragCoord` lazily only when `frag_coord_*()` is used, exposes `sin`/`cos`/`tan`/`pow`/`exp`/`log`/`exp2`/`log2` (`GLSL.std.450`), and supports `%` (`OpSMod`/`OpFMod`).
+  - `Spv.Module` pre-decodes constants/variables/entry offset once in `evaluate()`, restricts output color updates in `OpStore` to `output_id`, copies vector components in `OpLoad`, and implements `OpConvertSToF`, `OpSNegate`, `OpFNegate`, `OpIAdd`, `OpISub`, `OpIMul`, `OpSDiv`, `OpSMod`, and `OpFMod`.
+  - `Gsk.ShaderNode` reuses its block buffer, clips `draw_cairo()` to the active clip rect (with a `draw_rgba()` fast path when `step == 1`), and `Gsk.VulkanRenderer` caches Venus shader modules/pipelines per `Spv.Module`.
+
+

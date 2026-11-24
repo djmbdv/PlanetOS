@@ -27,6 +27,15 @@ namespace Planc {
             return __planc_host_read_file (path);
         }
 
+        public static uint8[] read_bytes (string path) throws FileError {
+            string s = __planc_host_read_file (path);
+            int n = s.length;
+            var out_buf = new uint8[n];
+            for (int i = 0; i < n; i++)
+                out_buf[i] = (uint8) s[i];
+            return out_buf;
+        }
+
         public static void write_file (string path, uint8[] data) throws FileError {
             __planc_host_write_file (path, data);
         }

@@ -12,7 +12,36 @@
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-PLANC=${PLANC:-$HERE/../build/planc}
+
+IS_WIN=0
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*) IS_WIN=1 ;;
+esac
+
+if [ -z "${PLANC:-}" ]; then
+    if [ "$IS_WIN" = "1" ] && [ -x "$HERE/../build/planc.exe" ]; then
+        PLANC="$HERE/../build/planc.exe"
+    else
+        PLANC="$HERE/../build/planc"
+    fi
+fi
+
+PYTHON_BIN=$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)
+
+RUN_MODE="native"
+TARGET_FLAGS=""
+BIN_EXT=""
+if [ "$IS_WIN" = "1" ]; then
+    req_target="${PLANC_TEST_TARGET:-windows}"
+    if [ "$req_target" = "linux" ]; then
+        RUN_MODE="wsl"
+    else
+        RUN_MODE="windows"
+        TARGET_FLAGS="--target=windows"
+        BIN_EXT=".exe"
+    fi
+fi
+
 WORK=${WORK:-$(mktemp -d)}
 PASS=0
 FAIL=0
@@ -37,9 +66,100 @@ ko () {
     echo "FAIL $1: $2"
 }
 
+files_equal () {
+    if command -v cmp >/dev/null 2>&1; then
+        cmp -s "$1" "$2"
+        return $?
+    fi
+    "$PYTHON_BIN" - "$1" "$2" <<'PYEOF'
+import sys
+a = open(sys.argv[1], "rb").read().replace(b"\r\n", b"\n")
+b = open(sys.argv[2], "rb").read().replace(b"\r\n", b"\n")
+sys.exit(0 if a == b else 1)
+PYEOF
+}
+
+to_wsl_path () {
+    if command -v wslpath >/dev/null 2>&1; then
+        wslpath -a "$1"
+    else
+        local winp
+        winp=$(cygpath -m "$1" 2>/dev/null || echo "$1")
+        wsl wslpath -a "$winp"
+    fi
+}
+
+run_bin () {
+    if [ "$RUN_MODE" = "wsl" ]; then
+        wsl "$(to_wsl_path "$1")"
+    else
+        "$1"
+    fi
+}
+
 check_elf () {
     name=$1
     binary=$2
+
+    if [ "$RUN_MODE" = "windows" ]; then
+        if ! "$PYTHON_BIN" - "$binary" <<'PYEOF'
+import struct, sys
+b = open(sys.argv[1], "rb").read()
+assert len(b) >= 64 and b[:2] == b"MZ"
+pe_off = struct.unpack_from("<I", b, 0x3C)[0]
+assert b[pe_off:pe_off+4] == b"PE\x00\x00"
+PYEOF
+        then
+            ko "$name" "invalid PE executable"
+            return 1
+        fi
+        return 0
+    fi
+
+    if [ "$RUN_MODE" = "wsl" ] && ! wsl sh -c "command -v readelf >/dev/null 2>&1"; then
+        if ! "$PYTHON_BIN" - "$binary" <<'PYEOF'
+import struct, sys
+b = open(sys.argv[1], "rb").read()
+assert len(b) >= 64 and b[:4] == b"\x7fELF", "not ELF"
+e_type, = struct.unpack_from("<H", b, 16)
+assert e_type == 2, "not ET_EXEC"
+e_phoff, = struct.unpack_from("<Q", b, 32)
+e_phentsize, e_phnum = struct.unpack_from("<HH", b, 54)
+loads = 0
+for i in range(e_phnum):
+    p_type, p_flags = struct.unpack_from("<II", b, e_phoff + i * e_phentsize)
+    if p_type == 1:
+        loads += 1
+        assert (p_flags & 3) != 3 or (p_flags & 1) == 0 or (p_flags & 2) == 0, "segment is RWX"
+assert loads == 3, f"expected 3 PT_LOAD, got {loads}"
+PYEOF
+        then
+            ko "$name" "invalid ELF64 ET_EXEC"
+            return 1
+        fi
+        return 0
+    fi
+
+    if [ "$RUN_MODE" = "wsl" ]; then
+        wbin=$(to_wsl_path "$binary")
+        if ! wsl readelf -h "$wbin" | grep -q 'Type:.*EXEC'; then
+            ko "$name" "not ET_EXEC"
+            return 1
+        fi
+        if [ "$(wsl readelf -lW "$wbin" | grep -c '^  LOAD')" != "3" ]; then
+            ko "$name" "expected exactly 3 PT_LOAD segments"
+            return 1
+        fi
+        if wsl readelf -lW "$wbin" | grep '^  LOAD' | grep -q 'RWE'; then
+            ko "$name" "segment is RWX"
+            return 1
+        fi
+        if [ -n "$(wsl nm -u "$wbin" 2>/dev/null)" ]; then
+            ko "$name" "undefined symbols present"
+            return 1
+        fi
+        return 0
+    fi
 
     if ! readelf -h "$binary" | grep -q 'Type:.*EXEC'; then
         ko "$name" "not ET_EXEC"
@@ -60,12 +180,19 @@ check_elf () {
     return 0
 }
 
-echo "== valid =="
+echo "== valid (mode=$RUN_MODE) =="
 for src in "$HERE"/valid/*.vala; do
     name=$(basename "$src" .vala)
-    binary="$WORK/$name"
+    if [ "$RUN_MODE" = "windows" ]; then
+        case "$name" in
+            async_goroutines|channels_and_mutex)
+                continue
+                ;;
+        esac
+    fi
+    binary="$WORK/${name}${BIN_EXT}"
 
-    if ! "$PLANC" "$src" -o "$binary" 2>"$WORK/$name.err"; then
+    if ! "$PLANC" $TARGET_FLAGS "$src" -o "$binary" 2>"$WORK/$name.err"; then
         ko "$name" "compile failed: $(cat "$WORK/$name.err")"
         continue
     fi
@@ -74,7 +201,7 @@ for src in "$HERE"/valid/*.vala; do
         continue
     fi
 
-    "$binary" >"$WORK/$name.stdout" 2>&1
+    run_bin "$binary" >"$WORK/$name.stdout" 2>&1
     actual_code=$?
 
     expected_code=0
@@ -86,7 +213,7 @@ for src in "$HERE"/valid/*.vala; do
     fi
 
     if [ -f "$HERE/valid/$name.out" ]; then
-        if ! cmp -s "$WORK/$name.stdout" "$HERE/valid/$name.out"; then
+        if ! files_equal "$WORK/$name.stdout" "$HERE/valid/$name.out"; then
             ko "$name" "stdout differs from $name.out"
             continue
         fi
@@ -135,9 +262,9 @@ done
 echo "== bounds =="
 for src in "$HERE"/bounds/*.vala; do
     name=$(basename "$src" .vala)
-    binary="$WORK/bounds_$name"
+    binary="$WORK/bounds_${name}${BIN_EXT}"
 
-    if ! "$PLANC" "$src" -o "$binary" 2>"$WORK/$name.err"; then
+    if ! "$PLANC" $TARGET_FLAGS "$src" -o "$binary" 2>"$WORK/$name.err"; then
         ko "$name" "compile failed: $(cat "$WORK/$name.err")"
         continue
     fi
@@ -145,7 +272,7 @@ for src in "$HERE"/bounds/*.vala; do
         continue
     fi
 
-    "$binary" >"$WORK/$name.stdout" 2>"$WORK/$name.runerr"
+    run_bin "$binary" >"$WORK/$name.stdout" 2>"$WORK/$name.runerr"
     code=$?
     if [ "$code" != "134" ]; then
         ko "$name" "exit $code, expected 134"
@@ -159,20 +286,20 @@ for src in "$HERE"/bounds/*.vala; do
 done
 
 if [ -f "$HERE/valid/string_index.vala" ]; then
-    nb_bin="$WORK/string_index_nobc"
-    if ! "$PLANC" --no-bounds-check "$HERE/valid/string_index.vala" -o "$nb_bin" 2>"$WORK/nobc.err"; then
+    nb_bin="$WORK/string_index_nobc${BIN_EXT}"
+    if ! "$PLANC" $TARGET_FLAGS --no-bounds-check "$HERE/valid/string_index.vala" -o "$nb_bin" 2>"$WORK/nobc.err"; then
         ko "no_bounds_check" "compile failed: $(cat "$WORK/nobc.err")"
     elif ! check_elf "no_bounds_check" "$nb_bin"; then
         :
-    elif nm "$nb_bin" | grep -q '__planc_bounds_panic'; then
+    elif [ "$RUN_MODE" = "native" ] && nm "$nb_bin" | grep -q '__planc_bounds_panic'; then
         ko "no_bounds_check" "__planc_bounds_panic still emitted"
     else
-        "$nb_bin" >"$WORK/nobc.stdout" 2>&1
+        run_bin "$nb_bin" >"$WORK/nobc.stdout" 2>&1
         code=$?
         expected_code=$(cat "$HERE/valid/string_index.code")
         if [ "$code" != "$expected_code" ]; then
             ko "no_bounds_check" "exit $code, expected $expected_code"
-        elif ! cmp -s "$WORK/nobc.stdout" "$HERE/valid/string_index.out"; then
+        elif ! files_equal "$WORK/nobc.stdout" "$HERE/valid/string_index.out"; then
             ko "no_bounds_check" "stdout differs"
         else
             ok "no_bounds_check"
@@ -182,11 +309,18 @@ fi
 
 echo "== check_leaks =="
 for base_name in array_int array_string string_concat template_value refcount_loop class_basic class_inheritance class_dtor_arc nullable_narrowing foreach_array switch_stmt ternary_coalesce string_slice_literals error_handling properties_and_initializers out_ref_params namespaces_and_forward_types generics_and_array interfaces delegates_and_lambdas named_ctors_defaults_args byte_arrays_and_stdlib float_double asm_body async_goroutines signals channels_and_mutex object_root compact_manual compact_nested do_while nullable_delegate; do
+    if [ "$RUN_MODE" = "windows" ]; then
+        case "$base_name" in
+            async_goroutines|channels_and_mutex|named_ctors_defaults_args)
+                continue
+                ;;
+        esac
+    fi
     src="$HERE/valid/$base_name.vala"
-    bin="$WORK/leaks_$base_name"
+    bin="$WORK/leaks_${base_name}${BIN_EXT}"
     case_name="check_leaks_$base_name"
 
-    if ! "$PLANC" --check-leaks "$src" -o "$bin" 2>"$WORK/$case_name.err"; then
+    if ! "$PLANC" $TARGET_FLAGS --check-leaks "$src" -o "$bin" 2>"$WORK/$case_name.err"; then
         ko "$case_name" "compile failed: $(cat "$WORK/$case_name.err")"
         continue
     fi
@@ -194,7 +328,7 @@ for base_name in array_int array_string string_concat template_value refcount_lo
         continue
     fi
 
-    "$bin" >"$WORK/$case_name.stdout" 2>"$WORK/$case_name.runerr"
+    run_bin "$bin" >"$WORK/$case_name.stdout" 2>"$WORK/$case_name.runerr"
     code=$?
     expected_code=0
     [ -f "$HERE/valid/$base_name.code" ] && expected_code=$(cat "$HERE/valid/$base_name.code")
@@ -205,7 +339,7 @@ for base_name in array_int array_string string_concat template_value refcount_lo
     fi
 
     if [ -f "$HERE/valid/$base_name.out" ]; then
-        if ! cmp -s "$WORK/$case_name.stdout" "$HERE/valid/$base_name.out"; then
+        if ! files_equal "$WORK/$case_name.stdout" "$HERE/valid/$base_name.out"; then
             ko "$case_name" "stdout differs from $base_name.out"
             continue
         fi
@@ -232,12 +366,12 @@ int main() {
     return b.x;
 }
 EOF
-if ! "$PLANC" "$WORK/null_deref.vala" -o "$WORK/null_deref" 2>"$WORK/null_deref.err"; then
+if ! "$PLANC" $TARGET_FLAGS "$WORK/null_deref.vala" -o "$WORK/null_deref${BIN_EXT}" 2>"$WORK/null_deref.err"; then
     ko "null_deref_panic" "compile failed: $(cat "$WORK/null_deref.err")"
-elif ! check_elf "null_deref_panic" "$WORK/null_deref"; then
+elif ! check_elf "null_deref_panic" "$WORK/null_deref${BIN_EXT}"; then
     :
 else
-    "$WORK/null_deref" >"$WORK/null_deref.stdout" 2>"$WORK/null_deref.runerr"
+    run_bin "$WORK/null_deref${BIN_EXT}" >"$WORK/null_deref.stdout" 2>"$WORK/null_deref.runerr"
     code=$?
     if [ "$code" != "134" ]; then
         ko "null_deref_panic" "exit $code, expected 134"
@@ -248,17 +382,17 @@ else
     fi
 fi
 
-if ! "$PLANC" --no-null-check "$WORK/null_deref.vala" -o "$WORK/null_deref_nnc" 2>"$WORK/nnc.err"; then
+if ! "$PLANC" $TARGET_FLAGS --no-null-check "$WORK/null_deref.vala" -o "$WORK/null_deref_nnc${BIN_EXT}" 2>"$WORK/nnc.err"; then
     ko "no_null_check" "compile failed: $(cat "$WORK/nnc.err")"
-elif ! check_elf "no_null_check" "$WORK/null_deref_nnc"; then
+elif ! check_elf "no_null_check" "$WORK/null_deref_nnc${BIN_EXT}"; then
     :
-elif nm "$WORK/null_deref_nnc" | grep -q '__planc_null_panic'; then
+elif [ "$RUN_MODE" = "native" ] && nm "$WORK/null_deref_nnc${BIN_EXT}" | grep -q '__planc_null_panic'; then
     ko "no_null_check" "__planc_null_panic still emitted"
 else
     ok "no_null_check"
 fi
 
-if "$PLANC" --strict-null "$WORK/null_deref.vala" -o "$WORK/null_deref_sn" 2>"$WORK/sn.err"; then
+if "$PLANC" $TARGET_FLAGS --strict-null "$WORK/null_deref.vala" -o "$WORK/null_deref_sn${BIN_EXT}" 2>"$WORK/sn.err"; then
     ko "strict_null_reject" "expected compile error for unguarded T?"
 elif ! grep -q "cannot dereference nullable" "$WORK/sn.err"; then
     ko "strict_null_reject" "unexpected error: $(cat "$WORK/sn.err")"
@@ -275,9 +409,9 @@ int main () {
     return 1;
 }
 EOF
-if ! "$PLANC" --strict-null "$WORK/strict_null_ok.vala" -o "$WORK/strict_null_ok" 2>"$WORK/sn_ok.err"; then
+if ! "$PLANC" $TARGET_FLAGS --strict-null "$WORK/strict_null_ok.vala" -o "$WORK/strict_null_ok${BIN_EXT}" 2>"$WORK/sn_ok.err"; then
     ko "strict_null_narrowed" "compile failed: $(cat "$WORK/sn_ok.err")"
-elif ! "$WORK/strict_null_ok"; then
+elif ! run_bin "$WORK/strict_null_ok${BIN_EXT}"; then
     ko "strict_null_narrowed" "non-zero exit"
 else
     ok "strict_null_narrowed"
@@ -290,12 +424,12 @@ int main () {
     return f (5);
 }
 EOF
-if ! "$PLANC" "$WORK/null_del_call.vala" -o "$WORK/null_del_call" 2>"$WORK/ndc.err"; then
+if ! "$PLANC" $TARGET_FLAGS "$WORK/null_del_call.vala" -o "$WORK/null_del_call${BIN_EXT}" 2>"$WORK/ndc.err"; then
     ko "nullable_delegate_panic" "compile failed: $(cat "$WORK/ndc.err")"
-elif ! check_elf "nullable_delegate_panic" "$WORK/null_del_call"; then
+elif ! check_elf "nullable_delegate_panic" "$WORK/null_del_call${BIN_EXT}"; then
     :
 else
-    "$WORK/null_del_call" >"$WORK/ndc.stdout" 2>"$WORK/ndc.runerr"
+    run_bin "$WORK/null_del_call${BIN_EXT}" >"$WORK/ndc.stdout" 2>"$WORK/ndc.runerr"
     code=$?
     if [ "$code" != "134" ]; then
         ko "nullable_delegate_panic" "exit $code, expected 134"
@@ -306,7 +440,7 @@ else
     fi
 fi
 
-if "$PLANC" --strict-null "$WORK/null_del_call.vala" -o "$WORK/null_del_sn" 2>"$WORK/ndsn.err"; then
+if "$PLANC" $TARGET_FLAGS --strict-null "$WORK/null_del_call.vala" -o "$WORK/null_del_sn${BIN_EXT}" 2>"$WORK/ndsn.err"; then
     ko "nullable_delegate_strict_null_reject" "expected compile error for unguarded Fn?"
 elif ! grep -q "cannot dereference nullable" "$WORK/ndsn.err"; then
     ko "nullable_delegate_strict_null_reject" "unexpected error: $(cat "$WORK/ndsn.err")"
@@ -324,9 +458,9 @@ int main () {
     return (r1 == 5 && r2 == 10) ? 0 : 1;
 }
 EOF
-if ! "$PLANC" --strict-null "$WORK/null_del_sn_ok.vala" -o "$WORK/null_del_sn_ok" 2>"$WORK/ndsn_ok.err"; then
+if ! "$PLANC" $TARGET_FLAGS --strict-null "$WORK/null_del_sn_ok.vala" -o "$WORK/null_del_sn_ok${BIN_EXT}" 2>"$WORK/ndsn_ok.err"; then
     ko "nullable_delegate_strict_null_ok" "compile failed: $(cat "$WORK/ndsn_ok.err")"
-elif ! "$WORK/null_del_sn_ok"; then
+elif ! run_bin "$WORK/null_del_sn_ok${BIN_EXT}"; then
     ko "nullable_delegate_strict_null_ok" "non-zero exit"
 else
     ok "nullable_delegate_strict_null_ok"
@@ -362,11 +496,11 @@ int main () {
     return (sum == 68 && ga.length == 12) ? 0 : 1;
 }
 EOF
-if ! "$PLANC" "$WORK/planc_extra_features.vala" -o "$WORK/planc_extra_features" 2>"$WORK/pef.err"; then
+if ! "$PLANC" $TARGET_FLAGS "$WORK/planc_extra_features.vala" -o "$WORK/planc_extra_features${BIN_EXT}" 2>"$WORK/pef.err"; then
     ko "planc_extra_features" "compile failed: $(cat "$WORK/pef.err")"
-elif ! check_elf "planc_extra_features" "$WORK/planc_extra_features"; then
+elif ! check_elf "planc_extra_features" "$WORK/planc_extra_features${BIN_EXT}"; then
     :
-elif ! "$WORK/planc_extra_features" >"$WORK/pef.stdout" 2>&1; then
+elif ! run_bin "$WORK/planc_extra_features${BIN_EXT}" >"$WORK/pef.stdout" 2>&1; then
     ko "planc_extra_features" "non-zero exit"
 elif ! grep -q '^ext=68,18446744073709551615,6148914691236517203,-9223372036854775808,18446744073709551615,12,51,1622$' "$WORK/pef.stdout"; then
     ko "planc_extra_features" "unexpected stdout: $(cat "$WORK/pef.stdout")"
@@ -390,12 +524,12 @@ int main() {
     return b.kind();
 }
 EOF
-if ! "$PLANC" "$WORK/bad_cast.vala" -o "$WORK/bad_cast" 2>"$WORK/bad_cast.err"; then
+if ! "$PLANC" $TARGET_FLAGS "$WORK/bad_cast.vala" -o "$WORK/bad_cast${BIN_EXT}" 2>"$WORK/bad_cast.err"; then
     ko "bad_cast_panic" "compile failed: $(cat "$WORK/bad_cast.err")"
-elif ! check_elf "bad_cast_panic" "$WORK/bad_cast"; then
+elif ! check_elf "bad_cast_panic" "$WORK/bad_cast${BIN_EXT}"; then
     :
 else
-    "$WORK/bad_cast" >"$WORK/bad_cast.stdout" 2>"$WORK/bad_cast.runerr"
+    run_bin "$WORK/bad_cast${BIN_EXT}" >"$WORK/bad_cast.stdout" 2>"$WORK/bad_cast.runerr"
     code=$?
     if [ "$code" != "134" ]; then
         ko "bad_cast_panic" "exit $code, expected 134"
@@ -421,12 +555,12 @@ int main () {
     return 0;
 }
 EOF
-if ! "$PLANC" "$WORK/compact_double_free.vala" -o "$WORK/compact_double_free" 2>"$WORK/compact_double_free.err"; then
+if ! "$PLANC" $TARGET_FLAGS "$WORK/compact_double_free.vala" -o "$WORK/compact_double_free${BIN_EXT}" 2>"$WORK/compact_double_free.err"; then
     ko "compact_double_free_panic" "compile failed: $(cat "$WORK/compact_double_free.err")"
-elif ! check_elf "compact_double_free_panic" "$WORK/compact_double_free"; then
+elif ! check_elf "compact_double_free_panic" "$WORK/compact_double_free${BIN_EXT}"; then
     :
 else
-    "$WORK/compact_double_free" >"$WORK/compact_double_free.stdout" 2>"$WORK/compact_double_free.runerr"
+    run_bin "$WORK/compact_double_free${BIN_EXT}" >"$WORK/compact_double_free.stdout" 2>"$WORK/compact_double_free.runerr"
     code=$?
     if [ "$code" != "134" ]; then
         ko "compact_double_free_panic" "exit $code, expected 134"
@@ -479,17 +613,17 @@ namespace Models {
     }
 }
 EOF
-if ! "$PLANC" --check-leaks "$WORK/multi_a.vala" "$WORK/multi_b.vala" -o "$WORK/multifile_bin" 2>"$WORK/multifile.err"; then
+if ! "$PLANC" $TARGET_FLAGS --check-leaks "$WORK/multi_a.vala" "$WORK/multi_b.vala" -o "$WORK/multifile_bin${BIN_EXT}" 2>"$WORK/multifile.err"; then
     ko "multifile" "compile failed: $(cat "$WORK/multifile.err")"
-elif ! check_elf "multifile" "$WORK/multifile_bin"; then
+elif ! check_elf "multifile" "$WORK/multifile_bin${BIN_EXT}"; then
     :
 else
-    "$WORK/multifile_bin" >"$WORK/multifile.stdout" 2>"$WORK/multifile.runerr"
+    run_bin "$WORK/multifile_bin${BIN_EXT}" >"$WORK/multifile.stdout" 2>"$WORK/multifile.runerr"
     code=$?
     printf 'alice:7\nauth:empty user\n' >"$WORK/multifile.expected"
     if [ "$code" != "0" ]; then
         ko "multifile" "exit $code, expected 0 ($(cat "$WORK/multifile.runerr"))"
-    elif ! cmp -s "$WORK/multifile.stdout" "$WORK/multifile.expected"; then
+    elif ! files_equal "$WORK/multifile.stdout" "$WORK/multifile.expected"; then
         ko "multifile" "unexpected stdout: $(cat "$WORK/multifile.stdout")"
     else
         ok "multifile"
@@ -509,8 +643,8 @@ if command -v readelf >/dev/null 2>&1; then
     fi
 fi
 
-echo "== freestanding_qemu =="
-if command -v qemu-system-x86_64 >/dev/null 2>&1; then
+if [ "$IS_WIN" = "0" ] && command -v qemu-system-x86_64 >/dev/null 2>&1; then
+    echo "== freestanding_qemu =="
     ROOT=$(cd "$HERE/../.." && pwd)
     k_bin="$WORK/planet-kernel"
     u_bin="$WORK/init.elf"
@@ -685,7 +819,7 @@ PYEOF
     p_elf="$WORK/planc.elf"
     p_disk="$WORK/planet_planc_disk.img"
     p_ser="$WORK/qemu_planc_serial.log"
-    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/diag.vala" "$ROOT/planc/src/preproc.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
+    if ! "$PLANC" --target=planetos --image-base=0xC00000 "$ROOT/stdlib/planet_sys.vala" "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" "$ROOT/planc/src/ast.vala" "$ROOT/planc/src/diag.vala" "$ROOT/planc/src/preproc.vala" "$ROOT/planc/src/lexer.vala" "$ROOT/planc/src/parser.vala" "$ROOT/planc/src/asm.vala" "$ROOT/planc/src/emitter.vala" "$ROOT/planc/src/elf.vala" "$ROOT/planc/src/dwarf.vala" "$ROOT/planc/src/spirv.vala" "$ROOT/planc/src/opt.vala" "$ROOT/planc/src/pe.vala" "$ROOT/planc/src/puzzle_ra.vala" "$ROOT/planc/src/codegen.vala" "$ROOT/planc/src/main.vala" -o "$p_elf" 2>"$WORK/p_elf.err"; then
         ko "planetos_planc_qemu" "planc.elf compile failed: $(cat "$WORK/p_elf.err")"
     else
     python3 - "$p_disk" "$s_bin" "$p_elf" "$HERE/valid/utf8.vala" "$HERE/valid/class_basic.vala" << 'PYEOF'
@@ -770,9 +904,9 @@ EOF
         ko "spirv_shader" "compile failed: $(cat "$WORK/spv.err")"
     elif ! "$PLANC" --target=spirv "$WORK/frag_planet.vala" -o "$WORK/frag2.spv" 2>/dev/null; then
         ko "spirv_shader" "second compile failed"
-    elif ! cmp -s "$WORK/frag1.spv" "$WORK/frag2.spv"; then
+    elif ! files_equal "$WORK/frag1.spv" "$WORK/frag2.spv"; then
         ko "spirv_shader" "non-deterministic .spv output"
-    elif ! python3 - "$WORK/frag1.spv" <<'PYEOF'
+    elif ! "$PYTHON_BIN" - "$WORK/frag1.spv" <<'PYEOF'
 import struct, sys
 b = open(sys.argv[1], "rb").read()
 assert len(b) >= 20 and len(b) % 4 == 0
@@ -792,32 +926,32 @@ fi
 
 echo
 echo "== -O1 optimization =="
-if ! "$PLANC" -O1 "$HERE/valid/opt_o1.vala" -o "$WORK/opt_o1_bin" 2>"$WORK/opt_o1.err"; then
+if ! "$PLANC" $TARGET_FLAGS -O1 "$HERE/valid/opt_o1.vala" -o "$WORK/opt_o1_bin${BIN_EXT}" 2>"$WORK/opt_o1.err"; then
     ko "opt_o1_flag" "compile failed: $(cat "$WORK/opt_o1.err")"
-elif ! "$WORK/opt_o1_bin" >"$WORK/opt_o1.stdout" 2>&1; then
+elif ! run_bin "$WORK/opt_o1_bin${BIN_EXT}" >"$WORK/opt_o1.stdout" 2>&1; then
     ko "opt_o1_flag" "non-zero exit"
-elif ! cmp -s "$WORK/opt_o1.stdout" "$HERE/valid/opt_o1.out"; then
+elif ! files_equal "$WORK/opt_o1.stdout" "$HERE/valid/opt_o1.out"; then
     ko "opt_o1_flag" "stdout differs from opt_o1.out"
 else
     ok "opt_o1_flag"
 fi
 
-if ! "$PLANC" -O2 "$HERE/valid/opt_o2.vala" -o "$WORK/opt_o2_bin" 2>"$WORK/opt_o2.err"; then
+if ! "$PLANC" $TARGET_FLAGS -O2 "$HERE/valid/opt_o2.vala" -o "$WORK/opt_o2_bin${BIN_EXT}" 2>"$WORK/opt_o2.err"; then
     ko "opt_o2_flag" "compile failed: $(cat "$WORK/opt_o2.err")"
-elif ! "$WORK/opt_o2_bin" >"$WORK/opt_o2.stdout" 2>&1; then
+elif ! run_bin "$WORK/opt_o2_bin${BIN_EXT}" >"$WORK/opt_o2.stdout" 2>&1; then
     ko "opt_o2_flag" "non-zero exit"
-elif ! cmp -s "$WORK/opt_o2.stdout" "$HERE/valid/opt_o2.out"; then
+elif ! files_equal "$WORK/opt_o2.stdout" "$HERE/valid/opt_o2.out"; then
     ko "opt_o2_flag" "stdout differs from opt_o2.out"
 else
     ok "opt_o2_flag"
 fi
 
 for lv in 1 2; do
-    if ! "$PLANC" "-O$lv" "$HERE/valid/unsigned_ints.vala" -o "$WORK/uint_o$lv" 2>"$WORK/uint_o$lv.err"; then
+    if ! "$PLANC" $TARGET_FLAGS "-O$lv" "$HERE/valid/unsigned_ints.vala" -o "$WORK/uint_o${lv}${BIN_EXT}" 2>"$WORK/uint_o$lv.err"; then
         ko "unsigned_ints_o$lv" "compile failed: $(cat "$WORK/uint_o$lv.err")"
-    elif ! "$WORK/uint_o$lv" >"$WORK/uint_o$lv.stdout" 2>&1; then
+    elif ! run_bin "$WORK/uint_o${lv}${BIN_EXT}" >"$WORK/uint_o$lv.stdout" 2>&1; then
         ko "unsigned_ints_o$lv" "non-zero exit"
-    elif ! cmp -s "$WORK/uint_o$lv.stdout" "$HERE/valid/unsigned_ints.out"; then
+    elif ! files_equal "$WORK/uint_o$lv.stdout" "$HERE/valid/unsigned_ints.out"; then
         ko "unsigned_ints_o$lv" "stdout differs"
     else
         ok "unsigned_ints_o$lv"

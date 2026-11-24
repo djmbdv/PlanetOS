@@ -2003,10 +2003,17 @@ namespace Planc {
         }
 
         private void emit_setcc (Reg dst, uint8 cc) {
-            code.u8 (0x0F); code.u8 (cc); code.u8 (0xC0); // setcc al
-            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0xC0); // movzx eax, al
-            if (dst != Reg.RAX)
-                emit_mov_rr (dst, Reg.RAX);
+            int d = (int) dst;
+            if (d >= 8)
+                code.u8 (0x41);
+            else if (d >= 4)
+                code.u8 (0x40);
+            code.u8 (0x0F); code.u8 (cc); code.u8 ((uint8) (0xC0 | (d & 7))); // setcc dst8
+            if (d >= 8)
+                code.u8 (0x45);
+            else if (d >= 4)
+                code.u8 (0x40);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 ((uint8) (0xC0 | ((d & 7) << 3) | (d & 7))); // movzx dst32, dst8
         }
 
         private static uint8 cmp_cc (string op, bool is_u) {

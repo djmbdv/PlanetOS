@@ -1074,7 +1074,8 @@ namespace Planc {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"union '$(sd.name)' cannot contain reference-counted field '$(fld.name)' at $(fld.line):$(fld.column)");
                     }
-                    if (fld.field_type == ValaType.STRUCT) {
+                    if ((fld.field_type == ValaType.STRUCT || fld.field_type == ValaType.CLASS)
+                        && !fld.type_name.has_suffix ("*") && !fld.type_name.has_suffix ("?")) {
                         int u = find_decl_idx (names, fld.type_name);
                         if (u > 0) {
                             suc.add (v);
@@ -4553,6 +4554,8 @@ namespace Planc {
                     } else if (d.stack_alloc && d.init is ArrayNewExpr) {
                         // Stack-allocated constant-length array: no ref_temp_slot needed
                     } else {
+                        if (!d.infer_type)
+                            coerce_byte_array_literal (d.init, d.decl_type, d.decl_type_name);
                         prepare_expr (d.init, ref struct_temps, ref ref_temps);
                     }
                 }
@@ -6760,7 +6763,7 @@ namespace Planc {
             return b == "uint8" || b == "int8";
         }
 
-        private static void coerce_byte_array_literal (Expr? e, ValaType expected_t, string expected_tname) {
+        private void coerce_byte_array_literal (Expr? e, ValaType expected_t, string expected_tname) {
             if (e == null || !(e is ArrayLiteralExpr) || expected_t != ValaType.ARRAY)
                 return;
             var raw = strip_null (expected_tname);
@@ -6768,6 +6771,16 @@ namespace Planc {
                 var arr = (ArrayLiteralExpr) e;
                 arr.elem_type = ValaType.INT;
                 arr.elem_type_name = raw;
+            } else if (raw != "" && program.find_delegate (raw) != null) {
+                var arr = (ArrayLiteralExpr) e;
+                arr.elem_type = ValaType.STRUCT;
+                arr.elem_type_name = raw;
+                for (int i = 0; i < arr.elements.length; i++) {
+                    if (arr.elements[i] is LambdaExpr)
+                        ((LambdaExpr) arr.elements[i]).delegate_type_name = raw;
+                    else if (arr.elements[i] is VarRef && program.find (((VarRef) arr.elements[i]).name) != null)
+                        ((VarRef) arr.elements[i]).target_del_type = raw;
+                }
             }
         }
 
@@ -7194,6 +7207,9 @@ namespace Planc {
             } else if (program.find_class (raw) != null) {
                 et = ValaType.CLASS;
                 et_name = elem_name.has_suffix ("?") ? (raw + "?") : raw;
+            } else if (program.find_struct (raw) != null || program.find_delegate (raw) != null) {
+                et = ValaType.STRUCT;
+                et_name = raw;
             } else {
                 et = ValaType.ENUM;
                 et_name = raw;
@@ -8465,6 +8481,7 @@ namespace Planc {
                     tname = an.elem_type_name;
                 else if (an.elem_type == ValaType.ENUM || an.elem_type == ValaType.CLASS
                          || an.elem_type == ValaType.INTERFACE
+                         || an.elem_type == ValaType.STRUCT
                          || (an.elem_type == ValaType.ERROR && an.elem_type_name != ""))
                     tname = an.elem_type_name;
                 else

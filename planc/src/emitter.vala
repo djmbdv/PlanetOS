@@ -2517,6 +2517,10 @@ namespace Planc {
 
         // string[] __planc_build_args(int64 rdi_argc, uint8** rsi_argv)
         public void emit_rt_build_args () {
+            if (target_windows) {
+                emit_rt_build_args_win32 ();
+                return;
+            }
             var l_arg_loop = new_label ();
             var l_strlen = new_label ();
             var l_strlen_done = new_label ();
@@ -2590,6 +2594,168 @@ namespace Planc {
             bind (l_done);
             // mov rax, r14                    4C 89 F0
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
+        private void emit_rt_build_args_win32 () {
+            var l_c_ws = new_label ();
+            var l_c_tok = new_label ();
+            var l_c_q = new_label ();
+            var l_c_uq = new_label ();
+            var l_c_done = new_label ();
+            var l_p_ws = new_label ();
+            var l_p_q = new_label ();
+            var l_p_uq = new_label ();
+            var l_p_alloc = new_label ();
+            var l_done = new_label ();
+
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            code.u8 (0x41); code.u8 (0x57); // push r15
+            sub_rsp (40); // 16-byte aligned + 32-byte Win64 shadow
+
+            emit_iat_call (Pe.IAT_GET_COMMAND_LINE_A);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC5); // mov r13, rax (cmdline)
+
+            // Pass 1: count tokens in r12
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xE4); // xor r12d, r12d
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xEE); // mov rsi, r13
+
+            bind (l_c_ws);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06); // movzx eax, byte ptr [rsi]
+            code.u8 (0x84); code.u8 (0xC0);                 // test al, al
+            branch (BranchKind.JE, l_c_done);
+            code.u8 (0x3C); code.u8 (0x20);                 // cmp al, ' '
+            branch (BranchKind.JE, l_c_tok);
+            code.u8 (0x3C); code.u8 (0x09);                 // cmp al, '\t'
+            branch (BranchKind.JNE, l_c_q);
+            bind (l_c_tok);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            branch (BranchKind.JMP, l_c_ws);
+
+            bind (l_c_q);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC4); // inc r12 (argc++)
+            code.u8 (0x3C); code.u8 (0x22);                 // cmp al, '"'
+            branch (BranchKind.JNE, l_c_uq);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            var l_c_q_loop = new_label ();
+            bind (l_c_q_loop);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06); // movzx eax, byte ptr [rsi]
+            code.u8 (0x84); code.u8 (0xC0);                 // test al, al
+            branch (BranchKind.JE, l_c_done);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            code.u8 (0x3C); code.u8 (0x22);                 // cmp al, '"'
+            branch (BranchKind.JNE, l_c_q_loop);
+            branch (BranchKind.JMP, l_c_ws);
+
+            bind (l_c_uq);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x06); // movzx eax, byte ptr [rsi]
+            code.u8 (0x84); code.u8 (0xC0);                 // test al, al
+            branch (BranchKind.JE, l_c_done);
+            code.u8 (0x3C); code.u8 (0x20);                 // cmp al, ' '
+            branch (BranchKind.JE, l_c_ws);
+            code.u8 (0x3C); code.u8 (0x09);                 // cmp al, '\t'
+            branch (BranchKind.JE, l_c_ws);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6); // inc rsi
+            branch (BranchKind.JMP, l_c_uq);
+
+            bind (l_c_done);
+            // Allocate string[] of length r12
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE7); code.u8 (0x03); // shl rdi, 3
+            code.u8 (0xBE); code.u32le (1);                 // mov esi, 1
+            call_rel32 ("__planc_alloc");
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x60); code.u8 (0x08); // mov [rax + 8], r12
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC6); // mov r14, rax
+
+            // Pass 2: populate string[]
+            code.u8 (0x31); code.u8 (0xDB);                 // xor ebx, ebx
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0xEF); // mov r15, r13
+
+            bind (l_p_ws);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xE3); // cmp rbx, r12
+            branch (BranchKind.JGE, l_done);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x07); // movzx eax, byte ptr [r15]
+            code.u8 (0x84); code.u8 (0xC0);                 // test al, al
+            branch (BranchKind.JE, l_done);
+            code.u8 (0x3C); code.u8 (0x20);                 // cmp al, ' '
+            branch (BranchKind.JE, l_p_q);
+            code.u8 (0x3C); code.u8 (0x09);                 // cmp al, '\t'
+            branch (BranchKind.JNE, l_p_uq);
+            bind (l_p_q);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC7); // inc r15
+            branch (BranchKind.JMP, l_p_ws);
+
+            bind (l_p_uq);
+            code.u8 (0x31); code.u8 (0xC9);                 // xor ecx, ecx
+            code.u8 (0x3C); code.u8 (0x22);                 // cmp al, '"'
+            var l_p_unquoted = new_label ();
+            branch (BranchKind.JNE, l_p_unquoted);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC7); // inc r15
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xFA); // mov rdx, r15
+            var l_p_ql = new_label ();
+            bind (l_p_ql);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x0F);
+            code.u8 (0x84); code.u8 (0xC0);                 // test al, al
+            var l_p_q_advance = new_label ();
+            branch (BranchKind.JE, l_p_q_advance);
+            code.u8 (0x3C); code.u8 (0x22);                 // cmp al, '"'
+            branch (BranchKind.JE, l_p_q_advance);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1); // inc rcx
+            branch (BranchKind.JMP, l_p_ql);
+            bind (l_p_q_advance);
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xCF); // add r15, rcx
+            code.u8 (0x41); code.u8 (0x80); code.u8 (0x3F); code.u8 (0x22); // cmp byte ptr [r15], '"'
+            branch (BranchKind.JNE, l_p_alloc);
+            code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC7); // inc r15
+            branch (BranchKind.JMP, l_p_alloc);
+
+            bind (l_p_unquoted);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xFA); // mov rdx, r15
+            var l_p_ul = new_label ();
+            bind (l_p_ul);
+            code.u8 (0x41); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x0F);
+            code.u8 (0x84); code.u8 (0xC0);                 // test al, al
+            var l_p_u_adv = new_label ();
+            branch (BranchKind.JE, l_p_u_adv);
+            code.u8 (0x3C); code.u8 (0x20);
+            branch (BranchKind.JE, l_p_u_adv);
+            code.u8 (0x3C); code.u8 (0x09);
+            branch (BranchKind.JE, l_p_u_adv);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1); // inc rcx
+            branch (BranchKind.JMP, l_p_ul);
+            bind (l_p_u_adv);
+            code.u8 (0x49); code.u8 (0x01); code.u8 (0xCF); // add r15, rcx
+
+            bind (l_p_alloc);
+            code.u8 (0x52);                                 // push rdx
+            code.u8 (0x51);                                 // push rcx
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x79); code.u8 (0x01); // lea rdi, [rcx + 1]
+            code.u8 (0x31); code.u8 (0xF6);                 // xor esi, esi
+            call_rel32 ("__planc_alloc");
+            code.u8 (0x59);                                 // pop rcx
+            code.u8 (0x5E);                                 // pop rsi
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x48); code.u8 (0x08); // mov [rax + 8], rcx
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x78); code.u8 (0x10); // lea rdi, [rax + 16]
+            code.u8 (0xF3); code.u8 (0xA4);                 // rep movsb
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00); // mov byte ptr [rdi], 0
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0x44); code.u8 (0xDE); code.u8 (0x10); // mov [r14 + rbx * 8 + 16], rax
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC3); // inc rbx
+            branch (BranchKind.JMP, l_p_ws);
+
+            bind (l_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0); // mov rax, r14
+            add_rsp (40);
+            code.u8 (0x41); code.u8 (0x5F); // pop r15
             code.u8 (0x41); code.u8 (0x5E); // pop r14
             code.u8 (0x41); code.u8 (0x5D); // pop r13
             code.u8 (0x41); code.u8 (0x5C); // pop r12
@@ -3279,6 +3445,28 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x57); code.u8 (0x08); // mov rdx, [rdi + 8]
             code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2); // test rdx, rdx
             branch (BranchKind.JLE, l_done);
+            if (target_windows) {
+                push_rbp ();
+                mov_rsp_to_rbp ();
+                push_reg (Reg.RBX);
+                sub_rsp (56); // 16-byte aligned
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB); // mov rbx, rdi
+                code.u8 (0xB9); code.u32le (0xFFFFFFF4u); // mov ecx, STD_ERROR_HANDLE (-12)
+                emit_iat_call (Pe.IAT_GET_STD_HANDLE);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xC1); // mov rcx, rax
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x53); code.u8 (0x10); // lea rdx, [rbx + 16]
+                code.u8 (0x44); code.u8 (0x8B); code.u8 (0x43); code.u8 (0x08); // mov r8d, [rbx + 8]
+                code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x4C); code.u8 (0x24); code.u8 (0x28); // lea r9, [rsp + 40]
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (0); // mov qword [rsp+32], 0
+                emit_iat_call (Pe.IAT_WRITE_FILE);
+                add_rsp (56);
+                pop_reg (Reg.RBX);
+                leave ();
+                ret ();
+                bind (l_done);
+                ret ();
+                return;
+            }
             code.u8 (0x48); code.u8 (0x8D); code.u8 (0x77); code.u8 (0x10); // lea rsi, [rdi + 16]
             mov_edi (2);
             mov_eax (1);
@@ -3289,6 +3477,10 @@ namespace Planc {
 
         // void __planc_chmod(string* rdi_path, int64 rsi_mode)
         public void emit_rt_chmod () {
+            if (target_windows) {
+                ret ();
+                return;
+            }
             var l_done = new_label ();
             code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
             branch (BranchKind.JE, l_done);
@@ -3301,6 +3493,10 @@ namespace Planc {
 
         // (string* rax, Error* rdx) __planc_read_file(string* rdi_path)
         public void emit_rt_read_file (int err_msg_off, int domain_id) {
+            if (target_windows) {
+                emit_rt_read_file_win32 (err_msg_off, domain_id);
+                return;
+            }
             var l_rd_loop = new_label ();
             var l_rd_done = new_label ();
             var l_err_free = new_label ();
@@ -3434,6 +3630,10 @@ namespace Planc {
 
         // (int64 rax, Error* rdx) __planc_write_file(string* rdi_path, uint8[]* rsi_data)
         public void emit_rt_write_file (int err_msg_off, int domain_id) {
+            if (target_windows) {
+                emit_rt_write_file_win32 (err_msg_off, domain_id);
+                return;
+            }
             var l_wr_loop = new_label ();
             var l_wr_done = new_label ();
             var l_err_close = new_label ();
@@ -3525,6 +3725,227 @@ namespace Planc {
             ret ();
         }
 
+        private void emit_rt_read_file_win32 (int err_msg_off, int domain_id) {
+            var l_rd_loop = new_label ();
+            var l_rd_done = new_label ();
+            var l_err_free = new_label ();
+            var l_err_close = new_label ();
+            var l_err = new_label ();
+            var l_ret = new_label ();
+
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            code.u8 (0x41); code.u8 (0x57); // push r15
+            sub_rsp (72);
+
+            code.u8 (0x49); code.u8 (0xC7); code.u8 (0xC4); code.u32le (0xFFFFFFFFu); // mov r12, -1
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_err);
+
+            // CreateFileA(rdi + 16, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x4F); code.u8 (0x10); // lea rcx, [rdi + 16]
+            code.u8 (0xBA); code.u32le (0x80000000u); // mov edx, GENERIC_READ
+            code.u8 (0x41); code.u8 (0xB8); code.u32le (1); // mov r8d, FILE_SHARE_READ
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC9); // xor r9d, r9d
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (3); // [rsp+32] = OPEN_EXISTING
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x28); code.u32le (0x80); // [rsp+40] = FILE_ATTRIBUTE_NORMAL
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x30); code.u32le (0); // [rsp+48] = NULL
+            emit_iat_call (Pe.IAT_CREATE_FILE_A);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xF8); code.u8 (0xFF); // cmp rax, -1
+            branch (BranchKind.JE, l_err);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4); // mov r12, rax
+
+            // GetFileSizeEx(r12, &rsp[56])
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x54); code.u8 (0x24); code.u8 (0x38); // lea rdx, [rsp + 56]
+            emit_iat_call (Pe.IAT_GET_FILE_SIZE_EX);
+            code.u8 (0x85); code.u8 (0xC0); // test eax, eax
+            branch (BranchKind.JE, l_err_close);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x6C); code.u8 (0x24); code.u8 (0x38); // mov r13, [rsp + 56]
+
+            // str = __planc_alloc(r13 + 1, 0)
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x7D); code.u8 (0x01); // lea rdi, [r13 + 1]
+            code.u8 (0x31); code.u8 (0xF6); // xor esi, esi
+            call_rel32 ("__planc_alloc");
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC6); // mov r14, rax
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0x6E); code.u8 (0x08); // mov [r14 + 8], r13
+            code.u8 (0x41); code.u8 (0xC6); code.u8 (0x46); code.u8 (0x10); code.u8 (0x00); // mov byte [r14 + 16], 0
+
+            code.u8 (0x31); code.u8 (0xDB); // xor ebx, ebx
+            bind (l_rd_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xEB); // cmp rbx, r13
+            branch (BranchKind.JAE, l_rd_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE9); // mov rcx, r13
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xD9); // sub rcx, rbx
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC8); // mov r8, rcx
+            // clamp r8 to 0x40000000
+            code.u8 (0x49); code.u8 (0x81); code.u8 (0xF8); code.u32le (0x40000000u);
+            var l_no_clamp = new_label ();
+            branch (BranchKind.JBE, l_no_clamp);
+            code.u8 (0x41); code.u8 (0xB8); code.u32le (0x40000000u);
+            bind (l_no_clamp);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x54); code.u8 (0x1E); code.u8 (0x10); // lea rdx, [r14 + rbx + 16]
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x4C); code.u8 (0x24); code.u8 (0x38); // lea r9, [rsp + 56]
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (0); // [rsp+32] = NULL
+            emit_iat_call (Pe.IAT_READ_FILE);
+            code.u8 (0x85); code.u8 (0xC0); // test eax, eax
+            branch (BranchKind.JE, l_err_free);
+            code.u8 (0x8B); code.u8 (0x44); code.u8 (0x24); code.u8 (0x38); // mov eax, [rsp + 56]
+            code.u8 (0x85); code.u8 (0xC0); // test eax, eax
+            branch (BranchKind.JE, l_rd_done);
+            code.u8 (0x48); code.u8 (0x01); code.u8 (0xC3); // add rbx, rax
+            branch (BranchKind.JMP, l_rd_loop);
+
+            bind (l_rd_done);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0x5E); code.u8 (0x08); // mov [r14 + 8], rbx
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x7C); code.u8 (0x1E); code.u8 (0x10); // lea rdi, [r14 + rbx + 16]
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00); // mov byte [rdi], 0
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            emit_iat_call (Pe.IAT_CLOSE_HANDLE);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0); // mov rax, r14
+            xor_edx ();
+            branch (BranchKind.JMP, l_ret);
+
+            bind (l_err_free);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
+            call_rel32 ("__planc_unref");
+
+            bind (l_err_close);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            emit_iat_call (Pe.IAT_CLOSE_HANDLE);
+
+            bind (l_err);
+            mov_rdi_imm (24);
+            mov_esi_imm (1);
+            call_rel32 ("__planc_alloc");
+            mov_rcx_rax ();
+            mov_rax_imm (1);
+            store_rcx_disp_rax (8);
+            lea_rax_rip (err_msg_off);
+            store_rcx_disp_rax (16);
+            mov_rax_imm ((int64) domain_id);
+            store_rcx_disp_rax (24);
+            mov_rax_imm (1);
+            store_rcx_disp_rax (32);
+            mov_rdx_rcx_copy ();
+            xor_eax ();
+
+            bind (l_ret);
+            add_rsp (72);
+            code.u8 (0x41); code.u8 (0x5F); // pop r15
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
+        private void emit_rt_write_file_win32 (int err_msg_off, int domain_id) {
+            var l_wr_loop = new_label ();
+            var l_wr_done = new_label ();
+            var l_err_close = new_label ();
+            var l_err = new_label ();
+            var l_ret = new_label ();
+
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            code.u8 (0x41); code.u8 (0x57); // push r15
+            sub_rsp (72);
+
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_err);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6); // test rsi, rsi
+            branch (BranchKind.JE, l_err);
+
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF6); // mov r14, rsi
+            code.u8 (0x4D); code.u8 (0x8B); code.u8 (0x6E); code.u8 (0x08); // mov r13, [r14 + 8]
+            code.u8 (0x31); code.u8 (0xDB); // xor ebx, ebx
+
+            // CreateFileA(rdi + 16, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x4F); code.u8 (0x10); // lea rcx, [rdi + 16]
+            code.u8 (0xBA); code.u32le (0x40000000u); // mov edx, GENERIC_WRITE
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC0); // xor r8d, r8d
+            code.u8 (0x45); code.u8 (0x31); code.u8 (0xC9); // xor r9d, r9d
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (2); // [rsp+32] = CREATE_ALWAYS
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x28); code.u32le (0x80); // [rsp+40] = FILE_ATTRIBUTE_NORMAL
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x30); code.u32le (0); // [rsp+48] = NULL
+            emit_iat_call (Pe.IAT_CREATE_FILE_A);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xF8); code.u8 (0xFF); // cmp rax, -1
+            branch (BranchKind.JE, l_err);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4); // mov r12, rax
+
+            bind (l_wr_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xEB); // cmp rbx, r13
+            branch (BranchKind.JAE, l_wr_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE9); // mov rcx, r13
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xD9); // sub rcx, rbx
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xC8); // mov r8, rcx
+            code.u8 (0x49); code.u8 (0x81); code.u8 (0xF8); code.u32le (0x40000000u);
+            var l_no_clamp = new_label ();
+            branch (BranchKind.JBE, l_no_clamp);
+            code.u8 (0x41); code.u8 (0xB8); code.u32le (0x40000000u);
+            bind (l_no_clamp);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            code.u8 (0x49); code.u8 (0x8D); code.u8 (0x54); code.u8 (0x1E); code.u8 (0x10); // lea rdx, [r14 + rbx + 16]
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x4C); code.u8 (0x24); code.u8 (0x38); // lea r9, [rsp + 56]
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (0); // [rsp+32] = NULL
+            emit_iat_call (Pe.IAT_WRITE_FILE);
+            code.u8 (0x85); code.u8 (0xC0); // test eax, eax
+            branch (BranchKind.JE, l_err_close);
+            code.u8 (0x8B); code.u8 (0x44); code.u8 (0x24); code.u8 (0x38); // mov eax, [rsp + 56]
+            code.u8 (0x85); code.u8 (0xC0); // test eax, eax
+            branch (BranchKind.JE, l_err_close);
+            code.u8 (0x48); code.u8 (0x01); code.u8 (0xC3); // add rbx, rax
+            branch (BranchKind.JMP, l_wr_loop);
+
+            bind (l_wr_done);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            emit_iat_call (Pe.IAT_CLOSE_HANDLE);
+            xor_eax ();
+            xor_edx ();
+            branch (BranchKind.JMP, l_ret);
+
+            bind (l_err_close);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1); // mov rcx, r12
+            emit_iat_call (Pe.IAT_CLOSE_HANDLE);
+
+            bind (l_err);
+            mov_rdi_imm (24);
+            mov_esi_imm (1);
+            call_rel32 ("__planc_alloc");
+            mov_rcx_rax ();
+            mov_rax_imm (1);
+            store_rcx_disp_rax (8);
+            lea_rax_rip (err_msg_off);
+            store_rcx_disp_rax (16);
+            mov_rax_imm ((int64) domain_id);
+            store_rcx_disp_rax (24);
+            mov_rax_imm (1);
+            store_rcx_disp_rax (32);
+            mov_rdx_rcx_copy ();
+            xor_eax ();
+
+            bind (l_ret);
+            add_rsp (72);
+            code.u8 (0x41); code.u8 (0x5F); // pop r15
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
         // Reads ap[ap[0]++] where rdi/rax holds ap (uint64[] payload at +16).
         public void emit_va_arg () {
             mov_rcx_rax ();
@@ -3539,6 +3960,12 @@ namespace Planc {
 
         // int __planc_cpu_count()
         public void emit_rt_cpu_count () {
+            if (target_windows) {
+                // Keep Windows host compilation single-threaded and deterministic.
+                mov_eax (1);
+                ret ();
+                return;
+            }
             var l_byte_loop = new_label ();
             var l_bit_loop = new_label ();
             var l_next_byte = new_label ();
@@ -3598,6 +4025,74 @@ namespace Planc {
 
         // int64 __planc_thread_spawn(delegate_ptr rdi, int64 arg rsi)
         public void emit_rt_thread_spawn (bool target_planetos = false) {
+            if (target_windows) {
+                var l_ret_zero = new_label ();
+                var l_tramp = new_label ();
+                var l_spawn = new_label ();
+
+                push_rbp ();
+                mov_rsp_to_rbp ();
+                push_reg (Reg.RBX);
+                code.u8 (0x41); code.u8 (0x54); // push r12
+                code.u8 (0x41); code.u8 (0x55); // push r13
+                sub_rsp (56); // 16-byte aligned + 32 shadow + 16 args
+
+                code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+                branch (BranchKind.JE, l_ret_zero);
+                code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x27); // mov r12, [rdi] (fn_addr)
+                code.u8 (0x49); code.u8 (0x89); code.u8 (0xF5); // mov r13, rsi (arg)
+
+                mov_rdi_imm (16);
+                mov_esi_imm (1);
+                call_rel32 ("__planc_alloc");
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0x60); code.u8 (0x10); // mov [rax + 16], r12
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0x68); code.u8 (0x18); // mov [rax + 24], r13
+                code.u8 (0x49); code.u8 (0x89); code.u8 (0xC1); // mov r9, rax (lpParameter)
+                code.u8 (0x31); code.u8 (0xC9);                 // xor ecx, ecx (lpThreadAttributes = NULL)
+                code.u8 (0x31); code.u8 (0xD2);                 // xor edx, edx (dwStackSize = 0)
+                // lea r8, [rip + l_tramp]
+                code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x05);
+                var p_tramp = new BranchPatch ();
+                p_tramp.kind = BranchKind.JMP;
+                p_tramp.label = l_tramp;
+                p_tramp.displacement = code.length;
+                branches.add (p_tramp);
+                code.u32le (0);
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x20); code.u32le (0); // [rsp+32] = 0
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0x44); code.u8 (0x24); code.u8 (0x28); code.u32le (0); // [rsp+40] = NULL
+                emit_iat_call (Pe.IAT_CREATE_THREAD);
+                branch (BranchKind.JMP, l_spawn);
+
+                bind (l_ret_zero);
+                xor_eax ();
+
+                bind (l_spawn);
+                add_rsp (56);
+                code.u8 (0x41); code.u8 (0x5D); // pop r13
+                code.u8 (0x41); code.u8 (0x5C); // pop r12
+                pop_reg (Reg.RBX);
+                leave ();
+                ret ();
+
+                // Win64 LPTHREAD_START_ROUTINE trampoline: rcx = block*
+                bind (l_tramp);
+                push_rbp ();
+                mov_rsp_to_rbp ();
+                push_reg (Reg.RBX);
+                sub_rsp (40); // 16-byte aligned
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xCB); // mov rbx, rcx
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x7B); code.u8 (0x18); // mov rdi, [rbx + 24] (arg)
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x43); code.u8 (0x10); // mov rax, [rbx + 16] (fn)
+                code.u8 (0xFF); code.u8 (0xD0); // call rax
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xDF); // mov rdi, rbx
+                call_rel32 ("__planc_unref");
+                xor_eax ();
+                add_rsp (40);
+                pop_reg (Reg.RBX);
+                leave ();
+                ret ();
+                return;
+            }
             if (target_planetos) {
                 // A PlanetOS thread is a kernel task: SYS_THREAD_SPAWN(entry in
                 // rdi, arg in rsi) returns the tid. The entry runs in the same
@@ -3702,6 +4197,24 @@ namespace Planc {
 
         // void __planc_thread_join(int64 ctrl rdi)
         public void emit_rt_thread_join (bool target_planetos = false) {
+            if (target_windows) {
+                var l_done = new_label ();
+                code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+                branch (BranchKind.JE, l_done);
+                push_reg (Reg.RBX);
+                sub_rsp (32); // 16-byte aligned (push rbx = 8 + 8 ret = 16, +32 = 48)
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB); // mov rbx, rdi
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xF9); // mov rcx, rdi
+                code.u8 (0xBA); code.u32le (0xFFFFFFFFu); // mov edx, INFINITE
+                emit_iat_call (Pe.IAT_WAIT_FOR_SINGLE_OBJECT);
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xD9); // mov rcx, rbx
+                emit_iat_call (Pe.IAT_CLOSE_HANDLE);
+                add_rsp (32);
+                pop_reg (Reg.RBX);
+                bind (l_done);
+                ret ();
+                return;
+            }
             if (target_planetos) {
                 // The spawn result is the tid: SYS_WAIT(tid).
                 mov_eax (17);

@@ -182,7 +182,8 @@ namespace Gsk {
         public Rect bounds;
         public Module? shader;
         public int step = 8;
-        private int[] cells = new int[1];
+        private int[] cells = new int[0];
+        private uint8[] rgba_buf = new uint8[0];
         private int cols = 0;
         private int rows = 0;
         private bool baked = false;
@@ -208,6 +209,14 @@ namespace Gsk {
             return shader.has_input ();
         }
 
+        public void set_step (int block) {
+            int next = (block > 0) ? block : 8;
+            if (next != step) {
+                step = next;
+                baked = false;
+            }
+        }
+
         public void set_time (double t) {
             utime = t;
             baked = false;
@@ -225,6 +234,25 @@ namespace Gsk {
             return cols * rows;
         }
 
+        public int color_at_pixel (int x, int y) {
+            if (!valid () || bounds == null || bounds.is_empty ())
+                return 0;
+            if (!shader.has_input ()) {
+                shader.set_uniforms (utime, bounds.w, bounds.h);
+                shader.set_params (pa, pb, pc, pd);
+                shader.pixel (0, 0);
+                return (shader.ir () << 16) | (shader.ig () << 8) | shader.ib ();
+            }
+            if (!baked)
+                bake ();
+            int st = (step > 0) ? step : 8;
+            int bx = (x - (int) bounds.x) / st;
+            int by = (y - (int) bounds.y) / st;
+            if (bx < 0 || by < 0 || bx >= cols || by >= rows)
+                return 0;
+            return cells[by * cols + bx] & 0xFFFFFF;
+        }
+
         public void bake () {
             if (bounds == null || bounds.is_empty ())
                 return;
@@ -235,7 +263,9 @@ namespace Gsk {
             rows = ((int) bounds.h + st - 1) / st;
             if (cols <= 0 || rows <= 0)
                 return;
-            cells = new int[cols * rows];
+            int need = cols * rows;
+            if (cells.length != need)
+                cells = new int[need];
             shader.set_uniforms (utime, bounds.w, bounds.h);
             shader.set_params (pa, pb, pc, pd);
             shader.set_origin (bounds.x, bounds.y);
@@ -270,19 +300,52 @@ namespace Gsk {
                 shader.set_uniforms (utime, bounds.w, bounds.h);
                 shader.set_params (pa, pb, pc, pd);
                 shader.pixel (0, 0);
-                cr.set_source_rgba ((double) shader.ir () / 255.0,
-                                    (double) shader.ig () / 255.0,
-                                    (double) shader.ib () / 255.0, 1.0);
-                cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
-                cr.fill ();
+                double sa = (double) shader.ia () / 255.0;
+                if (sa > 0.0) {
+                    cr.set_source_rgba ((double) shader.ir () / 255.0,
+                                        (double) shader.ig () / 255.0,
+                                        (double) shader.ib () / 255.0, sa);
+                    cr.rectangle (bounds.x, bounds.y, bounds.w, bounds.h);
+                    cr.fill ();
+                }
                 cr.restore ();
                 return;
             }
             if (!baked)
                 bake ();
             int st = (step > 0) ? step : 8;
-            for (int by = 0; by < rows; by++) {
-                for (int bx = 0; bx < cols; bx++) {
+            if (st == 1 && cols > 0 && rows > 0) {
+                int need_bytes = cols * rows * 4;
+                if (rgba_buf.length != need_bytes)
+                    rgba_buf = new uint8[need_bytes];
+                for (int i = 0; i < cols * rows; i++) {
+                    int c = cells[i];
+                    int off = i * 4;
+                    rgba_buf[off + 0] = (uint8) (c & 0xFF);
+                    rgba_buf[off + 1] = (uint8) ((c >> 8) & 0xFF);
+                    rgba_buf[off + 2] = (uint8) ((c >> 16) & 0xFF);
+                    rgba_buf[off + 3] = (uint8) ((c >> 24) & 0xFF);
+                }
+                cr.draw_rgba (rgba_buf, cols, rows, (int) bounds.x, (int) bounds.y);
+                cr.restore ();
+                return;
+            }
+            int cx0 = cr.clip_left ();
+            int cy0 = cr.clip_top ();
+            int cx1 = cr.clip_right ();
+            int cy1 = cr.clip_bottom ();
+            int ox = (int) bounds.x;
+            int oy = (int) bounds.y;
+            int bx0 = (cx0 > ox) ? ((cx0 - ox) / st) : 0;
+            int by0 = (cy0 > oy) ? ((cy0 - oy) / st) : 0;
+            int bx1 = (cx1 - ox + st - 1) / st;
+            int by1 = (cy1 - oy + st - 1) / st;
+            if (bx0 < 0) bx0 = 0;
+            if (by0 < 0) by0 = 0;
+            if (bx1 > cols) bx1 = cols;
+            if (by1 > rows) by1 = rows;
+            for (int by = by0; by < by1; by++) {
+                for (int bx = bx0; bx < bx1; bx++) {
                     int c = cells[by * cols + bx];
                     int a = (c >> 24) & 0xFF;
                     if (a == 0)

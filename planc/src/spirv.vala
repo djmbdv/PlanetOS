@@ -40,6 +40,8 @@ namespace Planc {
         private const uint16 OP_F_MUL               = 133;
         private const uint16 OP_S_DIV               = 135;
         private const uint16 OP_F_DIV               = 136;
+        private const uint16 OP_S_MOD               = 139;
+        private const uint16 OP_F_MOD               = 141;
         private const uint16 OP_LABEL               = 248;
         private const uint16 OP_RETURN              = 253;
 
@@ -72,6 +74,7 @@ namespace Planc {
         private uint32 ty_ptr_pc_f32 = 0;
         private uint32 pc_id = 0;
         private bool pc_used = false;
+        private bool in_coord_used = false;
         private bool ext_used = false;
         private uint32 ext_set_id = 0;
         private uint32 main_fn_id = 0;
@@ -168,6 +171,17 @@ namespace Planc {
             return res;
         }
 
+        private void ensure_frag_coord () {
+            if (in_coord_used)
+                return;
+            in_coord_used = true;
+            ty_ptr_in_v4 = alloc_id ();
+            in_coord_id = alloc_id ();
+            emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_in_v4, 1, ty_v4f32 });   // Input=1
+            // gl_FragCoord: built-in input, usable through frag_coord_x()/y()
+            emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_in_v4, in_coord_id, 1 });
+        }
+
         // GLSL.std.450 opcode for the scalar math builtins, or 0 when the name
         // is not one of them.
         private static int ext_opcode (string name, out int argc) {
@@ -175,6 +189,14 @@ namespace Planc {
             if (name == "abs") { argc = 1; return 4; }
             if (name == "floor") { argc = 1; return 8; }
             if (name == "fract") { argc = 1; return 10; }
+            if (name == "sin") { argc = 1; return 13; }
+            if (name == "cos") { argc = 1; return 14; }
+            if (name == "tan") { argc = 1; return 15; }
+            if (name == "pow") { argc = 2; return 26; }
+            if (name == "exp") { argc = 1; return 27; }
+            if (name == "log") { argc = 1; return 28; }
+            if (name == "exp2") { argc = 1; return 29; }
+            if (name == "log2") { argc = 1; return 30; }
             if (name == "sqrt") { argc = 1; return 31; }
             if (name == "min") { argc = 2; return 37; }
             if (name == "max") { argc = 2; return 38; }
@@ -259,6 +281,7 @@ namespace Planc {
                 else if (be.op == "-") opc = is_f ? OP_F_SUB : OP_I_SUB;
                 else if (be.op == "*") opc = is_f ? OP_F_MUL : OP_I_MUL;
                 else if (be.op == "/") opc = is_f ? OP_F_DIV : OP_S_DIV;
+                else if (be.op == "%") opc = is_f ? OP_F_MOD : OP_S_MOD;
                 else throw new SemanticError.TYPE_MISMATCH (@"[spirv] unsupported binary op '$(be.op)' at $(be.line):$(be.column)");
                 uint32 res = alloc_id ();
                 out_ty = lt;
@@ -270,6 +293,7 @@ namespace Planc {
                 if ((ce.callee == "frag_coord_x" || ce.callee == "frag_coord_y"
                      || ce.callee == "frag_coord_z" || ce.callee == "frag_coord_w")
                     && ce.args.length == 0) {
+                    ensure_frag_coord ();
                     uint32 loaded = alloc_id ();
                     emit_op (fn_words, OP_LOAD, new uint32[] { ty_v4f32, loaded, in_coord_id });
                     int comp = 0;
@@ -445,18 +469,19 @@ namespace Planc {
             local_ptr_ids = new GenericArray<uint32> ();
             local_ty_ids = new GenericArray<uint32> ();
 
+            pc_used = false;
+            in_coord_used = false;
+            ext_used = false;
             ty_void = alloc_id ();
             ty_fn_void = alloc_id ();
             ty_f32 = alloc_id ();
             ty_i32 = alloc_id ();
             ty_v4f32 = alloc_id ();
             ty_ptr_out_v4 = alloc_id ();
-            ty_ptr_in_v4 = alloc_id ();
             ty_ptr_fn_f32 = alloc_id ();
             ty_ptr_fn_i32 = alloc_id ();
             ty_ptr_fn_v4 = alloc_id ();
             out_color_id = alloc_id ();
-            in_coord_id = alloc_id ();
             main_fn_id = alloc_id ();
             uint32 entry_lbl = alloc_id ();
 
@@ -466,13 +491,10 @@ namespace Planc {
             emit_op (type_words, OP_TYPE_INT, new uint32[] { ty_i32, 32, 1 });
             emit_op (type_words, OP_TYPE_VECTOR, new uint32[] { ty_v4f32, ty_f32, 4 });
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_out_v4, 3, ty_v4f32 });  // Output=3
-            emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_in_v4, 1, ty_v4f32 });   // Input=1
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_fn_f32, 7, ty_f32 });   // Function=7
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_fn_i32, 7, ty_i32 });
             emit_op (type_words, OP_TYPE_POINTER, new uint32[] { ty_ptr_fn_v4, 7, ty_v4f32 });
             emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_out_v4, out_color_id, 3 });
-            // gl_FragCoord: built-in input, usable through frag_coord_x()/y()
-            emit_op (type_words, OP_VARIABLE, new uint32[] { ty_ptr_in_v4, in_coord_id, 1 });
 
             bool has_ret = false;
             for (int i = 0; i < main_fn.body.length; i++) {
@@ -502,21 +524,23 @@ namespace Planc {
             }
             emit_op (words, OP_MEMORY_MODEL, new uint32[] { 0, 1 }); // Logical, GLSL450
 
-            // OpEntryPoint Fragment %main "main" %out_color
+            // OpEntryPoint Fragment %main "main" %out_color [%in_coord]
             var ep_str_words = new GenericArray<uint32> ();
             emit_str_words (ep_str_words, "main");
-            uint32 ep_wc = (uint32) (5 + ep_str_words.length);
+            uint32 ep_wc = (uint32) ((in_coord_used ? 5 : 4) + ep_str_words.length);
             words.add ((ep_wc << 16) | (uint32) OP_ENTRY_POINT);
             words.add (4); // Fragment
             words.add (main_fn_id);
             for (int i = 0; i < ep_str_words.length; i++)
                 words.add (ep_str_words[i]);
             words.add (out_color_id);
-            words.add (in_coord_id);
+            if (in_coord_used)
+                words.add (in_coord_id);
 
             emit_op (words, OP_EXECUTION_MODE, new uint32[] { main_fn_id, 7 }); // OriginUpperLeft
             emit_op (words, OP_DECORATE, new uint32[] { out_color_id, 30, 0 }); // Location 0
-            emit_op (words, OP_DECORATE, new uint32[] { in_coord_id, 11, 15 }); // BuiltIn FragCoord
+            if (in_coord_used)
+                emit_op (words, OP_DECORATE, new uint32[] { in_coord_id, 11, 15 }); // BuiltIn FragCoord
             if (pc_used) {
                 emit_op (words, OP_DECORATE, new uint32[] { ty_block, 2, 0 }); // Block
                 emit_op (words, OP_MEMBER_DECORATE, new uint32[] { ty_block, 0, 35, 0 });  // Offset 0
