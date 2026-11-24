@@ -469,8 +469,8 @@ namespace Planc {
 
         // leave                              C9   (mov rsp, rbp; pop rbp)
         public void leave () {
-            if (reg_alloc_active) {
-                int disp = -(reg_alloc_frame_bytes + 32);
+            if (reg_alloc_active && reg_alloc_save_count > 0) {
+                int disp = -(reg_alloc_frame_bytes + 8 * reg_alloc_save_count);
                 if (disp >= -128 && disp <= 127) {
                     code.u8 (0x48); code.u8 (0x8D); code.u8 (0x65);
                     code.u8 ((uint8) disp);
@@ -478,8 +478,10 @@ namespace Planc {
                     code.u8 (0x48); code.u8 (0x8D); code.u8 (0xA5);
                     code.u32le ((uint32) disp);
                 }
-                pop_reg (Reg.R15);
-                pop_reg (Reg.R14);
+                if (reg_alloc_save_count >= 4) {
+                    pop_reg (Reg.R15);
+                    pop_reg (Reg.R14);
+                }
                 pop_reg (Reg.R13);
                 pop_reg (Reg.R12);
             }
@@ -673,21 +675,32 @@ namespace Planc {
 
         private int[] slot_reg_map = new int[0];
         private int reg_alloc_frame_bytes = 0;
+        private int reg_alloc_save_count = 0;
         private bool reg_alloc_active = false;
 
-        public void begin_reg_alloc (int frame_bytes) {
+        public void begin_reg_alloc (int frame_bytes, int reg_count = 4) {
+            if (reg_count <= 0) {
+                reg_alloc_active = false;
+                reg_alloc_save_count = 0;
+                return;
+            }
+            int save_n = (reg_count <= 2) ? 2 : 4;
             reg_alloc_frame_bytes = frame_bytes;
+            reg_alloc_save_count = save_n;
             reg_alloc_active = true;
             slot_reg_map = new int[0];
             push_reg (Reg.R12);
             push_reg (Reg.R13);
-            push_reg (Reg.R14);
-            push_reg (Reg.R15);
+            if (save_n >= 4) {
+                push_reg (Reg.R14);
+                push_reg (Reg.R15);
+            }
         }
 
         public void end_reg_alloc () {
             reg_alloc_active = false;
             reg_alloc_frame_bytes = 0;
+            reg_alloc_save_count = 0;
             slot_reg_map = new int[0];
         }
 

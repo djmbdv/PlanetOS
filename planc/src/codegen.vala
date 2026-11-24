@@ -5760,7 +5760,10 @@ namespace Planc {
             reg_alloc_func = (opt_level >= 2 && !f.is_async && !f.is_dtor && !f.is_compact_free && f.from_lambda == null && !stmt_list_uses_addr_or_lambda (f.body));
             if (reg_alloc_func) {
                 compute_hot_reg_vars (f);
-                emitter.begin_reg_alloc (frame_bytes);
+                if (hot_reg_names.length > 0)
+                    emitter.begin_reg_alloc (frame_bytes, hot_reg_names.length);
+                else
+                    reg_alloc_func = false;
             }
 
             var param_raw_slots = new int[f.params.length];

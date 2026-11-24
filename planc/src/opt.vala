@@ -19,6 +19,7 @@ namespace Planc {
         private string cur_file = "";
         private Function? cur_func = null;
         private GenericArray<string> active_locals = new GenericArray<string> ();
+        private int licm_counter = 0;
 
         private static void mt_opt_worker (int wid) {
             var opt = new Optimizer ();
@@ -725,6 +726,270 @@ namespace Planc {
             return e;
         }
 
+        private static bool arr_contains_str (GenericArray<string> arr, string s) {
+            for (int i = 0; i < arr.length; i++) {
+                if (arr[i] == s) return true;
+            }
+            return false;
+        }
+
+        private static void add_unique_str (GenericArray<string> arr, string s) {
+            if (s != "" && !arr_contains_str (arr, s))
+                arr.add (s);
+        }
+
+        private bool collect_mod_expr (Expr? e, GenericArray<string> mod) {
+            if (e == null) return true;
+            if (e is LambdaExpr || e is AddrOfExpr) return false;
+            if (e is IncDecExpr) {
+                var inc = (IncDecExpr) e;
+                if (inc.target is VarRef) add_unique_str (mod, ((VarRef) inc.target).name);
+                return true;
+            }
+            if (e is UnaryExpr) return collect_mod_expr (((UnaryExpr) e).operand, mod);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return collect_mod_expr (b.left, mod) && collect_mod_expr (b.right, mod);
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return collect_mod_expr (ix.target, mod) && collect_mod_expr (ix.index, mod);
+            }
+            if (e is MemberAccessExpr) return collect_mod_expr (((MemberAccessExpr) e).target, mod);
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (c.args[i] is VarRef) add_unique_str (mod, ((VarRef) c.args[i]).name);
+                    if (!collect_mod_expr (c.args[i], mod)) return false;
+                }
+                return true;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (!collect_mod_expr (mc.target, mod)) return false;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (mc.args[i] is VarRef) add_unique_str (mod, ((VarRef) mc.args[i]).name);
+                    if (!collect_mod_expr (mc.args[i], mod)) return false;
+                }
+                return true;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return collect_mod_expr (te.condition, mod)
+                    && collect_mod_expr (te.then_expr, mod)
+                    && collect_mod_expr (te.else_expr, mod);
+            }
+            return true;
+        }
+
+        private bool collect_mod_stmt (Statement? s, GenericArray<string> mod) {
+            if (s == null) return true;
+            if (s is TryStatement || s is ForeachStatement || s is SwitchStatement) return false;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (!collect_mod_stmt (blk.statements[i], mod)) return false;
+                }
+                return true;
+            }
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                add_unique_str (mod, d.name);
+                return collect_mod_expr (d.init, mod);
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                add_unique_str (mod, a.name);
+                return collect_mod_expr (a.value, mod);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return collect_mod_expr (fa.target, mod) && collect_mod_expr (fa.value, mod);
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return collect_mod_expr (ia.target, mod)
+                    && collect_mod_expr (ia.index, mod)
+                    && collect_mod_expr (ia.value, mod);
+            }
+            if (s is ReturnStatement) return collect_mod_expr (((ReturnStatement) s).value, mod);
+            if (s is ExprStatement) return collect_mod_expr (((ExprStatement) s).expr, mod);
+            if (s is PrintStatement) return collect_mod_expr (((PrintStatement) s).value, mod);
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return collect_mod_expr (ifs.condition, mod)
+                    && collect_mod_stmt (ifs.then_body, mod)
+                    && collect_mod_stmt (ifs.else_body, mod);
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                return collect_mod_expr (ws.condition, mod) && collect_mod_stmt (ws.body, mod);
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                return collect_mod_stmt (dw.body, mod) && collect_mod_expr (dw.condition, mod);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return collect_mod_stmt (fs.init, mod)
+                    && collect_mod_expr (fs.condition, mod)
+                    && collect_mod_stmt (fs.step, mod)
+                    && collect_mod_stmt (fs.body, mod);
+            }
+            return true;
+        }
+
+        private bool is_licm_pure_arith (Expr? e, GenericArray<string> mod, out bool has_var) {
+            has_var = false;
+            if (e == null) return false;
+            if (e is IntLiteral) return true;
+            if (e is VarRef) {
+                string name = ((VarRef) e).name;
+                if (name == "this" || !is_local_or_param (name) || arr_contains_str (mod, name))
+                    return false;
+                has_var = true;
+                return true;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                if (u.op != "-" && u.op != "~") return false;
+                return is_licm_pure_arith (u.operand, mod, out has_var);
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                if (b.op != "+" && b.op != "-" && b.op != "*"
+                    && b.op != "&" && b.op != "|" && b.op != "^"
+                    && b.op != "<<" && b.op != ">>")
+                    return false;
+                bool hv1 = false;
+                bool hv2 = false;
+                if (!is_licm_pure_arith (b.left, mod, out hv1)) return false;
+                if (!is_licm_pure_arith (b.right, mod, out hv2)) return false;
+                has_var = hv1 || hv2;
+                return true;
+            }
+            return false;
+        }
+
+        private Expr licm_rewrite_expr (Expr e, GenericArray<string> mod,
+                                        GenericArray<Statement> out_stmts, int line, int col) {
+            if (e is BinaryExpr) {
+                bool hv = false;
+                if (is_licm_pure_arith (e, mod, out hv) && hv) {
+                    string tname = @"__licm_$(licm_counter++)";
+                    var vd = new VarDeclStatement () {
+                        name = tname,
+                        infer_type = true,
+                        init = e,
+                        line = line,
+                        column = col
+                    };
+                    out_stmts.add (vd);
+                    active_locals.add (tname);
+                    return new VarRef () { name = tname, line = e.line, column = e.column };
+                }
+                var b = (BinaryExpr) e;
+                b.left = licm_rewrite_expr (b.left, mod, out_stmts, line, col);
+                b.right = licm_rewrite_expr (b.right, mod, out_stmts, line, col);
+                return b;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = licm_rewrite_expr (u.operand, mod, out_stmts, line, col);
+                return u;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                ix.target = licm_rewrite_expr (ix.target, mod, out_stmts, line, col);
+                ix.index = licm_rewrite_expr (ix.index, mod, out_stmts, line, col);
+                return ix;
+            }
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                ma.target = licm_rewrite_expr (ma.target, mod, out_stmts, line, col);
+                return ma;
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++)
+                    c.args[i] = licm_rewrite_expr (c.args[i], mod, out_stmts, line, col);
+                return c;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (mc.target != null)
+                    mc.target = licm_rewrite_expr (mc.target, mod, out_stmts, line, col);
+                for (int i = 0; i < mc.args.length; i++)
+                    mc.args[i] = licm_rewrite_expr (mc.args[i], mod, out_stmts, line, col);
+                return mc;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = licm_rewrite_expr (te.condition, mod, out_stmts, line, col);
+                te.then_expr = licm_rewrite_expr (te.then_expr, mod, out_stmts, line, col);
+                te.else_expr = licm_rewrite_expr (te.else_expr, mod, out_stmts, line, col);
+                return te;
+            }
+            return e;
+        }
+
+        private void licm_rewrite_stmt (Statement? s, GenericArray<string> mod,
+                                        GenericArray<Statement> out_stmts, int line, int col) {
+            if (s == null) return;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++)
+                    licm_rewrite_stmt (blk.statements[i], mod, out_stmts, line, col);
+            } else if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                if (d.init != null) d.init = licm_rewrite_expr (d.init, mod, out_stmts, line, col);
+            } else if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                a.value = licm_rewrite_expr (a.value, mod, out_stmts, line, col);
+            } else if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                fa.target = licm_rewrite_expr (fa.target, mod, out_stmts, line, col);
+                fa.value = licm_rewrite_expr (fa.value, mod, out_stmts, line, col);
+            } else if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                ia.target = licm_rewrite_expr (ia.target, mod, out_stmts, line, col);
+                ia.index = licm_rewrite_expr (ia.index, mod, out_stmts, line, col);
+                ia.value = licm_rewrite_expr (ia.value, mod, out_stmts, line, col);
+            } else if (s is ExprStatement) {
+                var es = (ExprStatement) s;
+                es.expr = licm_rewrite_expr (es.expr, mod, out_stmts, line, col);
+            } else if (s is ReturnStatement) {
+                var rs = (ReturnStatement) s;
+                if (rs.value != null) rs.value = licm_rewrite_expr (rs.value, mod, out_stmts, line, col);
+            } else if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                ifs.condition = licm_rewrite_expr (ifs.condition, mod, out_stmts, line, col);
+                licm_rewrite_stmt (ifs.then_body, mod, out_stmts, line, col);
+                licm_rewrite_stmt (ifs.else_body, mod, out_stmts, line, col);
+            } else if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                ws.condition = licm_rewrite_expr (ws.condition, mod, out_stmts, line, col);
+                licm_rewrite_stmt (ws.body, mod, out_stmts, line, col);
+            } else if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                licm_rewrite_stmt (fs.init, mod, out_stmts, line, col);
+                if (fs.condition != null) fs.condition = licm_rewrite_expr (fs.condition, mod, out_stmts, line, col);
+                licm_rewrite_stmt (fs.step, mod, out_stmts, line, col);
+                licm_rewrite_stmt (fs.body, mod, out_stmts, line, col);
+            }
+        }
+
+        private void hoist_for_invariants (ForStatement fs, GenericArray<Statement> out_stmts) {
+            var mod = new GenericArray<string> ();
+            if (!collect_mod_stmt (fs.init, mod)) return;
+            if (!collect_mod_expr (fs.condition, mod)) return;
+            if (!collect_mod_stmt (fs.step, mod)) return;
+            if (!collect_mod_stmt (fs.body, mod)) return;
+            if (fs.condition != null)
+                fs.condition = licm_rewrite_expr (fs.condition, mod, out_stmts, fs.line, fs.column);
+            licm_rewrite_stmt (fs.body, mod, out_stmts, fs.line, fs.column);
+        }
+
         private void opt_stmt_list (GenericArray<Statement> stmts) {
             var out_stmts = new GenericArray<Statement> ();
             var cnames = new GenericArray<string> ();
@@ -807,6 +1072,8 @@ namespace Planc {
                         for (int j = 0; j < inner.statements.length; j++)
                             out_stmts.add (inner.statements[j]);
                     } else {
+                        if (level >= 2 && opt_s is ForStatement)
+                            hoist_for_invariants ((ForStatement) opt_s, out_stmts);
                         out_stmts.add (opt_s);
                     }
                     if (opt_s is ReturnStatement || opt_s is BreakStatement
