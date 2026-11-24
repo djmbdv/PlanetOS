@@ -17,6 +17,8 @@ namespace Planc {
         RET,
         RET_VOID,
         CALL,
+        TRE_JUMP,
+        TAIL_CALL,
         ARR_NEW,
         ARR_LOAD,
         ARR_STORE,
@@ -111,6 +113,10 @@ namespace Planc {
         private GenericArray<int> break_bbs = new GenericArray<int> ();
         private GenericArray<int> continue_bbs = new GenericArray<int> ();
         private GenericArray<int> arr_locals = new GenericArray<int> ();
+        private string cur_fn_name = "";
+        private int cur_nparams = 0;
+        private int tre_loop_bb = -1;
+        private int tre_acc_vreg = -1;
 
         private PuzzleRA (Emitter emitter, Program program, bool bounds_check,
                           bool program_uses_heap, Label bounds_panic_label) {
@@ -515,8 +521,49 @@ namespace Planc {
             }
             if (s is ReturnStatement) {
                 var r = (ReturnStatement) s;
+                if (r.value != null && arr_locals.length == 0) {
+                    if (r.value is CallExpr) {
+                        var c = (CallExpr) r.value;
+                        if (c.callee == cur_fn_name && c.args.length == cur_nparams && tre_loop_bb >= 0) {
+                            var ins = new IRInst () { op = IROp.TRE_JUMP, target_bb = tre_loop_bb };
+                            for (int i = 0; i < c.args.length; i++)
+                                ins.args.add (lower_expr (c.args[i]));
+                            emit_ir (ins);
+                            blocks[cur_bb].succs.add (tre_loop_bb);
+                            return;
+                        }
+                        if (tre_acc_vreg < 0 && c.callee != cur_fn_name && program.find (c.callee) != null && c.args.length <= 6) {
+                            var ins = new IRInst () { op = IROp.TAIL_CALL, str_val = c.callee };
+                            for (int i = 0; i < c.args.length; i++)
+                                ins.args.add (lower_expr (c.args[i]));
+                            emit_ir (ins);
+                            return;
+                        }
+                    }
+                    if (tre_acc_vreg >= 0 && r.value is BinaryExpr) {
+                        var b = (BinaryExpr) r.value;
+                        if (b.op == "+" && b.right is CallExpr) {
+                            var c = (CallExpr) b.right;
+                            if (c.callee == cur_fn_name && c.args.length == cur_nparams && tre_loop_bb >= 0) {
+                                int lv = lower_expr (b.left);
+                                emit_ir (new IRInst () { op = IROp.BIN, sop = "+", dst = tre_acc_vreg, lhs = tre_acc_vreg, rhs = lv });
+                                var ins = new IRInst () { op = IROp.TRE_JUMP, target_bb = tre_loop_bb };
+                                for (int i = 0; i < c.args.length; i++)
+                                    ins.args.add (lower_expr (c.args[i]));
+                                emit_ir (ins);
+                                blocks[cur_bb].succs.add (tre_loop_bb);
+                                return;
+                            }
+                        }
+                    }
+                }
                 if (r.value != null) {
                     int rv = lower_expr (r.value);
+                    if (tre_acc_vreg >= 0) {
+                        int sum_v = new_vreg ();
+                        emit_ir (new IRInst () { op = IROp.BIN, sop = "+", dst = sum_v, lhs = rv, rhs = tre_acc_vreg });
+                        rv = sum_v;
+                    }
                     emit_ir (new IRInst () { op = IROp.RET, lhs = rv });
                 } else {
                     emit_ir (new IRInst () { op = IROp.RET_VOID });
@@ -665,7 +712,35 @@ namespace Planc {
             var insts = blocks[bb].insts;
             if (insts.length == 0) return false;
             var op = insts[insts.length - 1].op;
-            return op == IROp.JMP || op == IROp.RET || op == IROp.RET_VOID;
+            return op == IROp.JMP || op == IROp.RET || op == IROp.RET_VOID
+                || op == IROp.TRE_JUMP || op == IROp.TAIL_CALL;
+        }
+
+        private bool stmt_has_assoc_tre (Statement? s) {
+            if (s == null) return false;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (stmt_has_assoc_tre (blk.statements[i])) return true;
+                }
+                return false;
+            }
+            if (s is ReturnStatement) {
+                var r = (ReturnStatement) s;
+                if (r.value is BinaryExpr) {
+                    var b = (BinaryExpr) r.value;
+                    if (b.op == "+" && b.right is CallExpr && ((CallExpr) b.right).callee == cur_fn_name)
+                        return true;
+                }
+                return false;
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return stmt_has_assoc_tre (ifs.then_body) || stmt_has_assoc_tre (ifs.else_body);
+            }
+            if (s is WhileStatement) return stmt_has_assoc_tre (((WhileStatement) s).body);
+            if (s is ForStatement) return stmt_has_assoc_tre (((ForStatement) s).body);
+            return false;
         }
 
         // ------------------------------------------------------------------
@@ -700,7 +775,6 @@ namespace Planc {
                 var insts = blocks[b].insts;
                 for (int ii = 0; ii < insts.length; ii++) {
                     var ins = insts[ii];
-                    int[] uses = new int[0];
                     if (ins.lhs >= 0) add_use_bit (b * words, bb_use, bb_def, ins.lhs);
                     if (ins.rhs >= 0) add_use_bit (b * words, bb_use, bb_def, ins.rhs);
                     if (ins.op == IROp.ARR_STORE && ins.dst >= 0)
@@ -709,6 +783,10 @@ namespace Planc {
                         add_use_bit (b * words, bb_use, bb_def, ins.args[ai]);
                     if (ins.dst >= 0 && ins.op != IROp.ARR_STORE)
                         set_bit (bb_def, b * words, ins.dst);
+                    if (ins.op == IROp.TRE_JUMP) {
+                        for (int pi = 0; pi < cur_nparams; pi++)
+                            set_bit (bb_def, b * words, pi);
+                    }
                 }
             }
 
@@ -773,6 +851,26 @@ namespace Planc {
                             }
                         }
                         clear_bit (cur_live, 0, def);
+                    }
+                    if (ins.op == IROp.TRE_JUMP) {
+                        for (int pi = 0; pi < cur_nparams; pi++) {
+                            for (int w = 0; w < words; w++) {
+                                uint64 m = cur_live[w];
+                                while (m != 0) {
+                                    int u = w * 64 + ctz64 (m);
+                                    if (u != pi) {
+                                        set_bit (interf, pi * words, u);
+                                        set_bit (interf, u * words, pi);
+                                    }
+                                    m &= m - 1;
+                                }
+                            }
+                            clear_bit (cur_live, 0, pi);
+                        }
+                        for (int ai = 0; ai < ins.args.length && ai < 6; ai++) {
+                            if (hint_phys[ins.args[ai]] < 0)
+                                hint_phys[ins.args[ai]] = abi_arg_phys (ai);
+                        }
                     }
 
                     // Apply x86-64 puzzle board constraints for live-across vregs:
@@ -1200,25 +1298,27 @@ namespace Planc {
             for (int i = 0; i < n; i++) {
                 if (done[i]) continue;
                 int cur = i;
-                Reg saved_r = phys_to_reg (vreg_phys[args[cur]]);
-                emit_mov_rr (Reg.R10, saved_r);
+                int start_dst_p = abi_arg_phys (i);
+                emit_mov_rr (Reg.R10, phys_to_reg (start_dst_p));
                 while (!done[cur]) {
                     int dst_p = abi_arg_phys (cur);
+                    int src_p = vreg_phys[args[cur]];
+                    if (src_p == start_dst_p) {
+                        emit_mov_rr (phys_to_reg (dst_p), Reg.R10);
+                        done[cur] = true;
+                        break;
+                    }
                     int next_idx = -1;
                     for (int j = 0; j < n; j++) {
-                        if (!done[j] && vreg_phys[args[j]] == dst_p) {
+                        if (!done[j] && abi_arg_phys (j) == src_p) {
                             next_idx = j;
                             break;
                         }
                     }
-                    if (next_idx < 0) {
-                        emit_mov_rr (phys_to_reg (dst_p), Reg.R10);
-                        done[cur] = true;
-                    } else {
-                        emit_mov_rr (phys_to_reg (dst_p), phys_to_reg (vreg_phys[args[next_idx]]));
-                        done[cur] = true;
-                        cur = next_idx;
-                    }
+                    emit_mov_rr (phys_to_reg (dst_p), phys_to_reg (src_p));
+                    done[cur] = true;
+                    if (next_idx < 0) break;
+                    cur = next_idx;
                 }
             }
         }
@@ -1299,6 +1399,30 @@ namespace Planc {
 
             for (int b = 0; b < blocks.length; b++)
                 blocks[b].label = emitter.new_label ();
+
+            int ret_count = 0;
+            var tail_targets = new GenericArray<string> ();
+            var tail_labels = new GenericArray<Label> ();
+            for (int b = 0; b < blocks.length; b++) {
+                var binsts = blocks[b].insts;
+                for (int ii = 0; ii < binsts.length; ii++) {
+                    var op = binsts[ii].op;
+                    if (op == IROp.RET || op == IROp.RET_VOID) {
+                        ret_count++;
+                    } else if (op == IROp.TAIL_CALL) {
+                        string tgt = binsts[ii].str_val;
+                        bool found = false;
+                        for (int ti = 0; ti < tail_targets.length; ti++) {
+                            if (tail_targets[ti] == tgt) { found = true; break; }
+                        }
+                        if (!found) {
+                            tail_targets.add (tgt);
+                            tail_labels.add (emitter.new_label ());
+                        }
+                    }
+                }
+            }
+            Label? epilogue_label = (ret_count > 1) ? emitter.new_label () : null;
 
             for (int b = 0; b < blocks.length; b++) {
                 emitter.bind ((Label) blocks[b].label);
@@ -1564,8 +1688,121 @@ namespace Planc {
                             emitter.call_rel32 ("__planc_write_int");
                             break;
                         }
+                        case IROp.TRE_JUMP: {
+                            int n = ins.args.length;
+                            if (n > 0) {
+                                var done = new bool[n];
+                                for (int i = 0; i < n; i++) {
+                                    int s = ins.args[i];
+                                    if (s == i) {
+                                        done[i] = true;
+                                    } else if (vreg_phys[i] >= 0 && vreg_phys[s] == vreg_phys[i]) {
+                                        done[i] = true;
+                                    } else if (vreg_phys[i] < 0 && vreg_phys[s] < 0 && vreg_spill[s] == vreg_spill[i]) {
+                                        done[i] = true;
+                                    }
+                                }
+                                bool progress = true;
+                                while (progress) {
+                                    progress = false;
+                                    for (int i = 0; i < n; i++) {
+                                        if (done[i]) continue;
+                                        bool blocked = false;
+                                        for (int j = 0; j < n; j++) {
+                                            if (done[j]) continue;
+                                            int sj = ins.args[j];
+                                            if (vreg_phys[i] >= 0) {
+                                                if (vreg_phys[sj] == vreg_phys[i]) { blocked = true; break; }
+                                            } else {
+                                                if (vreg_phys[sj] < 0 && vreg_spill[sj] == vreg_spill[i]) { blocked = true; break; }
+                                            }
+                                        }
+                                        if (!blocked) {
+                                            Reg r = read_vreg (ins.args[i], Reg.R10);
+                                            write_vreg_from (i, r);
+                                            done[i] = true;
+                                            progress = true;
+                                        }
+                                    }
+                                }
+                                for (int i = 0; i < n; i++) {
+                                    if (done[i]) continue;
+                                    int cur = i;
+                                    Reg saved = read_vreg (i, Reg.R11);
+                                    if (saved != Reg.R11) emit_mov_rr (Reg.R11, saved);
+                                    while (!done[cur]) {
+                                        int sc = ins.args[cur];
+                                        bool matches_i = (vreg_phys[i] >= 0)
+                                            ? (vreg_phys[sc] == vreg_phys[i])
+                                            : (vreg_phys[sc] < 0 && vreg_spill[sc] == vreg_spill[i]);
+                                        if (matches_i) {
+                                            write_vreg_from (cur, Reg.R11);
+                                            done[cur] = true;
+                                            break;
+                                        }
+                                        int next_idx = -1;
+                                        for (int j = 0; j < n; j++) {
+                                            if (done[j]) continue;
+                                            bool same = (vreg_phys[j] >= 0)
+                                                ? (vreg_phys[sc] == vreg_phys[j])
+                                                : (vreg_phys[sc] < 0 && vreg_spill[sc] == vreg_spill[j]);
+                                            if (same) { next_idx = j; break; }
+                                        }
+                                        Reg sr = read_vreg (sc, Reg.R10);
+                                        write_vreg_from (cur, sr);
+                                        done[cur] = true;
+                                        if (next_idx < 0) break;
+                                        cur = next_idx;
+                                    }
+                                }
+                            }
+                            emitter.branch (BranchKind.JMP, (Label) blocks[ins.target_bb].label);
+                            break;
+                        }
+                        case IROp.TAIL_CALL: {
+                            emit_parallel_arg_moves (ins.args);
+                            if (program_uses_heap && arr_locals.length > 0) {
+                                emitter.call_rel32 (ins.str_val);
+                                emitter.push_rax ();
+                                emitter.sub_rsp (8);
+                                for (int ai = 0; ai < arr_locals.length; ai++) {
+                                    Reg av = read_vreg (arr_locals[ai], Reg.RDI);
+                                    emit_mov_rr (Reg.RDI, av);
+                                    emitter.call_rel32 ("__planc_unref");
+                                }
+                                emitter.add_rsp (8);
+                                emitter.pop_rax ();
+                                emitter.xor_edx ();
+                                for (int i = callee_list.length - 1; i >= 0; i--)
+                                    emitter.pop_reg (callee_list[i]);
+                                if (total_sub > 0)
+                                    emitter.add_rsp (total_sub);
+                                emitter.pop_rbp ();
+                                emitter.ret ();
+                            } else {
+                                Label? tlbl = null;
+                                for (int ti = 0; ti < tail_targets.length; ti++) {
+                                    if (tail_targets[ti] == ins.str_val) {
+                                        tlbl = tail_labels[ti];
+                                        break;
+                                    }
+                                }
+                                emitter.branch (BranchKind.JMP, (Label) tlbl);
+                            }
+                            break;
+                        }
                         case IROp.RET:
                         case IROp.RET_VOID: {
+                            if (epilogue_label != null) {
+                                if (ins.op == IROp.RET) {
+                                    Reg r = read_vreg (ins.lhs, Reg.RAX);
+                                    emit_mov_rr (Reg.RAX, r);
+                                } else {
+                                    emitter.xor_eax ();
+                                }
+                                emitter.branch (BranchKind.JMP, (Label) epilogue_label);
+                                break;
+                            }
                             if (program_uses_heap && arr_locals.length > 0) {
                                 // Save return value in R12? No, put ret in RAX after unref if ret != RAX?
                                 // Simpler: if ins.op == IROp.RET, push RAX (or save in R11? no, __planc_unref clobbers R11).
@@ -1604,6 +1841,38 @@ namespace Planc {
                     }
                 }
             }
+            if (epilogue_label != null) {
+                emitter.bind ((Label) epilogue_label);
+                if (program_uses_heap && arr_locals.length > 0) {
+                    emitter.push_rax ();
+                    emitter.sub_rsp (8);
+                    for (int ai = 0; ai < arr_locals.length; ai++) {
+                        Reg av = read_vreg (arr_locals[ai], Reg.RDI);
+                        emit_mov_rr (Reg.RDI, av);
+                        emitter.call_rel32 ("__planc_unref");
+                    }
+                    emitter.add_rsp (8);
+                    emitter.pop_rax ();
+                }
+                emitter.xor_edx ();
+                for (int i = callee_list.length - 1; i >= 0; i--)
+                    emitter.pop_reg (callee_list[i]);
+                if (total_sub > 0)
+                    emitter.add_rsp (total_sub);
+                emitter.pop_rbp ();
+                emitter.ret ();
+            }
+            if (!(program_uses_heap && arr_locals.length > 0)) {
+                for (int ti = 0; ti < tail_targets.length; ti++) {
+                    emitter.bind (tail_labels[ti]);
+                    for (int i = callee_list.length - 1; i >= 0; i--)
+                        emitter.pop_reg (callee_list[i]);
+                    if (total_sub > 0)
+                        emitter.add_rsp (total_sub);
+                    emitter.pop_rbp ();
+                    emitter.jmp_rel32 (tail_targets[ti]);
+                }
+            }
             symbols.add (new Symbol (f.name, start, emitter.here () - start));
         }
 
@@ -1630,6 +1899,8 @@ namespace Planc {
             }
 
             var ra = new PuzzleRA (emitter, program, bounds_check, program_uses_heap, bounds_panic_label);
+            ra.cur_fn_name = f.name;
+            ra.cur_nparams = f.params.length;
             for (int i = 0; i < f.params.length; i++) {
                 var p = f.params[i];
                 ra.var_names.add (p.name);
@@ -1652,7 +1923,23 @@ namespace Planc {
                 int v = ra.new_vreg (p.param_type == ValaType.ARRAY, is_unsigned_name (p.type_name));
                 ra.var_vregs[i] = v;
             }
+            bool has_assoc_tre = false;
+            if (f.return_type == ValaType.INT) {
+                for (int i = 0; i < f.body.length; i++) {
+                    if (ra.stmt_has_assoc_tre (f.body[i])) {
+                        has_assoc_tre = true;
+                        break;
+                    }
+                }
+            }
             ra.cur_bb = ra.new_bb ();
+            if (has_assoc_tre) {
+                ra.tre_acc_vreg = ra.new_vreg ();
+                ra.emit_ir (new IRInst () { op = IROp.MOV_IMM, dst = ra.tre_acc_vreg, imm = 0 });
+            }
+            ra.tre_loop_bb = ra.new_bb ();
+            ra.blocks[0].succs.add (ra.tre_loop_bb);
+            ra.cur_bb = ra.tre_loop_bb;
             for (int i = 0; i < f.body.length; i++)
                 ra.lower_stmt (f.body[i]);
             if (!ra.bb_ends_with_term (ra.cur_bb))
