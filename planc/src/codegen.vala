@@ -160,6 +160,10 @@ namespace Planc {
         private GenericArray<bool> local_is_unowned;
         private GenericArray<int> local_borrow_src;
         private GenericArray<bool> local_borrow_dead;
+        private GenericArray<string> cg_bce_arrs = new GenericArray<string> ();
+        private GenericArray<string> cg_bce_idxs = new GenericArray<string> ();
+        private GenericArray<string> cg_len_alias_vars = new GenericArray<string> ();
+        private GenericArray<string> cg_len_alias_arrs = new GenericArray<string> ();
         private bool in_check_pass = false;
         private int next_var_slot;
         private GenericArray<Expr> pending_struct_exprs;
@@ -2718,6 +2722,7 @@ namespace Planc {
                             @"planc: warning: unused variable '$(locals[i])' at $loc");
                 }
                 invalidate_borrows_of_idx (i);
+                cg_invalidate_len_alias (locals[i]);
                 local_active[i] = false;
             }
         }
@@ -2750,6 +2755,152 @@ namespace Planc {
             }
             local_borrow_src[dst_idx] = -1;
             local_borrow_dead[dst_idx] = false;
+        }
+
+        private void cg_invalidate_len_alias (string name) {
+            for (int i = cg_len_alias_vars.length - 1; i >= 0; i--) {
+                if (cg_len_alias_vars[i] == name || cg_len_alias_arrs[i] == name) {
+                    cg_len_alias_vars.remove_index (i);
+                    cg_len_alias_arrs.remove_index (i);
+                }
+            }
+        }
+
+        private static bool cg_expr_modifies (Expr? e, string vname) {
+            if (e == null) return false;
+            if (e is IncDecExpr) {
+                var inc = (IncDecExpr) e;
+                return (inc.target is VarRef && ((VarRef) inc.target).name == vname) || cg_expr_modifies (inc.target, vname);
+            }
+            if (e is UnaryExpr) return cg_expr_modifies (((UnaryExpr) e).operand, vname);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return cg_expr_modifies (b.left, vname) || cg_expr_modifies (b.right, vname);
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return cg_expr_modifies (te.condition, vname) || cg_expr_modifies (te.then_expr, vname) || cg_expr_modifies (te.else_expr, vname);
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (cg_expr_modifies (c.args[i], vname)) return true;
+                }
+                return false;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (cg_expr_modifies (mc.target, vname)) return true;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (cg_expr_modifies (mc.args[i], vname)) return true;
+                }
+                return false;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return cg_expr_modifies (ix.target, vname) || cg_expr_modifies (ix.index, vname);
+            }
+            if (e is MemberAccessExpr) return cg_expr_modifies (((MemberAccessExpr) e).target, vname);
+            return false;
+        }
+
+        private static bool cg_stmt_modifies (Statement? s, string vname) {
+            if (s == null) return false;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (cg_stmt_modifies (blk.statements[i], vname)) return true;
+                }
+                return false;
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                return a.name == vname || cg_expr_modifies (a.value, vname);
+            }
+            if (s is VarDeclStatement) return cg_expr_modifies (((VarDeclStatement) s).init, vname);
+            if (s is ExprStatement) return cg_expr_modifies (((ExprStatement) s).expr, vname);
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return cg_expr_modifies (ifs.condition, vname)
+                    || cg_stmt_modifies (ifs.then_body, vname)
+                    || cg_stmt_modifies (ifs.else_body, vname);
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                return cg_expr_modifies (ws.condition, vname) || cg_stmt_modifies (ws.body, vname);
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                return cg_stmt_modifies (dw.body, vname) || cg_expr_modifies (dw.condition, vname);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return cg_stmt_modifies (fs.init, vname) || cg_expr_modifies (fs.condition, vname)
+                    || cg_stmt_modifies (fs.step, vname) || cg_stmt_modifies (fs.body, vname);
+            }
+            if (s is TryStatement || s is SwitchStatement || s is ForeachStatement) return true;
+            return false;
+        }
+
+        private bool cg_bce_try_push_for (ForStatement fs) {
+            if (opt_level < 2 || !(fs.init is VarDeclStatement) || !(fs.condition is BinaryExpr))
+                return false;
+            var vd = (VarDeclStatement) fs.init;
+            if (vd.init == null || !(vd.init is IntLiteral) || ((IntLiteral) vd.init).value < 0)
+                return false;
+            string idx_name = vd.name;
+            var cb = (BinaryExpr) fs.condition;
+            if (cb.op != "<" || !(cb.left is VarRef) || ((VarRef) cb.left).name != idx_name)
+                return false;
+            if (fs.step is AssignStatement) {
+                var st_a = (AssignStatement) fs.step;
+                if (st_a.name != idx_name || !(st_a.value is BinaryExpr)) return false;
+                var sb = (BinaryExpr) st_a.value;
+                if (sb.op != "+" || !(sb.left is VarRef) || ((VarRef) sb.left).name != idx_name
+                    || !(sb.right is IntLiteral) || ((IntLiteral) sb.right).value != 1)
+                    return false;
+            } else if (fs.step is ExprStatement && ((ExprStatement) fs.step).expr is IncDecExpr) {
+                var inc = (IncDecExpr) ((ExprStatement) fs.step).expr;
+                if (inc.op != "++" || !(inc.target is VarRef) || ((VarRef) inc.target).name != idx_name)
+                    return false;
+            } else {
+                return false;
+            }
+            string? arr_name = null;
+            if (cb.right is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) cb.right;
+                if (ma.member == "length" && ma.target is VarRef)
+                    arr_name = ((VarRef) ma.target).name;
+            } else if (cb.right is VarRef) {
+                string rname = ((VarRef) cb.right).name;
+                if (cg_stmt_modifies (fs.body, rname)) return false;
+                for (int i = cg_len_alias_vars.length - 1; i >= 0; i--) {
+                    if (cg_len_alias_vars[i] == rname) {
+                        arr_name = cg_len_alias_arrs[i];
+                        break;
+                    }
+                }
+            }
+            if (arr_name == null) return false;
+            int aidx = lookup (arr_name);
+            if (aidx < 0 || local_types[aidx] != ValaType.ARRAY) return false;
+            if (cg_stmt_modifies (fs.body, idx_name) || cg_stmt_modifies (fs.body, arr_name))
+                return false;
+            cg_bce_arrs.add (arr_name);
+            cg_bce_idxs.add (idx_name);
+            return true;
+        }
+
+        private bool cg_bce_is_safe (Expr target, Expr index) {
+            if (!(target is VarRef) || !(index is VarRef))
+                return false;
+            string aname = ((VarRef) target).name;
+            string iname = ((VarRef) index).name;
+            for (int i = cg_bce_arrs.length - 1; i >= 0; i--) {
+                if (cg_bce_arrs[i] == aname && cg_bce_idxs[i] == iname)
+                    return true;
+            }
+            return false;
         }
 
         private GenericArray<string> clone_non_null () {
@@ -4665,6 +4816,10 @@ namespace Planc {
                     push_local (@"#fe_col_$(col_mark)", is_ga ? ValaType.CLASS : ValaType.ARRAY, strip_null (ct_name), cslot, false);
                     var islot = next_var_slot++;
                     push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", islot, false);
+                    if (!is_ga) {
+                        var lslot = next_var_slot++;
+                        push_local (@"#fe_len_$(col_mark)", ValaType.INT, "", lslot, true);
+                    }
                 }
 
                 var eslot = next_var_slot++;
@@ -10109,6 +10264,16 @@ namespace Planc {
                 }
                 if (!d.stack_alloc)
                     push_local (d.name, vtype, vtname, slot, false, false, d.is_weak);
+                if (d.init is MemberAccessExpr) {
+                    var ma_l = (MemberAccessExpr) d.init;
+                    if (ma_l.member == "length" && ma_l.target is VarRef) {
+                        int ai_l = lookup (((VarRef) ma_l.target).name);
+                        if (ai_l >= 0 && local_types[ai_l] == ValaType.ARRAY) {
+                            cg_len_alias_vars.add (d.name);
+                            cg_len_alias_arrs.add (((VarRef) ma_l.target).name);
+                        }
+                    }
+                }
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else
@@ -10603,7 +10768,7 @@ namespace Planc {
                         push_depth--;
                     }
                     emitter.load_rax_disp (16);
-                } else if (bounds_check) {
+                } else if (bounds_check && !cg_bce_is_safe (ia.target, ia.index)) {
                     need_bounds_panic = true;
                     emitter.cmp_rcx_rax_len ();
                     emitter.branch (BranchKind.JAE, bounds_panic_label);
@@ -10774,6 +10939,7 @@ namespace Planc {
                 var saved = locals.length;
                 if (fs.init != null)
                     gen_statement (fs.init);
+                var l_body = emitter.new_label ();
                 var l_cond = emitter.new_label ();
                 var l_step = emitter.new_label ();
                 var l_end = emitter.new_label ();
@@ -10781,6 +10947,21 @@ namespace Planc {
                 continue_labels.add (l_step);
                 break_scope_marks.add (saved);
                 continue_scope_marks.add (locals.length);
+                if (fs.condition != null)
+                    emitter.branch (BranchKind.JMP, l_cond);
+                emitter.bind (l_body);
+                var body_mark = locals.length;
+                bool cg_bce_pushed = cg_bce_try_push_for (fs);
+                gen_statement (fs.body);
+                if (cg_bce_pushed) {
+                    cg_bce_arrs.remove_index (cg_bce_arrs.length - 1);
+                    cg_bce_idxs.remove_index (cg_bce_idxs.length - 1);
+                }
+                unref_locals_from (body_mark);
+                deactivate_from (body_mark);
+                emitter.bind (l_step);
+                if (fs.step != null)
+                    gen_statement (fs.step);
                 emitter.bind (l_cond);
                 if (fs.condition != null) {
                     string ct_name = "";
@@ -10788,16 +10969,10 @@ namespace Planc {
                     if (!is_int_like (ct))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"for condition must be bool or int, got $(type_label (ct, ct_name)) at $(fs.condition.line):$(fs.condition.column)");
-                    emit_cond_jump_if_false (fs.condition, l_end);
+                    emit_cond_jump_if_true (fs.condition, l_body);
+                } else {
+                    emitter.branch (BranchKind.JMP, l_body);
                 }
-                var body_mark = locals.length;
-                gen_statement (fs.body);
-                unref_locals_from (body_mark);
-                deactivate_from (body_mark);
-                emitter.bind (l_step);
-                if (fs.step != null)
-                    gen_statement (fs.step);
-                emitter.branch (BranchKind.JMP, l_cond);
                 emitter.bind (l_end);
                 pop_loop_labels ();
                 unref_locals_from (saved);
@@ -10835,6 +11010,7 @@ namespace Planc {
                 var col_mark = locals.length;
                 var col_slot = next_var_slot++;
                 int idx_slot = -1;
+                int len_slot = -1;
 
                 gen_expr (fe.collection);
                 emit_null_check_if_nullable (ct, ct_name);
@@ -10856,6 +11032,13 @@ namespace Planc {
                     emitter.zero_local (idx_slot);
                     push_local (@"#fe_col_$(col_mark)", is_ga ? ValaType.CLASS : ValaType.ARRAY, strip_null (ct_name), col_slot, false);
                     push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
+                    if (!is_ga) {
+                        len_slot = next_var_slot++;
+                        emitter.load_local (col_slot);
+                        emitter.load_rax_disp (8);
+                        emitter.store_local (len_slot);
+                        push_local (@"#fe_len_$(col_mark)", ValaType.INT, "", len_slot, true);
+                    }
                 }
 
                 var l_cond = emitter.new_label ();
@@ -10883,8 +11066,12 @@ namespace Planc {
                         emit_int_narrow (vtname);
                     emitter.store_local (eslot);
                 } else {
-                    emitter.load_local (col_slot);
-                    emitter.load_rax_disp (is_ga ? 24 : 8);
+                    if (len_slot >= 0) {
+                        emitter.load_local (len_slot);
+                    } else {
+                        emitter.load_local (col_slot);
+                        emitter.load_rax_disp (is_ga ? 24 : 8);
+                    }
                     emitter.mov_rcx_rax ();
                     emitter.load_local (idx_slot);
                     emitter.cmp_rax_rcx ();
@@ -11325,6 +11512,15 @@ namespace Planc {
             return is_unsigned ? BranchKind.JB : BranchKind.JL;
         }
 
+        private static BranchKind direct_branch (string op, bool is_unsigned = false) {
+            if (op == "==") return BranchKind.JE;
+            if (op == "!=") return BranchKind.JNE;
+            if (op == "<") return is_unsigned ? BranchKind.JB : BranchKind.JL;
+            if (op == "<=") return is_unsigned ? BranchKind.JBE : BranchKind.JLE;
+            if (op == ">") return is_unsigned ? BranchKind.JA : BranchKind.JG;
+            return is_unsigned ? BranchKind.JAE : BranchKind.JGE;
+        }
+
         private bool expr_has_ref_temp (Expr? e) {
             if (e == null) return false;
             if (e.ref_temp_slot >= 0) return true;
@@ -11411,6 +11607,14 @@ namespace Planc {
         }
 
         private void emit_cond_jump_if_false (Expr cond, Label target) throws SemanticError {
+            emit_cond_jump (cond, target, false);
+        }
+
+        private void emit_cond_jump_if_true (Expr cond, Label target) throws SemanticError {
+            emit_cond_jump (cond, target, true);
+        }
+
+        private void emit_cond_jump (Expr cond, Label target, bool on_true) throws SemanticError {
             if (opt_level >= 1 && cond is BinaryExpr && (!program_uses_heap || !expr_has_ref_temp (cond))) {
                 var b = (BinaryExpr) cond;
                 if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
@@ -11425,6 +11629,7 @@ namespace Planc {
                         && !is_delegate_type (program, rt, rt_name)) {
                         string res_tn = promote_int_type (lt_name, rt_name);
                         bool is_u = is_unsigned_int_type (res_tn);
+                        BranchKind br = on_true ? direct_branch (b.op, is_u) : inverted_branch (b.op, is_u);
                         if (b.right is IntLiteral) {
                             int64 imm = ((IntLiteral) b.right).value;
                             if (imm >= int32.MIN && imm <= int32.MAX) {
@@ -11433,7 +11638,7 @@ namespace Planc {
                                     emitter.test_rax_rax ();
                                 else
                                     emitter.cmp_rax_imm ((int32) imm);
-                                emitter.branch (inverted_branch (b.op, is_u), target);
+                                emitter.branch (br, target);
                                 return;
                             }
                         }
@@ -11451,7 +11656,7 @@ namespace Planc {
                             push_depth--;
                         }
                         emitter.cmp_rax_rcx ();
-                        emitter.branch (inverted_branch (b.op, is_u), target);
+                        emitter.branch (br, target);
                         return;
                     }
                 }
@@ -11465,7 +11670,7 @@ namespace Planc {
                 push_depth--;
             }
             emitter.test_rax_rax ();
-            emitter.branch (BranchKind.JE, target);
+            emitter.branch (on_true ? BranchKind.JNE : BranchKind.JE, target);
         }
 
         private void gen_expr (Expr e) throws SemanticError {
@@ -12237,7 +12442,7 @@ namespace Planc {
                             emit_int_narrow (ga_etn);
                     }
                 } else {
-                    if (bounds_check) {
+                    if (bounds_check && !cg_bce_is_safe (ix.target, ix.index)) {
                         need_bounds_panic = true;
                         emitter.cmp_rcx_rax_len ();
                         emitter.branch (BranchKind.JAE, bounds_panic_label);

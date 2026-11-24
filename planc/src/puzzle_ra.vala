@@ -133,6 +133,8 @@ namespace Planc {
         private GenericArray<int> bce_mul_b = new GenericArray<int> ();
         private GenericArray<int> bce_bnd_vreg = new GenericArray<int> ();
         private GenericArray<int> bce_bnd_min = new GenericArray<int> ();
+        private GenericArray<int> bce_len_alias_v = new GenericArray<int> ();
+        private GenericArray<int> bce_len_alias_arr = new GenericArray<int> ();
         private GenericArray<int> bce_bnd_max_c = new GenericArray<int> ();
         private GenericArray<int> bce_bnd_max_v = new GenericArray<int> ();
         private GenericArray<int> bce_bnd_max_off = new GenericArray<int> ();
@@ -507,6 +509,50 @@ namespace Planc {
             blocks[cur_bb].succs.add (target_bb);
         }
 
+        private static string negate_cmp_op (string op) {
+            if (op == "==") return "!=";
+            if (op == "!=") return "==";
+            if (op == "<") return ">=";
+            if (op == "<=") return ">";
+            if (op == ">") return "<=";
+            return "<";
+        }
+
+        private void lower_cond_jump_true (Expr cond, int target_bb, int fall_bb) {
+            if (cond is BinaryExpr) {
+                var b = (BinaryExpr) cond;
+                if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                    string nop = negate_cmp_op (b.op);
+                    int lv = lower_expr (b.left);
+                    if (b.right is IntLiteral) {
+                        int64 imm = ((IntLiteral) b.right).value;
+                        if (imm >= -2147483648L && imm <= 2147483647L) {
+                            emit_ir (new IRInst () {
+                                op = IROp.CMP_IMM_JMP_FALSE, sop = nop, lhs = lv, imm = imm,
+                                target_bb = target_bb, is_unsigned = vreg_is_unsigned[lv]
+                            });
+                            if (fall_bb != cur_bb + 1)
+                                emit_ir (new IRInst () { op = IROp.JMP, target_bb = fall_bb });
+                            blocks[cur_bb].succs.add (fall_bb);
+                            blocks[cur_bb].succs.add (target_bb);
+                            return;
+                        }
+                    }
+                    int rv = lower_expr (b.right);
+                    emit_ir (new IRInst () {
+                        op = IROp.CMP_JMP_FALSE, sop = nop, lhs = lv, rhs = rv,
+                        target_bb = target_bb, is_unsigned = vreg_is_unsigned[lv] || vreg_is_unsigned[rv]
+                    });
+                    if (fall_bb != cur_bb + 1)
+                        emit_ir (new IRInst () { op = IROp.JMP, target_bb = fall_bb });
+                    blocks[cur_bb].succs.add (fall_bb);
+                    blocks[cur_bb].succs.add (target_bb);
+                    return;
+                }
+            }
+            lower_cond_jump_false (cond, fall_bb, target_bb);
+        }
+
         private bool bce_has_nonneg (int v) {
             for (int i = 0; i < bce_nonneg.length; i++) {
                 if (bce_nonneg[i] == v) return true;
@@ -533,6 +579,12 @@ namespace Planc {
                     bce_arr_off.remove_index (i);
                     bce_arr_ma.remove_index (i);
                     bce_arr_mb.remove_index (i);
+                }
+            }
+            for (int i = bce_len_alias_v.length - 1; i >= 0; i--) {
+                if (bce_len_alias_v[i] == v || bce_len_alias_arr[i] == v) {
+                    bce_len_alias_v.remove_index (i);
+                    bce_len_alias_arr.remove_index (i);
                 }
             }
             for (int i = bce_mul_v.length - 1; i >= 0; i--) {
@@ -718,6 +770,12 @@ namespace Planc {
                 if (ri < 0) return false;
                 mv = var_vregs[ri];
                 moff = extra;
+                for (int li = bce_len_alias_v.length - 1; li >= 0; li--) {
+                    if (bce_len_alias_v[li] == mv) {
+                        marr = bce_len_alias_arr[li];
+                        break;
+                    }
+                }
             } else if (cb.right is BinaryExpr) {
                 var rb = (BinaryExpr) cb.right;
                 if ((rb.op == "+" || rb.op == "-") && rb.left is VarRef && rb.right is IntLiteral) {
@@ -892,6 +950,16 @@ namespace Planc {
                 var_tnames.add (d.decl_type_name);
                 if (d.init is ArrayNewExpr) {
                     bce_record_arr (v, ((ArrayNewExpr) d.init).length_expr);
+                } else if (d.init is MemberAccessExpr) {
+                    var ma_d = (MemberAccessExpr) d.init;
+                    if (ma_d.member == "length" && ma_d.target is VarRef) {
+                        int ai_d = lookup_var (((VarRef) ma_d.target).name);
+                        if (ai_d >= 0 && var_types[ai_d] == ValaType.ARRAY) {
+                            bce_len_alias_v.add (v);
+                            bce_len_alias_arr.add (var_vregs[ai_d]);
+                        }
+                    }
+                    bce_set_nonneg (v, true);
                 } else if (d.init == null || (d.init is IntLiteral && ((IntLiteral) d.init).value >= 0) || is_u) {
                     bce_set_nonneg (v, true);
                 } else if (d.init is BinaryExpr) {
@@ -1126,23 +1194,21 @@ namespace Planc {
                 }
                 if (init_v != null && !bce_stmt_only_inc (fs.step, init_v))
                     init_v = null;
-                int bb_cond = new_bb ();
                 int bb_body = new_bb ();
                 int bb_step = new_bb ();
+                int bb_cond = new_bb ();
                 int bb_end = new_bb ();
-                emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_cond });
-                blocks[cur_bb].succs.add (bb_cond);
+                if (fs.condition != null) {
+                    emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_cond });
+                    blocks[cur_bb].succs.add (bb_cond);
+                } else {
+                    if (cur_bb + 1 != bb_body)
+                        emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_body });
+                    blocks[cur_bb].succs.add (bb_body);
+                }
 
                 int old_w = loop_weight;
                 if (loop_weight < 1000) loop_weight *= 10;
-
-                cur_bb = bb_cond;
-                if (fs.condition != null) {
-                    lower_cond_jump_false (fs.condition, bb_end, bb_body);
-                } else {
-                    emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_body });
-                    blocks[cur_bb].succs.add (bb_body);
-                }
 
                 break_bbs.add (bb_end);
                 continue_bbs.add (bb_step);
@@ -1151,14 +1217,25 @@ namespace Planc {
                 lower_stmt (fs.body);
                 if (pushed_f) bce_pop_bnd ();
                 if (!bb_ends_with_term (cur_bb)) {
-                    emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_step });
+                    if (cur_bb + 1 != bb_step)
+                        emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_step });
                     blocks[cur_bb].succs.add (bb_step);
                 }
                 cur_bb = bb_step;
                 if (fs.step != null)
                     lower_stmt (fs.step);
-                emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_cond });
-                blocks[cur_bb].succs.add (bb_cond);
+                if (!bb_ends_with_term (cur_bb)) {
+                    if (cur_bb + 1 != bb_cond)
+                        emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_cond });
+                    blocks[cur_bb].succs.add (bb_cond);
+                }
+                cur_bb = bb_cond;
+                if (fs.condition != null) {
+                    lower_cond_jump_true (fs.condition, bb_body, bb_end);
+                } else {
+                    emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_body });
+                    blocks[cur_bb].succs.add (bb_body);
+                }
 
                 break_bbs.length = break_bbs.length - 1;
                 continue_bbs.length = continue_bbs.length - 1;

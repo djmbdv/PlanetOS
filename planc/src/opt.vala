@@ -19,8 +19,10 @@ namespace Planc {
         private string cur_file = "";
         private Function? cur_func = null;
         private GenericArray<string> active_locals = new GenericArray<string> ();
+        private GenericArray<string> arr_vnames = new GenericArray<string> ();
         private int licm_counter = 0;
         private int sra_counter = 0;
+        private int fe_counter = 0;
 
         private static void mt_opt_worker (int wid) {
             var opt = new Optimizer ();
@@ -1532,6 +1534,11 @@ namespace Planc {
             cur_func = f;
             cur_file = f.file;
             active_locals = new GenericArray<string> ();
+            arr_vnames = new GenericArray<string> ();
+            for (int pi = 0; pi < f.params.length; pi++) {
+                if (f.params[pi].param_type == ValaType.ARRAY)
+                    arr_vnames.add (f.params[pi].name);
+            }
             if (f.body != null) {
                 if (level >= 2 && cur_prog != null)
                     sra_stmt_list (f.body);
@@ -1968,11 +1975,106 @@ namespace Planc {
             licm_rewrite_stmt (fs.body, mod, out_stmts, fs.line, fs.column);
         }
 
+        private bool is_arr_var (string name) {
+            for (int i = arr_vnames.length - 1; i >= 0; i--) {
+                if (arr_vnames[i] == name)
+                    return true;
+            }
+            return false;
+        }
+
+        private Statement try_lower_foreach_arr (ForeachStatement fe) {
+            if (cur_func != null && (cur_func.is_async || cur_func.from_lambda != null))
+                return fe;
+            if (!(fe.collection is VarRef))
+                return fe;
+            string arr_name = ((VarRef) fe.collection).name;
+            if (!is_arr_var (arr_name) || fe.var_name == arr_name)
+                return fe;
+            if (!fe.infer_type && fe.elem_type == ValaType.STRUCT)
+                return fe;
+            var mod = new GenericArray<string> ();
+            if (!collect_mod_stmt (fe.body, mod))
+                return fe;
+            for (int i = 0; i < mod.length; i++) {
+                if (mod[i] == arr_name)
+                    return fe;
+            }
+            fe_counter++;
+            string idx_name = @"__fe_i_$(fe_counter)";
+            var init_s = new VarDeclStatement () {
+                name = idx_name,
+                decl_type = ValaType.INT,
+                decl_type_name = "",
+                infer_type = false,
+                init = new IntLiteral () { value = 0, line = fe.line, column = fe.column },
+                line = fe.line,
+                column = fe.column
+            };
+            var cond_e = new BinaryExpr () {
+                op = "<",
+                left = new VarRef () { name = idx_name, line = fe.line, column = fe.column },
+                right = new MemberAccessExpr () {
+                    target = new VarRef () { name = arr_name, line = fe.line, column = fe.column },
+                    member = "length",
+                    line = fe.line,
+                    column = fe.column
+                },
+                line = fe.line,
+                column = fe.column
+            };
+            var step_s = new AssignStatement () {
+                name = idx_name,
+                value = new BinaryExpr () {
+                    op = "+",
+                    left = new VarRef () { name = idx_name, line = fe.line, column = fe.column },
+                    right = new IntLiteral () { value = 1, line = fe.line, column = fe.column },
+                    line = fe.line,
+                    column = fe.column
+                },
+                line = fe.line,
+                column = fe.column
+            };
+            var elem_decl = new VarDeclStatement () {
+                name = fe.var_name,
+                decl_type = fe.elem_type,
+                decl_type_name = fe.elem_type_name,
+                infer_type = fe.infer_type,
+                is_unowned = fe.is_unowned,
+                init = new IndexExpr () {
+                    target = new VarRef () { name = arr_name, line = fe.line, column = fe.column },
+                    index = new VarRef () { name = idx_name, line = fe.line, column = fe.column },
+                    line = fe.line,
+                    column = fe.column
+                },
+                line = fe.line,
+                column = fe.column
+            };
+            var body_blk = new BlockStatement () { line = fe.line, column = fe.column };
+            body_blk.statements.add (elem_decl);
+            if (fe.body is BlockStatement) {
+                var fblk = (BlockStatement) fe.body;
+                for (int i = 0; i < fblk.statements.length; i++)
+                    body_blk.statements.add (fblk.statements[i]);
+            } else if (fe.body != null) {
+                body_blk.statements.add (fe.body);
+            }
+            return new ForStatement () {
+                init = init_s,
+                condition = cond_e,
+                step = step_s,
+                body = body_blk,
+                line = fe.line,
+                column = fe.column
+            };
+        }
+
         private void opt_stmt_list (GenericArray<Statement> stmts) {
             var out_stmts = new GenericArray<Statement> ();
             var cnames = new GenericArray<string> ();
             var cvals = new GenericArray<Expr?> ();
             var ctracked = new GenericArray<bool> ();
+            int arr_mark = arr_vnames.length;
             for (int i = 0; i < stmts.length; i++) {
                 var s = stmts[i];
                 if (level >= 2 && cnames.length > 0) {
@@ -2005,6 +2107,8 @@ namespace Planc {
                     if (opt_s is VarDeclStatement) {
                         var vd = (VarDeclStatement) opt_s;
                         active_locals.add (vd.name);
+                        if (vd.decl_type == ValaType.ARRAY || (vd.infer_type && (vd.init is ArrayNewExpr || vd.init is ArrayLiteralExpr)))
+                            arr_vnames.add (vd.name);
                         bool track_const = vd.decl_type == ValaType.BOOL || vd.decl_type == ValaType.STRING;
                         if (vd.decl_type == ValaType.INT && is_signed_64_int_name (vd.decl_type_name))
                             track_const = true;
@@ -2050,6 +2154,8 @@ namespace Planc {
                         for (int j = 0; j < inner.statements.length; j++)
                             out_stmts.add (inner.statements[j]);
                     } else {
+                        if (level >= 2 && opt_s is ForeachStatement)
+                            opt_s = try_lower_foreach_arr ((ForeachStatement) opt_s);
                         if (level >= 2 && opt_s is ForStatement) {
                             hoist_for_invariants ((ForStatement) opt_s, out_stmts);
                             if (cur_prog != null)
@@ -2063,6 +2169,8 @@ namespace Planc {
                     }
                 }
             }
+            while (arr_vnames.length > arr_mark)
+                arr_vnames.remove_index (arr_vnames.length - 1);
             stmts.length = 0;
             for (int i = 0; i < out_stmts.length; i++)
                 stmts.add (out_stmts[i]);
