@@ -13,4 +13,5 @@
 =pool=ok
 =dev=ok
 =memguard=ok
+=ring=ok
 !FAIL

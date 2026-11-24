@@ -553,6 +553,15 @@ namespace Planet {
             return __sys4 (64, handle, tid, 0, 0);
         }
 
+        // B: attach a descriptor ring over a granted block, then kick it.
+        public static int ring_attach (int grant_handle, int entries) {
+            return __sys4 (65, grant_handle, entries, 0, 0);
+        }
+
+        public static int ring_kick (int ring_handle) {
+            return __sys4 (66, ring_handle, 0, 0, 0);
+        }
+
         public static int protect_user_ro (int vaddr, int size) {
             if (vaddr < USER_MIN_ADDR || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
                 return -1;

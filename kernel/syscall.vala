@@ -14,8 +14,22 @@ namespace Planet.Kernel {
     // owns; inherited stdio is the one cross-task exception.
     private const int MAX_FDS = 64;
 
-    // Handle kinds: 1 XFS, 2 RAMFS, 3 byte device, 4 grant (A2).
+    // Handle kinds: 1 XFS, 2 RAMFS, 3 byte device, 4 grant, 5 descriptor ring (A2/B).
     private const int KIND_GRANT = 4;
+    private const int KIND_RING = 5;
+    // Ring header (docs/08 6.1): magic, version, entries, entry size, head,
+    // tail, seq, wake, doorbell epoch, status. Little-endian.
+    private const int RING_MAGIC = 0x524E4C50; // bytes "PLNR"
+    private const int RING_VERSION = 1;
+    private const int RING_ENTRY = 32;
+    private const int RING_MAX_ENTRIES = 64;
+    // Descriptor flags (6.1) and the status the kernel writes back.
+    private const int RING_F_READ = 1;
+    private const int RING_F_WRITE = 2;
+    private const int RING_ST_READY = 1;
+    private const int RING_ST_DONE = 2;
+    private const int RING_ST_ERROR = 3;
+    private const int RING_MAX_XFER = 16384;
     // A2 frame ownership: one entry per SYS_ALLOC_PAGE block, and up to four
     // task ids allowed to map a grant handle.
     private const int ALLOC_SLOTS = 64;
@@ -513,9 +527,73 @@ namespace Planet.Kernel {
         return false;
     }
 
+    // --- B: descriptor rings (IO-05) -----------------------------------
+    // A ring is a granted block the caller owns: a fixed header followed by
+    // fixed-size descriptors. Every descriptor is validated against the ring's
+    // own block before anything runs, which is what keeps userland away from
+    // MMIO and DMA while there is no IOMMU.
+    private static bool ring_header_ok (int rstart, int rlen, int entries) {
+        if (rstart <= 0)
+            return false;
+        if (rlen < 64)
+            return false;
+        if (entries <= 0)
+            return false;
+        if (entries > RING_MAX_ENTRIES)
+            return false;
+        if (rlen < 64 + entries * RING_ENTRY)
+            return false;
+        if (mmio_read32 (rstart) != RING_MAGIC)
+            return false;
+        if (mmio_read32 (rstart + 4) != RING_VERSION)
+            return false;
+        if (mmio_read32 (rstart + 8) != entries)
+            return false;
+        if (mmio_read32 (rstart + 12) != RING_ENTRY)
+            return false;
+        return true;
+    }
+
+    // Runs one descriptor. Returns 1 when it completed, 0 when it was rejected
+    // (the entry is marked and nothing else was touched). C1 has no device yet,
+    // so the only operation is a loopback fill: flags WRITE means the kernel
+    // fills the buffer, READ means it reads it.
+    private static int ring_run_one (int rstart, int rlen, int desc) {
+        int addr = mmio_read64 (desc);
+        int len = mmio_read32 (desc + 8);
+        int flags = mmio_read32 (desc + 12);
+        bool ok = false;
+        if (flags == RING_F_WRITE)
+            ok = true;
+        if (flags == RING_F_READ)
+            ok = true;
+        if (flags == (RING_F_READ | RING_F_WRITE))
+            ok = true;
+        if (len <= 0)
+            ok = false;
+        if (len > RING_MAX_XFER)
+            ok = false;
+        if (addr < rstart)
+            ok = false;
+        if (addr + len > rstart + rlen)
+            ok = false;
+        if (!ok) {
+            mmio_write32 (desc + 20, RING_ST_ERROR);
+            return 0;
+        }
+        if (flags != RING_F_READ) {
+            int i = 0;
+            while (i < len) {
+                mmio_write8 (addr + i, 0xA5);
+                i = i + 1;
+            }
+        }
+        mmio_write32 (desc + 20, RING_ST_DONE);
+        return 1;
+    }
+
     // Called when a task dies: its blocks go back to the Pmm.
-    public static void release_allocs (int tid) {
-        int i = 0;
+    public static void release_allocs (int tid) {        int i = 0;
         while (i < ALLOC_SLOTS) {
             int a = alloc_slot (i);
             int phys = mmio_read64 (a);
@@ -1300,6 +1378,51 @@ namespace Planet.Kernel {
                     t64 = t64 + 1;
                 }
                 return fail (E_NOSPC);
+            case 65: // SYS_RING_ATTACH(grant_handle, entries) -> ring handle | -1
+                if (fd_check (a0, R_READ) != 0)
+                    return fail (E_BAD_HANDLE);
+                int gslot65 = handle_slot (a0);
+                if (fd_kind_of (gslot65) != KIND_GRANT)
+                    return fail (E_INVAL);
+                int rstart65 = mmio_read64 (gslot65 + 8);
+                int rlen65 = mmio_read64 (gslot65 + 16);
+                if (!ring_header_ok (rstart65, rlen65, a1))
+                    return fail (E_INVAL);
+                int h65 = fd_alloc (KIND_RING, R_READ | R_WRITE | R_POLL | R_CLOSE,
+                                    rstart65, rlen65);
+                if (h65 < 0)
+                    return fail (E_NOSPC);
+                mmio_write64 (handle_slot (h65) + 24, a1);
+                ok ();
+                return h65;
+            case 66: // SYS_RING_KICK(ring_handle) -> completed | -1 when a descriptor is bad
+                if (fd_check (a0, R_WRITE) != 0)
+                    return fail (E_BAD_HANDLE);
+                int rslot66 = handle_slot (a0);
+                if (fd_kind_of (rslot66) != KIND_RING)
+                    return fail (E_INVAL);
+                int rstart66 = mmio_read64 (rslot66 + 8);
+                int rlen66 = mmio_read64 (rslot66 + 16);
+                int entries66 = mmio_read64 (rslot66 + 24);
+                if (!ring_header_ok (rstart66, rlen66, entries66))
+                    return fail (E_INVAL);
+                int head66 = mmio_read32 (rstart66 + 16);
+                int tail66 = mmio_read32 (rstart66 + 20);
+                int done66 = 0;
+                while (head66 != tail66) {
+                    int desc66 = rstart66 + 64 + (head66 % entries66) * RING_ENTRY;
+                    if (mmio_read32 (desc66 + 20) == RING_ST_READY) {
+                        if (ring_run_one (rstart66, rlen66, desc66) == 0)
+                            return fail (E_INVAL);
+                        done66 = done66 + 1;
+                    }
+                    head66 = head66 + 1;
+                    mmio_write32 (rstart66 + 16, head66);
+                }
+                mmio_write32 (rstart66 + 24, mmio_read32 (rstart66 + 24) + 1);
+                Sched.wake_word (rstart66 + 24, 1);
+                ok ();
+                return done66;
             default:
                 return -1;
         }

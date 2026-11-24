@@ -306,5 +306,53 @@ int main (string[] args) {
         fails++;
     }
 
+    // 16. B: a descriptor ring the kernel validates before it touches anything.
+    int ring_block = Sys.alloc_pages (1);
+    Sys.poke32 (ring_block + 0, 0x524E4C50); // magic "PLNR"
+    Sys.poke32 (ring_block + 4, 1);          // version
+    Sys.poke32 (ring_block + 8, 2);          // entries
+    Sys.poke32 (ring_block + 12, 32);        // entry size
+    int ring_grant = (ring_block > 0) ? Sys.grant (ring_block, 4096) : -1;
+    int ring_h = (ring_grant > 0) ? Sys.ring_attach (ring_grant, 2) : -1;
+    int ring_err = Sys.errno_code ();
+    int ring_buf = ring_block + 2048;
+    int ring_d0 = ring_block + 64;
+    int ring_d1 = ring_block + 96;
+    // Descriptor 0: the device writes 8 bytes inside the ring block.
+    Sys.poke32 (ring_d0 + 0, ring_buf);
+    Sys.poke32 (ring_d0 + 4, 0);
+    Sys.poke32 (ring_d0 + 8, 8);
+    Sys.poke32 (ring_d0 + 12, 2); // WRITE
+    Sys.poke32 (ring_d0 + 20, 1); // READY
+    // Descriptor 1: points outside the ring, so it must be rejected.
+    Sys.poke32 (ring_d1 + 0, 0x20000000);
+    Sys.poke32 (ring_d1 + 4, 0);
+    Sys.poke32 (ring_d1 + 8, 8);
+    Sys.poke32 (ring_d1 + 12, 2);
+    Sys.poke32 (ring_d1 + 20, 1);
+    Sys.poke32 (ring_block + 20, 1); // tail: one descriptor published
+    int ring_k1 = (ring_h > 0) ? Sys.ring_kick (ring_h) : -1;
+    int ring_st0 = Sys.peek32 (ring_d0 + 20);
+    int ring_fill = Sys.peek32 (ring_buf);
+    Sys.poke32 (ring_block + 20, 2);
+    int ring_k2 = (ring_h > 0) ? Sys.ring_kick (ring_h) : 0;
+    int ring_st1 = Sys.peek32 (ring_d1 + 20);
+    if (ring_h > 0)
+        Sys.close (ring_h);
+    if (ring_grant > 0)
+        Sys.close (ring_grant);
+    if (ring_block > 0)
+        Sys.free_page (ring_block);
+    bool ring_ok = ring_block > 0 && ring_h > 0
+                   && ring_k1 == 1 && ring_st0 == 2 && ring_fill == 0xA5A5A5A5
+                   && ring_k2 == -1 && ring_st1 == 3;
+    if (ring_ok)
+        print ("ring=ok\n");
+    else {
+        print (@"ringdbg err=$ring_err block=$ring_block grant=$ring_grant h=$ring_h k1=$ring_k1 st0=$ring_st0 fill=$ring_fill k2=$ring_k2 st1=$ring_st1\n");
+        print ("ring=FAIL\n");
+        fails++;
+    }
+
     return fails;
 }
