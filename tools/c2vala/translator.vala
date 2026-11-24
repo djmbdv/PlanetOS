@@ -4,82 +4,6 @@ using Planc;
 
 namespace C2Vala {
 
-    // Builder emitted for a C compound literal `(T){ .a = x }` (see
-    // Translator.ensure_lit_helper).
-    public class LitHelper : Object {
-        public string name;
-        public CType ctype;
-        public GenericArray<string> fields = new GenericArray<string> ();
-        public GenericArray<string> vtypes = new GenericArray<string> ();
-    }
-
-    public class ReportEntry : Object {
-        public string name;
-        public bool ok;
-        public string reason;
-
-        public ReportEntry (string name, bool ok, string reason = "") {
-            this.name = name;
-            this.ok = ok;
-            this.reason = reason;
-        }
-    }
-
-    public class LocalInfo : Object {
-        public string name;
-        public CType ctype;
-        public bool is_array = false;
-        public bool is_param = false;
-        public bool has_ptr_arith = false;
-        public bool has_addr_taken = false;
-        public bool is_field_ref = false;
-        public bool is_native_ptr = false;
-
-        public LocalInfo (string name, CType ctype, bool is_param = false) {
-            this.name = name;
-            this.ctype = ctype;
-            this.is_param = is_param;
-        }
-    }
-
-    public class FuncSig : Object {
-        public string name;
-        public CType ret_type;
-        public bool ret_is_array = false;
-        public bool is_extern = false;
-        public bool is_varargs = false;
-        public GenericArray<CType> param_types = new GenericArray<CType> ();
-        public GenericArray<bool> param_is_array = new GenericArray<bool> ();
-
-        public FuncSig (string name, CType ret_type) {
-            this.name = name;
-            this.ret_type = ret_type;
-        }
-    }
-
-    public class GotoPlan : Object {
-        public string label;
-        public string flag_name;
-        public bool is_general = false;
-        public int target_idx = -1;
-        public StmtIf? hoisted_if = null;
-        public StmtBlock? hoisted_block = null;
-        public int hoisted_label_idx = 0;
-        public CStmt? loop_continue_stmt = null;
-        public StmtSwitch? switch_case_sw = null;
-        public int switch_case_idx = -1;
-        public StmtBlock? nested_target_block = null;
-        public int nested_label_idx = 0;
-        public int top_stmt_idx = -1;
-
-        public GotoPlan (string label, string flag_name, bool is_general = false, int target_idx = -1) {
-            this.label = label;
-            this.flag_name = flag_name;
-            this.is_general = is_general;
-            this.target_idx = target_idx;
-        }
-    }
-
     public class Translator : Object {
         private TranslationUnit tu;
         private GenericArray<FuncSig> sigs = new GenericArray<FuncSig> ();
@@ -252,6 +176,33 @@ namespace C2Vala {
             return cls_name;
         }
 
+        private static string fnv1a_hex (string s) {
+            uint32 h = 2166136261u;
+            for (int i = 0; i < s.length; i++) {
+                h ^= (uint32) s[i];
+                h *= 16777619u;
+            }
+            return Host.hex_u32 (h);
+        }
+
+        private static int[] sorted_order (GenericArray<string> names) {
+            int n = names.length;
+            int[] ord = new int[n];
+            for (int i = 0; i < n; i++)
+                ord[i] = i;
+            for (int i = 1; i < n; i++) {
+                int key_idx = ord[i];
+                string key_name = names[key_idx];
+                int j = i - 1;
+                while (j >= 0 && strcmp (names[ord[j]], key_name) > 0) {
+                    ord[j + 1] = ord[j];
+                    j--;
+                }
+                ord[j + 1] = key_idx;
+            }
+            return ord;
+        }
+
         private string ensure_field_ref_step (string fref_cls, string vt, string field) {
             string key = @"$fref_cls|$field";
             Host.spin_lock (del_lock);
@@ -261,7 +212,7 @@ namespace C2Vala {
                 Host.spin_unlock (del_lock);
                 return existing;
             }
-            string sfn = @"_c2v_step_$(fref_step_names.length)_$(esc_ident (field))";
+            string sfn = @"_c2v_step_$(fref_cls)_$(esc_ident (field))";
             fref_step_map.set_index (key, fref_step_names.length);
             fref_step_names.add (sfn);
             fref_step_fref.add (fref_cls);
@@ -445,13 +396,20 @@ namespace C2Vala {
                 Host.spin_unlock (del_lock);
                 return res;
             }
-            string base_name = (hint != "") ? hint : @"_c2v_del_$(del_names.length)";
+            string h = fnv1a_hex (key);
+            string base_name = (hint != "") ? hint : @"_c2v_del_$h";
             string name = base_name;
             bool clash = (find_struct (name) != null || find_enum (name) != null
                 || find_sig (name) != null || del_name_map.get_index (name) >= 0
                 || global_map.get_index (name) >= 0);
-            if (clash)
-                name = @"_c2v_del_$(del_names.length)";
+            if (clash) {
+                name = @"_c2v_del_$h";
+                int salt = 1;
+                while (del_name_map.get_index (name) >= 0) {
+                    name = @"_c2v_del_$(h)_$(salt)";
+                    salt++;
+                }
+            }
             del_sig_map.set_index (key, del_names.length);
             del_name_map.set_index (name, del_names.length);
             del_names.add (name);
@@ -1023,9 +981,7 @@ namespace C2Vala {
                         mt_fn_code[fi] = fsb.str + "\n";
                         mt_fn_rep[fi] = new ReportEntry (fn.name, true);
                     } catch (RefuseError e) {
-                        var rsb = new StrBuilder ();
-                        w.emit_refused_func (rsb, fn, sig, e.message);
-                        mt_fn_code[fi] = rsb.str;
+                        mt_fn_code[fi] = @"// c2vala refused $(fn.name): $(e.message)\n\n";
                         mt_fn_rep[fi] = new ReportEntry (fn.name, false, e.message);
                     }
                 } else {
@@ -1165,13 +1121,16 @@ namespace C2Vala {
             sb.append ("// Generated by c2vala.\n\n");
             if (ns_name != "")
                 sb.append (@"namespace $ns_name {\n\n");
-            for (int oi = 0; oi < opaque_names.length; oi++) {
-                sb.append (@"[Compact]\npublic sealed class $(esc_ident (opaque_names[oi])) {}\n");
+            int[] opaque_ord = sorted_order (opaque_names);
+            for (int oi = 0; oi < opaque_ord.length; oi++) {
+                sb.append (@"[Compact]\npublic sealed class $(esc_ident (opaque_names[opaque_ord[oi]])) {}\n");
             }
             if (opaque_names.length > 0)
                 sb.append ("\n");
             sb.append (types_sb.str);
-            for (int di = 0; di < del_names.length; di++) {
+            int[] del_ord = sorted_order (del_names);
+            for (int di_i = 0; di_i < del_ord.length; di_i++) {
+                int di = del_ord[di_i];
                 var fp = del_ctypes[di];
                 string rtype = fp.fp_ret != null ? vala_type ((CType) fp.fp_ret, false) : "void";
                 sb.append (@"public delegate $rtype $(esc_ident (del_names[di])) (");
@@ -1186,7 +1145,9 @@ namespace C2Vala {
             }
             if (del_names.length > 0)
                 sb.append ("\n");
-            for (int si2 = 0; si2 < slice_names.length; si2++) {
+            int[] slice_ord = sorted_order (slice_names);
+            for (int si2_i = 0; si2_i < slice_ord.length; si2_i++) {
+                int si2 = slice_ord[si2_i];
                 string sfn = slice_names[si2];
                 string svt = slice_vtypes[si2];
                 sb.append (@"private static $svt[] $sfn ($svt[] arr, int off) {\n");
@@ -1198,7 +1159,9 @@ namespace C2Vala {
                 sb.append ("    return res;\n");
                 sb.append ("}\n\n");
             }
-            for (int cai = 0; cai < copy_arr_names.length; cai++) {
+            int[] copy_ord = sorted_order (copy_arr_names);
+            for (int cai_i = 0; cai_i < copy_ord.length; cai_i++) {
+                int cai = copy_ord[cai_i];
                 string cfn = copy_arr_names[cai];
                 string cvt = copy_arr_vtypes[cai];
                 sb.append (@"private static void $cfn ($cvt[] dst, int doff, $cvt[] src, int soff, int n) {\n");
@@ -1208,7 +1171,9 @@ namespace C2Vala {
                 sb.append ("    }\n");
                 sb.append ("}\n\n");
             }
-            for (int fri = 0; fri < fref_names.length; fri++) {
+            int[] fref_ord = sorted_order (fref_names);
+            for (int fri_i = 0; fri_i < fref_ord.length; fri_i++) {
+                int fri = fref_ord[fri_i];
                 string fcls = fref_names[fri];
                 string fvt = fref_vtypes[fri];
                 string gdel = @"_c2v_fget_$fcls";
@@ -1225,7 +1190,9 @@ namespace C2Vala {
                 sb.append ("    }\n");
                 sb.append ("}\n\n");
             }
-            for (int fsi = 0; fsi < fref_step_names.length; fsi++) {
+            int[] fref_step_ord = sorted_order (fref_step_names);
+            for (int fsi_i = 0; fsi_i < fref_step_ord.length; fsi_i++) {
+                int fsi = fref_step_ord[fsi_i];
                 string sfn = fref_step_names[fsi];
                 string fcls = fref_step_fref[fsi];
                 string fvt = fref_step_vtypes[fsi];
@@ -1235,14 +1202,18 @@ namespace C2Vala {
                 sb.append (@"    return new $fcls (() => { return _c.$fld; }, (v) => { _c.$fld = v; });\n");
                 sb.append ("}\n\n");
             }
-            for (int oi2 = 0; oi2 < op_assign_names.length; oi2++) {
+            int[] op_assign_ord = sorted_order (op_assign_names);
+            for (int oi2_i = 0; oi2_i < op_assign_ord.length; oi2_i++) {
+                int oi2 = op_assign_ord[oi2_i];
                 string ovt = op_assign_vtypes[oi2];
                 sb.append (@"private static $ovt $(op_assign_names[oi2]) ($ovt v, ref $ovt t) {\n");
                 sb.append (@"    t $(op_assign_ops[oi2])= v;\n");
                 sb.append ("    return t;\n");
                 sb.append ("}\n\n");
             }
-            for (int bi = 0; bi < box_names.length; bi++) {
+            int[] box_ord = sorted_order (box_names);
+            for (int bi_i = 0; bi_i < box_ord.length; bi_i++) {
+                int bi = box_ord[bi_i];
                 string bvt = box_types[bi];
                 if (bvt == "Time" || bvt == "RecMutex" || bvt == "Cond") {
                     sb.append (@"private static $bvt[] $(box_names[bi])_arr ($bvt v) {\n");
@@ -1268,14 +1239,18 @@ namespace C2Vala {
                 }
             }
             emit_lit_helpers (sb);
-            for (int xi = 0; xi < idx_set_names.length; xi++) {
+            int[] idx_set_ord = sorted_order (idx_set_names);
+            for (int xi_i = 0; xi_i < idx_set_ord.length; xi_i++) {
+                int xi = idx_set_ord[xi_i];
                 string xvt = idx_set_vtypes[xi];
                 sb.append (@"private static $xvt $(idx_set_names[xi]) ($xvt[] arr, int idx, $xvt v) {\n");
                 sb.append ("    arr[idx] = v;\n");
                 sb.append ("    return v;\n");
                 sb.append ("}\n\n");
             }
-            for (int ai = 0; ai < assign_arr_names.length; ai++) {
+            int[] assign_arr_ord = sorted_order (assign_arr_names);
+            for (int ai_i = 0; ai_i < assign_arr_ord.length; ai_i++) {
+                int ai = assign_arr_ord[ai_i];
                 string avt = assign_arr_vtypes[ai];
                 sb.append (@"private static $avt $(assign_arr_names[ai]) ($avt v, ref $avt t) {\n");
                 sb.append ("    t = v;\n");
@@ -3531,6 +3506,22 @@ namespace C2Vala {
                     sb.append (@"_off_$(pli.name) = $base_off $sign (int) ($(emit_expr (rb.right)));\n");
                     return;
                 }
+                if (rb.op == "+" && rb.right is ExprIdent) {
+                    var rbt = infer_type (rb.right);
+                    if (rbt != null && (rbt.kind == CTypeKind.PTR || rbt.kind == CTypeKind.ARRAY)) {
+                        string src = ((ExprIdent) rb.right).name;
+                        var sli = find_local (cur_locals, src);
+                        string base_off = (sli != null && sli.has_ptr_arith) ? @"_off_$src" : "0";
+                        indent (sb, level);
+                        if (src == pli.name)
+                            sb.append (@"$lname = $(emit_expr (rb.right));\n");
+                        else
+                            sb.append (@"$lname = $(coerce_ptr (rb.right, pli.ctype, a.lvalue));\n");
+                        indent (sb, level);
+                        sb.append (@"_off_$(pli.name) = $base_off + (int) ($(emit_expr (rb.left)));\n");
+                        return;
+                    }
+                }
             }
             indent (sb, level);
             sb.append (@"$lname = $(coerce_assign (a.lvalue, rv));\n");
@@ -4263,8 +4254,26 @@ namespace C2Vala {
             if (target == null)
                 return rt;
             var vt = infer_type (value);
-            if (vt == null || vt.kind != CTypeKind.SCALAR)
+            if (vt == null)
                 return rt;
+            if (vt.kind == CTypeKind.ENUM) {
+                string ev = vala_type (vt, false);
+                if (ev == target)
+                    return rt;
+                return @"($target) $(wrap_operand (rt))";
+            }
+            if (vt.kind != CTypeKind.SCALAR) {
+                if (target == "bool" && (vt.kind == CTypeKind.PTR || vt.kind == CTypeKind.FUNC_PTR))
+                    return emit_cond (value);
+                return rt;
+            }
+            if (target == "bool") {
+                if (vt.name == "bool")
+                    return rt;
+                return emit_cond (value);
+            }
+            if (vt.name == "bool")
+                return @"($target) ($(wrap_operand (rt)) ? 1 : 0)";
             if (vt.name == target) {
                 // C's char is a byte and a `char *` buffer is a Vala `uint8[]`,
                 // so reading an element into a Vala `char` needs the narrowing
@@ -4557,7 +4566,7 @@ namespace C2Vala {
                 return existing;
             }
             var lh = new LitHelper () { ctype = ct };
-            lh.name = @"_c2v_lit_$(esc_ident (ct.name))_$(lit_helpers.length)";
+            lh.name = @"_c2v_lit_$(esc_ident (ct.name))_$(fnv1a_hex (key))";
             for (int i = 0; i < fields.length; i++) {
                 lh.fields.add (fields[i]);
                 lh.vtypes.add (vtypes[i]);
@@ -4569,8 +4578,12 @@ namespace C2Vala {
         }
 
         private void emit_lit_helpers (StrBuilder sb) throws RefuseError {
-            for (int hi = 0; hi < lit_helpers.length; hi++) {
-                var lh = lit_helpers[hi];
+            var lit_names = new GenericArray<string> ();
+            for (int hi = 0; hi < lit_helpers.length; hi++)
+                lit_names.add (lit_helpers[hi].name);
+            int[] ord = sorted_order (lit_names);
+            for (int hi_i = 0; hi_i < ord.length; hi_i++) {
+                var lh = lit_helpers[ord[hi_i]];
                 string vt = vala_type (lh.ctype, false);
                 sb.append (@"private static $vt $(lh.name) (");
                 for (int i = 0; i < lh.fields.length; i++) {
@@ -4907,8 +4920,14 @@ namespace C2Vala {
                     string inner_c = emit_expr (c.expr);
                     var ict = infer_type (c.expr);
                     if (ict != null && (ict.kind == CTypeKind.ARRAY
-                        || (ict.kind == CTypeKind.PTR && ptr_view (c.expr, ict) == 2)))
+                        || (ict.kind == CTypeKind.PTR && ptr_view (c.expr, ict) == 2))) {
+                        if (c.expr is ExprIdent) {
+                            var pli = find_local (cur_locals, ((ExprIdent) c.expr).name);
+                            if (pli != null && pli.has_ptr_arith)
+                                return @"(string) c_bytes_add ($inner_c, _off_$(pli.name))";
+                        }
                         return @"(string) $inner_c";
+                    }
                     return inner_c;
                 }
                 var src_t = infer_type (c.expr);
@@ -4929,9 +4948,22 @@ namespace C2Vala {
                                 if (c.expr is ExprBinary) {
                                     var cb = (ExprBinary) c.expr;
                                     if (cb.op == "+" || cb.op == "-") {
+                                        string base_off = "";
+                                        if (cb.left is ExprIdent) {
+                                            var pli = find_local (cur_locals, ((ExprIdent) cb.left).name);
+                                            if (pli != null && pli.has_ptr_arith)
+                                                base_off = @"_off_$(pli.name) $(cb.op) ";
+                                        }
+                                        if (base_off != "")
+                                            return @"new $(esc_ident (bsd.name)).at ($(emit_expr (cb.left)), $base_off(int) ($(emit_expr (cb.right))))";
                                         string sign_s = (cb.op == "-") ? "-" : "";
                                         return @"new $(esc_ident (bsd.name)).at ($(emit_expr (cb.left)), $sign_s(int) ($(emit_expr (cb.right))))";
                                     }
+                                }
+                                if (c.expr is ExprIdent) {
+                                    var pli = find_local (cur_locals, ((ExprIdent) c.expr).name);
+                                    if (pli != null && pli.has_ptr_arith)
+                                        return @"new $(esc_ident (bsd.name)).at ($(emit_expr (c.expr)), _off_$(pli.name))";
                                 }
                                 return @"new $(esc_ident (bsd.name)).at ($(emit_expr (c.expr)), 0)";
                             }
@@ -4946,30 +4978,43 @@ namespace C2Vala {
                     if (dt2 == null || dt2.kind != CTypeKind.PTR)
                         is_ptr_diff = false;
                 }
-                if (!is_ptr_diff && src_is_bytes && c.target_type.kind == CTypeKind.SCALAR
-                    && (vt == "uint64" || vt == "int64" || vt == "size_t" || vt == "ssize_t"
-                        || vt == "ulong" || vt == "long" || vt == "uint" || vt == "int")
-                    && src_t != null && (src_t.is_void_ptr () || (src_t.is_char_ptr () && src_view == 2)
-                        || (src_t.kind == CTypeKind.ARRAY && src_t.inner != null
-                            && (src_t.inner.is_scalar ("char") || src_t.inner.is_scalar ("uint8") || src_t.inner.is_scalar ("uchar"))))) {
+                bool tgt_is_int_ptr = (vt == "uint64" || vt == "int64" || vt == "size_t" || vt == "ssize_t"
+                    || vt == "ulong" || vt == "long" || vt == "uint" || vt == "int"
+                    || vt == "uintptr" || vt == "uintptr_t" || vt == "intptr_t");
+                bool src_is_byte_ptr_or_arr = (src_t != null && (src_t.is_void_ptr ()
+                    || (src_t.is_char_ptr () && src_view == 2)
+                    || ((src_t.kind == CTypeKind.ARRAY || src_t.kind == CTypeKind.PTR) && src_t.inner != null
+                        && (src_t.inner.is_scalar ("char") || src_t.inner.is_scalar ("uint8") || src_t.inner.is_scalar ("uchar")))));
+                if (!is_ptr_diff && (src_is_bytes || src_is_byte_ptr_or_arr) && c.target_type.kind == CTypeKind.SCALAR && tgt_is_int_ptr
+                    && src_is_byte_ptr_or_arr) {
                     string ptr_s = @"c_ptr_u64 ($(emit_expr (c.expr)))";
+                    if (c.expr is ExprIdent) {
+                        var pli = find_local (cur_locals, ((ExprIdent) c.expr).name);
+                        if (pli != null && pli.has_ptr_arith)
+                            ptr_s = @"($ptr_s + (uint64) _off_$(pli.name))";
+                    }
                     return (vt == "uint64") ? ptr_s : @"(($vt) $ptr_s)";
                 }
                 if (!is_ptr_diff && src_t != null && src_t.is_struct_ptr () && ptr_view (c.expr, src_t) == 1
-                    && c.target_type.kind == CTypeKind.SCALAR
-                    && (vt == "uint64" || vt == "int64" || vt == "size_t" || vt == "ssize_t"
-                        || vt == "ulong" || vt == "long" || vt == "uint" || vt == "int")) {
+                    && c.target_type.kind == CTypeKind.SCALAR && tgt_is_int_ptr) {
                     string ptr_s = @"uintptr.from_pointer ((void*) $(emit_expr (c.expr)))";
                     return (vt == "uint64") ? @"(uint64) $ptr_s" : @"(($vt) $ptr_s)";
                 }
+                if (c.target_type.is_scalar ("bool"))
+                    return emit_cond (c.expr);
                 // Unwrap redundant identical nested casts: `(T) ((T) x)` -> `(T) x`.
                 CExpr inner_expr = c.expr;
                 while (inner_expr is ExprCast && vala_type (((ExprCast) inner_expr).target_type, false) == vt)
                     inner_expr = ((ExprCast) inner_expr).expr;
                 var inner_t = infer_type (inner_expr);
+                if (inner_t != null && inner_t.is_scalar ("bool") && c.target_type.kind == CTypeKind.SCALAR) {
+                    string cond_s = wrap_operand (emit_expr (inner_expr));
+                    return (vt == "int") ? @"($cond_s ? 1 : 0)" : @"(($vt) ($cond_s ? 1 : 0))";
+                }
                 if (inner_t != null && !(inner_expr is ExprInt) && !(inner_expr is ExprChar)
                     && inner_t.kind == CTypeKind.SCALAR && c.target_type.kind == CTypeKind.SCALAR
-                    && vala_type (inner_t, false) == vt)
+                    && vala_type (inner_t, false) == vt
+                    && !(vt == "char" && is_byte_element_read (inner_expr)))
                     return emit_expr (inner_expr);
                 // planc's parser rejects `(T) (x)` with a parenthesized simple
                 // operand, so only complex operands get parentheses.
@@ -5065,10 +5110,15 @@ namespace C2Vala {
                                     init_s = @"($lval_s != null ? $(lval_s)[_off_$(oli.name):$(lval_s).length] : null)";
                                 string rtmp = @"_c2v_ref_$(out_ref_id++)";
                                 if (rvt.has_suffix ("[]")) {
-                                    out_ref_decls.add (@"C2VBox<$rvt> $rtmp = new C2VBox<$rvt> ($init_s);");
-                                    out_ref_writebacks.add (@"$lval_s = $rtmp.val;");
-                                    if (oli != null && oli.has_ptr_arith)
-                                        out_ref_writebacks.add (@"_off_$(oli.name) = 0;");
+                                    if (oli != null && oli.has_ptr_arith) {
+                                        string orig = @"_c2v_orig_$(out_ref_id++)";
+                                        out_ref_decls.add (@"$rvt $orig = $init_s;");
+                                        out_ref_decls.add (@"C2VBox<$rvt> $rtmp = new C2VBox<$rvt> ($orig);");
+                                        out_ref_writebacks.add (@"if ($rtmp.val != $orig) { $lval_s = $rtmp.val; _off_$(oli.name) = 0; }");
+                                    } else {
+                                        out_ref_decls.add (@"C2VBox<$rvt> $rtmp = new C2VBox<$rvt> ($init_s);");
+                                        out_ref_writebacks.add (@"$lval_s = $rtmp.val;");
+                                    }
                                 } else {
                                     out_ref_decls.add (@"$rvt[] $rtmp = { $init_s };");
                                     out_ref_writebacks.add (@"$lval_s = $rtmp[0];");
@@ -5092,6 +5142,15 @@ namespace C2Vala {
                             string off_p = (pli != null && pli.has_ptr_arith) ? @"_off_$pnm" : "0";
                             string sign = (pb.op == "+") ? "+" : "-";
                             return @"$(esc_ident (pnm))[$off_p $sign (int) ($(emit_expr (pb.right)))]";
+                        }
+                        if (pb.op == "+" && pb.right is ExprIdent) {
+                            var pbt = infer_type (pb.right);
+                            if (pbt != null && (pbt.kind == CTypeKind.PTR || pbt.kind == CTypeKind.ARRAY)) {
+                                string pnm = ((ExprIdent) pb.right).name;
+                                var pli = find_local (cur_locals, pnm);
+                                string off_p = (pli != null && pli.has_ptr_arith) ? @"_off_$pnm" : "0";
+                                return @"$(esc_ident (pnm))[$off_p + (int) ($(emit_expr (pb.left)))]";
+                            }
                         }
                     }
                     if (u.operand is ExprIdent) {
@@ -5291,11 +5350,24 @@ namespace C2Vala {
                     && (lt == null || (lt.kind != CTypeKind.PTR && lt.kind != CTypeKind.ARRAY))) {
                     if (rt.is_char_ptr () && ptr_view (b.right, rt) == 1)
                         return @"c_str_add ($(emit_expr (b.right)), (int) ($(emit_expr (b.left))))";
-                    if (rt.is_void_ptr () || rt.is_char_ptr ())
+                    if (rt.is_void_ptr () || rt.is_char_ptr ()) {
+                        if (b.right is ExprIdent) {
+                            string pnm = ((ExprIdent) b.right).name;
+                            var pli = find_local (cur_locals, pnm);
+                            if (pli != null && pli.has_ptr_arith)
+                                return @"c_bytes_add ($(esc_ident (pnm)), _off_$pnm + (int) ($(emit_expr (b.left))))";
+                        }
                         return @"c_bytes_add ($(emit_expr (b.right)), (int) ($(emit_expr (b.left))))";
+                    }
                     if (rt.inner != null && rt.inner.kind != CTypeKind.ARRAY
                         && (rt.inner.kind != CTypeKind.PTR || !vala_type ((CType) rt.inner, false).has_suffix ("[]"))) {
                         string sh = ensure_slice_helper ((CType) rt.inner);
+                        if (b.right is ExprIdent) {
+                            string pnm = ((ExprIdent) b.right).name;
+                            var pli = find_local (cur_locals, pnm);
+                            if (pli != null && pli.has_ptr_arith)
+                                return @"$sh ($(esc_ident (pnm)), _off_$pnm + (int) ($(emit_expr (b.left))))";
+                        }
                         return @"$sh ($(emit_expr (b.right)), (int) ($(emit_expr (b.left))))";
                     }
                     refuse_loc (e.file, e.line, "pointer arithmetic is not supported");
@@ -5309,11 +5381,46 @@ namespace C2Vala {
                     } else if (rt != null && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY || rt.kind == CTypeKind.FUNC_PTR)
                                && b.left is ExprInt && ((ExprInt) b.left).val == 0) {
                         ls = "null";
+                    } else if (lt != null && rt != null
+                               && (lt.kind == CTypeKind.PTR || lt.kind == CTypeKind.ARRAY)
+                               && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY)) {
+                        CExpr ul = b.left;
+                        while (ul is ExprCast) ul = ((ExprCast) ul).expr;
+                        CExpr ur = b.right;
+                        while (ur is ExprCast) ur = ((ExprCast) ur).expr;
+                        if (ul is ExprIdent && ur is ExprIdent) {
+                            string ln = ((ExprIdent) ul).name;
+                            string rn = ((ExprIdent) ur).name;
+                            var lli = find_local (cur_locals, ln);
+                            var rli = find_local (cur_locals, rn);
+                            if ((lli != null && lli.has_ptr_arith) || (rli != null && rli.has_ptr_arith)) {
+                                string lo = (lli != null && lli.has_ptr_arith) ? @"_off_$ln" : "0";
+                                string ro = (rli != null && rli.has_ptr_arith) ? @"_off_$rn" : "0";
+                                if (b.op == "==")
+                                    return @"($ls == $rs && $lo == $ro)";
+                                return @"($ls != $rs || $lo != $ro)";
+                            }
+                        }
                     }
                 } else if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=")
                            && lt != null && rt != null
                            && (lt.kind == CTypeKind.PTR || lt.kind == CTypeKind.ARRAY)
                            && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY)) {
+                    CExpr ul = b.left;
+                    while (ul is ExprCast) ul = ((ExprCast) ul).expr;
+                    CExpr ur = b.right;
+                    while (ur is ExprCast) ur = ((ExprCast) ur).expr;
+                    if (ul is ExprIdent && ur is ExprIdent) {
+                        string ln = ((ExprIdent) ul).name;
+                        string rn = ((ExprIdent) ur).name;
+                        var lli = find_local (cur_locals, ln);
+                        var rli = find_local (cur_locals, rn);
+                        if ((lli != null && lli.has_ptr_arith) || (rli != null && rli.has_ptr_arith)) {
+                            string lo = (lli != null && lli.has_ptr_arith) ? @"_off_$ln" : "0";
+                            string ro = (rli != null && rli.has_ptr_arith) ? @"_off_$rn" : "0";
+                            return @"($ls == $rs ? ($lo $(b.op) $ro) : (uintptr.from_pointer ((void*) ($ls)) $(b.op) uintptr.from_pointer ((void*) ($rs))))";
+                        }
+                    }
                     return @"(uintptr.from_pointer ((void*) ($ls)) $(b.op) uintptr.from_pointer ((void*) ($rs)))";
                 }
                 if (lt != null && rt != null && lt.kind == CTypeKind.SCALAR && rt.kind == CTypeKind.SCALAR) {
@@ -5432,6 +5539,9 @@ namespace C2Vala {
                         return @"$lhs_s = $cast_s($lhs_s $bin_op ($(emit_expr (a.rvalue))))";
                     }
                 }
+                string? st = scalar_lvalue_type (a.lvalue);
+                if (st != null)
+                    return @"$(emit_expr (a.lvalue)) $(a.op) $(coerce_value (a.rvalue, st))";
                 return @"$(emit_expr (a.lvalue)) $(a.op) $(emit_expr (a.rvalue))";
             }
             if (e is ExprTernary) {                var t = (ExprTernary) e;

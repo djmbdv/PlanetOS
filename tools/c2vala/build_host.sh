@@ -21,6 +21,7 @@ valac --pkg=glib-2.0 -o "$OUT" \
     "$HERE/lexer.vala" \
     "$HERE/parser.vala" \
     "$HERE/ptr_analyzer.vala" \
+    "$HERE/translator_models.vala" \
     "$HERE/translator.vala" \
     "$HERE/main.vala"
 

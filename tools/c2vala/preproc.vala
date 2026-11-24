@@ -33,7 +33,7 @@ namespace C2Vala {
     }
 
     public class Preprocessor : Object {
-        private const int MACRO_CAP = 32768;
+        private int macro_cap = 32768;
         private GenericArray<string> include_dirs = new GenericArray<string> ();
         private GenericArray<MacroDef> macros = new GenericArray<MacroDef> ();
         private int[] macro_idx = new int[32768];
@@ -78,10 +78,30 @@ namespace C2Vala {
             define_macro (new MacroDef (name, val));
         }
 
+        private void rehash_macros () {
+            int new_cap = macro_cap * 2;
+            int[] new_idx = new int[new_cap];
+            uint32 mask = (uint32) (new_cap - 1);
+            for (int i = 0; i < macros.length; i++) {
+                // Only re-insert macros that are still active in the old table
+                if (find_macro (macros[i].name) == macros[i]) {
+                    uint32 idx = hash_str (macros[i].name) & mask;
+                    while (new_idx[idx] != 0)
+                        idx = (idx + 1) & mask;
+                    new_idx[idx] = i + 1;
+                }
+            }
+            macro_cap = new_cap;
+            macro_idx = new_idx;
+        }
+
         public void define_macro (MacroDef m) {
-            uint32 idx = hash_str (m.name) & (uint32) (MACRO_CAP - 1);
+            if (macros.length * 2 >= macro_cap)
+                rehash_macros ();
+            uint32 mask = (uint32) (macro_cap - 1);
+            uint32 idx = hash_str (m.name) & mask;
             int first_tomb = -1;
-            for (int probe = 0; probe < MACRO_CAP; probe++) {
+            for (int probe = 0; probe < macro_cap; probe++) {
                 int slot = macro_idx[idx];
                 if (slot == 0) {
                     int target = (first_tomb >= 0) ? first_tomb : (int) idx;
@@ -96,31 +116,33 @@ namespace C2Vala {
                     macros[slot - 1] = m;
                     return;
                 }
-                idx = (idx + 1) & (uint32) (MACRO_CAP - 1);
+                idx = (idx + 1) & mask;
             }
         }
 
         public void undef (string name) {
-            uint32 idx = hash_str (name) & (uint32) (MACRO_CAP - 1);
-            for (int probe = 0; probe < MACRO_CAP; probe++) {
+            uint32 mask = (uint32) (macro_cap - 1);
+            uint32 idx = hash_str (name) & mask;
+            for (int probe = 0; probe < macro_cap; probe++) {
                 int slot = macro_idx[idx];
                 if (slot == 0) return;
                 if (slot > 0 && macros[slot - 1].name == name) {
                     macro_idx[idx] = -1;
                     return;
                 }
-                idx = (idx + 1) & (uint32) (MACRO_CAP - 1);
+                idx = (idx + 1) & mask;
             }
         }
 
         private MacroDef? find_macro (string name) {
-            uint32 idx = hash_str (name) & (uint32) (MACRO_CAP - 1);
-            for (int probe = 0; probe < MACRO_CAP; probe++) {
+            uint32 mask = (uint32) (macro_cap - 1);
+            uint32 idx = hash_str (name) & mask;
+            for (int probe = 0; probe < macro_cap; probe++) {
                 int slot = macro_idx[idx];
                 if (slot == 0) return null;
                 if (slot > 0 && macros[slot - 1].name == name)
                     return macros[slot - 1];
-                idx = (idx + 1) & (uint32) (MACRO_CAP - 1);
+                idx = (idx + 1) & mask;
             }
             return null;
         }
@@ -821,7 +843,7 @@ namespace C2Vala {
                         continue;
                     }
                     if (ident == "__FILE__" && cur_file != "") {
-                        sb.append (@"\"$cur_file\"");
+                        sb.append (stringify_arg (cur_file));
                         continue;
                     }
                     var m = find_macro (ident);
@@ -842,7 +864,7 @@ namespace C2Vala {
                                 if (end_paren > j) {
                                     string sub = subst_macro (m, args);
                                     m.expanding = true;
-                                    sb.append (expand_macros (sub, depth + 1));
+                                    sb.append (expand_macros (sub, depth + 1, cur_file, cur_line));
                                     m.expanding = false;
                                     i = end_paren;
                                     continue;
@@ -1040,10 +1062,10 @@ namespace C2Vala {
         private int64 eval_if_expr (string raw, string file, int line) {
             // First handle defined(X) / defined X before macro expansion
             string pre = resolve_defined (raw);
-            string expanded = expand_macros (pre, 0);
+            string expanded = expand_macros (pre, 0, file, line);
             if_src = expanded;
             if_pos = 0;
-            return parse_if_lor ();
+            return parse_if_ternary ();
         }
 
         private string resolve_defined (string s) {
@@ -1103,6 +1125,30 @@ namespace C2Vala {
             return false;
         }
 
+        private bool if_match_single (uint8 ch, uint8 not_next1, uint8 not_next2 = 0) {
+            if_skip_ws ();
+            if (if_pos >= if_src.length || if_src[if_pos] != ch)
+                return false;
+            if (if_pos + 1 < if_src.length) {
+                uint8 nxt = if_src[if_pos + 1];
+                if (nxt == not_next1 || (not_next2 != 0 && nxt == not_next2))
+                    return false;
+            }
+            if_pos++;
+            return true;
+        }
+
+        private int64 parse_if_ternary () {
+            int64 cond = parse_if_lor ();
+            if (if_match ("?")) {
+                int64 tval = parse_if_ternary ();
+                if_match (":");
+                int64 fval = parse_if_ternary ();
+                return cond != 0 ? tval : fval;
+            }
+            return cond;
+        }
+
         private int64 parse_if_lor () {
             int64 v = parse_if_land ();
             while (if_match ("||")) {
@@ -1113,10 +1159,34 @@ namespace C2Vala {
         }
 
         private int64 parse_if_land () {
-            int64 v = parse_if_eq ();
+            int64 v = parse_if_bor ();
             while (if_match ("&&")) {
-                int64 r = parse_if_eq ();
+                int64 r = parse_if_bor ();
                 v = (v != 0 && r != 0) ? 1 : 0;
+            }
+            return v;
+        }
+
+        private int64 parse_if_bor () {
+            int64 v = parse_if_bxor ();
+            while (if_match_single ('|', '|', '=')) {
+                v = v | parse_if_bxor ();
+            }
+            return v;
+        }
+
+        private int64 parse_if_bxor () {
+            int64 v = parse_if_band ();
+            while (if_match_single ('^', '=')) {
+                v = v ^ parse_if_band ();
+            }
+            return v;
+        }
+
+        private int64 parse_if_band () {
+            int64 v = parse_if_eq ();
+            while (if_match_single ('&', '&', '=')) {
+                v = v & parse_if_eq ();
             }
             return v;
         }
@@ -1135,18 +1205,34 @@ namespace C2Vala {
         }
 
         private int64 parse_if_rel () {
-            int64 v = parse_if_add ();
+            int64 v = parse_if_shift ();
             while (true) {
                 if (if_match ("<="))
-                    v = (v <= parse_if_add ()) ? 1 : 0;
+                    v = (v <= parse_if_shift ()) ? 1 : 0;
                 else if (if_match (">="))
-                    v = (v >= parse_if_add ()) ? 1 : 0;
-                else if (if_match ("<"))
-                    v = (v < parse_if_add ()) ? 1 : 0;
-                else if (if_match (">"))
-                    v = (v > parse_if_add ()) ? 1 : 0;
+                    v = (v >= parse_if_shift ()) ? 1 : 0;
+                else if (if_match_single ('<', '<', '='))
+                    v = (v < parse_if_shift ()) ? 1 : 0;
+                else if (if_match_single ('>', '>', '='))
+                    v = (v > parse_if_shift ()) ? 1 : 0;
                 else
                     break;
+            }
+            return v;
+        }
+
+        private int64 parse_if_shift () {
+            int64 v = parse_if_add ();
+            while (true) {
+                if (if_match ("<<")) {
+                    int64 sh = parse_if_add ();
+                    v = (sh >= 0 && sh < 64) ? (v << (int) sh) : 0;
+                } else if (if_match (">>")) {
+                    int64 sh = parse_if_add ();
+                    v = (sh >= 0 && sh < 64) ? (v >> (int) sh) : 0;
+                } else {
+                    break;
+                }
             }
             return v;
         }
@@ -1172,6 +1258,9 @@ namespace C2Vala {
                 else if (if_match ("/")) {
                     int64 d = parse_if_unary ();
                     v = d != 0 ? v / d : 0;
+                } else if (if_match ("%")) {
+                    int64 d = parse_if_unary ();
+                    v = d != 0 ? v % d : 0;
                 } else
                     break;
             }
@@ -1182,18 +1271,57 @@ namespace C2Vala {
             if_skip_ws ();
             if (if_match ("!"))
                 return parse_if_unary () == 0 ? 1 : 0;
+            if (if_match ("+"))
+                return parse_if_unary ();
             if (if_match ("-"))
                 return -parse_if_unary ();
             if (if_match ("~"))
                 return ~parse_if_unary ();
             if (if_match ("(")) {
-                int64 v = parse_if_lor ();
+                int64 v = parse_if_ternary ();
                 if_match (")");
                 return v;
             }
             if_skip_ws ();
             if (if_pos >= if_src.length)
                 return 0;
+            if (if_src[if_pos] == '\'') {
+                if_pos++;
+                int64 chv = 0;
+                if (if_pos < if_src.length && if_src[if_pos] == '\\') {
+                    if_pos++;
+                    if (if_pos < if_src.length) {
+                        uint8 ec = if_src[if_pos++];
+                        if (ec == 'n') chv = 10;
+                        else if (ec == 't') chv = 9;
+                        else if (ec == 'r') chv = 13;
+                        else if (ec == '0') chv = 0;
+                        else if (ec == 'x') {
+                            int64 hv = 0;
+                            while (if_pos < if_src.length && if_src[if_pos] != '\'') {
+                                uint8 hc = if_src[if_pos];
+                                int d = -1;
+                                if (hc >= '0' && hc <= '9') d = (int) (hc - '0');
+                                else if (hc >= 'a' && hc <= 'f') d = 10 + (int) (hc - 'a');
+                                else if (hc >= 'A' && hc <= 'F') d = 10 + (int) (hc - 'A');
+                                else break;
+                                hv = (hv << 4) | d;
+                                if_pos++;
+                            }
+                            chv = hv;
+                        } else {
+                            chv = (int64) ec;
+                        }
+                    }
+                } else if (if_pos < if_src.length) {
+                    chv = (int64) if_src[if_pos++];
+                }
+                while (if_pos < if_src.length && if_src[if_pos] != '\'')
+                    if_pos++;
+                if (if_pos < if_src.length)
+                    if_pos++;
+                return chv;
+            }
             if (if_src[if_pos] >= '0' && if_src[if_pos] <= '9') {
                 int start = if_pos;
                 while (if_pos < if_src.length && is_ident_char (if_src[if_pos]))

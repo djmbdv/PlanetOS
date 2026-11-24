@@ -16,6 +16,7 @@ mkdir -p "$(dirname "$OUT")"
     "$HERE/lexer.vala" \
     "$HERE/parser.vala" \
     "$HERE/ptr_analyzer.vala" \
+    "$HERE/translator_models.vala" \
     "$HERE/translator.vala" \
     "$HERE/main.vala" \
     -o "$OUT"

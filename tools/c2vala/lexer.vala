@@ -110,6 +110,7 @@ namespace C2Vala {
                     // String literal
                     if (c == '"') {
                         int start = i;
+                        bool closed = false;
                         i++;
                         while (i < s.length) {
                             uint8 sc = s[i];
@@ -117,9 +118,12 @@ namespace C2Vala {
                             if (sc == '\\' && i < s.length) {
                                 i++;
                             } else if (sc == '"') {
+                                closed = true;
                                 break;
                             }
                         }
+                        if (!closed)
+                            throw new RefuseError.FAILED (@"$f:$ln: unterminated string literal");
                         raw_toks.add (new CTok (TokKind.STR_LIT, s.substring (start, i - start), f, ln));
                         continue;
                     }
@@ -127,6 +131,7 @@ namespace C2Vala {
                     // Char literal
                     if (c == '\'') {
                         int start = i;
+                        bool closed = false;
                         i++;
                         while (i < s.length) {
                             uint8 sc = s[i];
@@ -134,9 +139,12 @@ namespace C2Vala {
                             if (sc == '\\' && i < s.length) {
                                 i++;
                             } else if (sc == '\'') {
+                                closed = true;
                                 break;
                             }
                         }
+                        if (!closed)
+                            throw new RefuseError.FAILED (@"$f:$ln: unterminated character literal");
                         raw_toks.add (new CTok (TokKind.CHAR_LIT, s.substring (start, i - start), f, ln));
                         continue;
                     }

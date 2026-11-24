@@ -31,8 +31,14 @@ public int c_strcmp (string a, string b) {
 public int c_strncmp (string a, string b, size_t n) {
     int limit = (int) n;
     for (int i = 0; i < limit; i++) {
-        if (i >= a.length || i >= b.length)
-            break;
+        bool end_a = (i >= a.length);
+        bool end_b = (i >= b.length);
+        if (end_a && end_b)
+            return 0;
+        if (end_a)
+            return -1;
+        if (end_b)
+            return 1;
         if (a[i] != b[i])
             return (a[i] < b[i]) ? -1 : 1;
     }
