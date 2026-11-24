@@ -276,6 +276,9 @@ namespace Planet.Kernel {
 
     private static int handle_slot (int h) {
         int index = h & 0xFF;
+        // One test per `if` on purpose: the equivalent `index < 3 || index >=
+        // MAX_FDS` still fails under planc d9d0e9e (R-35), which silently kills
+        // every fd check and leaves the shell unloaded.
         if (index < 3)
             return -1;
         if (index >= MAX_FDS)
@@ -533,6 +536,7 @@ namespace Planet.Kernel {
     // own block before anything runs, which is what keeps userland away from
     // MMIO and DMA while there is no IOMMU.
     private static bool ring_header_ok (int rstart, int rlen, int entries) {
+        // One test per `if`: the `||` forms are miscompiled (R-35).
         if (rstart <= 0)
             return false;
         if (rlen < 64)
