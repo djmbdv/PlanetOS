@@ -33,6 +33,7 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | `Pollable`, `FileDescriptorBased`, `IOStream`, cancellable source | [stdlib/gio/types.vala](../stdlib/gio/types.vala), [stdlib/gio/streams.vala](../stdlib/gio/streams.vala) | implemented: `PollableInputStream`/`PollableOutputStream` on the file and device streams, `SimpleIOStream`, `Cancellable.create_source` |
 | Capability grant | `SYS_MAP_USER_AT`, [kernel/syscall.vala](../kernel/syscall.vala) | **missing**: maps any physical frame above 6 MiB |
 | Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A3): PML4 walk with read/write rights, guarded copy that recovers from a fault |
+| Frame ownership and grants | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A2): `SYS_ALLOC_PAGE` records the owner, `SYS_GRANT`/`SYS_GRANT_SHARE` hand out a capability, `SYS_FREE_PAGE` and `SYS_MAP_USER_AT` check it |
 | Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
 | IOMMU | QEMU command line, [run-qemu.ps1](../run-qemu.ps1) | absent |
 | Protocol stacks | - | absent |
@@ -92,19 +93,27 @@ Rules:
 - Transfer between processes is explicit (a planned `SYS_HANDLE_SEND`, or a
   channel). There is no ambient file-descriptor namespace.
 
-### 4.2 Memory grants
+### 4.2 Memory grants (implemented, A2)
 
-- `SYS_GRANT(handle, offset, len, prot)` maps only frames owned by the resource
-  named by the handle.
-- Each process owns a pre-mapped **I/O arena**: a fixed virtual window granted at
-  `exec`. Grants carve windows inside it. The fast path does not edit page
-  tables; the mapping cost is paid once.
-- `SYS_MAP_USER_AT` and `SYS_MAP_USER_RO_AT` are not capabilities and must be
-  removed from the public ABI once `SharedSurface` and the `.dlib` loader
-  ([stdlib/gmodule_compat.vala](../stdlib/gmodule_compat.vala)) use `SYS_GRANT`.
-  Until then they are an open isolation hole: they map `vaddr == paddr` for any
-  physical frame above 6 MiB, with `RW|USER` or read-only, without checking
-  ownership.
+`SYS_GRANT(start, len)` turns a block the task allocated with `SYS_ALLOC_PAGE`
+into a handle (`KIND_GRANT`, no seek/poll rights). The kernel keeps a table of
+owned blocks, so:
+
+- `SYS_FREE_PAGE` refuses frames the caller does not own (`EACCES`) and any
+  frame a live grant still covers.
+- `SYS_MAP_USER_AT` refuses a range that belongs to another task, unless a
+  grant covering it lists the caller in its ACL (`SYS_GRANT_SHARE`). Image
+  segments nobody owns (the `.dlib` loader) stay mappable.
+- A task's death returns its blocks to the Pmm; handles die with their owner.
+
+The compositor grants each shared surface and shares it with the client task
+before `spawn`, so the address in `PLANET_WIN_SHM` is a hint and the capability
+is what actually authorizes the mapping.
+
+Still open from the original design: a dedicated pre-mapped **I/O arena** per
+process (`exec`-time grant window) so the fast path never edits page tables, and
+an explicit `SYS_HANDLE_SEND` so a handle can travel over a channel instead of
+being shared by task id.
 
 ### 4.3 User copies (implemented, A3)
 
@@ -286,7 +295,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 | Phase | Work | Exit criterion |
 |---|---|---|
 | **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 19/19 QEMU cases green. A dedicated per-process table remains an optional optimisation |
-| **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | Mapping an unowned frame fails; the compositor still attaches a client surface |
+| **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | **Done for grants**: `SYS_GRANT` returns a handle over a block the task owns, `SYS_GRANT_SHARE` puts a task id in its ACL, `SYS_FREE_PAGE` refuses a non-owner and any range a live grant covers, and `SYS_MAP_USER_AT` refuses another task's block. `system` proves it (`memguard=ok`). The compositor grants its surface and shares it with the client before `spawn`, so zero-copy keeps working (`graphics`, `compositor-ext`). A dedicated I/O arena remains optional |
 | **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`). **A3.1 also done**: paths, `readdir` and `stat_ex` stage through the scratch, and `copy_guarded` moves 8 bytes per iteration. 20/20 QEMU cases green |
 | **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
 | **B1** | `devfs` and `Gio.File` for `/dev` | **Done for the namespace**: `gio_demo` opens `/dev/console`, checks `PollableInputStream`/`FileDescriptorBased`/`PollableOutputStream`/`is_writable` and closes the pair as one `IOStream` (`dev=ok` in `system`). Remaining: `cat` through `/dev/serial0` and a readiness-driven read |
