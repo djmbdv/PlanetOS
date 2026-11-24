@@ -478,6 +478,8 @@ namespace Planc {
                                 op = IROp.CMP_IMM_JMP_FALSE, sop = b.op, lhs = lv, imm = imm,
                                 target_bb = target_bb, is_unsigned = vreg_is_unsigned[lv]
                             });
+                            if (fall_bb != cur_bb + 1)
+                                emit_ir (new IRInst () { op = IROp.JMP, target_bb = fall_bb });
                             blocks[cur_bb].succs.add (fall_bb);
                             blocks[cur_bb].succs.add (target_bb);
                             return;
@@ -488,6 +490,8 @@ namespace Planc {
                         op = IROp.CMP_JMP_FALSE, sop = b.op, lhs = lv, rhs = rv,
                         target_bb = target_bb, is_unsigned = vreg_is_unsigned[lv] || vreg_is_unsigned[rv]
                     });
+                    if (fall_bb != cur_bb + 1)
+                        emit_ir (new IRInst () { op = IROp.JMP, target_bb = fall_bb });
                     blocks[cur_bb].succs.add (fall_bb);
                     blocks[cur_bb].succs.add (target_bb);
                     return;
@@ -495,6 +499,8 @@ namespace Planc {
             }
             int cv = lower_expr (cond);
             emit_ir (new IRInst () { op = IROp.TEST_JMP_FALSE, lhs = cv, target_bb = target_bb });
+            if (fall_bb != cur_bb + 1)
+                emit_ir (new IRInst () { op = IROp.JMP, target_bb = fall_bb });
             blocks[cur_bb].succs.add (fall_bb);
             blocks[cur_bb].succs.add (target_bb);
         }
@@ -1461,23 +1467,23 @@ namespace Planc {
         }
 
         private static void set_bit (uint64[] arr, int base_w, int bit) {
-            arr[base_w + (bit >> 6)] |= (1UL << (bit & 63));
+            arr[base_w + (bit >> 6)] |= (((uint64) 1) << (bit & 63));
         }
 
         private static void clear_bit (uint64[] arr, int base_w, int bit) {
-            arr[base_w + (bit >> 6)] &= ~(1UL << (bit & 63));
+            arr[base_w + (bit >> 6)] &= ~(((uint64) 1) << (bit & 63));
         }
 
         private static void add_use_bit (int base_w, uint64[] bb_use, uint64[] bb_def, int v) {
             int w = base_w + (v >> 6);
-            uint64 mask = 1UL << (v & 63);
+            uint64 mask = ((uint64) 1) << (v & 63);
             if ((bb_def[w] & mask) == 0)
                 bb_use[w] |= mask;
         }
 
         private static int ctz64 (uint64 x) {
             int c = 0;
-            while ((x & 1UL) == 0) { x >>= 1; c++; }
+            while ((x & ((uint64) 1)) == 0) { x >>= 1; c++; }
             return c;
         }
 
