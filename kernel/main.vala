@@ -102,6 +102,12 @@ int main () {
     if (ata_ok)
         print (@"ata:sectors=$(Ata.total_sectors ()) lba48=$(Ata.has_lba48 () ? 1 : 0)\n");
 
+    // C2: the virtio-blk path is the IRQ-driven one; ATA stays as the fallback
+    // for images that do not expose the device.
+    bool blk_ok = VirtioBlk.init ();
+    if (VirtioBlk.is_present ())
+        print (@"blk:sectors=$(VirtioBlk.capacity_sectors ()) irq=$(blk_ok ? 1 : 0)\n");
+
     VirtioGpu.init ();
     if (VirtioGpu.is_present ()) {
         print (@"virtio_gpu:found=1 w=$(VirtioGpu.display_width ()) h=$(VirtioGpu.display_height ()) virgl=$(VirtioGpu.has_virgl () ? 1 : 0) blob=$(VirtioGpu.has_blob () ? 1 : 0) ctx=$(VirtioGpu.has_ctx_init () ? 1 : 0) venus=$(VirtioGpu.has_venus () ? 1 : 0)\n");

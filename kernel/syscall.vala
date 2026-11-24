@@ -1423,6 +1423,18 @@ namespace Planet.Kernel {
                 Sched.wake_word (rstart66 + 24, 1);
                 ok ();
                 return done66;
+            case 67: // SYS_BLK_READ(buf, sector, count) -> bytes | -1
+                if (a2 <= 0 || a2 > 64)
+                    return fail (E_INVAL);
+                if (!user_ok_w (a0, a2 * 512))
+                    return fail (E_INVAL);
+                if (!VirtioBlk.read (a1, a0, a2))
+                    return fail (E_IO);
+                ok ();
+                return a2 * 512;
+            case 68: // SYS_BLK_STATS() -> irqs << 16 | capacity in MiB
+                return (VirtioBlk.irq_count () << 16)
+                    | ((VirtioBlk.capacity_sectors () / 2048) & 0xFFFF);
             default:
                 return -1;
         }

@@ -354,5 +354,25 @@ int main (string[] args) {
         fails++;
     }
 
+    // 17. C2: block I/O over virtio-blk, completed by its IRQ.
+    int blk_buf = Sys.alloc_pages (1);
+    int blk_bytes = (blk_buf > 0) ? Sys.sys (67, blk_buf, 0, 1) : -1;
+    int blk_magic = (blk_buf > 0) ? Sys.peek32 (blk_buf) : 0;
+    int blk_stats = Sys.sys (68, 0, 0, 0);
+    int blk_irqs = (blk_stats >> 16) & 0xFFFF;
+    if (blk_buf > 0)
+        Sys.free_page (blk_buf);
+    // Sector 0 of the image carries the XFS magic; the IRQ counter proves the
+    // completion did not come from a spin loop.
+    bool blk_ok = blk_buf > 0 && blk_bytes == 512
+                  && blk_magic == 0x42534658 && blk_irqs > 0;
+    if (blk_ok)
+        print ("blk=ok\n");
+    else {
+        print (@"blkdbg buf=$blk_buf bytes=$blk_bytes magic=$blk_magic stats=$blk_stats\n");
+        print ("blk=FAIL\n");
+        fails++;
+    }
+
     return fails;
 }

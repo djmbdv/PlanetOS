@@ -288,6 +288,8 @@ if (-not $NoBuild) {
     # they are compiled once instead of into each ELF.
     Invoke-Planc (@('--target=planetos', $Opt, '--format=dlib', '--image-base=0x1800000', $PlanetSys) + $GlibSrcs + @('-o', (Out-Path 'glib.dlib')))
     $GlibImp = '--import-dlib=' + (Out-Path 'glib.dlib')
+    Invoke-Planc (@('--target=planetos', $Opt, '--format=dlib', '--image-base=0x1880000', $GlibImp, $PlanetSys) + $CairoSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), '-o', (Out-Path 'pango.dlib')))
+    $PangoImp = '--import-dlib=' + (Out-Path 'pango.dlib')
     # In-guest compiles need the GLib declarations (the .dlib carries no types),
     # packed into one file because the guest shell line buffer is only 480 bytes.
     & $Python (Join-Path $Root 'tools\make_sdk.py') (Out-Path 'c2vala_sdk.vala')
@@ -310,11 +312,11 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_pattern.vala'), '-o', (Out-Path 'frag_pattern.spv'))
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys, (Join-Path $StdDir 'glib\math.vala'), (Join-Path $StdDir 'spirv_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf')))
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys, (Join-Path $StdDir 'glib\math.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $UserDir 'vk_demo.vala'), '-o', (Out-Path 'vk_demo.elf')))
-    Invoke-Planc (@('--target=planetos', $Opt, '--image-base=0xE00000', $GlibImp, $PlanetSys) + $GlibSrcs + $GioSrcs + @((Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'gsk\path.vala')) + $GskSrcs + $GtkSrcs + $CompositorSrcs + @('-o', (Out-Path 'compositor.elf')))
-    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $CairoSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf')))
-    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + $GioSrcs + @((Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala')) + $GtkSrcs + @((Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, '--image-base=0xE00000', $GlibImp, $PangoImp, $PlanetSys) + $GlibSrcs + $GioSrcs + @((Join-Path $StdDir 'pango_compat.vala'), (Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'gsk\path.vala')) + $GskSrcs + $GtkSrcs + $CompositorSrcs + @('-o', (Out-Path 'compositor.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PangoImp, $PlanetSys) + $CairoSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PangoImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + $GioSrcs + @((Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala')) + $GtkSrcs + @((Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf')))
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + @((Join-Path $UserDir 'pluto.vala'), '-o', (Out-Path 'pluto.elf')))
-    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + $GioSrcs + @((Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala')) + $GtkSrcs + @((Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf')))
+    Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PangoImp, $PlanetSys) + $GlibSrcs + $GeeSrcs + $GioSrcs + @((Join-Path $StdDir 'spirv_compat.vala'), (Join-Path $StdDir 'venus_compat.vala')) + $CairoSrcs + $GdkSrcs + $GskSrcs + @((Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala')) + $GtkSrcs + @((Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf')))
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + @((Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf')))
     Invoke-Planc (@('--target=planetos', $Opt, $GlibImp, $PlanetSys) + $GlibSrcs + @((Join-Path $UserDir 'sys_demo.vala'), '-o', (Out-Path 'sys_demo.elf')))
 
@@ -372,6 +374,7 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'vmm.vala'),
         (Join-Path $KernelDir 'console_font.vala'),
         (Join-Path $KernelDir 'virtio_gpu.vala'),
+        (Join-Path $KernelDir 'virtio_blk.vala'),
         (Join-Path $KernelDir 'env.vala'),
         (Join-Path $KernelDir 'ramfs.vala'),
         (Join-Path $KernelDir 'keyboard.vala'),
@@ -430,7 +433,8 @@ if (-not $NoBuild) {
         (Out-Path 'jsmn_demo.elf') `
         (Out-Path 'glib.dlib') `
         (Out-Path 'c2vala_sdk.vala') `
-        (Out-Path 'sys_demo.elf')
+        (Out-Path 'sys_demo.elf') `
+        (Out-Path 'pango.dlib')
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'
     }
@@ -534,7 +538,9 @@ Write-Host ('GPU: ' + $GpuMode + ' [' + $gpuLine + ']')
 $qemuArgs = @(
     '-cpu', 'max',
     '-kernel', (To-QemuPath $kernelPath),
-    '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide')
+    '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide'),
+    '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=none,id=vd0,readonly=on'),
+    '-device', 'virtio-blk-pci,drive=vd0'
 ) + $vgaArgs + @(
     '-no-reboot',
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04'

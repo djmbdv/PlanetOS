@@ -149,6 +149,10 @@ def run_guest(qemu, out_dir, commands, delay, boot_timeout, command_timeout):
         "-cpu", "max",
         "-kernel", qemu_path(kernel),
         "-drive", "file=%s,format=raw,if=ide" % qemu_path(disk),
+        # C2: the same image is exposed again as a read-only virtio-blk device,
+        # so the IRQ-driven block path is exercised alongside ATA.
+        "-drive", "file=%s,format=raw,if=none,id=vd0,readonly=on" % qemu_path(disk),
+        "-device", "virtio-blk-pci,drive=vd0",
         "-vga", "std",
         "-display", "none",
         "-serial", "mon:stdio",
