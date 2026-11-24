@@ -763,7 +763,7 @@ namespace Planet.Kernel {
                 } else if (kind == Vfs.KIND_DEV) {
                     fd_kind = 3;
                     fsz = 0;
-                } else if (kind == Vfs.KIND_DIR) {
+                } else if (kind == Vfs.KIND_DIR || kind == Vfs.KIND_XFS_DIR) {
                     return fail (E_ISDIR);
                 } else {
                     return fail (E_NOENT);
@@ -1059,10 +1059,18 @@ namespace Planet.Kernel {
                     return fail (E_INVAL);
                 int id31 = -1;
                 int kind31 = Vfs.resolve (kp31, a1, out id31);
-                if (kind31 != Vfs.KIND_DIR)
+                if (kind31 != Vfs.KIND_DIR && kind31 != Vfs.KIND_XFS_DIR)
                     return fail (E_NOTDIR);
                 int sc31 = KernelIo.scratch_addr ();
                 int want31 = (a3 > KernelIo.CHUNK) ? KernelIo.CHUNK : a3;
+                if (kind31 == Vfs.KIND_XFS_DIR) {
+                    int n31x = Xfs.list_dir (id31, sc31, want31);
+                    if (n31x < 0)
+                        n31x = 0;
+                    if (n31x > 0 && copy_guarded (a2, sc31, n31x) != 0)
+                        return fail (E_INVAL);
+                    return n31x;
+                }
                 if (id31 == Vfs.DEV_DIR) {
                     string names31 = "console\nserial0\nnull\n";
                     int n31d = (names31.length > want31) ? want31 : names31.length;
@@ -1096,7 +1104,7 @@ namespace Planet.Kernel {
                 }
                 int id32 = -1;
                 int kind32 = Vfs.resolve (kp32, a1, out id32);
-                if (kind32 == Vfs.KIND_DIR)
+                if (kind32 == Vfs.KIND_DIR || kind32 == Vfs.KIND_XFS_DIR)
                     return 2;
                 if (kind32 == Vfs.KIND_FILE || kind32 == Vfs.KIND_XFS || kind32 == Vfs.KIND_DEV)
                     return 1;
@@ -1227,7 +1235,7 @@ namespace Planet.Kernel {
                 } else if (kind55 == Vfs.KIND_FILE) {
                     k55 = 1;
                     sz55 = Ramfs.file_size (id55);
-                } else if (kind55 == Vfs.KIND_DIR) {
+                } else if (kind55 == Vfs.KIND_DIR || kind55 == Vfs.KIND_XFS_DIR) {
                     k55 = 2;
                 } else if (kind55 == Vfs.KIND_DEV) {
                     k55 = 1;

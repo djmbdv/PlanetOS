@@ -210,35 +210,30 @@ namespace Planet.Kernel {
             return true;
         }
 
-        private static void scan_alloc_state () {
-            if (xfs_alloc_ready != 0 || !xfs_mounted)
+        private static void scan_dir_alloc (int dir_ino, int depth, ref int min_ino, ref int max_ino, ref int max_blk) {
+            if (depth > 3)
                 return;
-            int tmp_root = Pmm.alloc_frame ();
-            int tmp_ino = Pmm.alloc_frame ();
-            if (tmp_root == 0 || tmp_ino == 0) {
-                if (tmp_root != 0) Pmm.free_frame (tmp_root);
-                if (tmp_ino != 0) Pmm.free_frame (tmp_ino);
+            int tmp = Pmm.alloc_frame ();
+            if (tmp == 0)
                 return;
-            }
-            if (!load_inode (xfs_rootino, tmp_root)) {
-                Pmm.free_frame (tmp_root);
-                Pmm.free_frame (tmp_ino);
+            if (!load_inode (dir_ino, tmp)) {
+                Pmm.free_frame (tmp);
                 return;
             }
-            int roff = inode_off (xfs_rootino);
-            int ino_base = tmp_root + roff;
-            int ver = read_u8 (ino_base + 4);
-            int df = ino_base + ((ver >= 3) ? 176 : 100);
+            int off = inode_off (dir_ino);
+            int dbase = tmp + off;
+            if (read_u8 (dbase + 5) != 1) {
+                Pmm.free_frame (tmp);
+                return;
+            }
+            int ver = read_u8 (dbase + 4);
+            int df = dbase + ((ver >= 3) ? 176 : 100);
             int count = read_u8 (df);
             int i8count = read_u8 (df + 1);
             int ino_sz = (i8count > 0) ? 8 : 4;
             int cur = df + 4 + ino_sz;
-
-            int min_ino = 0x7FFFFFFF;
-            int max_ino = 0;
-            int max_blk = 0;
             for (int i = 0; i < count; i++) {
-                if (cur + 3 + ino_sz > tmp_root + 2048)
+                if (cur + 3 + ino_sz > tmp + 2048)
                     break;
                 int nlen = read_u8 (cur);
                 int ino_addr = cur + 3 + nlen;
@@ -246,10 +241,11 @@ namespace Planet.Kernel {
                 if (child > 0) {
                     if (child < min_ino) min_ino = child;
                     if (child > max_ino) max_ino = child;
-                    if (load_inode (child, tmp_ino)) {
+                    if (load_inode (child, xfs_sec_buf)) {
                         int coff = inode_off (child);
-                        int cbase = tmp_ino + coff;
-                        if (read_u8 (cbase + 5) == 2) {
+                        int cbase = xfs_sec_buf + coff;
+                        int fmt = read_u8 (cbase + 5);
+                        if (fmt == 2) {
                             int cver = read_u8 (cbase + 4);
                             int cdf_off = (cver >= 3) ? 176 : 100;
                             int nextents = be32 (cbase + 76);
@@ -264,27 +260,61 @@ namespace Planet.Kernel {
                                 if (sb + bc > max_blk)
                                     max_blk = sb + bc;
                             }
+                        } else if (fmt == 1) {
+                            scan_dir_alloc (child, depth + 1, ref min_ino, ref max_ino, ref max_blk);
                         }
                     }
                 }
                 cur = ino_addr + ino_sz;
             }
+            Pmm.free_frame (tmp);
+        }
+
+        private static void scan_alloc_state () {
+            if (xfs_alloc_ready != 0 || !xfs_mounted)
+                return;
+            int min_ino = 0x7FFFFFFF;
+            int max_ino = 0;
+            int max_blk = 0;
+            scan_dir_alloc (xfs_rootino, 0, ref min_ino, ref max_ino, ref max_blk);
             int ino_blk = (min_ino < 0x7FFFFFFF) ? (min_ino >> xfs_inopblog) : 1000;
             xfs_max_ino = (ino_blk + 8) << xfs_inopblog; // 8 inode blocks = 128 inodes
             xfs_next_ino = (max_ino > 0) ? (max_ino + 1) : (ino_blk << xfs_inopblog);
             int data_start = ino_blk + 8;
             xfs_next_blk = (max_blk > data_start) ? max_blk : data_start;
             xfs_alloc_ready = 1;
-            Pmm.free_frame (tmp_root);
-            Pmm.free_frame (tmp_ino);
         }
 
-        public static int lookup_root (int name_ptr, int name_len) {
-            if (!xfs_mounted || name_ptr == 0 || name_len <= 0 || name_len > 255)
+        public static int root_ino () {
+            return xfs_rootino;
+        }
+
+        public static bool is_dir (int ino) {
+            if (!load_inode (ino, xfs_sec_buf))
+                return false;
+            int off = inode_off (ino);
+            return (be16 (xfs_sec_buf + off + 2) & 0xF000) == 0x4000;
+        }
+
+        public static int dir_parent (int dir_ino) {
+            if (!load_inode (dir_ino, xfs_sec_buf))
                 return 0;
-            if (!load_inode (xfs_rootino, xfs_sec_buf))
+            int off = inode_off (dir_ino);
+            int ino_base = xfs_sec_buf + off;
+            if (read_u8 (ino_base + 5) != 1)
                 return 0;
-            int off = inode_off (xfs_rootino);
+            int ver = read_u8 (ino_base + 4);
+            int df = ino_base + ((ver >= 3) ? 176 : 100);
+            int i8count = read_u8 (df + 1);
+            return (i8count > 0) ? be64 (df + 4) : (be32 (df + 4) & 0xFFFFFFFF);
+        }
+
+        public static int lookup_dir (int dir_ino, int name_ptr, int name_len) {
+            if (!xfs_mounted || dir_ino <= 0 || name_ptr == 0 || name_len <= 0 || name_len > 255)
+                return 0;
+            if (!load_inode (dir_ino, xfs_sec_buf))
+                return 0;
+            int off = inode_off (dir_ino);
             int ino_base = xfs_sec_buf + off;
             int ino_end = xfs_sec_buf + 2048;
             int fmt = read_u8 (ino_base + 5);
@@ -314,12 +344,16 @@ namespace Planet.Kernel {
             return 0;
         }
 
-        public static int list_root (int buf, int max_bytes) {
-            if (!xfs_mounted || buf == 0 || max_bytes <= 0)
+        public static int lookup_root (int name_ptr, int name_len) {
+            return lookup_dir (xfs_rootino, name_ptr, name_len);
+        }
+
+        public static int list_dir (int dir_ino, int buf, int max_bytes) {
+            if (!xfs_mounted || dir_ino <= 0 || buf == 0 || max_bytes <= 0)
                 return -1;
-            if (!load_inode (xfs_rootino, xfs_sec_buf))
+            if (!load_inode (dir_ino, xfs_sec_buf))
                 return -1;
-            int off = inode_off (xfs_rootino);
+            int off = inode_off (dir_ino);
             int ino_base = xfs_sec_buf + off;
             int ino_end = xfs_sec_buf + 2048;
             int fmt = read_u8 (ino_base + 5);
@@ -355,6 +389,10 @@ namespace Planet.Kernel {
                 cur = ino_addr + ino_sz;
             }
             return pos;
+        }
+
+        public static int list_root (int buf, int max_bytes) {
+            return list_dir (xfs_rootino, buf, max_bytes);
         }
 
         public static int file_size (int ino) {

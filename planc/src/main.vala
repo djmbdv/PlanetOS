@@ -13,7 +13,13 @@ namespace Planc {
 
     private sealed class ImportAddr : Object {
         public uint64 addr;
-        public ImportAddr (uint64 a) { addr = a; }
+        public uint64 dlib_hash;
+        public string sym_name;
+        public ImportAddr (uint64 a, uint64 dh, string sn) {
+            addr = a;
+            dlib_hash = dh;
+            sym_name = sn;
+        }
     }
 
     private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--error-limit N] [--no-error-recovery]";
@@ -117,8 +123,14 @@ namespace Planc {
         var target_planetos = (Host.getenv ("OS") == "PlanetOS" || Host.getenv ("PLANC_TARGET") == "planetos");
         var target_spirv = false;
         var target_windows = false;
+        var nostdlib = false;
+        string library_dir = Host.getenv ("PLANETOS_LIBRARY_DIR");
+        if (library_dir == "" && Host.getenv ("OS") == "PlanetOS")
+            library_dir = "/library";
         int emit_format = 0; // 0 = elf, 1 = plan, 2 = dlib
         var import_dlibs = new GenericArray<string> ();
+        var hlib_paths = new GenericArray<string> ();
+        var hlib_seen = new StrIndexMap ();
         var import_map = new StrIndexMap ();
         var import_addrs = new GenericArray<ImportAddr> ();
         uint64 image_base = 0;
@@ -177,6 +189,10 @@ namespace Planc {
                 check_leaks = true;
             } else if (a == "--freestanding") {
                 freestanding = true;
+            } else if (a == "--nostdlib") {
+                nostdlib = true;
+            } else if (a.has_prefix ("--library-dir=")) {
+                library_dir = a.substring (14);
             } else if (a == "--target=planetos") {
                 target_planetos = true;
             } else if (a == "--target=windows") {
@@ -191,6 +207,15 @@ namespace Planc {
                 emit_format = 2;
             } else if (a.has_prefix ("--import-dlib=")) {
                 import_dlibs.add (a.substring (14));
+            } else if (a.has_prefix ("--import-lib=")) {
+                string lname = a.substring (13);
+                if (lname.has_suffix (".dlib") || lname.contains ("/") || lname.contains ("\\")) {
+                    import_dlibs.add (lname);
+                } else if (library_dir != "") {
+                    import_dlibs.add (@"$library_dir/$lname/$lname.dlib");
+                } else {
+                    import_dlibs.add (@"library/$lname/$lname.dlib");
+                }
             } else if (a.has_prefix ("--image-base=")) {
                 var val_str = a.substring (13);
                 uint64 parsed = 0;
@@ -237,8 +262,44 @@ namespace Planc {
             image_base = (uint64) 0x1800000;
         }
 
+        // Implicit glib linking on PlanetOS unless --freestanding, --nostdlib,
+        // or building glib.dlib itself.
+        if (target_planetos && !freestanding && !nostdlib && library_dir != "") {
+            bool building_glib = (emit_format == 2) &&
+                (output_path == "glib.dlib" || output_path.has_suffix ("/glib.dlib") || output_path.has_suffix ("\\glib.dlib"));
+            bool has_glib = false;
+            for (int di = 0; di < import_dlibs.length; di++) {
+                string dp = import_dlibs[di];
+                if (dp == "glib.dlib" || dp.has_suffix ("/glib.dlib") || dp.has_suffix ("\\glib.dlib")) {
+                    has_glib = true;
+                    break;
+                }
+            }
+            if (!building_glib && !has_glib) {
+                string imp_glib = @"$library_dir/glib/glib.dlib";
+                // Prepend so glib is loaded before higher-level libraries.
+                var new_imps = new GenericArray<string> ();
+                new_imps.add (imp_glib);
+                for (int di = 0; di < import_dlibs.length; di++)
+                    new_imps.add (import_dlibs[di]);
+                import_dlibs = new_imps;
+            }
+        }
+
         for (int di = 0; di < import_dlibs.length; di++) {
             string dpath = import_dlibs[di];
+            string hpath = dpath.has_suffix (".dlib")
+                ? (dpath.substring (0, dpath.length - 5) + ".hlib")
+                : (dpath + ".hlib");
+            if (hlib_seen.lookup (hpath) < 0) {
+                try {
+                    Host.read_file (hpath);
+                    hlib_seen.put (hpath, 1);
+                    hlib_paths.add (hpath);
+                } catch (FileError e) {
+                    // Optional .hlib: caller may still pass raw .vala declarations.
+                }
+            }
             uint8[] dbuf;
             try {
                 dbuf = Host.read_bytes (dpath);
@@ -256,6 +317,14 @@ namespace Planc {
             for (int k = 0; k < 8; k++)
                 meta_off |= ((uint64) dbuf[40 + k]) << (k * 8);
             int pos = (int) meta_off;
+            string dbase = dpath;
+            for (int k = dpath.length - 1; k >= 0; k--) {
+                if (dpath[k] == '/' || dpath[k] == '\\') {
+                    dbase = dpath.substring (k + 1);
+                    break;
+                }
+            }
+            uint64 dlib_h = Elf.fnv1a_64 (dbase);
             for (int ei = 0; ei < exp_count && pos + 12 <= dbuf.length; ei++) {
                 uint64 saddr = 0;
                 for (int k = 0; k < 8; k++)
@@ -271,10 +340,20 @@ namespace Planc {
                 string sname = Host.bytes_to_string (nsl, nlen);
                 pos += nlen;
                 if (import_map.lookup (sname) < 0) {
-                    import_addrs.add (new ImportAddr (saddr));
+                    import_addrs.add (new ImportAddr (saddr, dlib_h, sname));
                     import_map.put (sname, import_addrs.length);
                 }
             }
+        }
+
+        int own_source_start = hlib_paths.length;
+        if (own_source_start > 0) {
+            var all_paths = new GenericArray<string> ();
+            for (int hi = 0; hi < hlib_paths.length; hi++)
+                all_paths.add (hlib_paths[hi]);
+            for (int si = 0; si < source_paths.length; si++)
+                all_paths.add (source_paths[si]);
+            source_paths = all_paths;
         }
 
         var sources = new GenericArray<string> ();
@@ -499,6 +578,51 @@ namespace Planc {
         var text = codegen.emitter.code.to_array ();
         var rodata = codegen.emitter.data.to_array ();
         var data = codegen.emitter.init_data.to_array ();
+
+        var sym_index = new StrIndexMap ();
+        for (int si = 0; si < codegen.symbols.length; si++) {
+            if (sym_index.lookup (codegen.symbols[si].name) < 0)
+                sym_index.put (codegen.symbols[si].name, si + 1);
+        }
+
+        // Collect actually-referenced imported symbols and reserve a 6-byte
+        // `jmp *slot(%rip)` stub in .text + an 8-byte GOT slot in .data.
+        var used_imp_map = new StrIndexMap ();
+        var used_imp_idx = new GenericArray<int> ();
+        if (!target_windows && import_addrs.length > 0) {
+            foreach (var patch in codegen.emitter.calls) {
+                if (sym_index.lookup (patch.callee) < 0) {
+                    var imp_i = import_map.lookup (patch.callee);
+                    if (imp_i > 0 && used_imp_map.lookup (patch.callee) < 0) {
+                        used_imp_idx.add (imp_i - 1);
+                        used_imp_map.put (patch.callee, used_imp_idx.length);
+                    }
+                }
+            }
+            foreach (var patch in codegen.emitter.rodata_patches) {
+                if (patch.is_text && sym_index.lookup (patch.text_symbol) < 0) {
+                    var imp_i = import_map.lookup (patch.text_symbol);
+                    if (imp_i > 0 && used_imp_map.lookup (patch.text_symbol) < 0) {
+                        used_imp_idx.add (imp_i - 1);
+                        used_imp_map.put (patch.text_symbol, used_imp_idx.length);
+                    }
+                }
+            }
+        }
+        int orig_text_len = text.length;
+        int got_off = (data.length + 7) & ~7;
+        if (used_imp_idx.length > 0) {
+            var new_text = new uint8[orig_text_len + used_imp_idx.length * 6];
+            for (int k = 0; k < orig_text_len; k++)
+                new_text[k] = text[k];
+            text = new_text;
+
+            var new_data = new uint8[got_off + used_imp_idx.length * 8];
+            for (int k = 0; k < data.length; k++)
+                new_data[k] = data[k];
+            data = new_data;
+        }
+
         uint64 text_vaddr = 0;
         uint64 rodata_vaddr = 0;
         uint64 data_vaddr = 0;
@@ -508,7 +632,8 @@ namespace Planc {
         if (image_base != 0)
             base_addr = image_base;
         var layout = Elf.compute (text.length, rodata.length, data.length,
-                                  codegen.emitter.bss_size, codegen.symbols, base_addr);
+                                  codegen.emitter.bss_size, codegen.symbols, base_addr,
+                                  used_imp_idx.length > 0);
         var pe_layout = PeLayout ();
         if (target_windows) {
             pe_layout = Pe.compute (text.length, rodata.length, data.length,
@@ -523,6 +648,24 @@ namespace Planc {
             rodata_vaddr = layout.rodata_vaddr;
             data_vaddr = layout.data_vaddr;
             data_layout_size = layout.data_size;
+        }
+
+        var elf_imports = new GenericArray<ImportEntry> ();
+        for (int ui = 0; ui < used_imp_idx.length; ui++) {
+            var imp = import_addrs[used_imp_idx[ui]];
+            int stub_off = orig_text_len + ui * 6;
+            uint64 stub_va = text_vaddr + (uint64) stub_off;
+            int slot_off = got_off + ui * 8;
+            uint64 got_va = data_vaddr + (uint64) slot_off;
+            int64 disp = (int64) got_va - (int64) (stub_va + 6);
+            text[stub_off + 0] = 0xFF;
+            text[stub_off + 1] = 0x25;
+            uint32 d32 = (uint32) (int32) disp;
+            for (int k = 0; k < 4; k++)
+                text[stub_off + 2 + k] = (uint8) ((d32 >> (8 * k)) & 0xff);
+            for (int k = 0; k < 8; k++)
+                data[slot_off + k] = (uint8) ((imp.addr >> (8 * k)) & 0xff);
+            elf_imports.add (new ImportEntry (imp.dlib_hash, Elf.fnv1a_64 (imp.sym_name), got_va));
         }
 
         // Relocation pass 1: .text -> allocated data references.
@@ -555,18 +698,17 @@ namespace Planc {
                 text[patch.displacement + k] = (uint8) ((value >> (8 * k)) & 0xff);
         }
 
-        // Relocation pass 2: call rel32 to a .text symbol.
-        var sym_index = new StrIndexMap ();
-        for (int si = 0; si < codegen.symbols.length; si++) {
-            if (sym_index.lookup (codegen.symbols[si].name) < 0)
-                sym_index.put (codegen.symbols[si].name, si + 1);
-        }
+        // Relocation pass 2: call rel32 to a .text symbol (or GOT stub).
         foreach (var patch in codegen.emitter.calls) {
             var delta = (int64) int32.MIN - 1;
             var sym_i = sym_index.lookup (patch.callee);
             if (sym_i > 0) {
                 var s = codegen.symbols[sym_i - 1];
                 delta = (int64) s.offset - (int64) (patch.displacement + 4);
+            } else if (used_imp_map.lookup (patch.callee) > 0) {
+                int ui = used_imp_map.lookup (patch.callee) - 1;
+                int stub_off = orig_text_len + ui * 6;
+                delta = (int64) stub_off - (int64) (patch.displacement + 4);
             } else if (import_addrs.length > 0) {
                 var imp_i = import_map.lookup (patch.callee);
                 if (imp_i > 0) {
@@ -615,6 +757,9 @@ namespace Planc {
                 var sym_i = sym_index.lookup (patch.text_symbol);
                 if (sym_i > 0) {
                     target = text_vaddr + (uint64) codegen.symbols[sym_i - 1].offset;
+                } else if (used_imp_map.lookup (patch.text_symbol) > 0) {
+                    int ui = used_imp_map.lookup (patch.text_symbol) - 1;
+                    target = text_vaddr + (uint64) (orig_text_len + ui * 6);
                 } else {
                     var imp_i = (import_addrs.length > 0) ? import_map.lookup (patch.text_symbol) : -1;
                     if (imp_i > 0) {
@@ -665,10 +810,10 @@ namespace Planc {
 
             if (emit_format > 0) {
                 image = Elf.build_plan (text, rodata, data, codegen.symbols, layout,
-                                        entry_sym, emit_format == 2);
+                                        entry_sym, emit_format == 2, elf_imports);
             } else {
                 image = Elf.build (text, rodata, data, codegen.symbols, layout,
-                                   debug_line, debug_abbrev, debug_info, entry_sym);
+                                   debug_line, debug_abbrev, debug_info, entry_sym, elf_imports);
             }
         }
 
@@ -680,6 +825,30 @@ namespace Planc {
         }
 
         Host.chmod_755 (output_path);
+
+        if (emit_format == 2) {
+            string hlib_out = output_path.has_suffix (".dlib")
+                ? (output_path.substring (0, output_path.length - 5) + ".hlib")
+                : (output_path + ".hlib");
+            var hb = new Buffer (4096);
+            for (int si = own_source_start; si < sources.length; si++) {
+                string sp = source_paths[si];
+                string hdr = @"// ---- $sp ----\n";
+                for (int k = 0; k < hdr.length; k++)
+                    hb.u8 ((uint8) hdr[k]);
+                string body = sources[si];
+                for (int k = 0; k < body.length; k++)
+                    hb.u8 ((uint8) body[k]);
+                if (body.length == 0 || body[body.length - 1] != '\n')
+                    hb.u8 ('\n');
+            }
+            try {
+                Host.write_file (hlib_out, hb.to_array ());
+            } catch (FileError e) {
+                Host.eprintln (@"planc: cannot write $hlib_out: $(e.message)");
+                return 1;
+            }
+        }
         return 0;
     }
 }

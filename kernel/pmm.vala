@@ -221,7 +221,7 @@ namespace Planet.Kernel {
             if (pmm_total_frames > res_end) {
                 int bot2 = (first_free > res_end) ? first_free : res_end;
                 int dlib_start = 0x1800000 / PAGE_SIZE;
-                int dlib_end = 0x1900000 / PAGE_SIZE;
+                int dlib_end = 0x2000000 / PAGE_SIZE;
                 if (bot2 < dlib_start) {
                     int top2 = (pmm_total_frames < dlib_start) ? pmm_total_frames : dlib_start;
                     add_free_range (bot2, top2);

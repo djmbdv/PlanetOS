@@ -15,20 +15,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Only what c2vala_rt.vala actually references: Sys (planet_sys), StringChunk
-# (core), FileStream (filestream), Memory (memory), Thread/Mutex/Cond (thread,
-# which now builds its futex path on AtomicPointer) and get_real_time (time).
-# Adding the rest of GLIB_SRCS only grows the AST the guest compiler has to
-# build.
+# `glib.hlib` is now loaded implicitly by `planc --target=planetos` from
+# `/library/glib/`, so `c2vala_sdk.vala` only needs `c2vala_rt.vala`.
 SOURCES = [
-    "stdlib/planet_sys.vala",
-    "stdlib/glib/core.vala",
-    "stdlib/glib/filestream.vala",
-    "stdlib/glib/memory.vala",
-    "stdlib/glib/atomic.vala",
-    "stdlib/glib/thread.vala",
-    "stdlib/glib/queue.vala",
-    "stdlib/glib/time.vala",
     "tools/c2vala_rt.vala",
 ]
 

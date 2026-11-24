@@ -28,12 +28,36 @@ namespace Planc {
         }
     }
 
+    public class ImportEntry : Object {
+        public uint64 dlib_hash;
+        public uint64 sym_hash;
+        public uint64 got_vaddr;
+
+        public ImportEntry (uint64 dh, uint64 sh, uint64 gv) {
+            dlib_hash = dh;
+            sym_hash = sh;
+            got_vaddr = gv;
+        }
+    }
+
     public sealed class Elf : Object {
 
         public const uint64 BASE_ADDRESS = 0x400000;
         public const int HEADER_SIZE = 64;
         public const int PROGRAM_HEADER_SIZE = 56;
         public const int PROGRAM_HEADER_COUNT = 3;
+        public const uint32 PT_PLANET_IMPORTS = 0x70000001;
+
+        public static uint64 fnv1a_64 (string s) {
+            uint64 h = (uint64) 0xcbf29ce484222325;
+            for (int i = 0; i < s.length; i++) {
+                h ^= (uint64) (uint8) s[i];
+                h *= (uint64) 0x100000001b3;
+            }
+            if (h == 0)
+                h = 1;
+            return h;
+        }
         public const int SECTION_HEADER_SIZE = 64;
         public const int SECTION_HEADER_COUNT = 11;
         public const int PAGE_SIZE = 0x1000;
@@ -124,9 +148,10 @@ namespace Planc {
         public static Layout compute (int text_size, int rodata_size,
                                       int data_size, int bss_size,
                                       GenericArray<Symbol> symbols,
-                                      uint64 base_addr = BASE_ADDRESS) {
+                                      uint64 base_addr = BASE_ADDRESS,
+                                      bool has_imports = false) {
             var l = Layout ();
-            l.text_offset = HEADER_SIZE + PROGRAM_HEADER_SIZE * PROGRAM_HEADER_COUNT;
+            l.text_offset = HEADER_SIZE + PROGRAM_HEADER_SIZE * (has_imports ? 4 : PROGRAM_HEADER_COUNT);
             l.text_size = text_size;
             l.text_vaddr = base_addr + (uint64) l.text_offset;
 
@@ -184,12 +209,14 @@ namespace Planc {
         public static uint8[] build (uint8[] text, uint8[] rodata, uint8[] data,
                                      GenericArray<Symbol> symbols, Layout l,
                                      uint8[] debug_line, uint8[] debug_abbrev, uint8[] debug_info,
-                                     string entry_name = "_start") {
+                                     string entry_name = "_start",
+                                     GenericArray<ImportEntry>? imports = null) {
             var f = new Buffer (4096);
+            bool has_imp = (imports != null && imports.length > 0);
 
             // _start, not main: the stub aligns rsp, calls main and exits
             // with its return value, so main obeys the standard convention.
-            write_header (f, l, entry_for (l, symbols, entry_name));
+            write_header (f, l, entry_for (l, symbols, entry_name), has_imp ? 4 : PROGRAM_HEADER_COUNT);
 
             // Segment 1: R|X, covers headers and .text.
             write_program_header (f, 5 /* PF_R|PF_X */,
@@ -205,6 +232,18 @@ namespace Planc {
             write_program_header (f, 6 /* PF_R|PF_W */,
                                   l.data_offset, l.data_vaddr,
                                   l.data_size, l.data_size + l.bss_size);
+
+            if (has_imp) {
+                int imp_off = l.sections_offset + SECTION_HEADER_SIZE * SECTION_HEADER_COUNT;
+                f.u32le (PT_PLANET_IMPORTS);
+                f.u32le (4 /* PF_R */);
+                f.u64le ((uint64) imp_off);
+                f.u64le (0);
+                f.u64le (0);
+                f.u64le ((uint64) (imports.length * 24));
+                f.u64le (0);
+                f.u64le (8);
+            }
 
             expect_length (f, l.text_offset, "program headers");
 
@@ -254,6 +293,15 @@ namespace Planc {
             expect_length (f, l.sections_offset + SECTION_HEADER_SIZE * SECTION_HEADER_COUNT,
                            "section headers");
 
+            if (has_imp) {
+                for (int i = 0; i < imports.length; i++) {
+                    var imp = imports[i];
+                    f.u64le (imp.dlib_hash);
+                    f.u64le (imp.sym_hash);
+                    f.u64le (imp.got_vaddr);
+                }
+            }
+
             return f.to_array ();
         }
 
@@ -262,7 +310,7 @@ namespace Planc {
                 Host.panic (@"$what at 0x$(Host.hex_u32 ((uint32) f.length)), layout says 0x$(Host.hex_u32 ((uint32) expected))");
         }
 
-        private static void write_header (Buffer f, Layout l, uint64 entry) {
+        private static void write_header (Buffer f, Layout l, uint64 entry, int phnum = PROGRAM_HEADER_COUNT) {
             f.bytes (new uint8[] { 0x7F, (uint8) 'E', (uint8) 'L', (uint8) 'F' });
             f.u8 (2);      // ELFCLASS64
             f.u8 (1);      // ELFDATA2LSB
@@ -279,7 +327,7 @@ namespace Planc {
             f.u32le (0);                                    // e_flags
             f.u16le ((uint16) HEADER_SIZE);                 // e_ehsize
             f.u16le ((uint16) PROGRAM_HEADER_SIZE);         // e_phentsize
-            f.u16le ((uint16) PROGRAM_HEADER_COUNT);        // e_phnum
+            f.u16le ((uint16) phnum);                       // e_phnum
             f.u16le ((uint16) SECTION_HEADER_SIZE);         // e_shentsize
             f.u16le ((uint16) SECTION_HEADER_COUNT);        // e_shnum
             f.u16le ((uint16) SEC_SHSTRTAB);                // e_shstrndx
@@ -413,7 +461,8 @@ namespace Planc {
         // Native PlanetOS image builder for .plan (app) and .dlib (dynamic library).
         public static uint8[] build_plan (uint8[] text, uint8[] rodata, uint8[] data,
                                           GenericArray<Symbol> symbols, Layout l,
-                                          string entry_sym, bool is_dlib) {
+                                          string entry_sym, bool is_dlib,
+                                          GenericArray<ImportEntry>? imports = null) {
             var exports = new GenericArray<Symbol> ();
             uint64 entry_vaddr = l.text_vaddr;
             for (int i = 0; i < symbols.length; i++) {
@@ -423,6 +472,14 @@ namespace Planc {
                 if (is_dlib && s.name.length > 0 && !s.name.has_prefix ("_") && s.name != "main")
                     exports.add (s);
             }
+
+            uint32 ht_buckets = 0;
+            if (is_dlib && exports.length > 0) {
+                ht_buckets = 16;
+                while ((int) ht_buckets < exports.length * 2)
+                    ht_buckets *= 2;
+            }
+            uint32 imp_count = (imports != null) ? (uint32) imports.length : 0;
 
             uint32 sec_count = 3;
             uint64 hdr_size = 64 + (uint64) sec_count * 32;
@@ -440,8 +497,8 @@ namespace Planc {
             f.u64le (entry_vaddr);
             f.u32le (sec_count);
             f.u32le ((uint32) exports.length);
-            f.u32le (0);          // import_count
-            f.u32le (0);          // reloc_count
+            f.u32le (imp_count);  // import_count
+            f.u32le (ht_buckets); // ht_buckets (FNV-1a 64-bit export hash table)
             f.u64le (meta_off);
             f.u64le (l.text_vaddr);
             f.u64le (total_mem);
@@ -472,6 +529,36 @@ namespace Planc {
                 f.u32le ((uint32) ex.name.length);
                 for (int k = 0; k < ex.name.length; k++)
                     f.u8 ((uint8) ex.name[k]);
+            }
+
+            if (ht_buckets > 0) {
+                var ht_keys = new uint64[ht_buckets];
+                var ht_vals = new uint64[ht_buckets];
+                uint64 mask = (uint64) (ht_buckets - 1);
+                for (int i = 0; i < exports.length; i++) {
+                    var ex = exports[i];
+                    uint64 h = fnv1a_64 (ex.name);
+                    uint64 va = l.text_vaddr + (uint64) ex.offset;
+                    int idx = (int) (h & mask);
+                    while (ht_keys[idx] != 0) {
+                        idx = (int) (((uint64) (idx + 1)) & mask);
+                    }
+                    ht_keys[idx] = h;
+                    ht_vals[idx] = va;
+                }
+                for (int i = 0; i < (int) ht_buckets; i++) {
+                    f.u64le (ht_keys[i]);
+                    f.u64le (ht_vals[i]);
+                }
+            }
+
+            if (imports != null) {
+                for (int i = 0; i < imports.length; i++) {
+                    var imp = imports[i];
+                    f.u64le (imp.dlib_hash);
+                    f.u64le (imp.sym_hash);
+                    f.u64le (imp.got_vaddr);
+                }
             }
             return f.to_array ();
         }

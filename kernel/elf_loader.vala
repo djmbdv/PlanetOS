@@ -67,32 +67,80 @@ namespace Planet.Kernel {
         private const int USER_STACK_PAGES = 257; // 1 guard + 256 usable (1 MiB)
 
         public static int exec_depth = 0;
-        private static bool shared_glib_probed = false;
-        private static int shared_glib_ro_vaddr = 0;
-        private static int shared_glib_ro_size = 0;
-        private static int shared_glib_data_vaddr = 0;
-        private static int shared_glib_data_fsz = 0;
-        private static int shared_glib_data_msz = 0;
-        private static int shared_glib_data_tmpl = 0;
+        private const int MAX_SHARED_DLIBS = 24;
+        private static bool shared_dlibs_probed = false;
+        private static int shared_dlib_count = 0;
+        private static int[] shared_ro_vaddr;
+        private static int[] shared_ro_size;
+        private static int[] shared_data_vaddr;
+        private static int[] shared_data_fsz;
+        private static int[] shared_data_msz;
+        private static int[] shared_data_tmpl;
+        private static int[] shared_name_hash;
+        private static int[] shared_ht_addr;
+        private static int[] shared_ht_buckets;
+        private static int[] shared_imp_buf;
+        private static int[] shared_imp_count;
+        private static int[] shared_deps_mask;
+        private static int glib_dlib_idx = 0;
+        private static int last_loaded_dlib_mask = 0;
 
-        private static bool shared_pango_probed = false;
-        private static int shared_pango_ro_vaddr = 0;
-        private static int shared_pango_ro_size = 0;
-        private static int shared_pango_data_vaddr = 0;
-        private static int shared_pango_data_fsz = 0;
-        private static int shared_pango_data_msz = 0;
-        private static int shared_pango_data_tmpl = 0;
+        private static int fnv1a_64_mem (int ptr, int len) {
+            int h = (int) 0xcbf29ce484222325;
+            for (int i = 0; i < len; i++) {
+                h = h ^ read_u8 (ptr + i);
+                h = h * 0x100000001b3;
+            }
+            if (h == 0)
+                h = 1;
+            return h;
+        }
 
-        // Either .dlib is loaded once into the window Pmm.init reserves, and each
-        // process maps the same read-only pages.
-        private static void ensure_shared_dlib_one (int name_ptr, int name_len,
-                                                    ref bool probed, ref int ro_vaddr, ref int ro_size,
-                                                    ref int data_vaddr, ref int data_fsz, ref int data_msz, ref int data_tmpl) {
-            if (probed)
-                return;
-            probed = true;
-            int id = Xfs.lookup_root (name_ptr, name_len);
-            if (id <= 0)
+        private static int find_dlib_index (int dlib_hash) {
+            for (int i = 0; i < shared_dlib_count; i++) {
+                if (shared_name_hash[i] == dlib_hash)
+                    return i;
+            }
+            return -1;
+        }
+
+        private static int resolve_symbol_hash (int dlib_hash, int sym_hash) {
+            int i = find_dlib_index (dlib_hash);
+            if (i < 0)
+                return 0;
+            int buckets = shared_ht_buckets[i];
+            int ht = shared_ht_addr[i];
+            if (buckets <= 0 || ht == 0)
+                return 0;
+            int mask = buckets - 1;
+            int idx = sym_hash & mask;
+            for (int step = 0; step < buckets; step++) {
+                int kh = mmio_read64 (ht + idx * 16);
+                if (kh == 0)
+                    return 0;
+                if (kh == sym_hash)
+                    return mmio_read64 (ht + idx * 16 + 8);
+                idx = (idx + 1) & mask;
+            }
+            return 0;
+        }
+
+        private static int skip_plan_exports (int buf, int size, int exp_count, int meta_off) {
+            int pos = meta_off;
+            for (int i = 0; i < exp_count && pos + 12 <= size; i++) {
+                int nlen = mmio_read32 (buf + pos + 8) & 0xFFFFFFFF;
+                pos += 12;
+                if (nlen <= 0 || pos + nlen > size)
+                    return -1;
+                pos += nlen;
+            }
+            return pos;
+        }
+
+        // Each .dlib in /library/<name>/ is loaded once into the window Pmm.init reserves
+        // (0x1800000..0x2000000), and each process maps the same read-only pages.
+        private static void ensure_shared_dlib_ino (int id, int name_ptr, int name_len) {
+            if (id <= 0 || shared_dlib_count >= MAX_SHARED_DLIBS)
                 return;
             int sz = Xfs.file_size (id);
             if (sz < 160)
@@ -131,11 +179,11 @@ namespace Planet.Kernel {
             int s1_msz = mmio_read64 (buf + 120);
             int ro_end = s1_va + ((s1_msz > 0) ? s1_msz : 1);
             int ro_sz = ro_end - s0_va;
-            // 0x1800000..0x1900000 is the window Pmm.init reserves for the
+            // 0x1800000..0x2000000 is the window Pmm.init reserves for the
             // shared dlibs; a section starts a bit past the base (the .plan
             // header), so check the range and not the exact value.
-            if (s0_va < 0x1800000 || s0_va >= 0x1900000 || ro_sz <= 0
-                || ro_end > 0x1900000 || s0_off + s0_fsz > got || s1_off + s1_fsz > got) {
+            if (s0_va < 0x1800000 || s0_va >= 0x2000000 || ro_sz <= 0
+                || ro_end > 0x2000000 || s0_off + s0_fsz > got || s1_off + s1_fsz > got) {
                 Klog.error (Klog.CAT_EXEC, "shared dlib: unexpected image base");
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (buf + p * 4096);
@@ -146,8 +194,48 @@ namespace Planet.Kernel {
                 mmio_write8 (s0_va + b, read_u8 (buf + s0_off + b));
             for (int b = 0; b < s1_fsz; b++)
                 mmio_write8 (s1_va + b, read_u8 (buf + s1_off + b));
-            ro_vaddr = s0_va;
-            ro_size = ro_sz;
+
+            int idx = shared_dlib_count;
+            shared_ro_vaddr[idx] = s0_va;
+            shared_ro_size[idx] = ro_sz;
+            shared_data_vaddr[idx] = 0;
+            shared_data_fsz[idx] = 0;
+            shared_data_msz[idx] = 0;
+            shared_data_tmpl[idx] = 0;
+            shared_name_hash[idx] = fnv1a_64_mem (name_ptr, name_len);
+            shared_ht_addr[idx] = 0;
+            shared_ht_buckets[idx] = 0;
+            shared_imp_buf[idx] = 0;
+            shared_imp_count[idx] = 0;
+
+            int exp_count = mmio_read32 (buf + 28) & 0xFFFFFFFF;
+            int imp_count = mmio_read32 (buf + 32) & 0xFFFFFFFF;
+            int ht_buckets = mmio_read32 (buf + 36) & 0xFFFFFFFF;
+            int meta_off = mmio_read64 (buf + 40);
+            int meta_cur = skip_plan_exports (buf, got, exp_count, meta_off);
+            if (meta_cur >= 0 && ht_buckets > 0 && meta_cur + ht_buckets * 16 <= got) {
+                int ht_bytes = ht_buckets * 16;
+                int ht_pages = (ht_bytes + 4095) / 4096;
+                int ht_mem = Pmm.alloc_contiguous (ht_pages);
+                if (ht_mem != 0) {
+                    for (int b = 0; b < ht_bytes; b++)
+                        mmio_write8 (ht_mem + b, read_u8 (buf + meta_cur + b));
+                    shared_ht_addr[idx] = ht_mem;
+                    shared_ht_buckets[idx] = ht_buckets;
+                }
+                meta_cur += ht_bytes;
+            }
+            if (meta_cur >= 0 && imp_count > 0 && meta_cur + imp_count * 24 <= got) {
+                int ib_bytes = imp_count * 24;
+                int ib_pages = (ib_bytes + 4095) / 4096;
+                int ib_mem = Pmm.alloc_contiguous (ib_pages);
+                if (ib_mem != 0) {
+                    for (int b = 0; b < ib_bytes; b++)
+                        mmio_write8 (ib_mem + b, read_u8 (buf + meta_cur + b));
+                    shared_imp_buf[idx] = ib_mem;
+                    shared_imp_count[idx] = imp_count;
+                }
+            }
 
             int s2_va = mmio_read64 (buf + 128);
             int s2_off = mmio_read64 (buf + 136);
@@ -168,24 +256,121 @@ namespace Planet.Kernel {
                     if (tmpl != 0) {
                         for (int b = 0; b < s2_fsz; b++)
                             mmio_write8 (tmpl + b, read_u8 (buf + s2_off + b));
-                        data_tmpl = tmpl;
-                        data_fsz = s2_fsz;
+                        shared_data_tmpl[idx] = tmpl;
+                        shared_data_fsz[idx] = s2_fsz;
                     }
                 }
-                data_vaddr = s2_va;
-                data_msz = s2_msz;
+                shared_data_vaddr[idx] = s2_va;
+                shared_data_msz[idx] = s2_msz;
             }
+            shared_dlib_count = shared_dlib_count + 1;
             for (int p = 0; p < pages; p++)
                 Pmm.free_frame (buf + p * 4096);
         }
 
-        private static void ensure_shared_glib () {
-            ensure_shared_dlib_one (__el_str_data ("glib.dlib"), 9,
-                ref shared_glib_probed, ref shared_glib_ro_vaddr, ref shared_glib_ro_size,
-                ref shared_glib_data_vaddr, ref shared_glib_data_fsz, ref shared_glib_data_msz, ref shared_glib_data_tmpl);
-            ensure_shared_dlib_one (__el_str_data ("pango.dlib"), 10,
-                ref shared_pango_probed, ref shared_pango_ro_vaddr, ref shared_pango_ro_size,
-                ref shared_pango_data_vaddr, ref shared_pango_data_fsz, ref shared_pango_data_msz, ref shared_pango_data_tmpl);
+        private static bool is_dlib_name (int ptr, int len) {
+            if (len <= 5)
+                return false;
+            return read_u8 (ptr + len - 5) == '.'
+                && read_u8 (ptr + len - 4) == 'd'
+                && read_u8 (ptr + len - 3) == 'l'
+                && read_u8 (ptr + len - 2) == 'i'
+                && read_u8 (ptr + len - 1) == 'b';
+        }
+
+        private static void ensure_shared_dlibs_in (int dir_ino, int depth) {
+            if (dir_ino <= 0 || !Xfs.is_dir (dir_ino))
+                return;
+            int list_buf = Pmm.alloc_frame ();
+            if (list_buf == 0)
+                return;
+            int n = Xfs.list_dir (dir_ino, list_buf, 4096);
+            int start = 0;
+            for (int i = 0; i <= n; i++) {
+                if (i == n || read_u8 (list_buf + i) == '\n') {
+                    int len = i - start;
+                    if (len > 0) {
+                        int cino = Xfs.lookup_dir (dir_ino, list_buf + start, len);
+                        if (is_dlib_name (list_buf + start, len)) {
+                            ensure_shared_dlib_ino (cino, list_buf + start, len);
+                        } else if (depth == 0 && cino > 0 && Xfs.is_dir (cino)) {
+                            ensure_shared_dlibs_in (cino, depth + 1);
+                        }
+                    }
+                    start = i + 1;
+                }
+            }
+            Pmm.free_frame (list_buf);
+        }
+
+        private static void ensure_shared_dlibs () {
+            if (shared_dlibs_probed)
+                return;
+            shared_dlibs_probed = true;
+            shared_ro_vaddr = new int[MAX_SHARED_DLIBS];
+            shared_ro_size = new int[MAX_SHARED_DLIBS];
+            shared_data_vaddr = new int[MAX_SHARED_DLIBS];
+            shared_data_fsz = new int[MAX_SHARED_DLIBS];
+            shared_data_msz = new int[MAX_SHARED_DLIBS];
+            shared_data_tmpl = new int[MAX_SHARED_DLIBS];
+            shared_name_hash = new int[MAX_SHARED_DLIBS];
+            shared_ht_addr = new int[MAX_SHARED_DLIBS];
+            shared_ht_buckets = new int[MAX_SHARED_DLIBS];
+            shared_imp_buf = new int[MAX_SHARED_DLIBS];
+            shared_imp_count = new int[MAX_SHARED_DLIBS];
+            shared_deps_mask = new int[MAX_SHARED_DLIBS];
+
+            int lib_ino = Xfs.lookup_root (__el_str_data ("library"), 7);
+            if (lib_ino > 0 && Xfs.is_dir (lib_ino))
+                ensure_shared_dlibs_in (lib_ino, 0);
+            int stdlib_ino = Xfs.lookup_root (__el_str_data ("stdlib"), 6);
+            if (stdlib_ino > 0 && Xfs.is_dir (stdlib_ino))
+                ensure_shared_dlibs_in (stdlib_ino, 0);
+
+            glib_dlib_idx = find_dlib_index (fnv1a_64_mem (__el_str_data ("glib.dlib"), 9));
+
+            // Second pass: resolve cross-.dlib GOT slots and record direct dep masks.
+            for (int i = 0; i < shared_dlib_count; i++) {
+                shared_deps_mask[i] = 0;
+                int ib = shared_imp_buf[i];
+                int ic = shared_imp_count[i];
+                if (ib == 0 || ic <= 0)
+                    continue;
+                int dv = shared_data_vaddr[i];
+                int df = shared_data_fsz[i];
+                int dt = shared_data_tmpl[i];
+                for (int k = 0; k < ic; k++) {
+                    int dh = mmio_read64 (ib + k * 24 + 0);
+                    int sh = mmio_read64 (ib + k * 24 + 8);
+                    int gv = mmio_read64 (ib + k * 24 + 16);
+                    int didx = find_dlib_index (dh);
+                    if (didx >= 0)
+                        shared_deps_mask[i] = shared_deps_mask[i] | (1 << didx);
+                    int target = resolve_symbol_hash (dh, sh);
+                    if (target != 0 && gv >= dv && gv + 8 <= dv + df) {
+                        mmio_write64 (gv, target);
+                        if (dt != 0)
+                            mmio_write64 (dt + (gv - dv), target);
+                    }
+                }
+                int ipages = (ic * 24 + 4095) / 4096;
+                for (int p = 0; p < ipages; p++)
+                    Pmm.free_frame (ib + p * 4096);
+                shared_imp_buf[i] = 0;
+                shared_imp_count[i] = 0;
+            }
+
+            // Transitive closure of .dlib dependencies.
+            for (int step = 0; step < shared_dlib_count; step++) {
+                for (int i = 0; i < shared_dlib_count; i++) {
+                    int m = shared_deps_mask[i];
+                    for (int j = 0; j < shared_dlib_count; j++) {
+                        if ((m & (1 << j)) != 0)
+                            m = m | shared_deps_mask[j];
+                    }
+                    shared_deps_mask[i] = m;
+                }
+            }
         }
 
         private static void map_shared_dlib_one (int user_cr3, int ro_vaddr, int ro_size,
@@ -210,12 +395,21 @@ namespace Planet.Kernel {
             }
         }
 
-        private static void map_shared_glib_into (int user_cr3) {
-            ensure_shared_glib ();
-            map_shared_dlib_one (user_cr3, shared_glib_ro_vaddr, shared_glib_ro_size,
-                shared_glib_data_vaddr, shared_glib_data_fsz, shared_glib_data_msz, shared_glib_data_tmpl);
-            map_shared_dlib_one (user_cr3, shared_pango_ro_vaddr, shared_pango_ro_size,
-                shared_pango_data_vaddr, shared_pango_data_fsz, shared_pango_data_msz, shared_pango_data_tmpl);
+        private static void map_shared_dlibs_into (int user_cr3, int needed_mask) {
+            ensure_shared_dlibs ();
+            int full_mask = needed_mask;
+            if (glib_dlib_idx >= 0)
+                full_mask = full_mask | (1 << glib_dlib_idx);
+            for (int i = 0; i < shared_dlib_count; i++) {
+                if ((needed_mask & (1 << i)) != 0)
+                    full_mask = full_mask | shared_deps_mask[i];
+            }
+            for (int i = 0; i < shared_dlib_count; i++) {
+                if ((full_mask & (1 << i)) != 0) {
+                    map_shared_dlib_one (user_cr3, shared_ro_vaddr[i], shared_ro_size[i],
+                        shared_data_vaddr[i], shared_data_fsz[i], shared_data_msz[i], shared_data_tmpl[i]);
+                }
+            }
         }
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);
@@ -260,10 +454,34 @@ namespace Planet.Kernel {
                 for (int b = fsz; b < msz; b++)
                     mmio_write8 (vaddr + b, 0);
             }
+            int exp_count = mmio_read32 (buf + 28) & 0xFFFFFFFF;
+            int imp_count = mmio_read32 (buf + 32) & 0xFFFFFFFF;
+            int ht_buckets = mmio_read32 (buf + 36) & 0xFFFFFFFF;
+            int meta_off = mmio_read64 (buf + 40);
+            if (imp_count > 0) {
+                ensure_shared_dlibs ();
+                int cur = skip_plan_exports (buf, size, exp_count, meta_off);
+                if (cur >= 0) {
+                    cur += ht_buckets * 16;
+                    for (int k = 0; k < imp_count && cur + 24 <= size; k++) {
+                        int dh = mmio_read64 (buf + cur + 0);
+                        int sh = mmio_read64 (buf + cur + 8);
+                        int gv = mmio_read64 (buf + cur + 16);
+                        int didx = find_dlib_index (dh);
+                        if (didx >= 0)
+                            last_loaded_dlib_mask = last_loaded_dlib_mask | (1 << didx);
+                        int target = resolve_symbol_hash (dh, sh);
+                        if (target != 0 && gv >= 0x800000 && gv < 0x40000000)
+                            mmio_write64 (gv, target);
+                        cur += 24;
+                    }
+                }
+            }
             return entry;
         }
 
         public static int load_image (int buf, int size, int user_cr3 = 0) {
+            last_loaded_dlib_mask = 0;
             if (size < 64)
                 return 0;
             int magic = mmio_read32 (buf) & 0xFFFFFFFF;
@@ -287,6 +505,27 @@ namespace Planet.Kernel {
             for (int i = 0; i < phnum; i++) {
                 int ph = buf + phoff + i * phentsize;
                 int p_type = mmio_read32 (ph) & 0xFFFFFFFF;
+                if (p_type == 0x70000001) {
+                    int imp_off = mmio_read64 (ph + 8);
+                    int imp_sz = mmio_read64 (ph + 32);
+                    if (imp_off > 0 && imp_sz >= 24 && imp_off + imp_sz <= size) {
+                        ensure_shared_dlibs ();
+                        int imp_count = imp_sz / 24;
+                        for (int k = 0; k < imp_count; k++) {
+                            int rec = buf + imp_off + k * 24;
+                            int dh = mmio_read64 (rec + 0);
+                            int sh = mmio_read64 (rec + 8);
+                            int gv = mmio_read64 (rec + 16);
+                            int didx = find_dlib_index (dh);
+                            if (didx >= 0)
+                                last_loaded_dlib_mask = last_loaded_dlib_mask | (1 << didx);
+                            int target = resolve_symbol_hash (dh, sh);
+                            if (target != 0 && gv >= 0x800000 && gv < 0x40000000)
+                                mmio_write64 (gv, target);
+                        }
+                    }
+                    continue;
+                }
                 if (p_type != 1)
                     continue;
                 int p_offset = mmio_read64 (ph + 8);
@@ -318,7 +557,7 @@ namespace Planet.Kernel {
             int entry = load_image (buf, size);
             if (entry == 0)
                 return false;
-            ensure_shared_glib ();
+            ensure_shared_dlibs ();
             int sp = KernelLayout.LEGACY_STACK;
             int str = KernelLayout.LEGACY_ARGV;
             mmio_write8 (str + 0, 's');
@@ -362,7 +601,7 @@ namespace Planet.Kernel {
                 Vmm.destroy_user_space (user_cr3);
                 return 0;
             }
-            map_shared_glib_into (user_cr3);
+            map_shared_dlibs_into (user_cr3, last_loaded_dlib_mask);
 
             int stack_pages = USER_STACK_PAGES;
             int child_stack = Pmm.alloc_contiguous (stack_pages);

@@ -10,6 +10,7 @@ namespace Planet.Kernel {
         public const int KIND_FILE = 2;
         public const int KIND_DIR = 3;
         public const int KIND_DEV = 4;
+        public const int KIND_XFS_DIR = 5;
 
         // Virtual /dev entries. DEV_DIR is the id of the directory itself.
         public const int DEV_DIR = -2;
@@ -116,6 +117,7 @@ namespace Planet.Kernel {
             if (path_ptr == 0 || path_len > 4096)
                 return KIND_NONE;
             int dir = -1;
+            int xfs_dir = 0;
             int i = 0;
             while (i < path_len) {
                 while (i < path_len && byte_at (path_ptr + i) == '/')
@@ -142,25 +144,65 @@ namespace Planet.Kernel {
                 }
                 if (is_dot (path_ptr + start, clen)) {
                     if (last) {
+                        if (xfs_dir > 0) {
+                            id = xfs_dir;
+                            return KIND_XFS_DIR;
+                        }
                         id = dir;
                         return KIND_DIR;
                     }
                     continue;
                 }
                 if (is_dotdot (path_ptr + start, clen)) {
+                    if (xfs_dir > 0) {
+                        int p = Xfs.dir_parent (xfs_dir);
+                        if (p <= 0 || p == Xfs.root_ino ()) {
+                            xfs_dir = 0;
+                            dir = -1;
+                        } else {
+                            xfs_dir = p;
+                        }
+                    } else {
+                        dir = parent_dir (dir);
+                    }
                     if (last) {
-                        id = parent_dir (dir);
+                        if (xfs_dir > 0) {
+                            id = xfs_dir;
+                            return KIND_XFS_DIR;
+                        }
+                        id = dir;
                         return KIND_DIR;
                     }
-                    dir = parent_dir (dir);
                     continue;
+                }
+                if (xfs_dir > 0) {
+                    int cino = Xfs.lookup_dir (xfs_dir, path_ptr + start, clen);
+                    if (cino <= 0)
+                        return KIND_NONE;
+                    bool cdir = Xfs.is_dir (cino);
+                    if (!last) {
+                        if (!cdir)
+                            return KIND_NONE;
+                        xfs_dir = cino;
+                        continue;
+                    }
+                    id = cino;
+                    return cdir ? KIND_XFS_DIR : KIND_XFS;
                 }
                 if (!last) {
                     int child = Ramfs.find_in (dir, path_ptr + start, clen);
-                    if (child < 0 || Ramfs.kind_of (child) != 2)
-                        return KIND_NONE;
-                    dir = child;
-                    continue;
+                    if (child >= 0 && Ramfs.kind_of (child) == 2) {
+                        dir = child;
+                        continue;
+                    }
+                    if (dir == -1) {
+                        int xino = Xfs.lookup_root (path_ptr + start, clen);
+                        if (xino > 0 && Xfs.is_dir (xino)) {
+                            xfs_dir = xino;
+                            continue;
+                        }
+                    }
+                    return KIND_NONE;
                 }
                 int slot = Ramfs.find_in (dir, path_ptr + start, clen);
                 if (slot >= 0) {
@@ -171,10 +213,14 @@ namespace Planet.Kernel {
                     int ino = Xfs.lookup_root (path_ptr + start, clen);
                     if (ino > 0) {
                         id = ino;
-                        return KIND_XFS;
+                        return Xfs.is_dir (ino) ? KIND_XFS_DIR : KIND_XFS;
                     }
                 }
                 return KIND_NONE;
+            }
+            if (xfs_dir > 0) {
+                id = xfs_dir;
+                return KIND_XFS_DIR;
             }
             id = dir;
             return KIND_DIR;
