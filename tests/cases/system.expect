@@ -12,4 +12,5 @@
 =thread=ok
 =pool=ok
 =dev=ok
+=memguard=ok
 !FAIL

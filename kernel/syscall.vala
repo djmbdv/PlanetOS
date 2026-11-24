@@ -14,6 +14,13 @@ namespace Planet.Kernel {
     // owns; inherited stdio is the one cross-task exception.
     private const int MAX_FDS = 64;
 
+    // Handle kinds: 1 XFS, 2 RAMFS, 3 byte device, 4 grant (A2).
+    private const int KIND_GRANT = 4;
+    // A2 frame ownership: one entry per SYS_ALLOC_PAGE block, and up to four
+    // task ids allowed to map a grant handle.
+    private const int ALLOC_SLOTS = 64;
+    private const int GRANT_TASKS = 4;
+
     private const int R_READ  = 1;
     private const int R_WRITE = 2;
     private const int R_SEEK  = 4;
@@ -318,6 +325,12 @@ namespace Planet.Kernel {
     // Releases the slot but keeps its generation, so a stale value cannot be
     // revived by the next allocation in the same index.
     private static void fd_release (int slot) {
+        int index = (slot - KernelLayout.FD_TABLE) / 32;
+        int t = 0;
+        while (t < GRANT_TASKS) {
+            mmio_write32 (acl_addr (index) + t * 4, 0);
+            t = t + 1;
+        }
         mmio_write64 (slot + 0, (fd_gen_of (slot) << 16) | (fd_owner_of (slot) << 32));
         mmio_write64 (slot + 8, 0);
         mmio_write64 (slot + 16, 0);
@@ -331,6 +344,195 @@ namespace Planet.Kernel {
             int slot = KernelLayout.FD_TABLE + index * 32;
             if (fd_kind_of (slot) != 0 && fd_owner_of (slot) == tid)
                 fd_release (slot);
+        }
+    }
+
+    // Blocks the kernel handed to userland are recorded so a second task cannot
+    // map or free them without a capability (A2, IO-02). The owner is the task
+    // that called SYS_ALLOC_PAGE: a thread of the same process inherits the
+    // mapping, not the ownership.
+    private static int alloc_slot (int i) {
+        return KernelLayout.ALLOC_TABLE + i * 16;
+    }
+
+    private static int acl_addr (int index) {
+        return KernelLayout.GRANT_ACL + index * 16;
+    }
+
+    private static void alloc_track (int phys, int pages) {
+        int owner = Sched.current_tid ();
+        if (Sched.current_cr3 () == 0)
+            return;
+        if (phys <= 0 || pages <= 0)
+            return;
+        int i = 0;
+        while (i < ALLOC_SLOTS) {
+            int a = alloc_slot (i);
+            int cur = mmio_read64 (a);
+            if (cur == 0) {
+                mmio_write64 (a, phys);
+                mmio_write32 (a + 8, pages);
+                mmio_write32 (a + 12, owner);
+                return;
+            }
+            if (cur == phys) {
+                mmio_write32 (a + 8, pages);
+                mmio_write32 (a + 12, owner);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    private static void alloc_untrack (int phys) {
+        int i = 0;
+        while (i < ALLOC_SLOTS) {
+            int a = alloc_slot (i);
+            if (mmio_read64 (a) == phys) {
+                mmio_write64 (a, 0);
+                mmio_write32 (a + 8, 0);
+                mmio_write32 (a + 12, 0);
+            }
+            i = i + 1;
+        }
+    }
+
+    // 1 when `addr` falls inside a block owned by `tid`, 0 otherwise.
+    private static int page_owned_by (int addr, int tid) {
+        int found = 0;
+        int i = 0;
+        while (i < ALLOC_SLOTS) {
+            int a = alloc_slot (i);
+            int phys = mmio_read64 (a);
+            if (phys != 0) {
+                if (mmio_read32 (a + 12) == tid) {
+                    int npages = mmio_read32 (a + 8);
+                    if (addr >= phys) {
+                        if (addr < phys + npages * 0x1000)
+                            found = 1;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        return found;
+    }
+
+    // 1 when `addr` falls inside a block owned by somebody else.
+    private static int page_owned_by_other (int addr) {
+        int me = Sched.current_tid ();
+        int found = 0;
+        int i = 0;
+        while (i < ALLOC_SLOTS) {
+            int a = alloc_slot (i);
+            int phys = mmio_read64 (a);
+            if (phys != 0) {
+                int npages = mmio_read32 (a + 8);
+                if (addr >= phys) {
+                    if (addr < phys + npages * 0x1000) {
+                        if (mmio_read32 (a + 12) != me)
+                            found = 1;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+        return found;
+    }
+
+    // True when the caller owns every page of [start, start+len). Kernel callers
+    // keep the plain bound check: their buffers come from the Pmm, not a task.
+    private static bool range_owned (int start, int len) {
+        if (len <= 0)
+            return false;
+        if (Sched.current_cr3 () == 0)
+            return true;
+        if ((start & 0xFFF) != 0)
+            return false;
+        int me = Sched.current_tid ();
+        int pages = (len + 0xFFF) / 0x1000;
+        int p = 0;
+        while (p < pages) {
+            if (page_owned_by (start + p * 0x1000, me) == 0) {
+                int s0 = alloc_slot (0);
+            }
+            if (page_owned_by (start + p * 0x1000, me) == 0)
+                return false;
+            p = p + 1;
+        }
+        return true;
+    }
+
+    // True when a live grant covers [start, start+len) and lists this task.
+    private static bool range_granted_to_me (int start, int len) {
+        int me = Sched.current_tid ();
+        if (len <= 0)
+            return false;
+        int index = 3;
+        while (index < MAX_FDS) {
+            int slot = KernelLayout.FD_TABLE + index * 32;
+            if (fd_kind_of (slot) == KIND_GRANT) {
+                int gstart = mmio_read64 (slot + 8);
+                int glen = mmio_read64 (slot + 16);
+                if (glen > 0) {
+                    if (start >= gstart) {
+                        if (start + len <= gstart + glen) {
+                            int acl = acl_addr (index);
+                            int t = 0;
+                            while (t < GRANT_TASKS) {
+                                if (mmio_read32 (acl + t * 4) == me)
+                                    return true;
+                                t = t + 1;
+                            }
+                        }
+                    }
+                }
+            }
+            index = index + 1;
+        }
+        return false;
+    }
+
+    // True when a live grant overlaps [start, start+len).
+    private static bool range_in_live_grant (int start, int len) {
+        int index = 3;
+        while (index < MAX_FDS) {
+            int slot = KernelLayout.FD_TABLE + index * 32;
+            if (fd_kind_of (slot) == KIND_GRANT) {
+                int gstart = mmio_read64 (slot + 8);
+                int glen = mmio_read64 (slot + 16);
+                if (glen > 0) {
+                    if (start < gstart + glen) {
+                        if (gstart < start + len)
+                            return true;
+                    }
+                }
+            }
+            index = index + 1;
+        }
+        return false;
+    }
+
+    // Called when a task dies: its blocks go back to the Pmm.
+    public static void release_allocs (int tid) {
+        int i = 0;
+        while (i < ALLOC_SLOTS) {
+            int a = alloc_slot (i);
+            int phys = mmio_read64 (a);
+            if (phys != 0) {
+                if (mmio_read32 (a + 12) == tid) {
+                    int npages = mmio_read32 (a + 8);
+                    int p = 0;
+                    while (p < npages) {
+                        Pmm.free_frame (phys + p * 0x1000);
+                        p = p + 1;
+                    }
+                    mmio_write64 (a, 0);
+                    mmio_write32 (a + 8, 0);
+                    mmio_write32 (a + 12, 0);
+                }
+            }
+            i = i + 1;
         }
     }
 
@@ -422,15 +624,22 @@ namespace Planet.Kernel {
                             return 0;
                         }
                     }
+                    alloc_track (phys, count);
                 }
                 return phys;
             case 4: // SYS_FREE_PAGE(phys)
                 if (a0 < 0x100000 || (a0 & 0xFFF) != 0)
-                    return -1;
+                    return fail (E_INVAL);
+                // A2: only the owner frees, and never underneath a live grant.
+                if (!range_owned (a0, 0x1000))
+                    return fail (E_ACCES);
+                if (range_in_live_grant (a0, 0x1000))
+                    return fail (E_ACCES);
                 int ucr3 = Sched.current_cr3 ();
                 if (ucr3 != 0) {
                     Vmm.unmap_user_4k (ucr3, a0);
                 }
+                alloc_untrack (a0);
                 Pmm.free_frame (a0);
                 return 0;
             case 5: // SYS_READ_KEY() -> ASCII char or -1
@@ -888,9 +1097,24 @@ namespace Planet.Kernel {
             // floor is the first frame the Pmm can hand out (RESERVED_END) and not a
             // fixed 16 MiB: a 1.2 MiB block often lands in the 6-8 MiB hole below the
             // static userland window, and refusing it would force the file transport.
-            case 50: // SYS_MAP_USER_AT(vaddr, size) -> 0 or -1 (for .dlib loading)
+            case 50: // SYS_MAP_USER_AT(start, size) -> 0 or -1 (for .dlib loading)
                 if (a0 < KernelLayout.RESERVED_END || a1 <= 0 || a1 > 0x800000 || a0 + a1 > 0x40000000)
                     return -1;
+                // A2: mapping is allowed for what the caller owns, for a range a
+                // grant shared with it, and for image segments nobody owns (the
+                // .dlib loader). Another task's block is refused (IO-02).
+                if (!range_owned (a0, a1)) {
+                    if (!range_granted_to_me (a0, a1)) {
+                        int p50 = a0;
+                        while (p50 < a0 + a1) {
+                            if (page_owned_by_other (p50) != 0)
+                                return fail (E_ACCES);
+                            p50 = p50 + 0x1000;
+                        }
+                        if (range_in_live_grant (a0, a1))
+                            return fail (E_ACCES);
+                    }
+                }
                 int ucr3_50 = Sched.current_cr3 ();
                 Pmm.reserve_range (a0, a1);
                 if (ucr3_50 != 0)
@@ -1035,6 +1259,47 @@ namespace Planet.Kernel {
                 return 2;
             case 62: // SYS_TID() -> current kernel task id
                 return Sched.current_tid ();
+            case 63: // SYS_GRANT(start, len) -> handle | -1
+                // A grant turns a block the caller owns into a capability (A2).
+                if (a0 < KernelLayout.RESERVED_END || a1 <= 0 || a1 > 0x800000 || a0 + a1 > 0x40000000)
+                    return fail (E_INVAL);
+                if ((a0 & 0xFFF) != 0)
+                    return fail (E_INVAL);
+                if (!range_owned (a0, a1))
+                    return fail (E_ACCES);
+                int h63 = fd_alloc (KIND_GRANT, R_READ | R_WRITE | R_CLOSE, a0, a1);
+                if (h63 < 0)
+                    return fail (E_NOSPC);
+                ok ();
+                return h63;
+            case 64: // SYS_GRANT_SHARE(handle, tid) -> 0 | -1
+                if (fd_check (a0, 0) != 0)
+                    return fail (E_BAD_HANDLE);
+                if (fd_kind_of (handle_slot (a0)) != KIND_GRANT)
+                    return fail (E_INVAL);
+                if (!fd_owned (a0))
+                    return fail (E_ACCES);
+                if (a1 <= 0)
+                    return fail (E_INVAL);
+                int acl64 = acl_addr (a0 & 0xFF);
+                int t64 = 0;
+                while (t64 < GRANT_TASKS) {
+                    if (mmio_read32 (acl64 + t64 * 4) == a1) {
+                        ok ();
+                        return 0;
+                    }
+                    t64 = t64 + 1;
+                }
+                t64 = 0;
+                while (t64 < GRANT_TASKS) {
+                    if (mmio_read32 (acl64 + t64 * 4) == 0) {
+                        mmio_write32 (acl64 + t64 * 4, a1);
+                        ok ();
+                        return 0;
+                    }
+                    t64 = t64 + 1;
+                }
+                return fail (E_NOSPC);
             default:
                 return -1;
         }
@@ -1155,6 +1420,12 @@ namespace Planet.Kernel {
                 mmio_write64 (KernelLayout.FD_TABLE + slot * 32 + 16, 0);
                 mmio_write64 (KernelLayout.FD_TABLE + slot * 32 + 24, 0);
             }
+            for (int i = 0; i < ALLOC_SLOTS; i++) {
+                mmio_write64 (KernelLayout.ALLOC_TABLE + i * 16 + 0, 0);
+                mmio_write64 (KernelLayout.ALLOC_TABLE + i * 16 + 8, 0);
+            }
+            for (int i = 0; i < MAX_FDS * GRANT_TASKS; i++)
+                mmio_write32 (KernelLayout.GRANT_ACL + i * 4, 0);
             Hal.set_idt_gate_dpl (0x80, addr_isr_syscall (), 1);
         }
     }

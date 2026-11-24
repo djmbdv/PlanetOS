@@ -473,6 +473,7 @@ namespace Planet.Kernel {
         private static int reap_zombie (int tid) {
             int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
             release_fds (tid);
+            release_allocs (tid);
             int code = mmio_read64 (tcb + 24);
             int sbase = mmio_read64 (tcb + 16);
             int spages = mmio_read64 (tcb + 80);

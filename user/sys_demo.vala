@@ -275,5 +275,36 @@ int main (string[] args) {
     if (dev_fd >= 3) Sys.close (dev_fd);
     if (dev_null >= 3) Sys.close (dev_null);
 
+    // 15. A2: a grant is a capability over frames the task owns (IO-02).
+    int mem_block = Sys.alloc_pages (1);
+    // A range nobody allocated cannot be granted, even though the address is a
+    // valid user address: ownership is checked, not the address.
+    int mem_foreign = Sys.grant (0x20000000, 4096);
+    int mem_foreign_err = Sys.errno_code ();
+    int mem_grant = (mem_block > 0) ? Sys.grant (mem_block, 4096) : -1;
+    int mem_grant_err = Sys.errno_code ();
+    // While the capability is live the frames cannot be freed underneath it.
+    int mem_free_live = (mem_block > 0) ? Sys.free_page (mem_block) : 0;
+    int mem_free_live_err = Sys.errno_code ();
+    int mem_map_own = (mem_block > 0) ? Sys.map_user_at (mem_block, 4096) : -1;
+    if (mem_grant > 0)
+        Sys.close (mem_grant);
+    // With the grant gone the owner can release the block.
+    int mem_free_after = (mem_block > 0) ? Sys.free_page (mem_block) : -1;
+    bool mem_ok = mem_block > 0 && mem_foreign == -1
+                  && mem_foreign_err == Sys.EACCES
+                  && mem_grant >= 3
+                  && mem_free_live == -1
+                  && mem_free_live_err == Sys.EACCES
+                  && mem_map_own == 0
+                  && mem_free_after == 0;
+    if (mem_ok)
+        print ("memguard=ok\n");
+    else {
+        print (@"memdbg tid=$(Sys.tid()) block=$mem_block foreign=$mem_foreign/$mem_foreign_err grant=$mem_grant/$mem_grant_err live=$mem_free_live/$mem_free_live_err map=$mem_map_own after=$mem_free_after\n");
+        print ("memguard=FAIL\n");
+        fails++;
+    }
+
     return fails;
 }

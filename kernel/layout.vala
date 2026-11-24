@@ -110,7 +110,14 @@ namespace Planet.Kernel {
         public const int TCB_TABLE_SIZE = 0x800;
         public const int FXSAVE_AREA = 0x125000;   // 16 tasks x 1024 bytes (XSAVE x87+SSE+AVX)
         public const int FXSAVE_AREA_SIZE = 0x4000;
-        public const int WINDOW_END = FXSAVE_AREA + FXSAVE_AREA_SIZE;
+        // Blocks handed to userland by SYS_ALLOC_PAGE, so the kernel can tell
+        // who owns a frame (A2, IO-02): 64 blocks x 16 bytes.
+        public const int ALLOC_TABLE = FXSAVE_AREA + FXSAVE_AREA_SIZE;
+        public const int ALLOC_TABLE_SIZE = 0x400;
+        // Tasks allowed to map a grant, indexed by handle slot: 64 x 4 tids.
+        public const int GRANT_ACL = ALLOC_TABLE + ALLOC_TABLE_SIZE;
+        public const int GRANT_ACL_SIZE = 0x400;
+        public const int WINDOW_END = GRANT_ACL + GRANT_ACL_SIZE;
 
         // --- legacy bootstrap stack used by ElfLoader.load_and_run --------
         public const int LEGACY_STACK = 0x1FE000;
@@ -138,6 +145,8 @@ namespace Planet.Kernel {
         private const int R_SCHED_VARS = 15;
         private const int R_TCB_TABLE = 16;
         private const int R_FXSAVE_AREA = 17;
+        private const int R_ALLOC_TABLE = 21;
+        private const int R_GRANT_ACL = 22;
 
         private static int step (int id, int addr, int size) {
             if (size <= 0 || addr < layout_cursor)
@@ -192,6 +201,10 @@ namespace Planet.Kernel {
             r = step (R_TCB_TABLE, TCB_TABLE, TCB_TABLE_SIZE);
             if (r != 0) return r;
             r = step (R_FXSAVE_AREA, FXSAVE_AREA, FXSAVE_AREA_SIZE);
+            if (r != 0) return r;
+            r = step (R_ALLOC_TABLE, ALLOC_TABLE, ALLOC_TABLE_SIZE);
+            if (r != 0) return r;
+            r = step (R_GRANT_ACL, GRANT_ACL, GRANT_ACL_SIZE);
             if (r != 0) return r;
 
             if (WINDOW_END > STACK_LIMIT)

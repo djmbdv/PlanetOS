@@ -543,6 +543,16 @@ namespace Planet {
             return __sys4 (50, vaddr, size, 0, 0);
         }
 
+        // A2: turns a block this task owns into a capability, and lets another
+        // task map it without owning the frames.
+        public static int grant (int addr, int len) {
+            return __sys4 (63, addr, len, 0, 0);
+        }
+
+        public static int grant_share (int handle, int tid) {
+            return __sys4 (64, handle, tid, 0, 0);
+        }
+
         public static int protect_user_ro (int vaddr, int size) {
             if (vaddr < USER_MIN_ADDR || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
                 return -1;
