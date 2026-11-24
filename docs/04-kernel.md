@@ -134,7 +134,18 @@ Stubs are generated with assembler macros so that the 32 exceptions and the N IR
 
 `FXSAVE` is always saved, never lazily (KR-09). The area is 512 bytes aligned to 16. Enabling `CR0.EM=0`, `CR0.MP=1`, `CR4.OSFXSR=1`, `CR4.OSXMMEXCPT=1` is mandatory before executing any SSE instruction, because `planc` uses XMM for `float` and `double`.
 
-### 3.3 Panic
+### 3.3 Two interrupt paths
+
+The 8259 pair still carries the legacy vectors (IRQ0 timer at 32, IRQ1 keyboard at 33) in virtual-wire mode: a PIC EOI and no LAPIC involvement. Message-signalled interrupts go through the local APIC instead, which the kernel enables in `Hal.lapic_init`:
+
+- `IA32_APIC_BASE` gets the global enable bit and **loses x2APIC** (bit 10). QEMU's `-cpu max` starts with x2APIC on, and in that mode the LAPIC registers are MSR-only, so every MMIO write to `0xFEE00000` is silently dropped.
+- SIVR is set to `0x1FF` and TPR to 0; the enable bit is read back before the driver programs any vector.
+- A handler for an MSI vector acks with `lapic_eoi`; a handler for a 8259 vector acks the PIC. Acks are not interchangeable.
+- `Hal.lapic_irr`, `Hal.lapic_isr` and `Hal.lapic_tpr` read back the delivery state, so "the device never signalled" can be told apart from "the CPU never took it".
+
+The first consumer is the virtio-blk queue ([08](08-io-data-path.md), phase C2): PCI capability `0x11`, table entry 0 addressed to this LAPIC with vector 64, the capability enabled with the function mask clear, INTx disabled, and a driver that only reads the used ring when its one-second watchdog expires, so the interrupt is the completion path and the timeout is only a guard.
+
+### 3.4 Panic
 
 ```vala
 [NoReturn]
@@ -271,7 +282,7 @@ The two I/O contracts of [08](08-io-data-path.md) decide the interface. Byte dev
 | PS/2 keyboard | shell input | A: raw scancodes after B2, ASCII via `SYS_READ_KEY` meanwhile | implemented |
 | PCI enumeration | discover virtio | kernel | implemented |
 | ATA PIO | disk (legacy) | B: validated ring, PIO fallback | implemented, polled |
-| virtio-blk | disk | B: validated ring | planned |
+| virtio-blk | disk | B: validated ring | implemented, completion by MSI-X |
 | RTC | wall time | syscall today, byte device later | implemented |
 | virtio-gpu | display and 3D | B: validated ring plus scanout grant | implemented, controlq polled |
 | virtio-net | network | B: validated ring | planned, no driver |

@@ -330,7 +330,11 @@ separate project.
   lease state machine. Pure logic, no QEMU.
 - **QEMU**: handle denial across processes, unowned grant rejection, invalid
   pointer recovery, poll readiness, malformed descriptor, block throughput,
-  network echo.
+  network echo. The `system` case carries the current evidence: `fdguard`,
+  `rights` and `stale` for handles, `guard` for user copies, `memguard` for
+  grants, `ring` for the descriptor validator, and `blk:irq=4/4` with
+  `blk:late=0` for four virtio-blk reads completed by MSI-X. Network echo
+  arrives with C3.
 - **Symbol audit** (VE-02): no device code in the standard library; no host
   symbol in the target.
 - `SharedSurface` stays covered by the existing compositor cases.

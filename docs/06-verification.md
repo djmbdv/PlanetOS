@@ -108,6 +108,15 @@ serial output against `<case>.expect`.
 
 | Case | What it proves |
 |---|---|
+| `system` | the kernel contract behind the process API: the errno table, `readdir`, the kernel log, `Cond`, `poll`, `sleep`, `wait`; handle guards (`fdguard`, `rights`, `stale`) and recoverable user copies (`guard`); threads and the pool (`thread`, `pool`); devfs plus `Gio` polling (`dev`); frame ownership and grants (`memguard`); the validated descriptor ring (`ring`); and four virtio-blk reads, each completed by an MSI-X interrupt (`blk:irq=4/4`, `blk:late=0`, `blk=ok`) |
+| `fault` | a page fault in a user task is reported with tid, vector, error code, rip and cr2; the task exits 142 and the shell keeps running (`shell:alive=1`) |
+| `debug` | the kernel logger: level filter, per-category toggles, `dmesg` empty after a clear, PS/2 mouse resync counters, and the boot records (window verified, mouse on IRQ12, GPU fallback) |
+| `env` | `env`/`getenv` round-trip between parent and child plus the compiler demo values (`gcd=21`, `collatz(6)=8`) |
+| `time` | `date` prints UTC and `uptime` prints wall time and the tick count |
+| `c2vala` | the C-to-Vala translator runs in the guest: it writes `test/c2vala/arith.vala`, `planc` compiles it and the binary reports `gcd=21` and `collatz(1..6)` |
+| `jsmn` | the translated jsmn parser tokenizes the JSON sample: 12 tokens with the expected type, start, end and size |
+| `gpu` | the virtio-gpu probe reports the device as absent instead of faulting when QEMU has no such device |
+| `calendar` | the calendar panel is built with the environment time zone and three places, and the compositor summary reports zero failures |
 | `directories` | `mkdir`/`cd`/`pwd`, `ls -l`, path-relative `write`/`cat`/`mv`/`rm`, empty-directory deletion |
 | `gio` | the Gio layer runs twice in one boot at 51/51 |
 | `exec` | bare, case-insensitive and `exec` command resolution |
@@ -122,6 +131,12 @@ serial output against `<case>.expect`.
 
 Assertions: `text` (substring, in order), `=text` (whole line), `!text`
 (absent) and `~regex`.
+
+The launcher is part of the contract: `tools/mkdisk.py` consumes every guest
+binary, so a unit without its own build rule silently reuses the member that is
+already in `disk.img` and the case passes against old code. Compare the artifact
+timestamp with the source before believing a measurement (R-39 in
+[07](07-risks-and-decisions.md)).
 
 ```sh
 python tests/qemu.py                # build + every case
