@@ -18,6 +18,10 @@ namespace GioDemo {
     // their own `test/<case>/` tree instead of mutating the shared XFS root.
     private string base_dir = ".";
     private string target_name = "hello.txt";
+    // Cancellable source counter. planc currently captures locals by value in
+    // closures (writes do not reach the enclosing scope), so the callback
+    // reports through module state, like mainloop_demo does.
+    private int cancel_fired = 0;
 
     private string at (string name) {
         if (base_dir.length == 0 || base_dir == ".")
@@ -565,10 +569,57 @@ namespace GioDemo {
         demo_enumerate ();
         demo_application (args);
         demo_phase1_models ();
+        demo_io_api ();
         demo_regex ();
 
         print (@"gio:summary checks=$checks failures=$failures\n");
         return (failures == 0) ? 0 : 1;
+    }
+
+    // /dev, Pollable, FileDescriptorBased, IOStream and CancellableSource.
+    private void demo_io_api () {
+        var dev = File.new_for_path ("/dev/console");
+        check ("dev-exists", dev.query_exists ());
+        InputStream ins;
+        OutputStream outs;
+        try {
+            ins = dev.read ();
+            outs = dev.append_to ();
+        } catch (IOError e) {
+            report ("dev-streams", e);
+            return;
+        }
+        check ("dev-pollable-in", ins is PollableInputStream);
+        check ("dev-fd", ins is FileDescriptorBased
+                         && ((FileDescriptorBased) ins).get_fd () >= 3);
+        check ("dev-pollable-out", outs is PollableOutputStream);
+        check ("dev-writable", outs is PollableOutputStream
+                              && ((PollableOutputStream) outs).is_writable ());
+        var io = new SimpleIOStream (ins, outs);
+        check ("io-stream", io.get_input_stream () == ins && io.get_output_stream () == outs);
+        bool closed_ok = false;
+        try {
+            closed_ok = io.close ();
+        } catch (IOError e) {
+            closed_ok = false;
+        }
+        check ("io-close", closed_ok && io.is_closed ());
+
+        var c = new Cancellable ();
+        SourceFunc on_cancel = () => {
+            cancel_fired = cancel_fired + 1;
+            return false;
+        };
+        var src = c.create_source (on_cancel);
+        src.attach (MainContext.default_ ());
+        c.cancel ();
+        int guard = 0;
+        while (cancel_fired == 0 && guard < 100) {
+            MainContext.default_ ().iteration (false);
+            Sys.sleep_ms (5);
+            guard++;
+        }
+        check ("cancellable-source", cancel_fired == 1);
     }
 
     private void demo_regex () {

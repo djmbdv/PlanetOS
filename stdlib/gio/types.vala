@@ -127,28 +127,68 @@ namespace Gio {
         public abstract bool truncate (int offset, Cancellable? cancellable = null) throws IOError;
     }
 
+    public interface FileDescriptorBased : Object {
+        public abstract int get_fd ();
+    }
+
+    public interface PollableInputStream : Object {
+        public abstract bool is_readable ();
+        public abstract Source create_source (Cancellable? cancellable = null);
+    }
+
+    public interface PollableOutputStream : Object {
+        public abstract bool is_writable ();
+        public abstract Source create_source (Cancellable? cancellable = null);
+    }
+
     public class Cancellable : Object {
-        private bool cancelled = false;
+        private bool cancel_flag = false;
 
         public Cancellable () {}
 
+        public signal void cancelled ();
+
         public bool is_cancelled () {
-            return cancelled;
+            return cancel_flag;
         }
 
         public void cancel () {
-            cancelled = true;
+            if (cancel_flag)
+                return;
+            cancel_flag = true;
+            cancelled ();
         }
 
         public void reset () {
-            cancelled = false;
+            cancel_flag = false;
         }
 
         public bool set_error_if_cancelled () throws IOError {
-            if (cancelled)
+            if (cancel_flag)
                 throw new IOError.CANCELLED ("Operation was cancelled");
             return false;
         }
+
+        // Source that fires `func` once the cancellable is cancelled. It polls
+        // every 10 ms: a futex-backed source needs the futex waiter to expose a
+        // pollable handle (Phase B2 of docs/08). `this` is held through the
+        // handler record, not captured by the closure.
+        public Source create_source (SourceFunc func) {
+            var h = new CancelSourceData ();
+            h.func = func;
+            h.owner = this;
+            var src = new Source (0, Source.KIND_TIMEOUT, 10, 0, () => {
+                if (!h.owner.is_cancelled ())
+                    return true;
+                return h.func ();
+            });
+            return src;
+        }
+    }
+
+    private class CancelSourceData : Object {
+        public SourceFunc func;
+        public Cancellable owner;
     }
 
 }

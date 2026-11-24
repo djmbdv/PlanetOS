@@ -309,12 +309,29 @@ namespace Gio {
         }
     }
 
-    public class FileInputStream : InputStream, Seekable {
+    public class FileInputStream : InputStream, Seekable, FileDescriptorBased, PollableInputStream {
         private int fd;
         private int pos = 0;
 
         public FileInputStream (int fd) {
             this.fd = fd;
+        }
+
+        public int get_fd () {
+            return fd;
+        }
+
+        public bool is_readable () {
+            return !closed && fd >= 0;
+        }
+
+        // fd watch: MainContext polls it through SYS_POLL and runs the callback
+        // when the handle reports readable.
+        public Source create_source (Cancellable? cancellable = null) {
+            var src = new Source (0, Source.KIND_WATCH, 0, 0, null);
+            src.fd = fd;
+            src.condition = 1;
+            return src;
         }
 
         ~FileInputStream () {
@@ -418,13 +435,32 @@ namespace Gio {
         }
     }
 
-    public class FileOutputStream : OutputStream, Seekable {
+    public class FileOutputStream : OutputStream, Seekable, FileDescriptorBased, PollableOutputStream {
         private int fd;
         private int pos = 0;
 
         public FileOutputStream (int fd, int initial_pos = 0) {
             this.fd = fd;
             this.pos = initial_pos;
+        }
+
+        public int get_fd () {
+            return fd;
+        }
+
+        public bool is_writable () {
+            return !closed && fd >= 0;
+        }
+
+        // Output readiness is not polled by MainContext (SYS_POLL reports
+        // readable handles), so the source fires once on the next tick.
+        public Source create_source (Cancellable? cancellable = null) {
+            var src = new Source (0, Source.KIND_TIMEOUT, 10, 0, () => {
+                if (closed || fd < 0)
+                    return false;
+                return true;
+            });
+            return src;
         }
 
         ~FileOutputStream () {
@@ -1112,6 +1148,52 @@ namespace Gio {
                 return true;
             int w = 0;
             return base_stream.write_all (str.data, out w, cancellable);
+        }
+    }
+
+    /** A stream that has both a readable and a writable side. */
+    public class IOStream : Object {
+        private InputStream input;
+        private OutputStream output;
+        private bool closed = false;
+
+        public IOStream (InputStream input, OutputStream output) {
+            this.input = input;
+            this.output = output;
+        }
+
+        public InputStream get_input_stream () {
+            return input;
+        }
+
+        public OutputStream get_output_stream () {
+            return output;
+        }
+
+        public virtual bool close (Cancellable? cancellable = null) throws IOError {
+            if (closed)
+                return true;
+            bool in_ok = input.close (cancellable);
+            bool out_ok = output.close (cancellable);
+            closed = true;
+            return in_ok && out_ok;
+        }
+
+        public virtual bool is_closed () {
+            return closed;
+        }
+
+        public virtual bool has_pending () {
+            if (input.has_pending ())
+                return true;
+            if (output.has_pending ())
+                return true;
+            return false;
+        }
+    }
+
+    public class SimpleIOStream : IOStream {
+        public SimpleIOStream (InputStream input, OutputStream output) : base (input, output) {
         }
     }
 
