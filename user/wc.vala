@@ -9,10 +9,13 @@ int main (string[] args) {
     var opt_w = new OptionEntry ("words", 'w', OptionFlags.NONE, OptionArg.NONE, "Print word counts");
     var opt_c = new OptionEntry ("bytes", 'c', OptionFlags.NONE, OptionArg.NONE, "Print byte counts");
     var opt_m = new OptionEntry ("chars", 'm', OptionFlags.NONE, OptionArg.NONE, "Print character counts");
-    ctx.add_entry (opt_l);
-    ctx.add_entry (opt_w);
-    ctx.add_entry (opt_c);
-    ctx.add_entry (opt_m);
+    // GLib.OptionGroup: the four counts belong to one documented section.
+    var counting = new OptionGroup ("Counts", "Select the counts to print", null);
+    counting.add_entry (opt_l);
+    counting.add_entry (opt_w);
+    counting.add_entry (opt_c);
+    counting.add_entry (opt_m);
+    ctx.add_group (counting);
     try {
         ctx.parse (ref args);
     } catch (OptionError e) {

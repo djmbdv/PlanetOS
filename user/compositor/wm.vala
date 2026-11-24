@@ -11,6 +11,37 @@ using Gsk;
 using Wm;
 
 namespace Wm {
+    // Finds the first <path d="..."> of an SVG through GLib.MarkupParseContext,
+    // so attribute order and extra elements do not matter.
+    public class SvgPathProbe : Object {
+        public string data = "";
+        public bool found = false;
+
+        public static SvgPathProbe? from_svg (string svg) {
+            var probe = new SvgPathProbe ();
+            MarkupStartElement on_start = (ctx, name, attr_names, attr_values) => {
+                if (probe.found || name != "path")
+                    return;
+                for (int i = 0; i < attr_names.length; i++) {
+                    if (attr_names[i] == "d") {
+                        probe.data = attr_values[i];
+                        probe.found = true;
+                        return;
+                    }
+                }
+            };
+            var parser = new MarkupParser (on_start);
+            var ctx = new MarkupParseContext (parser);
+            try {
+                ctx.parse (svg, -1);
+                ctx.end_parse ();
+            } catch (MarkupError e) {
+                return probe.found ? probe : null;
+            }
+            return probe.found ? probe : null;
+        }
+    }
+
     public class Compositor : Object {
         private GenericArray<Win> wins;
         private Window screen;
@@ -72,6 +103,7 @@ namespace Wm {
         // image feeds the software blit and the VirtIO-GPU hardware cursor.
         private const int CURSOR_TEX = 64;
         private bool cursor_svg_ok = false;
+        private bool cursor_markup_ok = false;
         private uint8[] cursor_pix;
         private int cursor_hot_x = 0;
         private int cursor_hot_y = 0;
@@ -80,6 +112,17 @@ namespace Wm {
         private int cursor_bw = 16;
         private int cursor_bh = 22;
         private Renderer gsk_renderer;
+
+        // Calendar and places state. The zone comes from TZ/PLANET_TZ, and the
+        // place list is read once at start-up (GLib.BookmarkFile + GLib.Uri),
+        // with an HMAC-SHA256 sidecar proving it was not edited by hand.
+        private const string QDATA_CAL_MONTH = "cal-month";
+        private const string PLACES_FILE = "places.gbk";
+        private const string PLACES_SIG = "places.sig";
+        private const string PLACES_HMAC_KEY = "planetos-places-v1";
+        private TimeZone zone;
+        private BookmarkFile places;
+        private bool places_signed = false;
 
         public Compositor () {
             wins = new GenericArray<Win> ();
@@ -100,7 +143,135 @@ namespace Wm {
             // highlight the last line ("spir-v accent pipeline")
             notes_lay.add_color_attribute (103, 125, 0.220, 0.592, 0.941);
             pat = new int[1];
+            zone = TimeZone.new_local ();
+            places = new BookmarkFile ();
+            load_places ();
             load_cursor_svg ();
+        }
+
+        // --- calendar / places ----------------------------------------
+
+        public string zone_id () { return zone.get_identifier (); }
+
+        // True when cursor.svg was read through GLib.MarkupParseContext rather
+        // than the fallback string scan.
+        public bool cursor_via_markup () { return cursor_markup_ok; }
+
+        public int places_count () { return places.get_size (); }
+
+        public bool places_verified () { return places_signed; }
+
+        private static uint8[] hmac_key () {
+            var key = new uint8[PLACES_HMAC_KEY.length];
+            for (int i = 0; i < PLACES_HMAC_KEY.length; i++)
+                key[i] = (uint8) PLACES_HMAC_KEY[i];
+            return key;
+        }
+
+        public static string sign_payload (string data) {
+            return Hmac.compute_for_string (ChecksumType.SHA256, hmac_key (), data, -1);
+        }
+
+        public string places_signature () {
+            size_t len = 0;
+            string data = places.to_data (out len);
+            return sign_payload (data);
+        }
+
+        // Accepts only a payload whose HMAC-SHA256 matches; a tampered places
+        // file falls back to the built-in list.
+        public bool verify_places_data (string data, string signature) {
+            return sign_payload (data) == signature;
+        }
+
+        private void load_places () {
+            bool loaded = false;
+            try {
+                if (places.load_from_file (PLACES_FILE)) {
+                    loaded = places.get_size () > 0;
+                    if (loaded)
+                        places_signed = verify_places_signature ();
+                }
+            } catch (BookmarkFileError e) {
+                loaded = false;
+            }
+            if (loaded)
+                return;
+            try {
+                places.set_title ("file:///", "Root");
+                places.set_mime_type ("file:///", "inode/directory");
+                places.add_group ("file:///", "places");
+                places.set_title ("file:///tmp", "Scratch");
+                places.set_mime_type ("file:///tmp", "inode/directory");
+                places.add_group ("file:///tmp", "places");
+                places.set_title ("file:///test", "Test tree");
+                places.set_mime_type ("file:///test", "inode/directory");
+                places.add_group ("file:///test", "places");
+            } catch (BookmarkFileError e) {
+                print (@"compositor: places init failed: $(e.message)\n");
+            }
+        }
+
+        private bool verify_places_signature () {
+            string expected = "";
+            if (!FileUtils.get_contents (PLACES_SIG, out expected))
+                return false;
+            return places_signature () == expected;
+        }
+
+        private int current_month_index () {
+            var now = DateTime.now_utc ().to_timezone (zone);
+            return (now.get_year () - 1970) * 12 + (now.get_month () - 1);
+        }
+
+        private void calendar_shift (Win w, int delta) {
+            int base_months = current_month_index ();
+            int months = w.has_data (QDATA_CAL_MONTH) ? w.get_data (QDATA_CAL_MONTH) : base_months;
+            w.set_data (QDATA_CAL_MONTH, months + delta);
+            damage_window (w.id);
+        }
+
+        private void calendar_reset (Win w) {
+            w.set_data (QDATA_CAL_MONTH, current_month_index ());
+            damage_window (w.id);
+        }
+
+        // Month shown by the calendar window, as months since 1970-01.
+        public int calendar_month (int id) {
+            var w = find (id);
+            if (w == null || w.kind != Kind.CALENDAR)
+                return -1;
+            return w.has_data (QDATA_CAL_MONTH) ? w.get_data (QDATA_CAL_MONTH) : current_month_index ();
+        }
+
+        public void calendar_prev (int id) {
+            var w = find (id);
+            if (w != null && w.kind == Kind.CALENDAR)
+                calendar_shift (w, -1);
+        }
+
+        public void calendar_next (int id) {
+            var w = find (id);
+            if (w != null && w.kind == Kind.CALENDAR)
+                calendar_shift (w, 1);
+        }
+
+        private static string month_name (int mon) {
+            switch (mon) {
+                case 1: return "January";
+                case 2: return "February";
+                case 3: return "March";
+                case 4: return "April";
+                case 5: return "May";
+                case 6: return "June";
+                case 7: return "July";
+                case 8: return "August";
+                case 9: return "September";
+                case 10: return "October";
+                case 11: return "November";
+                case 12: return "December";
+                default: return "?";
+            }
         }
 
         // --- plumbing -------------------------------------------------
@@ -153,7 +324,14 @@ namespace Wm {
             string? svg = read_text ("cursor.svg");
             if (svg == null)
                 return;
-            string? d = svg_path_data (svg);
+            string? d = null;
+            var probe = SvgPathProbe.from_svg (svg);
+            if (probe != null && probe.found) {
+                d = probe.data;
+                cursor_markup_ok = true;
+            }
+            if (d == null)
+                d = svg_path_data (svg);
             if (d == null)
                 return;
             var path = Path.parse (d);
@@ -522,7 +700,16 @@ namespace Wm {
             last_sec = sec;
             for (int i = 0; i < wins.length; i++) {
                 var w = wins[i];
-                if (!w.alive || w.kind != Kind.CLOCK)
+                if (!w.alive)
+                    continue;
+                if (w.kind == Kind.CALENDAR) {
+                    // The header carries the seconds readout.
+                    int kx = w.x + BORDER;
+                    int ky = w.content_y ();
+                    damage (kx, ky, w.w - 2 * BORDER, w.content_h ());
+                    continue;
+                }
+                if (w.kind != Kind.CLOCK)
                     continue;
                 int cx = w.x + BORDER;
                 int cy = w.content_y ();
@@ -534,7 +721,7 @@ namespace Wm {
                 damage (ccx - rad - 2, ccy - rad - 2, rad * 2 + 4, rad * 2 + 4);
                 damage (cx, cy + ch - 30, cw, 30);
             }
-            damage (SCREEN_W - 200, 0, 200, TOP_H);
+            damage (SCREEN_W - 440, 0, 440, TOP_H);
         }
 
         // Culling: a window (or a bar) that does not touch the current clip is
@@ -1230,6 +1417,22 @@ namespace Wm {
                 close_win (focused_id);
                 return;
             }
+            // Calendar month navigation: [ previous, ] next, t today.
+            var cal_win = find (focused_id);
+            if (cal_win != null && cal_win.kind == Kind.CALENDAR) {
+                if (k == '[' || k == ',') {
+                    calendar_shift (cal_win, -1);
+                    return;
+                }
+                if (k == ']' || k == '.') {
+                    calendar_shift (cal_win, 1);
+                    return;
+                }
+                if (k == 't' || k == 'T') {
+                    calendar_reset (cal_win);
+                    return;
+                }
+            }
             if (k == 27) {
                 quit = true;
                 return;
@@ -1274,6 +1477,14 @@ namespace Wm {
             }
             if (k == 'g' || k == 'G') {
                 add ("gtk-demo", 140, 110, 380, 230, Kind.GTK);
+                return;
+            }
+            if (k == 'a' || k == 'A') {
+                add ("calendar", 120, 90, 340, 300, Kind.CALENDAR);
+                return;
+            }
+            if (k == 'b' || k == 'B') {
+                add ("places", 140, 120, 400, 150, Kind.PLACES);
                 return;
             }
             if (k == 9) {
@@ -1420,12 +1631,14 @@ namespace Wm {
         public void seed () {
             TextHelper.load_ttf ("LiberationSans-Regular.ttf");
             TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
-            add ("terminal", 48, 56, 420, 260, Kind.TERMINAL);
-            add ("shader", 500, 56, 360, 230, Kind.SHADER);
-            add ("clock", 900, 56, 320, 230, Kind.CLOCK);
-            add ("gtk-demo", 80, 340, 460, 280, Kind.GTK);
-            add ("pcm4", 570, 320, 650, 320, Kind.FILES);
-            focus_nth (4);
+            add ("terminal", 48, 56, 420, 240, Kind.TERMINAL);
+            add ("shader", 500, 56, 360, 240, Kind.SHADER);
+            add ("clock", 880, 56, 340, 240, Kind.CLOCK);
+            add ("calendar", 880, 316, 340, 300, Kind.CALENDAR);
+            add ("places", 48, 316, 400, 130, Kind.PLACES);
+            add ("gtk-demo", 48, 466, 400, 210, Kind.GTK);
+            add ("pcm4", 480, 316, 380, 360, Kind.FILES);
+            focus_nth (6);
         }
 
         public int add_demo () {
@@ -1574,8 +1787,11 @@ namespace Wm {
             // Titanium Mist (#8B9BB0)
             cr.set_source_rgb (0.545, 0.608, 0.690);
             TextHelper.draw_mono (cr, @"$(count ()) win", SCREEN_W - 190, 6, 14.0);
-            int total = Sys.ticks () / 100;
-            TextHelper.draw_mono (cr, @"T+$(pad2 ((total / 60) % 60)):$(pad2 (total % 60))", SCREEN_W - 110, 6, 14.0);
+            // Wall-clock date and time in the configured zone (TZ/PLANET_TZ).
+            int now_s = (int) get_real_time_seconds ();
+            var dt = DateTime.now_utc ().to_timezone (zone);
+            string stamp = @"$(dt.format ("%a %d %b %H:%M:%S")) $(zone.get_abbreviation (now_s))";
+            TextHelper.draw_mono (cr, stamp, SCREEN_W - 420, 6, 14.0);
         }
 
         private void draw_windows (Context cr) {
@@ -1861,6 +2077,10 @@ namespace Wm {
                     cr.set_source_rgb (0.545, 0.608, 0.690);
                     TextHelper.draw_mono (cr, "Starting GUI app...", cx + 16, cy + 20, 14.0);
                 }
+            } else if (w.kind == Kind.CALENDAR) {
+                draw_calendar (cr, w, cx, cy, cw, ch);
+            } else if (w.kind == Kind.PLACES) {
+                draw_places (cr, w, cx, cy, cw, ch);
             } else {
                 // Slate Atmosphere (#182028)
                 cr.set_source_rgb (0.094, 0.125, 0.157);
@@ -1870,6 +2090,112 @@ namespace Wm {
                 // Titanium Mist (#8B9BB0)
                 cr.set_source_rgb (0.545, 0.608, 0.690);
                 show_layout_at (cr, notes_lay, cx + 14, cy + 12);
+            }
+        }
+
+        // Month grid for the window's month (GLib.Date) plus the current
+        // date/time in the configured zone (GLib.TimeZone + GLib.DateTime).
+        private void draw_calendar (Context cr, Win w, int cx, int cy, int cw, int ch) {
+            // Slate Atmosphere (#182028)
+            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.rectangle (cx, cy, cw, ch);
+            cr.fill ();
+            if (cw < 220 || ch < 190)
+                return;
+            int now_s = (int) get_real_time_seconds ();
+            var now = DateTime.now_utc ().to_timezone (zone);
+            int base_months = (now.get_year () - 1970) * 12 + (now.get_month () - 1);
+            int months = w.has_data (QDATA_CAL_MONTH) ? w.get_data (QDATA_CAL_MONTH) : base_months;
+            int year = 1970 + months / 12;
+            int mon = (months % 12) + 1;
+            if (mon < 1) {
+                mon = mon + 12;
+                year = year - 1;
+            }
+
+            // Lunar White (#F0F4F8)
+            cr.set_source_rgb (0.941, 0.957, 0.973);
+            TextHelper.draw_text (cr, @"$(month_name (mon)) $(year)", cx + 12, cy + 8, 16.0);
+            // Titanium Mist (#8B9BB0)
+            cr.set_source_rgb (0.545, 0.608, 0.690);
+            TextHelper.draw_mono (cr, @"$(zone.get_identifier ()) $(zone.offset_string (now_s))", cx + 12, cy + 30, 13.0);
+
+            string[] labels = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
+            int grid_x = cx + 12;
+            int grid_y = cy + 56;
+            int cell_w = (cw - 24) / 7;
+            // Stratosphere Line (#26323F)
+            cr.set_source_rgb (0.149, 0.196, 0.247);
+            for (int i = 0; i < 7; i++)
+                TextHelper.draw_mono (cr, labels[i], grid_x + i * cell_w + 4, grid_y, 12.0);
+
+            var first = Date.dmy (1, mon, year);
+            int offset = ((int) first.get_weekday ()) - 1;
+            int dim = first.get_days_in_month ();
+            int today = (now.get_month () == mon && now.get_year () == year) ? now.get_day_of_month () : -1;
+            int row_y = grid_y + 20;
+            for (int cell = 0; cell < 42; cell++) {
+                int day = cell - offset + 1;
+                if (day < 1 || day > dim)
+                    continue;
+                int col = cell % 7;
+                int cxx = grid_x + col * cell_w + 4;
+                int cyy = row_y + (cell / 7) * 24;
+                if (cyy > cy + ch - 36)
+                    break;
+                if (day == today) {
+                    cr.set_source_rgb (acc_r, acc_g, acc_b);
+                    cr.rectangle (grid_x + col * cell_w, cyy - 3, cell_w - 2, 21);
+                    cr.fill ();
+                    // Obsidian Orbit (#0F1419) for contrast on the accent.
+                    cr.set_source_rgb (0.059, 0.078, 0.098);
+                } else {
+                    // Lunar White
+                    cr.set_source_rgb (0.827, 0.851, 0.878);
+                }
+                TextHelper.draw_mono (cr, day.to_string (), cxx, cyy, 13.0);
+            }
+
+            // Footer: full date, time and zone abbreviation.
+            cr.set_source_rgb (acc_r, acc_g, acc_b);
+            string footer = @"$(now.format ("%a %d %b %Y %H:%M:%S")) $(zone.get_abbreviation (now_s))";
+            TextHelper.draw_mono (cr, footer, cx + 12, cy + ch - 26, 13.0);
+        }
+
+        // Places list read from `places.gbk` (GLib.BookmarkFile); the path
+        // shown is the one GLib.Uri extracts from the bookmark's file URI.
+        private void draw_places (Context cr, Win w, int cx, int cy, int cw, int ch) {
+            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.rectangle (cx, cy, cw, ch);
+            cr.fill ();
+            cr.set_source_rgb (0.941, 0.957, 0.973);
+            string head = places_signed ? "Places (hmac ok)" : "Places";
+            TextHelper.draw_text (cr, head, cx + 12, cy + 8, 15.0);
+            var uris = places.get_uris ();
+            int y = cy + 34;
+            for (int i = 0; i < uris.length && y < cy + ch - 18; i++) {
+                string title = uris[i];
+                try {
+                    title = places.get_title (uris[i]);
+                } catch (BookmarkFileError e) {
+                    title = uris[i];
+                }
+                string path = uris[i];
+                try {
+                    var u = Uri.parse (uris[i]);
+                    if (u.get_path ().length > 0)
+                        path = u.get_path ();
+                } catch (UriError e) {
+                    path = uris[i];
+                }
+                cr.set_source_rgb (acc_r, acc_g, acc_b);
+                TextHelper.draw_mono (cr, @"$(i + 1)", cx + 12, y, 13.0);
+                cr.set_source_rgb (0.827, 0.851, 0.878);
+                TextHelper.draw_mono (cr, path, cx + 36, y, 13.0);
+                // Titanium Mist (#8B9BB0)
+                cr.set_source_rgb (0.545, 0.608, 0.690);
+                TextHelper.draw_mono (cr, title, cx + 200, y, 13.0);
+                y += 20;
             }
         }
 

@@ -379,9 +379,202 @@ private int self_test_run (Compositor comp) {
     lscroll.draw (lcr);
     check (lrows.y == ly - 40, "scroll-draw-keeps-offset");
 
+    // --- calendar, time zone, places (GLib.Date/TimeZone/Uri/BookmarkFile/Hmac)
+    calendar_self_test (comp);
+    make_calendar_checks (comp, surf);
+    return (st_fails == 0) ? 0 : 1;
+}
+
+private void calendar_self_test (Compositor comp) {
+    var d = Date.dmy (23, 11, 2026);
+    check (d.valid () && d.get_weekday () == DateWeekday.MONDAY, "date-weekday");
+    check (d.get_days_in_month () == 30 && d.get_day_of_year () == 327, "date-fields");
+    check (Date.dmy (29, 2, 2024).valid () && !Date.dmy (29, 2, 2025).valid (), "date-leap");
+    var moved = Date.dmy (31, 1, 2026);
+    moved.add_months (1);
+    check (moved.day == 28 && moved.month == 2, "date-month-clamp");
+    check (d.days_between (Date.dmy (30, 11, 2026)) == 7, "date-days-between");
+    check (Date.from_days (d.to_days ()).compare (d) == 0, "date-roundtrip");
+
+    int winter = 1766275200;   // 2025-12-21T00:00:00Z
+    int summer = 1781524800;   // 2026-06-15T12:00:00Z
+    var madrid = TimeZone.new_identifier ("Europe/Madrid");
+    if (madrid != null) {
+        check (((!) madrid).get_offset (winter) == 3600
+               && ((!) madrid).get_offset (summer) == 7200, "tz-madrid-dst");
+    } else {
+        check (false, "tz-madrid-missing");
+    }
+    var ny = TimeZone.new_identifier ("America/New_York");
+    if (ny != null) {
+        check (((!) ny).get_offset (winter) == -18000
+               && ((!) ny).get_offset (summer) == -14400, "tz-new-york-dst");
+    } else {
+        check (false, "tz-ny-missing");
+    }
+    var caracas = TimeZone.new_identifier ("America/Caracas");
+    if (caracas != null) {
+        check (((!) caracas).offset_string (summer) == "-04:00", "tz-caracas");
+    } else {
+        check (false, "tz-caracas-missing");
+    }
+    check (TimeZone.new_identifier ("Not/AZone") == null, "tz-unknown");
+
+    var dt = DateTime.from_unix_utc (1700000000L);
+    if (madrid != null)
+        dt = dt.to_timezone ((!) madrid);
+    check (dt.get_hour () == 23 && dt.get_timezone ().get_identifier () == "Europe/Madrid", "datetime-zone");
+    check (dt.to_utc ().get_hour () == 22, "datetime-back-to-utc");
+
+    try {
+        var u = Uri.parse ("file:///tmp/notes.txt", UriFlags.NONE);
+        check (u.get_scheme () == "file" && u.get_path () == "/tmp/notes.txt", "uri-path");
+        var https = Uri.parse ("https://user@example.com:8443/a/b?q=1#top", UriFlags.NONE);
+        check (https.get_port () == 8443 && https.get_host () == "example.com", "uri-authority");
+        check (https.get_query () == "q=1" && https.get_fragment () == "top", "uri-query-fragment");
+        string escaped = Uri.escape_string ("a b/c", null, true);
+        check (escaped == "a%20b%2Fc", "uri-escape");
+        size_t illegal = 0;
+        string unescaped = Uri.unescape_string ("a%20b", out illegal);
+        check (unescaped == "a b" && illegal == 0, "uri-unescape");
+        var ub = Uri.parse ("file:///a/b/c.txt", UriFlags.NONE);
+        var ur = Uri.resolve_relative (ub, "../d.txt", UriFlags.NONE);
+        check (ur.get_path () == "/a/d.txt", "uri-resolve");
+
+        var bk = new BookmarkFile ();
+        bk.set_title ("file:///tmp", "Scratch");
+        bk.set_mime_type ("file:///tmp", "inode/directory");
+        size_t blen = 0;
+        string btext = bk.to_data (out blen);
+        check (btext.contains ("[Bookmark 0]") && btext.contains ("URI=file:///tmp"), "bookmark-data");
+        var bk2 = new BookmarkFile ();
+        bk2.load_from_data (btext, blen);
+        check (bk2.has_item ("file:///tmp") && bk2.get_title ("file:///tmp") == "Scratch", "bookmark-roundtrip");
+
+        uint8[] hkey = new uint8[20];
+        for (int i = 0; i < 20; i++)
+            hkey[i] = (uint8) 0x0b;
+        uint8[] msg = { 'H', 'i', ' ', 'T', 'h', 'e', 'r', 'e' };
+        string mac = Hmac.compute_for_data (ChecksumType.SHA256, hkey, msg);
+        check (mac == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7", "hmac-rfc4231");
+    } catch (UriError e) {
+        check (false, "uri-error");
+    } catch (BookmarkFileError e) {
+        check (false, "bookmark-error");
+    }
+
+    check (comp.places_count () >= 3, "places-loaded");
+    check (comp.places_signature ().length == 64, "places-hmac");
+    check (comp.zone_id ().length > 0, "zone-id");
+
+    // The RTC path feeds Date.today(), so a wrong packed decode shows up here.
+    var today = Date.today ();
+    check (today.valid () && today.year >= 2024 && today.year <= 2100, "clock-year");
+
+    // A correctly signed places payload is accepted; one edited byte is not.
+    var signed_bk = new BookmarkFile ();
+    try {
+        signed_bk.set_title ("file:///tmp", "Scratch");
+    } catch (BookmarkFileError e) {
+        check (false, "places-sign-setup");
+    }
+    size_t slen = 0;
+    string sdata = signed_bk.to_data (out slen);
+    string sgood = Compositor.sign_payload (sdata);
+    check (comp.verify_places_data (sdata, sgood), "places-sig-accept");
+    check (!comp.verify_places_data (sdata + "\n", sgood), "places-sig-reject");
+
+    // File round-trip through the real BookmarkFile/FileUtils/Sys paths.
+    try {
+        var fbk = new BookmarkFile ();
+        fbk.set_title ("file:///tmp", "Scratch");
+        fbk.set_title ("file:///test", "Test tree");
+        bool wrote = fbk.to_file ("places_selftest.gbk");
+        size_t fw_len = 0;
+        string fw_data = fbk.to_data (out fw_len);
+        bool wrote_sig = FileUtils.set_contents ("places_selftest.sig", Compositor.sign_payload (fw_data));
+        var reloaded = new BookmarkFile ();
+        bool read_ok = reloaded.load_from_file ("places_selftest.gbk");
+        check (wrote && wrote_sig && read_ok && reloaded.get_size () == 2, "places-file-roundtrip");
+        size_t rl_len = 0;
+        string rl_data = reloaded.to_data (out rl_len);
+        check (comp.verify_places_data (rl_data, Compositor.sign_payload (rl_data)), "places-file-signature");
+        Sys.unlink ("places_selftest.gbk");
+        Sys.unlink ("places_selftest.sig");
+    } catch (BookmarkFileError e) {
+        print (@"compositor: places-file-error $(e.message)\n");
+        check (false, "places-file-error");
+    }
+}
+
+private void make_calendar_checks (Compositor comp, ImageSurface shared) {
+    int id = comp.add ("calendar", 40, 60, 340, 300, Kind.CALENDAR);
+    check (id > 0 && comp.calendar_month (id) >= 0, "calendar-window");
+    int before = comp.calendar_month (id);
+    comp.calendar_next (id);
+    check (comp.calendar_month (id) == before + 1, "calendar-next");
+    comp.calendar_prev (id);
+    comp.calendar_prev (id);
+    check (comp.calendar_month (id) == before - 1, "calendar-prev");
+    comp.key_press ('t');
+    check (comp.calendar_month (id) == before, "calendar-today-key");
+
+    // Paint the calendar and the places list once: a layout fault (division by
+    // a zero column count, a null surface) would abort here. The shared
+    // self-test surface is reused (slice 47): a second 1280x720 surface would
+    // exhaust the contiguous frames the animate run needs.
+    var csurf = shared;
+    var ccr = new Context (csurf);
+    comp.damage_full ();
+    comp.render (ccr, 10, 10);
+    check (csurf.width == SCREEN_W, "calendar-render");
+
+    // The painted calendar must contain the accent (today's cell and the
+    // footer) over its Slate Atmosphere background.
+    int accent_hits = 0;
+    int slate_hits = 0;
+    for (int py = 90; py < 380; py += 4) {
+        for (int px = 44; px < 376; px += 4) {
+            int argb = ccr.pixel_at (px, py);
+            int pr = (argb >> 16) & 0xFF;
+            int pg = (argb >> 8) & 0xFF;
+            int pb = argb & 0xFF;
+            if (pb > 200 && pr < 120 && pg > 100 && pg < 200)
+                accent_hits = accent_hits + 1;
+            if (pr < 40 && pg < 48 && pb < 60)
+                slate_hits = slate_hits + 1;
+        }
+    }
+    check (accent_hits > 3, "calendar-accent");
+    check (slate_hits > 100, "calendar-surface");
+
+    comp.close_win (id);
+
+    check (comp.cursor_via_markup (), "cursor-markup");
+
+    // GLib.MarkupParseContext: attribute order and self-closing elements.
+    var seen = new GenericArray<string> ();
+    MarkupStartElement on_path = (ctx, name, an, av) => {
+        if (name != "path")
+            return;
+        for (int i = 0; i < an.length; i++) {
+            if (an[i] == "d")
+                seen.add (av[i]);
+        }
+    };
+    var mparser = new MarkupParser (on_path);
+    var mctx = new MarkupParseContext (mparser, MarkupParseFlags.NONE);
+    try {
+        mctx.parse ("<svg><g><path fill=\"none\" d=\"M0 0 L1 1\"/></g></svg>", -1);
+        mctx.end_parse ();
+        check (seen.length == 1 && seen[0] == "M0 0 L1 1", "markup-path");
+    } catch (MarkupError e) {
+        check (false, "markup-error");
+    }
+
+    print (@"compositor: calendar tz=$(comp.zone_id ()) places=$(comp.places_count ()) signed=$(comp.places_verified () ? 1 : 0)\n");
     print (@"compositor: cursor_svg=$(comp.cursor_from_svg () ? 1 : 0) hotspot=$(comp.cursor_hotspot_x ())x$(comp.cursor_hotspot_y ())\n");
     print (@"compositor:summary checks=$st_checks failures=$st_fails\n");
-    return (st_fails == 0) ? 0 : 1;
 }
 
 // --- interactive -------------------------------------------------------

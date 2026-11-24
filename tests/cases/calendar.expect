@@ -1,0 +1,4 @@
+# The zone comes from the environment and the places list is the built-in one.
+~compositor: calendar tz=Europe/Madrid places=3 signed=0
+~compositor:summary checks=[0-9]+ failures=0
+!compositor: FAIL

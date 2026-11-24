@@ -58,7 +58,7 @@ namespace Wm {
     public const int DMG_RECTS = 32;
     public const int PAT_STEP = 8;
 
-    public enum Kind { TERMINAL, CLOCK, SHADER, NOTES, GTK, FILES, EXT }
+    public enum Kind { TERMINAL, CLOCK, SHADER, NOTES, GTK, FILES, EXT, CALENDAR, PLACES }
 
     public static string resolve_gui_binary (string nm) {
         if (nm == "gtk_demo" || nm == "gtk_demo.elf") return "gtk_demo.elf";

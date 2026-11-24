@@ -124,6 +124,22 @@ namespace Wm {
         public string ext_ev_file = "";
         public int ext_tid = -1;
         private ExtEventRing ext_ev;
+        // Per-window data attached by the WM (GLib.Datalist / g_object_set_data).
+        private Datalist? qdata = null;
+
+        public void set_data (string key, int value) {
+            if (qdata == null)
+                qdata = new Datalist ();
+            ((!) qdata).set (key, value);
+        }
+
+        public int get_data (string key) {
+            return (qdata == null) ? 0 : ((!) qdata).get (key);
+        }
+
+        public bool has_data (string key) {
+            return (qdata != null) && ((!) qdata).has (key);
+        }
 
         public Win (int id, string title, int x, int y, int w, int h, Kind kind) {
             ext_ev = new ExtEventRing ();

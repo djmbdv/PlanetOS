@@ -92,8 +92,10 @@ namespace GLib {
             return tm;
         }
 
+        // Local time as configured by TZ/PLANET_TZ; UTC when unset.
         public static Time local (int64 time) {
-            return gm (time);
+            var tz = TimeZone.new_local ();
+            return gm (time + (int64) tz.get_offset (time));
         }
 
         public int64 mktime () {
@@ -418,8 +420,24 @@ namespace GLib {
         }
     }
 
+    /**
+     * Seconds since the Unix epoch, decoded from the packed RTC fields the
+     * kernel returns through SYS_RTC_TIME.
+     */
+    public int64 get_real_time_seconds () {
+        int pk = Sys.rtc_time ();
+        Time tm = Time ();
+        tm.year = 2000 + ((pk >> 26) & 0x3f) - 1900;
+        tm.month = ((pk >> 22) & 0x0f) - 1;
+        tm.day = (pk >> 17) & 0x1f;
+        tm.hour = (pk >> 12) & 0x1f;
+        tm.minute = (pk >> 6) & 0x3f;
+        tm.second = pk & 0x3f;
+        return tm.mktime ();
+    }
+
     public int64 get_real_time () {
-        return ((int64) Sys.rtc_time ()) * 1000000L;
+        return get_real_time_seconds () * 1000000L;
     }
 
     public const int64 TIME_SPAN_DAY = 86400000000L;
@@ -434,17 +452,38 @@ namespace GLib {
     public class DateTime : Object {
         private int64 usec;
         private Time tm;
+        private TimeZone zone;
 
-        private DateTime (int64 us) {
-            usec = us;
+        private static int64 floor_secs (int64 us) {
             int64 secs = us / TIME_SPAN_SECOND;
             if (us < 0 && (us % TIME_SPAN_SECOND) != 0)
                 secs--;
-            tm = Time.gm ((int) secs);
+            return secs;
+        }
+
+        private void refresh () {
+            int64 secs = floor_secs (usec);
+            tm = Time.gm (secs + (int64) zone.get_offset (secs));
+        }
+
+        private DateTime (int64 us) {
+            usec = us;
+            zone = TimeZone.utc ();
+            refresh ();
+        }
+
+        private DateTime.zoned (int64 us, TimeZone tz) {
+            usec = us;
+            zone = tz;
+            refresh ();
         }
 
         public static DateTime now_utc () {
             return new DateTime (get_real_time ());
+        }
+
+        public static DateTime now_local () {
+            return new DateTime.zoned (get_real_time (), TimeZone.new_local ());
         }
 
         public static DateTime from_unix_utc (int64 t) {
@@ -452,19 +491,28 @@ namespace GLib {
         }
 
         public static DateTime from_unix_local (int64 t) {
-            var d = new DateTime (t * TIME_SPAN_SECOND);
-            d.tm = Time.local (t);
-            return d;
+            return new DateTime.zoned (t * TIME_SPAN_SECOND, TimeZone.new_local ());
         }
 
         public DateTime to_local () {
-            var d = new DateTime (usec);
-            d.tm = Time.local (to_unix ());
-            return d;
+            return new DateTime.zoned (usec, TimeZone.new_local ());
         }
 
         public DateTime to_utc () {
-            return new DateTime (usec);
+            return new DateTime.zoned (usec, TimeZone.utc ());
+        }
+
+        public DateTime to_timezone (TimeZone tz) {
+            return new DateTime.zoned (usec, tz);
+        }
+
+        public TimeZone get_timezone () {
+            return zone;
+        }
+
+        public DateWeekday get_weekday () {
+            int d = tm.weekday;
+            return (d == 0) ? DateWeekday.SUNDAY : (DateWeekday) d;
         }
 
         public int get_day_of_week () {
@@ -480,10 +528,7 @@ namespace GLib {
         }
 
         public int64 to_unix () {
-            int64 secs = usec / TIME_SPAN_SECOND;
-            if (usec < 0 && (usec % TIME_SPAN_SECOND) != 0)
-                secs--;
-            return secs;
+            return floor_secs (usec);
         }
 
         public int get_year () { return tm.year + 1900; }
@@ -500,11 +545,11 @@ namespace GLib {
         }
 
         public DateTime add (int64 span) {
-            return new DateTime (usec + span);
+            return new DateTime.zoned (usec + span, zone);
         }
 
         public DateTime add_seconds (double seconds) {
-            return new DateTime (usec + (int64) (seconds * 1000000.0));
+            return new DateTime.zoned (usec + (int64) (seconds * 1000000.0), zone);
         }
 
         public int64 difference (DateTime begin) {
@@ -522,7 +567,468 @@ namespace GLib {
         }
 
         public string format_iso8601 () {
-            return tm.format ("%Y-%m-%dT%H:%M:%SZ");
+            string stamp = tm.format ("%Y-%m-%dT%H:%M:%S");
+            if (zone.is_utc ())
+                return stamp + "Z";
+            return stamp + zone.offset_string (to_unix ());
+        }
+    }
+
+    public enum DateDMY {
+        DAY = 0,
+        MONTH = 1,
+        YEAR = 2
+    }
+
+    public enum DateMonth {
+        BAD_MONTH = 0,
+        JANUARY,
+        FEBRUARY,
+        MARCH,
+        APRIL,
+        MAY,
+        JUNE,
+        JULY,
+        AUGUST,
+        SEPTEMBER,
+        OCTOBER,
+        NOVEMBER,
+        DECEMBER
+    }
+
+    public enum DateWeekday {
+        BAD_WEEKDAY = 0,
+        MONDAY,
+        TUESDAY,
+        WEDNESDAY,
+        THURSDAY,
+        FRIDAY,
+        SATURDAY,
+        SUNDAY
+    }
+
+    /**
+     * Gregorian calendar date (GLib.Date). Months and days are 1-based; a zero
+     * field means "invalid", the same convention `g_date_clear` uses.
+     * Struct constructors are not part of the dialect, so the factories below
+     * replace `new Date.dmy (...)`.
+    /**
+     * Gregorian calendar date (GLib.Date). Months and days are 1-based; a zero
+     * field means "invalid", the same convention `g_date_clear` uses.
+     *
+     * GLib's Date is a struct, but `planc` passes struct `this` by value, so a
+     * mutating method could not change the caller's copy. This shim is a class
+     * with the same API surface; factories replace `new Date.dmy (...)`.
+     */
+    public class Date : Object {
+        public int day;
+        public int month;
+        public int year;
+
+        public Date () {
+            day = 0;
+            month = 0;
+            year = 0;
+        }
+
+        private static int64 days_from_civil (int y, int m, int d) {
+            int64 yy = (int64) y - (m <= 2 ? 1 : 0);
+            int64 era = (yy >= 0 ? yy : yy - 399) / 400;
+            int64 yoe = yy - era * 400;
+            int64 doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+            int64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+            return era * 146097 + doe - 719468;
+        }
+
+        private static void civil_from_days (int64 days, out int y, out int m, out int d) {
+            int64 z = days + 719468;
+            int64 era = (z >= 0 ? z : z - 146096) / 146097;
+            int64 doe = z - era * 146097;
+            int64 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+            int64 yr = yoe + era * 400;
+            int64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            int64 mp = (5 * doy + 2) / 153;
+            d = (int) (doy - (153 * mp + 2) / 5 + 1);
+            m = (int) (mp + (mp < 10 ? 3 : -9));
+            y = (int) (yr + (m <= 2 ? 1 : 0));
+        }
+
+        public static bool is_leap (int full_year) {
+            if (full_year % 4 != 0)
+                return false;
+            if (full_year % 100 != 0)
+                return true;
+            return (full_year % 400 == 0);
+        }
+
+        public static int days_in_month (int full_year, int mon) {
+            switch (mon) {
+                case 1: return 31;
+                case 2: return is_leap (full_year) ? 29 : 28;
+                case 3: return 31;
+                case 4: return 30;
+                case 5: return 31;
+                case 6: return 30;
+                case 7: return 31;
+                case 8: return 31;
+                case 9: return 30;
+                case 10: return 31;
+                case 11: return 30;
+                case 12: return 31;
+                default: return 0;
+            }
+        }
+
+        public static DateWeekday weekday_of (int full_year, int mon, int day) {
+            int64 dow0 = (days_from_civil (full_year, mon, day) + 4) % 7;
+            if (dow0 < 0)
+                dow0 += 7;
+            return (dow0 == 0) ? DateWeekday.SUNDAY : (DateWeekday) dow0;
+        }
+
+        public static Date dmy (int day, int month, int year) {
+            var res = new Date ();
+            res.day = day;
+            res.month = month;
+            res.year = year;
+            return res;
+        }
+
+        public static Date from_days (int64 days) {
+            int y;
+            int m;
+            int d;
+            civil_from_days (days, out y, out m, out d);
+            return dmy (d, m, y);
+        }
+
+        public static Date today () {
+            return from_days (get_real_time_seconds () / 86400);
+        }
+
+        public bool valid () {
+            if (year < 1 || month < 1 || month > 12 || day < 1)
+                return false;
+            return day <= get_days_in_month ();
+        }
+
+        public bool is_leap_year () {
+            return is_leap (year);
+        }
+
+        public int get_days_in_month () {
+            return days_in_month (year, month);
+        }
+
+        public static int get_days_in_month_of (DateMonth mon, int full_year) {
+            return days_in_month (full_year, (int) mon);
+        }
+
+        public int64 to_days () {
+            return days_from_civil (year, month, day);
+        }
+
+        public int get_day_of_year () {
+            return (int) (to_days () - days_from_civil (year, 1, 1)) + 1;
+        }
+
+        public DateWeekday get_weekday () {
+            return weekday_of (year, month, day);
+        }
+
+        public void set_dmy (int day, int month, int year) {
+            this.day = day;
+            this.month = month;
+            this.year = year;
+        }
+
+        public void add_days (int n_days) {
+            var moved = from_days (to_days () + n_days);
+            day = moved.day;
+            month = moved.month;
+            year = moved.year;
+        }
+
+        public void subtract_days (int n_days) {
+            add_days (-n_days);
+        }
+
+        public void add_months (int n_months) {
+            int m = month - 1 + n_months;
+            int y = year + (m >= 0 ? m / 12 : (m - 11) / 12);
+            int mm = m - (y - year) * 12;
+            month = mm + 1;
+            year = y;
+            int dim = get_days_in_month ();
+            if (day > dim)
+                day = dim;
+        }
+
+        public void add_years (int n_years) {
+            year = year + n_years;
+            int dim = get_days_in_month ();
+            if (day > dim)
+                day = dim;
+        }
+
+        public int compare (Date other) {
+            int64 a = to_days ();
+            int64 b = other.to_days ();
+            if (a < b) return -1;
+            if (a > b) return 1;
+            return 0;
+        }
+
+        public int days_between (Date other) {
+            return (int) (other.to_days () - to_days ());
+        }
+
+        public void clamp (Date min, Date max) {
+            if (compare (min) < 0) {
+                day = min.day;
+                month = min.month;
+                year = min.year;
+            } else if (compare (max) > 0) {
+                day = max.day;
+                month = max.month;
+                year = max.year;
+            }
+        }
+
+        public string format (string fmt) {
+            Time t = Time ();
+            t.year = year - 1900;
+            t.month = month - 1;
+            t.day = day;
+            t.weekday = ((int) get_weekday ()) % 7;
+            t.day_of_year = get_day_of_year () - 1;
+            return t.format (fmt);
+        }
+
+        public string to_string () {
+            return format ("%Y-%m-%d");
+        }
+    }
+
+    /**
+     * UTC offset lookup (GLib.TimeZone). PlanetOS has no tzdata binary, so this
+     * ships a small table of common identifiers plus fixed offsets, and applies
+     * the standard EU/US-style DST rules to the zones that observe it.
+     */
+    public class TimeZone : Object {
+        private string id;
+        private int32 base_offset;
+        private int32 dst_offset;
+        private string abbr_std;
+        private string abbr_dst;
+        private bool southern;
+
+        private static TimeZone? utc_singleton;
+
+        private TimeZone.full (string identifier, int32 std_offset, int32 dst, string std_abbr, string dst_abbr, bool is_southern) {
+            id = identifier;
+            base_offset = std_offset;
+            dst_offset = dst;
+            abbr_std = std_abbr;
+            abbr_dst = (dst_abbr.length > 0) ? dst_abbr : std_abbr;
+            southern = is_southern;
+        }
+
+        public static TimeZone utc () {
+            if (utc_singleton == null)
+                utc_singleton = new TimeZone.full ("UTC", 0, 0, "UTC", "UTC", false);
+            return (!) utc_singleton;
+        }
+
+        public static TimeZone new_utc () {
+            return utc ();
+        }
+
+        private static string two (int v) {
+            if (v >= 0 && v < 10)
+                return "0" + v.to_string ();
+            return v.to_string ();
+        }
+
+        public static TimeZone new_offset (int32 seconds) {
+            string sign = (seconds < 0) ? "-" : "+";
+            int32 abs_s = (seconds < 0) ? -seconds : seconds;
+            int hh = abs_s / 3600;
+            int mm = (abs_s % 3600) / 60;
+            string name = @"$sign$(two (hh)):$(two (mm))";
+            return new TimeZone.full (name, seconds, 0, name, name, false);
+        }
+
+        private static bool parse_offset (string text, out int32 seconds) {
+            seconds = 0;
+            if (text.length < 3)
+                return false;
+            char sign = text[0];
+            if (sign != '+' && sign != '-')
+                return false;
+            int hh = 0;
+            int mm = 0;
+            int i = 1;
+            int digits = 0;
+            while (i < text.length && text[i] >= '0' && text[i] <= '9' && digits < 2) {
+                hh = hh * 10 + (int) (text[i] - '0');
+                i++;
+                digits++;
+            }
+            if (digits != 2)
+                return false;
+            if (i < text.length && text[i] == ':')
+                i++;
+            digits = 0;
+            while (i < text.length && text[i] >= '0' && text[i] <= '9' && digits < 2) {
+                mm = mm * 10 + (int) (text[i] - '0');
+                i++;
+                digits++;
+            }
+            if (i != text.length || hh > 14 || mm > 59)
+                return false;
+            int32 total = (int32) (hh * 3600 + mm * 60);
+            seconds = (sign == '-') ? -total : total;
+            return true;
+        }
+
+        public static TimeZone? new_identifier (string? identifier) {
+            if (identifier == null)
+                return null;
+            string key = Str.strip (identifier);
+            if (key.length == 0)
+                return null;
+            if (key == "UTC" || key == "Etc/UTC" || key == "GMT" || key == "Etc/GMT"
+                    || key == "UCT" || key == "Universal" || key == "Z")
+                return utc ();
+            int32 off = 0;
+            if (parse_offset (key, out off))
+                return new_offset (off);
+            if (key == "America/Caracas")
+                return new TimeZone.full (key, -4 * 3600, 0, "-04", "-04", false);
+            if (key == "America/Sao_Paulo")
+                return new TimeZone.full (key, -3 * 3600, 0, "-03", "-03", false);
+            if (key == "America/Mexico_City")
+                return new TimeZone.full (key, -6 * 3600, 0, "CST", "CST", false);
+            if (key == "America/New_York")
+                return new TimeZone.full (key, -5 * 3600, 3600, "EST", "EDT", false);
+            if (key == "America/Chicago")
+                return new TimeZone.full (key, -6 * 3600, 3600, "CST", "CDT", false);
+            if (key == "America/Denver")
+                return new TimeZone.full (key, -7 * 3600, 3600, "MST", "MDT", false);
+            if (key == "America/Los_Angeles")
+                return new TimeZone.full (key, -8 * 3600, 3600, "PST", "PDT", false);
+            if (key == "Europe/London")
+                return new TimeZone.full (key, 0, 3600, "GMT", "BST", false);
+            if (key == "Europe/Lisbon")
+                return new TimeZone.full (key, 0, 3600, "WET", "WEST", false);
+            if (key == "Europe/Madrid" || key == "Europe/Paris" || key == "Europe/Berlin"
+                    || key == "Europe/Rome" || key == "Europe/Amsterdam")
+                return new TimeZone.full (key, 3600, 3600, "CET", "CEST", false);
+            if (key == "Europe/Kyiv" || key == "Europe/Athens")
+                return new TimeZone.full (key, 2 * 3600, 3600, "EET", "EEST", false);
+            if (key == "Europe/Moscow")
+                return new TimeZone.full (key, 3 * 3600, 0, "MSK", "MSK", false);
+            if (key == "Africa/Cairo")
+                return new TimeZone.full (key, 2 * 3600, 3600, "EET", "EEST", false);
+            if (key == "Africa/Lagos" || key == "Africa/Johannesburg")
+                return new TimeZone.full (key, 3600, 0, "WAT", "WAT", false);
+            if (key == "Asia/Dubai")
+                return new TimeZone.full (key, 4 * 3600, 0, "+04", "+04", false);
+            if (key == "Asia/Kolkata" || key == "Asia/Calcutta")
+                return new TimeZone.full (key, 5 * 3600 + 1800, 0, "IST", "IST", false);
+            if (key == "Asia/Shanghai" || key == "Asia/Hong_Kong")
+                return new TimeZone.full (key, 8 * 3600, 0, "CST", "CST", false);
+            if (key == "Asia/Tokyo")
+                return new TimeZone.full (key, 9 * 3600, 0, "JST", "JST", false);
+            if (key == "Australia/Perth")
+                return new TimeZone.full (key, 8 * 3600, 0, "AWST", "AWST", false);
+            if (key == "Australia/Sydney" || key == "Australia/Melbourne")
+                return new TimeZone.full (key, 10 * 3600, 3600, "AEST", "AEDT", true);
+            if (key == "Pacific/Auckland")
+                return new TimeZone.full (key, 12 * 3600, 3600, "NZST", "NZDT", true);
+            return null;
+        }
+
+        // Local zone from TZ (or PLANET_TZ), UTC when unset or unknown.
+        public static TimeZone new_local () {
+            var name = Environment.get_variable ("TZ");
+            if (name == null || ((!) name).length == 0)
+                name = Environment.get_variable ("PLANET_TZ");
+            if (name == null)
+                return utc ();
+            var tz = new_identifier (name);
+            return (tz != null) ? (!) tz : utc ();
+        }
+
+        public string get_identifier () {
+            return id;
+        }
+
+        public bool is_utc () {
+            return base_offset == 0 && dst_offset == 0;
+        }
+
+        private static int last_sunday (int full_year, int mon) {
+            int dim = Date.days_in_month (full_year, mon);
+            for (int d = dim; d >= 1; d--) {
+                if (Date.weekday_of (full_year, mon, d) == DateWeekday.SUNDAY)
+                    return d;
+            }
+            return dim;
+        }
+
+        private static int first_sunday (int full_year, int mon) {
+            int dim = Date.days_in_month (full_year, mon);
+            for (int d = 1; d <= dim; d++) {
+                if (Date.weekday_of (full_year, mon, d) == DateWeekday.SUNDAY)
+                    return d;
+            }
+            return 1;
+        }
+
+        private static int64 utc_at (int full_year, int mon, int day, int hour) {
+            Time t = Time ();
+            t.year = full_year - 1900;
+            t.month = mon - 1;
+            t.day = day;
+            t.hour = hour;
+            return t.mktime ();
+        }
+
+        private bool in_dst (int64 interval) {
+            if (dst_offset == 0)
+                return false;
+            Time lt = Time.gm (interval + (int64) base_offset);
+            int yr = lt.year + 1900;
+            if (!southern) {
+                int64 start = utc_at (yr, 3, last_sunday (yr, 3), 1);
+                int64 end = utc_at (yr, 10, last_sunday (yr, 10), 1);
+                return interval >= start && interval < end;
+            }
+            int64 start = utc_at (yr, 10, first_sunday (yr, 10), 2);
+            int64 end = utc_at (yr, 4, first_sunday (yr, 4), 2);
+            return interval >= start || interval < end;
+        }
+
+        public int32 get_offset (int64 interval) {
+            return in_dst (interval) ? (base_offset + dst_offset) : base_offset;
+        }
+
+        public string get_abbreviation (int64 interval) {
+            return in_dst (interval) ? abbr_dst : abbr_std;
+        }
+
+        // "+HH:MM" / "-HH:MM", the ISO-8601 numeric offset at that instant.
+        public string offset_string (int64 interval) {
+            int32 off = get_offset (interval);
+            string sign = (off < 0) ? "-" : "+";
+            int32 abs_s = (off < 0) ? -off : off;
+            return @"$sign$(two (abs_s / 3600)):$(two ((abs_s % 3600) / 60))";
+        }
+
+        public int64 adjust_time (int64 time) {
+            return time + (int64) get_offset (time);
         }
     }
 }

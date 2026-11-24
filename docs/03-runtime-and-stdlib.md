@@ -374,12 +374,33 @@ hot paths, without importing the C ABI:
 - **`AtomicUint`** ([stdlib/glib/atomic.vala](../../stdlib/glib/atomic.vala)):
   32-bit atomic get/set/add/decrement/CAS.
 
-Deliberately deferred: `MappedFile` (needs a file-backed mmap syscall), and the
+### 12.1 Time zones, dates, URIs and markup (slice 54)
+
+| API | File | Used by |
+|---|---|---|
+| `GLib.Date` (+ `DateMonth`, `DateWeekday`, `DateDMY`) and `GLib.TimeZone` | [stdlib/glib/time.vala](../../stdlib/glib/time.vala) | compositor calendar, top-bar clock |
+| `GLib.Uri`, `UriFlags`, `UriError` | [stdlib/glib/uri.vala](../../stdlib/glib/uri.vala) | places list, bookmark validation |
+| `GLib.BookmarkFile`, `BookmarkFileError` | [stdlib/glib/bookmark.vala](../../stdlib/glib/bookmark.vala) | compositor `places` window |
+| `GLib.MarkupParser` + `MarkupParseContext` | [stdlib/glib/utils.vala](../../stdlib/glib/utils.vala) | `cursor.svg` `<path d>` extraction |
+| `GLib.OptionGroup` | [stdlib/glib/test_option.vala](../../stdlib/glib/test_option.vala) | `wc --help` sections |
+| `GLib.Hmac`, `Checksum.get_digest` | [stdlib/glib/codec.vala](../../stdlib/glib/codec.vala) | `places.gbk` signature |
+| `GLib.Datalist` | [stdlib/glib/core.vala](../../stdlib/glib/core.vala) | per-window month state (`Win.set_data`) |
+
+`get_real_time ()` now decodes the packed `SYS_RTC_TIME` fields into epoch
+seconds, so `DateTime.now_utc ()`, `Date.today ()` and `TimeZone.get_offset`
+see a real clock instead of the packed word.
+
+Two dialect limits shaped the shim and are documented in
+[slice 54](../planc/slice-54-calendar-and-uri.md): `planc` passes struct `this`
+by value, so `GLib.Date` is a class here; and default arguments are only filled
+for a call that initialises a `var`, so call sites spell out `UriFlags.NONE` /
+`-1` explicitly.
+
+Deliberately deferred: `MappedFile` (needs a file-backed mmap syscall) and the
 collection compatibility classes `List`/`SList`/`Sequence`/`Tree`/`PtrArray`/
 `GenericSet` (Gee already provides these containers; `GLib.List`'s
 `[ReturnsModifiedPointer]` and null-receiver idiom do not map cleanly onto the
-`planc` dialect). `TimeZone`/`Date`/`Uri`/`MarkupParseContext` remain available
-as future slices once a consumer needs them.
+`planc` dialect).
 
 ## 13. Recent GLib & `c2vala` runtime additions
 

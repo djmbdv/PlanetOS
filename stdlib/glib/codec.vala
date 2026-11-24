@@ -212,6 +212,31 @@ namespace GLib {
             sha_compress ();
         }
 
+        // Raw digest bytes (GLib.Checksum.get_digest). The digest is finalized
+        // on the first call, like get_string().
+        public uint8[] get_digest (out size_t length) {
+            finalize_hash ();
+            if (kind == ChecksumType.CRC32 || kind == ChecksumType.CRC32C) {
+                var crc_buf = new uint8[4];
+                crc_buf[0] = (uint8) ((crc >> 24) & 0xFFu);
+                crc_buf[1] = (uint8) ((crc >> 16) & 0xFFu);
+                crc_buf[2] = (uint8) ((crc >> 8) & 0xFFu);
+                crc_buf[3] = (uint8) (crc & 0xFFu);
+                length = 4;
+                return crc_buf;
+            }
+            var out_buf = new uint8[32];
+            for (int i = 0; i < 8; i++) {
+                uint32 w = sha_h[i];
+                out_buf[i * 4 + 0] = (uint8) ((w >> 24) & 0xFFu);
+                out_buf[i * 4 + 1] = (uint8) ((w >> 16) & 0xFFu);
+                out_buf[i * 4 + 2] = (uint8) ((w >> 8) & 0xFFu);
+                out_buf[i * 4 + 3] = (uint8) (w & 0xFFu);
+            }
+            length = 32;
+            return out_buf;
+        }
+
         public string get_string () {
             if (cached_hex.length > 0)
                 return cached_hex;
@@ -241,6 +266,102 @@ namespace GLib {
                 b[i] = (uint8) str[i];
             cs.update (b, str.length);
             return cs.get_string ();
+        }
+    }
+
+    /**
+     * Keyed-hash message authentication (GLib.Hmac, RFC 2104). Only the
+     * checksum types this runtime implements are accepted; SHA-256 is the
+     * intended one.
+     */
+    public class Hmac : Object {
+        private const int BLOCK = 64;
+
+        private ChecksumType kind;
+        private uint8[] opad_key = new uint8[0];
+        private uint8[] ipad_key = new uint8[0];
+        private Checksum inner;
+        private bool finished = false;
+
+        public Hmac (ChecksumType digest_type, uint8[] key) {
+            kind = digest_type;
+            var k = new uint8[BLOCK];
+            if (key.length > BLOCK) {
+                var hk = new Checksum (digest_type);
+                hk.update (key, key.length);
+                size_t hl = 0;
+                var dig = hk.get_digest (out hl);
+                for (int i = 0; i < (int) hl && i < BLOCK; i++)
+                    k[i] = dig[i];
+            } else {
+                for (int i = 0; i < key.length; i++)
+                    k[i] = key[i];
+            }
+            ipad_key = new uint8[BLOCK];
+            opad_key = new uint8[BLOCK];
+            for (int i = 0; i < BLOCK; i++) {
+                ipad_key[i] = (uint8) (k[i] ^ 0x36);
+                opad_key[i] = (uint8) (k[i] ^ 0x5C);
+            }
+            reset ();
+        }
+
+        private void reset () {
+            inner = new Checksum (kind);
+            inner.update (ipad_key, BLOCK);
+            finished = false;
+        }
+
+        public void update (uint8[] data, ssize_t length = -1) {
+            if (finished)
+                return;
+            inner.update (data, length);
+        }
+
+        public uint8[] get_digest_bytes (out size_t length) {
+            finished = true;
+            size_t inner_len = 0;
+            var inner_digest = inner.get_digest (out inner_len);
+            var outer = new Checksum (kind);
+            outer.update (opad_key, BLOCK);
+            outer.update (inner_digest, (ssize_t) inner_len);
+            return outer.get_digest (out length);
+        }
+
+        public void get_digest (uint8[] buffer, ref size_t digest_len) {
+            size_t n = 0;
+            var d = get_digest_bytes (out n);
+            int want = (int) digest_len;
+            int copy_n = (want < (int) n) ? want : (int) n;
+            for (int i = 0; i < copy_n; i++)
+                buffer[i] = d[i];
+            digest_len = n;
+        }
+
+        public string get_string () {
+            size_t n = 0;
+            var d = get_digest_bytes (out n);
+            string hex = "0123456789abcdef";
+            var out_buf = new uint8[(int) n * 2];
+            for (int i = 0; i < (int) n; i++) {
+                out_buf[i * 2] = (uint8) hex[(int) ((d[i] >> 4) & 0xF)];
+                out_buf[i * 2 + 1] = (uint8) hex[(int) (d[i] & 0xF)];
+            }
+            return __planc_host_bytes_to_str (out_buf, (int) n * 2);
+        }
+
+        public static string compute_for_data (ChecksumType checksum_type, uint8[] key, uint8[] data) {
+            var h = new Hmac (checksum_type, key);
+            h.update (data, data.length);
+            return h.get_string ();
+        }
+
+        public static string compute_for_string (ChecksumType checksum_type, uint8[] key, string str, ssize_t length = -1) {
+            int n = (length < 0 || (int) length > str.length) ? str.length : (int) length;
+            var data_buf = new uint8[n];
+            for (int i = 0; i < n; i++)
+                data_buf[i] = (uint8) str[i];
+            return compute_for_data (checksum_type, key, data_buf);
         }
     }
 

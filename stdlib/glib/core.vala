@@ -1375,6 +1375,72 @@ namespace GLib {
         return @"$scaled $(units[unit])";
     }
 
+    public delegate void DatalistFunc (string key, int value);
+
+    /**
+     * Small key/value store attached to an object (GLib.Datalist). Values are
+     * words here instead of pointers, which is all `g_object_set_data` is used
+     * for in this system.
+     */
+    public class Datalist : Object {
+        private GenericArray<string> keys = new GenericArray<string> ();
+        private GenericArray<int> values = new GenericArray<int> ();
+
+        public Datalist () {}
+
+        public void set (string key, int value) {
+            for (int i = 0; i < keys.length; i++) {
+                if (keys[i] == key) {
+                    values[i] = value;
+                    return;
+                }
+            }
+            keys.add (key);
+            values.add (value);
+        }
+
+        public int get (string key) {
+            for (int i = 0; i < keys.length; i++) {
+                if (keys[i] == key)
+                    return values[i];
+            }
+            return 0;
+        }
+
+        public bool has (string key) {
+            for (int i = 0; i < keys.length; i++) {
+                if (keys[i] == key)
+                    return true;
+            }
+            return false;
+        }
+
+        public bool remove (string key) {
+            for (int i = 0; i < keys.length; i++) {
+                if (keys[i] == key) {
+                    keys.remove_index (i);
+                    values.remove_index (i);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public int length () {
+            return keys.length;
+        }
+
+        public void @foreach (DatalistFunc func) {
+            for (int i = 0; i < keys.length; i++)
+                func (keys[i], values[i]);
+        }
+
+        public void destroy () {
+            keys = new GenericArray<string> ();
+            values = new GenericArray<int> ();
+        }
+    }
+
     // --- main loop ---------------------------------------------------------
     // One MainContext with idle and timeout sources, driven by SYS_TICKS
     // (100 Hz) and SYS_YIELD. Single-threaded: sources run in the loop thread.

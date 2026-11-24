@@ -26,6 +26,11 @@ namespace Planet.Kernel {
         private static int xfs_inopblog = 0;
         private static int xfs_rootino = 128;
         private static int xfs_sec_buf = 0;
+        // Bounce frame for ATA transfers that must not land in the caller's
+        // buffer. It is allocated once with `xfs_sec_buf`: a per-call frame can
+        // fall outside the supervisor window a user CR3 maps, and `rep insw`
+        // into it faults (seen when the compositor self-test grew).
+        private static int xfs_bounce = 0;
         private static int xfs_cached_ino = 0;
 
         // Allocator state for persistent XFS writes (initialized by scan_alloc_state)
@@ -129,6 +134,8 @@ namespace Planet.Kernel {
                 xfs_sec_buf = Pmm.alloc_frame ();
             if (xfs_sec_buf == 0)
                 return false;
+            if (xfs_bounce == 0)
+                xfs_bounce = Pmm.alloc_frame ();
             if (xfs_bcache_mem == 0) {
                 xfs_bcache_mem = Pmm.alloc_contiguous (XFS_CACHE_SLOTS);
                 xfs_bcache_lba = new int[XFS_CACHE_SLOTS];
@@ -527,7 +534,11 @@ namespace Planet.Kernel {
                 }
             }
 
-            int tmp = Pmm.alloc_frame ();
+            int tmp = xfs_bounce;
+            if (tmp == 0) {
+                tmp = Pmm.alloc_frame ();
+                xfs_bounce = tmp;
+            }
             if (tmp == 0)
                 return -1;
             int written = 0;
@@ -551,21 +562,16 @@ namespace Planet.Kernel {
                     if (chunk > rem)
                         chunk = rem;
                     if (skip > 0 || chunk < 512) {
-                        if (!Ata.read_sector (lba + s, tmp)) {
-                            Pmm.free_frame (tmp);
+                        if (!Ata.read_sector (lba + s, tmp))
                             return written;
-                        }
                     }
                     xfs_memcpy (tmp + skip, src_buf + written, chunk);
-                    if (!Ata.write_sector (lba + s, tmp)) {
-                        Pmm.free_frame (tmp);
+                    if (!Ata.write_sector (lba + s, tmp))
                         return written;
-                    }
                     written += chunk;
                     skip = 0;
                 }
             }
-            Pmm.free_frame (tmp);
             if (offset + written > fsize)
                 be64_write (ib + 56, offset + written);
             Ata.write_sector (ilba, xfs_sec_buf);
@@ -615,7 +621,11 @@ namespace Planet.Kernel {
                 nextents = max_ext;
             int copied = 0;
             int skip = offset;
-            int tmp = Pmm.alloc_frame ();
+            int tmp = xfs_bounce;
+            if (tmp == 0) {
+                tmp = Pmm.alloc_frame ();
+                xfs_bounce = tmp;
+            }
             if (tmp == 0)
                 return -1;
             for (int e = 0; e < nextents && copied < to_read; e++) {
@@ -652,10 +662,8 @@ namespace Planet.Kernel {
                         }
                     }
                     if (src_ptr == 0) {
-                        if (!Ata.read_sectors (lba + s, batch, tmp)) {
-                            Pmm.free_frame (tmp);
+                        if (!Ata.read_sectors (lba + s, batch, tmp))
                             return copied;
-                        }
                         src_ptr = tmp;
                     }
                     int chunk = batch * 512 - skip;
@@ -667,7 +675,6 @@ namespace Planet.Kernel {
                     s += batch;
                 }
             }
-            Pmm.free_frame (tmp);
             return copied;
         }
     }

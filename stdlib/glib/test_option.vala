@@ -173,6 +173,8 @@ namespace GLib {
         public double double_val = 0.0;
         public GenericArray<string> str_arr_val = new GenericArray<string> ();
         public bool was_set = false;
+        // Set by OptionGroup so get_help() can print a heading per group.
+        public string group_name = "";
 
         public OptionEntry (string long_name, char short_name = '\0', OptionFlags flags = OptionFlags.NONE,
                             OptionArg arg = OptionArg.NONE, string? description = null, string? arg_description = null) {
@@ -186,6 +188,53 @@ namespace GLib {
     }
 
     /**
+     * A named set of options (GLib.OptionGroup) that an OptionContext can add
+     * as a unit; get_help() prints each group under its own heading.
+     */
+    public class OptionGroup : Object {
+        private string name;
+        private string? description;
+        private string? help_text;
+        private GenericArray<OptionEntry> entries = new GenericArray<OptionEntry> ();
+
+        public OptionGroup (string name, string? description, string? help) {
+            this.name = name;
+            this.description = description;
+            this.help_text = help;
+        }
+
+        public string get_name () {
+            return name;
+        }
+
+        public string? get_description () {
+            return description;
+        }
+
+        public string? get_help () {
+            return help_text;
+        }
+
+        public void set_help (string? help) {
+            help_text = help;
+        }
+
+        public void add_entry (OptionEntry entry) {
+            entry.group_name = name;
+            entries.add (entry);
+        }
+
+        public void add_entries (OptionEntry[] list) {
+            for (int i = 0; i < list.length; i++)
+                add_entry (list[i]);
+        }
+
+        public GenericArray<OptionEntry> get_entries () {
+            return entries;
+        }
+    }
+
+    /**
      * Command-line option parser (GLib.OptionContext).
      */
     public class OptionContext : Object {
@@ -195,10 +244,19 @@ namespace GLib {
         private bool help_enabled = true;
         private bool ignore_unknown = false;
         private GenericArray<OptionEntry> entries;
+        private GenericArray<OptionGroup> groups;
 
         public OptionContext (string? parameter_string = null) {
             this.parameter_string = parameter_string;
             entries = new GenericArray<OptionEntry> ();
+            groups = new GenericArray<OptionGroup> ();
+        }
+
+        public void add_group (OptionGroup group) {
+            groups.add (group);
+            var list = group.get_entries ();
+            for (int i = 0; i < list.length; i++)
+                entries.add (list[i]);
         }
 
         public void set_summary (string? s) { summary = s; }
@@ -372,6 +430,29 @@ namespace GLib {
             return true;
         }
 
+        private static void append_entry (StringBuilder sb, OptionEntry e) {
+            if (((int) e.flags & (int) OptionFlags.HIDDEN) != 0)
+                return;
+            sb.append ("  ");
+            if (e.short_name != '\0') {
+                sb.append ("-");
+                sb.append_c (e.short_name);
+                sb.append (", ");
+            } else {
+                sb.append ("    ");
+            }
+            sb.append (@"--$(e.long_name)");
+            if (e.arg != OptionArg.NONE) {
+                string ad = (e.arg_description != null) ? (!) e.arg_description : "VAL";
+                sb.append (@"=$ad");
+            }
+            if (e.description != null) {
+                string ed = (!) e.description;
+                sb.append (@"  $ed");
+            }
+            sb.append ("\n");
+        }
+
         public string get_help () {
             var sb = new StringBuilder ();
             sb.append ("Usage:\n  [OPTION...]");
@@ -388,27 +469,20 @@ namespace GLib {
             if (help_enabled)
                 sb.append ("  -h, --help                Show help options\n");
             for (int i = 0; i < entries.length; i++) {
-                var e = entries[i];
-                if (((int) e.flags & (int) OptionFlags.HIDDEN) != 0)
-                    continue;
-                sb.append ("  ");
-                if (e.short_name != '\0') {
-                    sb.append ("-");
-                    sb.append_c (e.short_name);
-                    sb.append (", ");
-                } else {
-                    sb.append ("    ");
+                if (entries[i].group_name.length == 0)
+                    append_entry (sb, entries[i]);
+            }
+            for (int g = 0; g < groups.length; g++) {
+                var group = groups[g];
+                sb.append (@"\n$(group.get_name ()):\n");
+                var gd = group.get_description ();
+                if (gd != null && ((!) gd).length > 0) {
+                    string gds = (!) gd;
+                    sb.append (@"  $gds\n");
                 }
-                sb.append (@"--$(e.long_name)");
-                if (e.arg != OptionArg.NONE) {
-                    string ad = (e.arg_description != null) ? (!) e.arg_description : "VAL";
-                    sb.append (@"=$ad");
-                }
-                if (e.description != null) {
-                    string ed = (!) e.description;
-                    sb.append (@"  $ed");
-                }
-                sb.append ("\n");
+                var list = group.get_entries ();
+                for (int i = 0; i < list.length; i++)
+                    append_entry (sb, list[i]);
             }
             if (description != null && ((!) description).length > 0) {
                 string ds = (!) description;
