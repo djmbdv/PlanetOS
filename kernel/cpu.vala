@@ -383,10 +383,12 @@ namespace Planet.Kernel {
 
         public static bool lapic_init () {
             int apic_base = rdmsr64 (0x1B); // IA32_APIC_BASE
-            if ((apic_base & 0x800) == 0) {
-                wrmsr64 (0x1B, apic_base | 0x800);
-                apic_base = rdmsr64 (0x1B);
-            }
+            // QEMU's -cpu max leaves x2APIC enabled, and in that mode the LAPIC
+            // registers are MSR-only. This kernel drives them through MMIO, so
+            // x2APIC has to go (bit 10) while the global enable stays (bit 11).
+            int wanted = (apic_base | 0x800) & ~0x400;
+            wrmsr64 (0x1B, wanted);
+            apic_base = rdmsr64 (0x1B);
             int apic_phys = apic_base & 0xFFFFF000;
             if (apic_phys == 0)
                 return false;
@@ -395,7 +397,7 @@ namespace Planet.Kernel {
             // Spurious vector 0xFF, then accept every priority (TPR = 0).
             mmio_write32 (lapic_base + 0xF0, 0x1FF);
             mmio_write32 (lapic_base + 0x80, 0);
-            return true;
+            return (mmio_read32 (lapic_base + 0xF0) & 0x100) != 0;
         }
 
         public static int lapic_id () {

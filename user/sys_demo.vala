@@ -364,10 +364,16 @@ int main (string[] args) {
         Sys.free_page (blk_buf);
     // Sector 0 carries the XFS magic. The IRQ wake count is printed, not
     // asserted: MSI-X is programmed but delivery is still unverified (C2).
-    bool blk_ok = blk_buf > 0 && blk_bytes == 512
-                  && blk_magic == 0x42534658;
+    bool blk_ok = true;
+    if (blk_buf <= 0)
+        blk_ok = false;
+    if (blk_bytes != 512)
+        blk_ok = false;
+    if (blk_magic != 0x42534658)
+        blk_ok = false;
+    print (@"blk:irq=$blk_irqs\n");
     if (blk_ok)
-        print (@"blk=ok irq=$blk_irqs\n");
+        print ("blk=ok\n");
     else {
         print (@"blkdbg buf=$blk_buf bytes=$blk_bytes magic=$blk_magic stats=$blk_stats\n");
         print ("blk=FAIL\n");
