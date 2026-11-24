@@ -37,6 +37,12 @@ namespace Gtk {
         EXTERNAL
     }
 
+    public enum SizeRequestMode {
+        HEIGHT_FOR_WIDTH,
+        WIDTH_FOR_HEIGHT,
+        CONSTANT_SIZE
+    }
+
     public class Widget : Object {
         public int x = 0;
         public int y = 0;
@@ -342,23 +348,43 @@ namespace Gtk {
             damage_self ();
         }
 
-        public void set_hexpand (bool expand) { hexpand = expand; }
+        public void set_hexpand (bool expand) {
+            if (hexpand != expand) { hexpand = expand; queue_resize (); }
+        }
         public bool get_hexpand () { return hexpand; }
-        public void set_vexpand (bool expand) { vexpand = expand; }
+        public void set_vexpand (bool expand) {
+            if (vexpand != expand) { vexpand = expand; queue_resize (); }
+        }
         public bool get_vexpand () { return vexpand; }
 
-        public void set_halign (Align align) { halign = align; }
+        public void set_halign (Align align) {
+            if (halign != align) { halign = align; queue_resize (); }
+        }
         public Align get_halign () { return halign; }
-        public void set_valign (Align align) { valign = align; }
+        public void set_valign (Align align) {
+            if (valign != align) { valign = align; queue_resize (); }
+        }
         public Align get_valign () { return valign; }
 
-        public void set_margin_top (int m) { margin_top = (m < 0) ? 0 : m; }
+        public void set_margin_top (int m) {
+            int nm = (m < 0) ? 0 : m;
+            if (margin_top != nm) { margin_top = nm; queue_resize (); }
+        }
         public int get_margin_top () { return margin_top; }
-        public void set_margin_bottom (int m) { margin_bottom = (m < 0) ? 0 : m; }
+        public void set_margin_bottom (int m) {
+            int nm = (m < 0) ? 0 : m;
+            if (margin_bottom != nm) { margin_bottom = nm; queue_resize (); }
+        }
         public int get_margin_bottom () { return margin_bottom; }
-        public void set_margin_start (int m) { margin_start = (m < 0) ? 0 : m; }
+        public void set_margin_start (int m) {
+            int nm = (m < 0) ? 0 : m;
+            if (margin_start != nm) { margin_start = nm; queue_resize (); }
+        }
         public int get_margin_start () { return margin_start; }
-        public void set_margin_end (int m) { margin_end = (m < 0) ? 0 : m; }
+        public void set_margin_end (int m) {
+            int nm = (m < 0) ? 0 : m;
+            if (margin_end != nm) { margin_end = nm; queue_resize (); }
+        }
         public int get_margin_end () { return margin_end; }
 
         public void set_can_focus (bool cf) {
@@ -403,10 +429,14 @@ namespace Gtk {
             return d;
         }
 
-        // GTK4-compatible orientation-based measurement wrapper.
-        public void measure_for (Orientation orientation, int for_size,
-                                 out int minimum, out int natural,
-                                 out int minimum_baseline, out int natural_baseline) {
+        // GTK4-compatible orientation-based measurement.
+        public virtual SizeRequestMode get_request_mode () {
+            return SizeRequestMode.CONSTANT_SIZE;
+        }
+
+        public virtual void measure_for (Orientation orientation, int for_size,
+                                         out int minimum, out int natural,
+                                         out int minimum_baseline, out int natural_baseline) {
             int mw = 0;
             int mh = 0;
             measure (out mw, out mh);
@@ -414,6 +444,18 @@ namespace Gtk {
             natural = minimum;
             minimum_baseline = -1;
             natural_baseline = -1;
+        }
+
+        public void measure_height_for_width (int for_width, out int min_h, out int nat_h) {
+            int mb = 0;
+            int nb = 0;
+            measure_for (Orientation.VERTICAL, for_width, out min_h, out nat_h, out mb, out nb);
+        }
+
+        public void measure_width_for_height (int for_height, out int min_w, out int nat_w) {
+            int mb = 0;
+            int nb = 0;
+            measure_for (Orientation.HORIZONTAL, for_height, out min_w, out nat_w, out mb, out nb);
         }
 
         public bool contains (int px, int py) {

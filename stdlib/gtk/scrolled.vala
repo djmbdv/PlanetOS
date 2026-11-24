@@ -98,12 +98,20 @@ namespace Gtk {
 
         // Sizes come from one measure pass; everything else is bookkeeping, so a
         // repaint only re-measures and never repositions an unchanged subtree.
+        private bool show_vbar () {
+            if (vscrollbar_policy == PolicyType.NEVER || vscrollbar_policy == PolicyType.EXTERNAL)
+                return false;
+            if (vscrollbar_policy == PolicyType.ALWAYS)
+                return height > 8;
+            return content_h > height && height > 8;
+        }
+
         private void apply_metrics (int cw, int ch) {
             natural_w = cw;
             natural_h = ch;
             content_w = (cw > width) ? cw : width;
             content_h = (ch > height) ? ch : height;
-            int view_w = (content_h > height && width > SB_W + 4) ? (width - SB_W) : width;
+            int view_w = (show_vbar () && width > SB_W + 4) ? (width - SB_W) : width;
             if (cw <= view_w)
                 content_w = view_w;
             int max_x = (content_w > width) ? (content_w - width) : 0;
@@ -113,12 +121,30 @@ namespace Gtk {
             position_child ();
         }
 
+        private void measure_child_dims (out int cw, out int ch) {
+            cw = 0;
+            ch = 0;
+            if (child == null)
+                return;
+            if (child.get_request_mode () == SizeRequestMode.HEIGHT_FOR_WIDTH && width > 0) {
+                int view_w = (vscrollbar_policy != PolicyType.NEVER && width > SB_W + 4) ? (width - SB_W) : width;
+                int cw_nat = 0;
+                int ch_nat = 0;
+                child.measure_width_for_height (-1, out cw, out cw_nat);
+                child.measure_height_for_width (view_w, out ch, out ch_nat);
+                if (cw < view_w)
+                    cw = view_w;
+            } else {
+                child.measure (out cw, out ch);
+            }
+        }
+
         private void relayout_child () {
             if (child == null)
                 return;
             int cw = 0;
             int ch = 0;
-            child.measure (out cw, out ch);
+            measure_child_dims (out cw, out ch);
             apply_metrics (cw, ch);
         }
 
@@ -127,7 +153,7 @@ namespace Gtk {
                 return;
             int cw = 0;
             int ch = 0;
-            child.measure (out cw, out ch);
+            measure_child_dims (out cw, out ch);
             if (cw == natural_w && ch == natural_h)
                 return;
             apply_metrics (cw, ch);
@@ -166,13 +192,12 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
-            sync_content ();
             cr.save ();
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.clip ();
             if (child != null)
                 child.render (cr);
-            if (content_h > height && height > 8) {
+            if (show_vbar ()) {
                 int bar_y = 0;
                 int bar_h = 0;
                 int track = 0;
@@ -242,23 +267,24 @@ namespace Gtk {
             }
             hovered = contains (mx, my);
             bool prev_sb = sb_hovered;
-            sb_hovered = (content_h > height && hovered && mx >= x + width - SB_W - 2);
+            sb_hovered = (show_vbar () && content_h > height && hovered && mx >= x + width - SB_W - 2);
             bool ch = false;
-            // Only the scrollbar strip draws a hover state; the content behind it
-            // does not change when the pointer merely enters.
             if (sb_hovered != prev_sb) {
                 damage_box (x + width - SB_W - 2, y, SB_W + 2, height);
                 ch = true;
             }
-            if (child != null && hovered && !sb_hovered && child.on_pointer_motion (mx, my))
-                ch = true;
+            if (child != null) {
+                int cmx = (hovered && !sb_hovered) ? mx : -1;
+                int cmy = (hovered && !sb_hovered) ? my : -1;
+                if (child.on_pointer_motion (cmx, cmy))
+                    ch = true;
+            }
             return ch;
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive || !contains (mx, my))
                 return false;
-            grab_focus ();
             sync_content ();
             if (button == 4) {
                 scroll_by (0, -36);
@@ -268,7 +294,8 @@ namespace Gtk {
                 scroll_by (0, 36);
                 return true;
             }
-            if (button == 1 && content_h > height && mx >= x + width - SB_W - 2) {
+            if (button == 1 && show_vbar () && content_h > height && mx >= x + width - SB_W - 2) {
+                grab_focus ();
                 int bar_y = 0;
                 int bar_h = 0;
                 int track = 0;
@@ -285,8 +312,9 @@ namespace Gtk {
                 }
                 return true;
             }
-            if (child != null)
-                return child.on_pointer_press (mx, my, button);
+            if (child != null && child.on_pointer_press (mx, my, button))
+                return true;
+            grab_focus ();
             return false;
         }
 
@@ -308,16 +336,7 @@ namespace Gtk {
         public override bool handle_key (int key) {
             if (!visible || !sensitive)
                 return false;
-            if (child != null && child.handle_key (key))
-                return true;
-            if (!focused)
-                return false;
-            return on_key_press (key);
-        }
-
-        public override bool on_key_press (int key) {
-            sync_content ();
-            if (child != null && child.on_key_press (key)) {
+            if (child != null && child.handle_key (key)) {
                 if (child is ListView) {
                     var lv = (ListView) child;
                     int sel = lv.get_selected ();
@@ -326,6 +345,13 @@ namespace Gtk {
                 }
                 return true;
             }
+            if (!focused)
+                return false;
+            return on_key_press (key);
+        }
+
+        public override bool on_key_press (int key) {
+            sync_content ();
             if (!focused)
                 return false;
             if (key == 0x81 || key == 0xFF52) { scroll_by (0, -28); return true; } // Up
@@ -410,11 +436,11 @@ namespace Gtk {
             if (end_child != null && end_child.visible)
                 end_child.measure (out w2, out h2);
             if (orientation == Orientation.HORIZONTAL) {
-                min_w = w1 + w2 + 6;
+                min_w = w1 + w2 + 4;
                 min_h = (h1 > h2) ? h1 : h2;
             } else {
                 min_w = (w1 > w2) ? w1 : w2;
-                min_h = h1 + h2 + 6;
+                min_h = h1 + h2 + 4;
             }
             if (req_w > min_w) min_w = req_w;
             if (req_h > min_h) min_h = req_h;
@@ -431,7 +457,6 @@ namespace Gtk {
                 int max_p = (width > 40 + div) ? (width - 40 - div) : 40;
                 if (p < 40) p = 40;
                 if (p > max_p) p = max_p;
-                position = p;
                 if (start_child != null)
                     start_child.allocate (ax, ay, p, height);
                 if (end_child != null)
@@ -441,7 +466,6 @@ namespace Gtk {
                 int max_p = (height > 40 + div) ? (height - 40 - div) : 40;
                 if (p < 40) p = 40;
                 if (p > max_p) p = max_p;
-                position = p;
                 if (start_child != null)
                     start_child.allocate (ax, ay, width, p);
                 if (end_child != null)
@@ -553,12 +577,37 @@ namespace Gtk {
         private int current_page = 0;
         private int tab_h = 30;
         private int tab_w = 120;
+        public bool show_tabs = true;
+        public bool scrollable = false;
 
         public signal void switch_page (Widget page, int page_num);
 
         public Notebook () {
             pages = new GenericArray<Widget> ();
             labels = new GenericArray<string> ();
+        }
+
+        public void set_show_tabs (bool show) {
+            if (show_tabs != show) {
+                show_tabs = show;
+                queue_resize ();
+            }
+        }
+        public bool get_show_tabs () { return show_tabs; }
+
+        public void set_scrollable (bool sc) { scrollable = sc; }
+        public bool get_scrollable () { return scrollable; }
+
+        public int page_num (Widget child) {
+            for (int i = 0; i < pages.length; i++) {
+                if (pages[i] == child)
+                    return i;
+            }
+            return -1;
+        }
+
+        public void set_tab_label (Widget child, string label) {
+            set_tab_label_text (child, label);
         }
 
         public int append_page (Widget child, string tab_label = "") {
@@ -568,6 +617,7 @@ namespace Gtk {
             int idx = pages.length - 1;
             if (width > 0 && height > tab_h)
                 child.allocate (x, y + tab_h, width, height - tab_h);
+            queue_resize ();
             return idx;
         }
 
@@ -680,8 +730,9 @@ namespace Gtk {
                 if (cw > max_w) max_w = cw;
                 if (ch > max_h) max_h = ch;
             }
+            int th = show_tabs ? tab_h : 0;
             min_w = (req_w > max_w) ? req_w : max_w;
-            min_h = (req_h > (max_h + tab_h)) ? req_h : (max_h + tab_h);
+            min_h = (req_h > (max_h + th)) ? req_h : (max_h + th);
         }
 
         public override void allocate (int ax, int ay, int aw, int ah) {
@@ -689,20 +740,31 @@ namespace Gtk {
             y = ay;
             width = (aw < 0) ? 0 : aw;
             height = (ah < 0) ? 0 : ah;
-            int ch = (height > tab_h) ? (height - tab_h) : 0;
+            int th = show_tabs ? tab_h : 0;
+            int ch = (height > th) ? (height - th) : 0;
             for (int i = 0; i < pages.length; i++)
-                pages[i].allocate (ax, ay + tab_h, width, ch);
+                pages[i].allocate (ax, ay + th, width, ch);
         }
 
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
+            if (!show_tabs) {
+                if (current_page >= 0 && current_page < pages.length)
+                    pages[current_page].render (cr);
+                return;
+            }
             // Obsidian Orbit (#0F1419) tab strip
             cr.set_source_rgb (0.059, 0.078, 0.098);
             cr.rectangle ((double) x, (double) y, (double) width, (double) tab_h);
             cr.fill ();
+            cr.save ();
+            cr.rectangle ((double) x, (double) y, (double) width, (double) tab_h);
+            cr.clip ();
             int tx = x + 4;
             for (int i = 0; i < pages.length; i++) {
+                if (tx >= x + width)
+                    break;
                 if (i == current_page)
                     // Slate Atmosphere (#182028)
                     cr.set_source_rgb (0.094, 0.125, 0.157);
@@ -726,6 +788,7 @@ namespace Gtk {
                 TextHelper.draw_text (cr, labels[i], tx + 10, y + 7, 13.0);
                 tx += tab_w;
             }
+            cr.restore ();
             // Stratosphere Line (#26323F)
             cr.set_source_rgb (0.149, 0.196, 0.247);
             cr.rectangle ((double) x, (double) (y + tab_h - 1), (double) width, 1.0);
@@ -741,6 +804,8 @@ namespace Gtk {
         }
 
         public override bool on_pointer_motion (int mx, int my) {
+            if (!visible || !sensitive)
+                return false;
             if (current_page >= 0 && current_page < pages.length)
                 return pages[current_page].on_pointer_motion (mx, my);
             return false;
@@ -749,7 +814,7 @@ namespace Gtk {
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive)
                 return false;
-            if (button == 1 && my >= y && my < y + tab_h) {
+            if (show_tabs && button == 1 && my >= y && my < y + tab_h && mx >= x + 4 && mx < x + width) {
                 int idx = (mx - (x + 4)) / tab_w;
                 if (idx >= 0 && idx < pages.length) {
                     set_current_page (idx);
@@ -762,12 +827,16 @@ namespace Gtk {
         }
 
         public override bool on_pointer_release (int mx, int my, int button) {
+            if (!visible || !sensitive)
+                return false;
             if (current_page >= 0 && current_page < pages.length)
                 return pages[current_page].on_pointer_release (mx, my, button);
             return false;
         }
 
         public override bool on_key_press (int key) {
+            if (!visible || !sensitive)
+                return false;
             if (current_page >= 0 && current_page < pages.length)
                 return pages[current_page].on_key_press (key);
             return false;
@@ -776,9 +845,7 @@ namespace Gtk {
         public override bool handle_key (int key) {
             if (!visible || !sensitive || current_page < 0 || current_page >= pages.length)
                 return false;
-            if (pages[current_page].handle_key (key))
-                return true;
-            return on_key_press (key);
+            return pages[current_page].handle_key (key);
         }
         public override bool on_scroll (int mx, int my, int dx, int dy) {
             if (!visible || !sensitive)

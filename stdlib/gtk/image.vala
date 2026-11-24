@@ -3,6 +3,12 @@ using Cairo;
 
 namespace Gtk {
 
+    public enum ImageType {
+        EMPTY,
+        ICON_NAME,
+        PIXBUF
+    }
+
     public class Image : Widget {
         public string icon_name = "";
         public int pixel_size = 20;
@@ -42,6 +48,14 @@ namespace Gtk {
             return pixel_size;
         }
 
+        public ImageType get_storage_type () {
+            if (rgba_buf != null && pb_w > 0 && pb_h > 0)
+                return ImageType.PIXBUF;
+            if (icon_name.length > 0)
+                return ImageType.ICON_NAME;
+            return ImageType.EMPTY;
+        }
+
         public void clear () {
             icon_name = "";
             rgba_buf = null;
@@ -69,6 +83,7 @@ namespace Gtk {
             rgba_buf = buf;
             pb_w = pw;
             pb_h = ph;
+            icon_name = "";
             damage_self ();
         }
 
@@ -121,7 +136,11 @@ namespace Gtk {
             if (rgba_buf != null && pb_w > 0 && pb_h > 0) {
                 int ox = x + (width - pb_w) / 2;
                 int oy = y + (height - pb_h) / 2;
+                cr.save ();
+                cr.rectangle ((double) x, (double) y, (double) width, (double) height);
+                cr.clip ();
                 cr.draw_rgba (rgba_buf, pb_w, pb_h, ox, oy);
+                cr.restore ();
                 return;
             }
             if (icon_name.length > 0) {

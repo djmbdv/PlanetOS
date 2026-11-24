@@ -74,6 +74,12 @@ int main (string[] args) {
     check (lay.line_chars_of (0) == 4 && lay.line_chars_of (1) == 4, "word-wrap-chars");
     check (lay.pixel_width () == 48, "word-wrap-width");
 
+    // space right on the wrap boundary must not leave a leading space on line 2
+    lay.set_width (48);
+    lay.set_text ("abcd efgh");
+    check (lay.line_count () == 2, "boundary-space-lines");
+    check (lay.line_start_of (1) == 5 && lay.line_chars_of (1) == 4, "boundary-space-no-leading");
+
     // hard break when a single word does not fit: 36 px / 12 = 3 chars
     lay.set_width (36);
     lay.set_text ("abcdefghij");
@@ -115,7 +121,7 @@ int main (string[] args) {
     check (lay.scale () == 1 && lay.char_width () == 6, "scale-8");
     var bold = FontDescription.from_string ("bold");
     check (bold.weight == Weight.BOLD, "font-bold");
-    check (bold.describe () == "sans 16", "font-describe");
+    check (bold.describe () == "sans bold 16", "font-describe");
 
     // spacing affects the block height
     var normal = FontDescription.from_string ("sans 16");
@@ -171,6 +177,19 @@ int main (string[] args) {
     check (has_blue (cr6, 40, 4, 12, 14), "attribute-draws-blue");
     lay.clear_attributes ();
     check (!lay.has_attributes (), "attributes-cleared");
+
+    // no color bleeding after an attributed run
+    lay.set_text ("redwhite");
+    lay.add_color_attribute (0, 3, 1.0, 0.0, 0.0);
+    var surf7 = new ImageSurface (Format.ARGB32, 200, 40);
+    var cr7 = new Context (surf7);
+    cr7.set_source_rgb (0.0, 0.0, 0.0);
+    cr7.paint ();
+    cr7.set_source_rgb (1.0, 1.0, 1.0);
+    show_layout_at (cr7, lay, 4, 4);
+    check (has_red (cr7, 4, 4, 12, 14), "bleed-red-prefix");
+    check (!has_red (cr7, 40, 4, 12, 14), "no-color-bleed");
+    lay.clear_attributes ();
 
     print (@"pango:summary checks=$pd_checks failures=$pd_fails\n");
     return (pd_fails == 0) ? 0 : 1;

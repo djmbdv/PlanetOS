@@ -1,28 +1,90 @@
 // Standard Gtk widgets: Label, Button, Entry.
 using Cairo;
 using GLib;
+using Pango;
+using PangoCairo;
 
 namespace Gtk {
+
+    public enum Justification {
+        LEFT,
+        RIGHT,
+        CENTER,
+        FILL
+    }
+
+    private PangoContext? gtk_pango_ctx = null;
+
+    private PangoContext get_pango_ctx () {
+        if (gtk_pango_ctx == null)
+            gtk_pango_ctx = new PangoContext ();
+        return (!) gtk_pango_ctx;
+    }
 
     public class Label : Widget {
         public string label = "";
         public double font_size = 16.0;
         public float xalign = 0.0f;
         public float yalign = 0.5f;
+        public bool wrap = false;
+        public EllipsizeMode ellipsize = EllipsizeMode.NONE;
+        public int max_width_chars = -1;
+        public Justification justify = Justification.LEFT;
         // Lunar White (#F0F4F8)
         public double r = 0.941;
         public double g = 0.957;
         public double b = 0.973;
+        private Layout? lay = null;
+        private double lay_font_size = -1.0;
 
         public Label (string? text = "") {
             label = (text != null) ? text : "";
+        }
+
+        private Layout ensure_layout () {
+            if (lay == null) {
+                var nl = new Layout (get_pango_ctx ());
+                nl.set_text (label);
+                lay = nl;
+            }
+            var l = (!) lay;
+            if (lay_font_size != font_size) {
+                var fd = new FontDescription ();
+                fd.size = (int) font_size;
+                if (fd.size < 1) fd.size = 1;
+                l.set_font_description (fd);
+                lay_font_size = font_size;
+            }
+            return l;
+        }
+
+        private void sync_layout_width () {
+            var l = ensure_layout ();
+            int max_px = -1;
+            if ((wrap || ellipsize != EllipsizeMode.NONE) && width > 8)
+                max_px = width - 8;
+            if (max_width_chars > 0) {
+                int cw_px = max_width_chars * l.char_width ();
+                if (max_px < 0 || cw_px < max_px)
+                    max_px = cw_px;
+            }
+            l.set_width (max_px);
+            l.set_ellipsize (ellipsize);
+            if (justify == Justification.CENTER)
+                l.set_alignment (Pango.Alignment.CENTER);
+            else if (justify == Justification.RIGHT)
+                l.set_alignment (Pango.Alignment.RIGHT);
+            else
+                l.set_alignment (Pango.Alignment.LEFT);
         }
 
         public void set_text (string text) {
             if (text == label)
                 return;
             label = text;
-            damage_self ();
+            if (lay != null)
+                lay.set_text (label);
+            queue_resize ();
         }
 
         public string get_text () {
@@ -45,6 +107,38 @@ namespace Gtk {
             }
         }
 
+        public void set_wrap (bool w) {
+            if (wrap != w) {
+                wrap = w;
+                queue_resize ();
+            }
+        }
+        public bool get_wrap () { return wrap; }
+
+        public void set_ellipsize (EllipsizeMode mode) {
+            if (ellipsize != mode) {
+                ellipsize = mode;
+                queue_resize ();
+            }
+        }
+        public EllipsizeMode get_ellipsize () { return ellipsize; }
+
+        public void set_max_width_chars (int n) {
+            if (max_width_chars != n) {
+                max_width_chars = n;
+                queue_resize ();
+            }
+        }
+        public int get_max_width_chars () { return max_width_chars; }
+
+        public void set_justify (Justification j) {
+            if (justify != j) {
+                justify = j;
+                damage_self ();
+            }
+        }
+        public Justification get_justify () { return justify; }
+
         public void set_xalign (float xa) {
             xalign = (xa < 0.0f) ? 0.0f : ((xa > 1.0f) ? 1.0f : xa);
             damage_self ();
@@ -57,27 +151,89 @@ namespace Gtk {
         }
         public float get_yalign () { return yalign; }
 
-        public override void measure (out int min_w, out int min_h) {
+        public override SizeRequestMode get_request_mode () {
+            return wrap ? SizeRequestMode.HEIGHT_FOR_WIDTH : SizeRequestMode.CONSTANT_SIZE;
+        }
+
+        public override void measure_for (Orientation orientation, int for_size,
+                                          out int minimum, out int natural,
+                                          out int minimum_baseline, out int natural_baseline) {
+            minimum_baseline = -1;
+            natural_baseline = -1;
+            var l = ensure_layout ();
+            if (orientation == Orientation.HORIZONTAL) {
+                l.set_ellipsize (EllipsizeMode.NONE);
+                if (max_width_chars > 0)
+                    l.set_width (max_width_chars * l.char_width ());
+                else
+                    l.set_width (-1);
+                int tw = 0;
+                int th = 0;
+                l.get_pixel_size (out tw, out th);
+                natural = (req_w > (tw + 8)) ? req_w : (tw + 8);
+                if (wrap || ellipsize != EllipsizeMode.NONE) {
+                    int min_cap = (req_w > 16) ? req_w : 16;
+                    minimum = (natural < min_cap) ? natural : min_cap;
+                } else {
+                    minimum = natural;
+                }
+                return;
+            }
+            if (for_size >= 0 && wrap) {
+                int avail_w = (for_size > 8) ? (for_size - 8) : 1;
+                if (max_width_chars > 0) {
+                    int cw_px = max_width_chars * l.char_width ();
+                    if (cw_px < avail_w)
+                        avail_w = cw_px;
+                }
+                l.set_ellipsize (EllipsizeMode.NONE);
+                l.set_width (avail_w);
+            } else {
+                l.set_ellipsize (ellipsize);
+                l.set_width ((max_width_chars > 0) ? (max_width_chars * l.char_width ()) : -1);
+            }
             int tw = 0;
             int th = 0;
-            measure_text_cached (label, font_size, out tw, out th);
-            min_w = (req_w > tw) ? req_w : (tw + 8);
-            min_h = (req_h > th) ? req_h : (th + 8);
+            l.get_pixel_size (out tw, out th);
+            minimum = (req_h > (th + 8)) ? req_h : (th + 8);
+            natural = minimum;
+        }
+
+        public override void measure (out int min_w, out int min_h) {
+            int nat_w = 0;
+            int nat_h = 0;
+            int mb = 0;
+            int nb = 0;
+            measure_for (Orientation.HORIZONTAL, -1, out min_w, out nat_w, out mb, out nb);
+            if (!wrap)
+                min_w = nat_w;
+            measure_for (Orientation.VERTICAL, -1, out min_h, out nat_h, out mb, out nb);
+        }
+
+        public override void allocate (int ax, int ay, int aw, int ah) {
+            base.allocate (ax, ay, aw, ah);
+            sync_layout_width ();
         }
 
         public override void draw (Context cr) {
-            if (!visible || label.length == 0)
+            if (!visible || width <= 0 || height <= 0 || label.length == 0)
                 return;
+            sync_layout_width ();
+            var l = ensure_layout ();
             int tw = 0;
             int th = 0;
-            measure_text_cached (label, font_size, out tw, out th);
+            l.get_pixel_size (out tw, out th);
             int tx = x + 4;
             if (width > tw + 8)
                 tx = x + 4 + (int) ((float) (width - tw - 8) * xalign);
             int ty = y + (int) ((float) (height - th) * yalign);
             if (ty < y) ty = y;
+            cr.save ();
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
+            cr.clip ();
             cr.set_source_rgb (r, g, b);
-            TextHelper.draw_text (cr, label, tx, ty, font_size);
+            show_layout_at (cr, l, tx, ty);
+            cr.restore ();
         }
     }
 
@@ -197,7 +353,7 @@ namespace Gtk {
                     else
                         // Subtle Border (#324253, 0.6)
                         cr.set_source_rgba (0.196, 0.259, 0.325, 0.6);
-                    cr.rectangle ((double) x, (double) y, (double) width, (double) height);
+                    cr.rectangle ((double) x + 0.5, (double) y + 0.5, (double) (width - 1), (double) (height - 1));
                     cr.stroke ();
                 }
             }
@@ -244,15 +400,19 @@ namespace Gtk {
             }
             bool prev = hovered;
             hovered = contains (mx, my);
-            if (hovered != prev)
+            bool ch = (hovered != prev);
+            if (ch)
                 damage_self ();
-            return hovered != prev;
+            if (child != null && child.on_pointer_motion (mx, my))
+                ch = true;
+            return ch;
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {
             if (!visible || !sensitive || button != 1)
                 return false;
             if (contains (mx, my)) {
+                grab_focus ();
                 pressed = true;
                 damage_self ();
                 return true;
@@ -261,7 +421,7 @@ namespace Gtk {
         }
 
         public override bool on_pointer_release (int mx, int my, int button) {
-            if (!pressed)
+            if (!pressed || button != 1)
                 return false;
             bool inside = contains (mx, my);
             pressed = false;
@@ -269,6 +429,22 @@ namespace Gtk {
             if (inside && visible && sensitive)
                 clicked ();
             return true;
+        }
+
+        public override bool on_key_press (int key) {
+            if (!focused || !visible || !sensitive)
+                return false;
+            if (key == ' ' || key == '\n' || key == '\r') {
+                clicked ();
+                return true;
+            }
+            return false;
+        }
+
+        public override bool on_scroll (int mx, int my, int dx, int dy) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_scroll (mx, my, dx, dy);
         }
     }
 
@@ -283,6 +459,11 @@ namespace Gtk {
         public int cursor_pos = 0;
         private bool cursor_on = true;
         private uint32 blink_id = 0;
+        private int scroll_x = 0;
+        private int sel_start = -1;
+        private int sel_end = -1;
+        private Layout? lay = null;
+        private double lay_font_size = -1.0;
         public signal void changed ();
         public signal void activate ();
 
@@ -293,6 +474,43 @@ namespace Gtk {
 
         ~Entry () {
             stop_blink ();
+        }
+
+        private static int utf8_prev (string s, int pos) {
+            int p = pos - 1;
+            while (p > 0 && (((uint8) s[p]) & 0xC0) == 0x80)
+                p--;
+            return (p < 0) ? 0 : p;
+        }
+
+        private static int utf8_next (string s, int pos) {
+            int p = pos + 1;
+            while (p < s.length && (((uint8) s[p]) & 0xC0) == 0x80)
+                p++;
+            return (p > s.length) ? s.length : p;
+        }
+
+        private static int utf8_count (string s) {
+            int c = 0;
+            for (int i = 0; i < s.length; i++) {
+                if ((((uint8) s[i]) & 0xC0) != 0x80)
+                    c++;
+            }
+            return c;
+        }
+
+        private static string utf8_truncate (string s, int max_cp) {
+            int c = 0;
+            int i = 0;
+            while (i < s.length) {
+                if ((((uint8) s[i]) & 0xC0) != 0x80) {
+                    if (c >= max_cp)
+                        return s.substring (0, i);
+                    c++;
+                }
+                i++;
+            }
+            return s;
         }
 
         private void stop_blink () {
@@ -306,24 +524,28 @@ namespace Gtk {
         private void start_blink () {
             stop_blink ();
             cursor_on = true;
+            weak Entry? self_weak = this;
             blink_id = GLib.timeout_add (500, () => {
-                if (!focused || !visible || !sensitive) {
-                    blink_id = 0;
-                    cursor_on = true;
+                if (self_weak == null || !self_weak.focused || !self_weak.visible || !self_weak.sensitive) {
+                    if (self_weak != null) {
+                        self_weak.blink_id = 0;
+                        self_weak.cursor_on = true;
+                    }
                     return false;
                 }
-                cursor_on = !cursor_on;
-                damage_self ();
+                self_weak.cursor_on = !self_weak.cursor_on;
+                self_weak.damage_self ();
                 return true;
             });
         }
 
         public void set_text (string t) {
-            string nt = (max_length > 0 && t.length > max_length) ? t.substring (0, max_length) : t;
+            string nt = (max_length > 0 && utf8_count (t) > max_length) ? utf8_truncate (t, max_length) : t;
             if (nt == text)
                 return;
             text = nt;
             cursor_pos = text.length;
+            scroll_x = 0;
             damage_self ();
             changed ();
         }
@@ -371,6 +593,68 @@ namespace Gtk {
         }
         public int get_max_length () { return max_length; }
 
+        private Layout ensure_layout (string content) {
+            if (lay == null)
+                lay = new Layout (get_pango_ctx ());
+            var l = (!) lay;
+            if (lay_font_size != font_size) {
+                var fd = new FontDescription ();
+                fd.size = (int) font_size;
+                if (fd.size < 1) fd.size = 1;
+                l.set_font_description (fd);
+                lay_font_size = font_size;
+            }
+            l.set_text (content);
+            return l;
+        }
+
+        private int byte_offset_at_x (string disp, int rel_x) {
+            if (rel_x <= 0 || disp.length == 0)
+                return 0;
+            var slot = FontRegistry.slot_for_family ("sans");
+            int px_sz = (int) font_size;
+            if (px_sz < 1) px_sz = 1;
+            int pos = 0;
+            int acc = 0;
+            while (pos < disp.length) {
+                int prev = pos;
+                int cp = FontRegistry.next_utf8 (disp, ref pos);
+                int adv = FontRegistry.glyph_advance (slot, cp, px_sz);
+                if (rel_x < acc + adv / 2)
+                    return prev;
+                acc += adv;
+            }
+            return disp.length;
+        }
+
+        public void select_region (int start, int end) {
+            int s = (start < 0) ? 0 : ((start > text.length) ? text.length : start);
+            int e = (end < 0) ? text.length : ((end > text.length) ? text.length : end);
+            if (s > e) {
+                int t = s; s = e; e = t;
+            }
+            sel_start = s;
+            sel_end = e;
+            cursor_pos = e;
+            damage_self ();
+        }
+
+        public bool get_selection_bounds (out int start, out int end) {
+            if (sel_start >= 0 && sel_end > sel_start) {
+                start = sel_start;
+                end = sel_end;
+                return true;
+            }
+            start = cursor_pos;
+            end = cursor_pos;
+            return false;
+        }
+
+        private void clear_selection () {
+            sel_start = -1;
+            sel_end = -1;
+        }
+
         private string display_text () {
             if (visibility || text.length == 0)
                 return text;
@@ -380,7 +664,8 @@ namespace Gtk {
                 string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
                 ch = ascii.substring ((int) invisible_char - 32, 1);
             }
-            for (int i = 0; i < text.length; i++)
+            int cp_cnt = utf8_count (text);
+            for (int i = 0; i < cp_cnt; i++)
                 sb.append (ch);
             return sb.str;
         }
@@ -414,38 +699,51 @@ namespace Gtk {
             int tw = 0;
             int th = 0;
             string disp = display_text ();
-            if (disp.length > 0) {
-                // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
-                measure_text_cached (disp, font_size, out tw, out th);
-            } else {
-                // Titanium Mist (#8B9BB0)
-                cr.set_source_rgb (0.545, 0.608, 0.690);
-                measure_text_cached (placeholder, font_size, out tw, out th);
-            }
+            string shown = (disp.length > 0) ? disp : placeholder;
+            var l = ensure_layout (shown);
+            l.get_pixel_size (out tw, out th);
+
             int inner_w = width - 20;
+            if (inner_w < 1) inner_w = 1;
             if (cursor_pos < 0) cursor_pos = 0;
             if (cursor_pos > disp.length) cursor_pos = disp.length;
-            int cur_tw = tw;
-            if (cursor_pos < disp.length) {
-                int dummy_h = 0;
-                TextHelper.measure_text (disp.substring (0, cursor_pos), font_size, out cur_tw, out dummy_h);
-            }
-            int scroll_x = 0;
+            var slot = FontRegistry.slot_for_family ("sans");
+            int px_sz = (int) font_size;
+            if (px_sz < 1) px_sz = 1;
+            int cur_tw = (disp.length > 0) ? FontRegistry.measure_string_px (slot, disp, 0, cursor_pos, px_sz) : 0;
+
             if (disp.length > 0 && tw > inner_w) {
-                if (cur_tw > inner_w)
+                if (cur_tw < scroll_x)
+                    scroll_x = cur_tw;
+                else if (cur_tw > scroll_x + inner_w)
                     scroll_x = cur_tw - inner_w;
                 if (scroll_x > tw - inner_w)
                     scroll_x = tw - inner_w;
+                if (scroll_x < 0)
+                    scroll_x = 0;
+            } else {
+                scroll_x = 0;
             }
             int ty = y + (height - th) / 2;
             cr.save ();
             cr.rectangle ((double) (x + 6), (double) (y + 2), (double) (width - 12), (double) (height - 4));
             cr.clip ();
-            if (disp.length > 0)
-                TextHelper.draw_text (cr, disp, x + 10 - scroll_x, ty, font_size);
-            else if (placeholder.length > 0)
-                TextHelper.draw_text (cr, placeholder, x + 10, ty, font_size);
+            if (disp.length > 0 && sel_start >= 0 && sel_end > sel_start && sel_end <= disp.length) {
+                int sx0 = FontRegistry.measure_string_px (slot, disp, 0, sel_start, px_sz);
+                int sx1 = FontRegistry.measure_string_px (slot, disp, 0, sel_end, px_sz);
+                cr.set_source_rgba (0.220, 0.592, 0.941, 0.35);
+                cr.rectangle ((double) (x + 10 + sx0 - scroll_x), (double) (y + 5), (double) (sx1 - sx0), (double) (height - 10));
+                cr.fill ();
+            }
+            if (disp.length > 0) {
+                // Lunar White (#F0F4F8)
+                cr.set_source_rgb (0.941, 0.957, 0.973);
+                show_layout_at (cr, l, x + 10 - scroll_x, ty);
+            } else if (placeholder.length > 0) {
+                // Titanium Mist (#8B9BB0)
+                cr.set_source_rgb (0.545, 0.608, 0.690);
+                show_layout_at (cr, l, x + 10, ty);
+            }
             if (focused && cursor_on) {
                 // Celestial Cerulean (#3897F0)
                 cr.set_source_rgb (0.220, 0.592, 0.941);
@@ -456,14 +754,20 @@ namespace Gtk {
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {
-            bool prev = focused;
             if (!visible || !sensitive || !contains (mx, my)) {
                 drop_focus ();
                 stop_blink ();
-                return prev;
+                clear_selection ();
+                return false;
             }
             grab_focus ();
             start_blink ();
+            if (button == 1) {
+                string disp = display_text ();
+                cursor_pos = byte_offset_at_x (disp, mx - (x + 10) + scroll_x);
+                clear_selection ();
+                damage_self ();
+            }
             return true;
         }
 
@@ -477,14 +781,14 @@ namespace Gtk {
             }
             if (key == 0x83) { // Left
                 if (cursor_pos > 0) {
-                    cursor_pos--;
+                    cursor_pos = utf8_prev (text, cursor_pos);
                     damage_self ();
                 }
                 return true;
             }
             if (key == 0x84) { // Right
                 if (cursor_pos < text.length) {
-                    cursor_pos++;
+                    cursor_pos = utf8_next (text, cursor_pos);
                     damage_self ();
                 }
                 return true;
@@ -507,10 +811,11 @@ namespace Gtk {
                 return false;
             if (key == 8 || key == 127) {
                 if (cursor_pos > 0 && text.length > 0) {
-                    string before = text.substring (0, cursor_pos - 1);
+                    int prev_p = utf8_prev (text, cursor_pos);
+                    string before = text.substring (0, prev_p);
                     string after = (cursor_pos < text.length) ? text.substring (cursor_pos) : "";
                     text = before + after;
-                    cursor_pos--;
+                    cursor_pos = prev_p;
                     damage_self ();
                     changed ();
                 }
@@ -518,8 +823,9 @@ namespace Gtk {
             }
             if (key == 0xFFFF) { // Delete
                 if (cursor_pos < text.length) {
+                    int next_p = utf8_next (text, cursor_pos);
                     string before = text.substring (0, cursor_pos);
-                    string after = (cursor_pos + 1 < text.length) ? text.substring (cursor_pos + 1) : "";
+                    string after = (next_p < text.length) ? text.substring (next_p) : "";
                     text = before + after;
                     damage_self ();
                     changed ();
@@ -527,14 +833,14 @@ namespace Gtk {
                 return true;
             }
             if (key >= 32 && key < 127) {
-                if (max_length > 0 && text.length >= max_length)
+                if (max_length > 0 && utf8_count (text) >= max_length)
                     return true;
                 string ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
                 string ch = ascii.substring (key - 32, 1);
                 string before = text.substring (0, cursor_pos);
                 string after = (cursor_pos < text.length) ? text.substring (cursor_pos) : "";
                 text = before + ch + after;
-                cursor_pos++;
+                cursor_pos += ch.length;
                 damage_self ();
                 changed ();
                 return true;
@@ -554,6 +860,22 @@ namespace Gtk {
         public CheckButton (string text = "", bool initial = false) {
             label = text;
             active = initial;
+        }
+
+        ~CheckButton () {
+            detach_group ();
+        }
+
+        private void detach_group () {
+            if (group_leader != null && group_leader.group_members != null) {
+                for (int i = 0; i < group_leader.group_members.length; i++) {
+                    if (group_leader.group_members[i] == this) {
+                        group_leader.group_members.remove_index (i);
+                        break;
+                    }
+                }
+            }
+            group_leader = null;
         }
 
         public void set_label (string? text) {
@@ -577,12 +899,16 @@ namespace Gtk {
         }
 
         public void set_group (CheckButton? group) {
-            group_leader = group;
-            if (group != null) {
-                if (group.group_members == null)
-                    group.group_members = new GenericArray<weak CheckButton> ();
-                group.group_members.add (this);
-            }
+            detach_group ();
+            if (group == null || group == this)
+                return;
+            var root = (group.group_leader != null) ? group.group_leader : group;
+            if (root == this)
+                return;
+            group_leader = root;
+            if (root.group_members == null)
+                root.group_members = new GenericArray<weak CheckButton> ();
+            root.group_members.add (this);
         }
 
         public CheckButton? get_group () {
@@ -678,6 +1004,7 @@ namespace Gtk {
             if (!visible || !sensitive || button != 1)
                 return false;
             if (contains (mx, my)) {
+                grab_focus ();
                 pressed = true;
                 return true;
             }
@@ -685,7 +1012,7 @@ namespace Gtk {
         }
 
         public override bool on_pointer_release (int mx, int my, int button) {
-            if (!pressed)
+            if (!pressed || button != 1)
                 return false;
             bool inside = contains (mx, my);
             pressed = false;
@@ -697,6 +1024,19 @@ namespace Gtk {
             }
             return true;
         }
+
+        public override bool on_key_press (int key) {
+            if (!focused || !visible || !sensitive)
+                return false;
+            if (key == ' ' || key == '\n' || key == '\r') {
+                if (group_leader != null || group_members != null)
+                    set_active (true);
+                else
+                    set_active (!active);
+                return true;
+            }
+            return false;
+        }
     }
 
     public class ProgressBar : Widget {
@@ -705,14 +1045,23 @@ namespace Gtk {
         public bool show_text = true;
         public double font_size = 13.0;
         private double pulse_step = 0.1;
+        private bool pulse_mode = false;
+        private double pulse_pos = 0.0;
+        private int pulse_dir = 1;
 
         public ProgressBar () {}
+
+        public void set_pulse_step (double frac) {
+            pulse_step = (frac > 0.0 && frac <= 1.0) ? frac : 0.1;
+        }
+        public double get_pulse_step () { return pulse_step; }
 
         public void set_fraction (double f) {
             if (!(f >= 0.0)) f = 0.0;
             if (f > 1.0) f = 1.0;
-            if (f == fraction)
+            if (f == fraction && !pulse_mode)
                 return;
+            pulse_mode = false;
             fraction = f;
             damage_self ();
         }
@@ -738,9 +1087,16 @@ namespace Gtk {
         public bool get_show_text () { return show_text; }
 
         public void pulse () {
-            double nf = fraction + pulse_step;
-            if (nf > 1.0) nf = 0.0;
-            set_fraction (nf);
+            pulse_mode = true;
+            pulse_pos += (double) pulse_dir * pulse_step;
+            if (pulse_pos >= 0.75) {
+                pulse_pos = 0.75;
+                pulse_dir = -1;
+            } else if (pulse_pos <= 0.0) {
+                pulse_pos = 0.0;
+                pulse_dir = 1;
+            }
+            damage_self ();
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -755,12 +1111,21 @@ namespace Gtk {
             cr.set_source_rgb (0.059, 0.078, 0.098);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
-            int fw = (int) ((double) (width - 2) * fraction);
-            if (fw > 2) {
-                // Celestial Cerulean (#3897F0)
+            if (pulse_mode) {
+                int pw = (width - 2) / 4;
+                if (pw < 8) pw = 8;
+                int px = x + 1 + (int) ((double) (width - 2 - pw) * (pulse_pos / 0.75));
                 cr.set_source_rgb (0.220, 0.592, 0.941);
-                cr.rectangle ((double) (x + 1), (double) (y + 1), (double) fw, (double) (height - 2));
+                cr.rectangle ((double) px, (double) (y + 1), (double) pw, (double) (height - 2));
                 cr.fill ();
+            } else {
+                int fw = (int) ((double) (width - 2) * fraction);
+                if (fw > 2) {
+                    // Celestial Cerulean (#3897F0)
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.rectangle ((double) (x + 1), (double) (y + 1), (double) fw, (double) (height - 2));
+                    cr.fill ();
+                }
             }
             cr.set_line_width (1.0);
             // Stratosphere Line (#26323F)
@@ -773,19 +1138,40 @@ namespace Gtk {
                 measure_text_cached (text, font_size, out tw, out th);
                 int tx = x + (width - tw) / 2;
                 int ty = y + (height - th) / 2;
+                cr.save ();
+                cr.rectangle ((double) (x + 2), (double) (y + 1), (double) (width - 4), (double) (height - 2));
+                cr.clip ();
                 // Lunar White (#F0F4F8)
                 cr.set_source_rgb (0.941, 0.957, 0.973);
                 TextHelper.draw_text (cr, text, tx, ty, font_size);
+                cr.restore ();
             }
         }
     }
 
     public class Separator : Widget {
-        public Separator () {}
+        public Orientation orientation = Orientation.HORIZONTAL;
+
+        public Separator (Orientation orient = Orientation.HORIZONTAL) {
+            orientation = orient;
+        }
+
+        public void set_orientation (Orientation orient) {
+            if (orientation != orient) {
+                orientation = orient;
+                queue_resize ();
+            }
+        }
+        public Orientation get_orientation () { return orientation; }
 
         public override void measure (out int min_w, out int min_h) {
-            min_w = (req_w > 20) ? req_w : 20;
-            min_h = (req_h > 6) ? req_h : 6;
+            if (orientation == Orientation.VERTICAL) {
+                min_w = (req_w > 6) ? req_w : 6;
+                min_h = (req_h > 20) ? req_h : 20;
+            } else {
+                min_w = (req_w > 20) ? req_w : 20;
+                min_h = (req_h > 6) ? req_h : 6;
+            }
         }
 
         public override void draw (Context cr) {
@@ -793,7 +1179,10 @@ namespace Gtk {
                 return;
             // Stratosphere Line (#26323F)
             cr.set_source_rgb (0.149, 0.196, 0.247);
-            cr.rectangle ((double) x, (double) (y + height / 2), (double) width, 1.0);
+            if (orientation == Orientation.VERTICAL)
+                cr.rectangle ((double) (x + width / 2), (double) y, 1.0, (double) height);
+            else
+                cr.rectangle ((double) x, (double) (y + height / 2), (double) width, 1.0);
             cr.fill ();
         }
     }
@@ -816,9 +1205,9 @@ namespace Gtk {
         public void set_active (bool v) {
             if (active != v) {
                 active = v;
-                state = v;
+                if (!state_set (v))
+                    state = v;
                 damage_self ();
-                state_set (v);
                 toggled ();
             }
         }
@@ -1002,13 +1391,18 @@ namespace Gtk {
             max_val = a.upper;
             step = a.step_increment;
             set_value (a.value);
+            weak Scale? self_weak = this;
+            a.value_changed.connect ((sender) => {
+                if (self_weak != null && self_weak.adj == a)
+                    self_weak.set_value (a.value);
+            });
         }
 
         public void set_value (double v) {
             double nv = (v < min_val) ? min_val : ((v > max_val) ? max_val : v);
             if (nv != value) {
                 value = nv;
-                if (adj != null)
+                if (adj != null && adj.value != nv)
                     adj.set_value (nv);
                 damage_self ();
                 value_changed (value);
@@ -1019,34 +1413,75 @@ namespace Gtk {
             return value;
         }
 
-        private void set_from_x (int mx) {
+        private void set_from_pos (int mx, int my) {
             int pad = 8;
-            int track_w = width - pad * 2;
-            if (track_w <= 0)
-                return;
-            double frac = (double) (mx - (x + pad)) / (double) track_w;
-            if (frac < 0.0) frac = 0.0;
-            if (frac > 1.0) frac = 1.0;
-            set_value (min_val + frac * (max_val - min_val));
+            if (orientation == Orientation.VERTICAL) {
+                int track_h = height - pad * 2;
+                if (track_h <= 0)
+                    return;
+                double frac = (double) (my - (y + pad)) / (double) track_h;
+                if (frac < 0.0) frac = 0.0;
+                if (frac > 1.0) frac = 1.0;
+                set_value (min_val + frac * (max_val - min_val));
+            } else {
+                int track_w = width - pad * 2;
+                if (track_w <= 0)
+                    return;
+                double frac = (double) (mx - (x + pad)) / (double) track_w;
+                if (frac < 0.0) frac = 0.0;
+                if (frac > 1.0) frac = 1.0;
+                set_value (min_val + frac * (max_val - min_val));
+            }
         }
 
         public override void measure (out int min_w, out int min_h) {
-            min_w = (req_w > 120) ? req_w : 120;
-            min_h = (req_h > 24) ? req_h : 24;
+            if (orientation == Orientation.VERTICAL) {
+                min_w = (req_w > 24) ? req_w : 24;
+                min_h = (req_h > 120) ? req_h : 120;
+            } else {
+                min_w = (req_w > 120) ? req_w : 120;
+                min_h = (req_h > 24) ? req_h : 24;
+            }
         }
 
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0)
                 return;
             int pad = 8;
-            int track_w = width - pad * 2;
-            if (track_w <= 0)
-                return;
-            int ty = y + height / 2 - 2;
             double span = max_val - min_val;
             double frac = (span > 0.0) ? ((value - min_val) / span) : 0.0;
             if (frac < 0.0) frac = 0.0;
             if (frac > 1.0) frac = 1.0;
+
+            if (orientation == Orientation.VERTICAL) {
+                int track_h = height - pad * 2;
+                if (track_h <= 0)
+                    return;
+                int tx = x + width / 2 - 2;
+                int fill_h = (int) (frac * (double) track_h);
+                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.rounded_rectangle ((double) tx, (double) (y + pad), 4.0, (double) track_h, 2.0);
+                cr.fill ();
+                if (fill_h > 0) {
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.rounded_rectangle ((double) tx, (double) (y + pad), 4.0, (double) fill_h, 2.0);
+                    cr.fill ();
+                }
+                int kx = x + width / 2 - 6;
+                int ky = y + pad + fill_h - 6;
+                if (dragging)
+                    cr.set_source_rgb (0.941, 0.957, 0.973);
+                else
+                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.rounded_rectangle ((double) kx, (double) ky, 12.0, 12.0, 6.0);
+                cr.fill ();
+                return;
+            }
+
+            int track_w = width - pad * 2;
+            if (track_w <= 0)
+                return;
+            int ty = y + height / 2 - 2;
             int fill_w = (int) (frac * (double) track_w);
 
             // Stratosphere Line (#26323F)
@@ -1067,11 +1502,20 @@ namespace Gtk {
                 cr.set_source_rgb (0.220, 0.592, 0.941);
             cr.rounded_rectangle ((double) kx, (double) ky, 12.0, 12.0, 6.0);
             cr.fill ();
+            if (draw_value) {
+                int iv = (int) (value + ((value >= 0.0) ? 0.5 : -0.5));
+                string vs = @"$iv";
+                int vw = 0;
+                int vh = 0;
+                measure_text_cached (vs, 11.0, out vw, out vh);
+                cr.set_source_rgb (0.941, 0.957, 0.973);
+                TextHelper.draw_text (cr, vs, x + width - vw - 4, y + 2, 11.0);
+            }
         }
 
         public override bool on_pointer_motion (int mx, int my) {
             if (dragging) {
-                set_from_x (mx);
+                set_from_pos (mx, my);
                 return true;
             }
             return base.on_pointer_motion (mx, my);
@@ -1083,12 +1527,12 @@ namespace Gtk {
             grab_focus ();
             dragging = true;
             damage_self ();
-            set_from_x (mx);
+            set_from_pos (mx, my);
             return true;
         }
 
         public override bool on_pointer_release (int mx, int my, int button) {
-            if (dragging) {
+            if (dragging && button == 1) {
                 dragging = false;
                 damage_self ();
                 return true;
@@ -1099,8 +1543,8 @@ namespace Gtk {
         public override bool on_key_press (int key) {
             if (!focused || !visible || !sensitive)
                 return false;
-            if (key == 0x83) { set_value (value - step); return true; }
-            if (key == 0x84) { set_value (value + step); return true; }
+            if (key == 0x83 || key == 0x81 || key == 0xFF52) { set_value (value - step); return true; }
+            if (key == 0x84 || key == 0x82 || key == 0xFF54) { set_value (value + step); return true; }
             if (key == 0x85) { set_value (min_val); return true; }
             if (key == 0x86) { set_value (max_val); return true; }
             return false;

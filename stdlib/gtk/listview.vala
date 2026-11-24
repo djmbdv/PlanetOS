@@ -19,7 +19,12 @@ namespace Gtk {
         public ListBoxRow () {}
 
         public void set_child (Widget? w) {
+            if (child != null)
+                child.unparent ();
             child = w;
+            if (child != null)
+                child.set_parent (this);
+            queue_resize ();
         }
 
         public Widget? get_child () {
@@ -32,6 +37,34 @@ namespace Gtk {
 
         public int get_index () {
             return index;
+        }
+
+        public override SizeRequestMode get_request_mode () {
+            if (child != null && child.visible)
+                return child.get_request_mode ();
+            return SizeRequestMode.CONSTANT_SIZE;
+        }
+
+        public override void measure_for (Orientation measure_orient, int for_size,
+                                          out int minimum, out int natural,
+                                          out int minimum_baseline, out int natural_baseline) {
+            minimum_baseline = -1;
+            natural_baseline = -1;
+            if (measure_orient == Orientation.VERTICAL && for_size >= 0 && child != null && child.visible) {
+                int avail_w = (for_size > 12) ? (for_size - 12) : 0;
+                int ch_min = 0;
+                int ch_nat = 0;
+                child.measure_height_for_width (avail_w, out ch_min, out ch_nat);
+                int total = ch_min + 6;
+                minimum = (req_h > total) ? req_h : total;
+                natural = minimum;
+                return;
+            }
+            int mw = 0;
+            int mh = 0;
+            measure (out mw, out mh);
+            minimum = (measure_orient == Orientation.HORIZONTAL) ? mw : mh;
+            natural = minimum;
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -72,6 +105,39 @@ namespace Gtk {
 
         public override void gather_damage () {
             hoist_child_damage (child);
+        }
+
+        public override bool handle_key (int key) {
+            if (!visible || !sensitive)
+                return false;
+            if (child != null && child.handle_key (key))
+                return true;
+            return base.handle_key (key);
+        }
+
+        public override bool on_pointer_motion (int mx, int my) {
+            bool changed = base.on_pointer_motion (mx, my);
+            if (visible && sensitive && child != null && child.on_pointer_motion (mx, my))
+                changed = true;
+            return changed;
+        }
+
+        public override bool on_pointer_press (int mx, int my, int button) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_pointer_press (mx, my, button);
+        }
+
+        public override bool on_pointer_release (int mx, int my, int button) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_pointer_release (mx, my, button);
+        }
+
+        public override bool on_scroll (int mx, int my, int dx, int dy) {
+            if (!visible || !sensitive || child == null)
+                return false;
+            return child.on_scroll (mx, my, dx, dy);
         }
     }
 
@@ -117,6 +183,7 @@ namespace Gtk {
         public void append (Widget child) {
             rows.add (wrap_row (child));
             reindex ();
+            queue_resize ();
         }
 
         public void prepend (Widget child) {
@@ -140,6 +207,7 @@ namespace Gtk {
             if (selected_index >= position)
                 selected_index++;
             reindex ();
+            queue_resize ();
         }
 
         public void unselect_all () {
@@ -210,9 +278,32 @@ namespace Gtk {
             return rows[selected_index];
         }
 
+        public GenericArray<ListBoxRow> get_selected_rows () {
+            var res = new GenericArray<ListBoxRow> ();
+            for (int i = 0; i < rows.length; i++) {
+                if (rows[i].selected)
+                    res.add (rows[i]);
+            }
+            return res;
+        }
+
         public void select_row (ListBoxRow? row) {
             if (selection_mode == SelectionMode.NONE)
                 return;
+            if (selection_mode == SelectionMode.MULTIPLE) {
+                if (row == null)
+                    return;
+                for (int i = 0; i < rows.length; i++) {
+                    if (rows[i] == row) {
+                        row.selected = !row.selected;
+                        selected_index = row.selected ? i : -1;
+                        row_selected (row);
+                        damage_self ();
+                        return;
+                    }
+                }
+                return;
+            }
             for (int i = 0; i < rows.length; i++)
                 rows[i].selected = false;
             selected_index = -1;
@@ -242,6 +333,40 @@ namespace Gtk {
             return on_key_press (key);
         }
 
+        public override SizeRequestMode get_request_mode () {
+            for (int i = 0; i < rows.length; i++) {
+                if (rows[i].visible && rows[i].get_request_mode () == SizeRequestMode.HEIGHT_FOR_WIDTH)
+                    return SizeRequestMode.HEIGHT_FOR_WIDTH;
+            }
+            return SizeRequestMode.CONSTANT_SIZE;
+        }
+
+        public override void measure_for (Orientation measure_orient, int for_size,
+                                          out int minimum, out int natural,
+                                          out int minimum_baseline, out int natural_baseline) {
+            minimum_baseline = -1;
+            natural_baseline = -1;
+            if (measure_orient == Orientation.VERTICAL && for_size >= 0) {
+                int total_h = 0;
+                for (int i = 0; i < rows.length; i++) {
+                    if (!rows[i].visible)
+                        continue;
+                    int rh = 0;
+                    int rh_nat = 0;
+                    rows[i].measure_height_for_width (for_size, out rh, out rh_nat);
+                    total_h += rh;
+                }
+                minimum = (req_h > total_h) ? req_h : total_h;
+                natural = minimum;
+                return;
+            }
+            int mw = 0;
+            int mh = 0;
+            measure (out mw, out mh);
+            minimum = (measure_orient == Orientation.HORIZONTAL) ? mw : mh;
+            natural = minimum;
+        }
+
         public override void measure (out int min_w, out int min_h) {
             int max_w = 120;
             int total_h = 0;
@@ -267,9 +392,9 @@ namespace Gtk {
             for (int i = 0; i < rows.length; i++) {
                 if (!rows[i].visible)
                     continue;
-                int rw = 0;
                 int rh = 0;
-                rows[i].measure (out rw, out rh);
+                int rh_nat = 0;
+                rows[i].measure_height_for_width (width, out rh, out rh_nat);
                 rows[i].allocate (ax, cy, width, rh);
                 cy += rh;
             }
@@ -357,14 +482,15 @@ namespace Gtk {
             bound_model = model;
             sync_from_model ();
             if (model != null) {
+                weak ListView? self_weak = this;
                 model.items_changed.connect ((sender, pos, rem, add) => {
-                    if (bound_model != model)
+                    if (self_weak == null || self_weak.bound_model != model)
                         return;
-                    if (rem == 0 && add == 1 && pos == labels.length) {
-                        labels.add (model.get_item (pos));
-                        damage_self ();
+                    if (rem == 0 && add == 1 && pos == self_weak.labels.length) {
+                        self_weak.labels.add (model.get_item (pos));
+                        self_weak.queue_resize ();
                     } else {
-                        sync_from_model ();
+                        self_weak.sync_from_model ();
                     }
                 });
             }
@@ -411,6 +537,16 @@ namespace Gtk {
             }
         }
 
+        public void scroll_to (int pos) {
+            if (pos < 0 || pos >= labels.length)
+                return;
+            set_selected (pos);
+            var p = get_parent ();
+            if (p != null && p is ScrolledWindow) {
+                ((ScrolledWindow) p).ensure_visible (pos * row_height, row_height);
+            }
+        }
+
         public override void measure (out int min_w, out int min_h) {
             int total_h = labels.length * row_height;
             min_w = (req_w > 180) ? req_w : 180;
@@ -420,6 +556,9 @@ namespace Gtk {
         public override void draw (Context cr) {
             if (!visible || width <= 0 || height <= 0 || row_height <= 0 || labels.length == 0)
                 return;
+            cr.save ();
+            cr.rectangle ((double) x, (double) y, (double) width, (double) height);
+            cr.clip ();
             int i0 = (cr.clip_top () - y) / row_height;
             int i1 = (cr.clip_bottom () - y) / row_height;
             if (i0 < 0) i0 = 0;
@@ -446,10 +585,11 @@ namespace Gtk {
                 cr.set_source_rgb (0.941, 0.957, 0.973);
                 TextHelper.draw_text (cr, labels[i], tx, ry + (row_height - 16) / 2, font_size);
             }
+            cr.restore ();
         }
 
         public override bool on_pointer_motion (int mx, int my) {
-            if (!visible || !sensitive)
+            if (!visible || !sensitive || row_height <= 0)
                 return false;
             int nh = -1;
             if (contains (mx, my)) {
@@ -466,7 +606,7 @@ namespace Gtk {
         }
 
         public override bool on_pointer_press (int mx, int my, int button) {
-            if (!visible || !sensitive || button != 1 || !contains (mx, my))
+            if (!visible || !sensitive || button != 1 || row_height <= 0 || !contains (mx, my))
                 return false;
             int idx = (my - y) / row_height;
             if (idx >= 0 && idx < labels.length) {

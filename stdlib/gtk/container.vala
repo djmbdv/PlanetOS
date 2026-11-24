@@ -55,6 +55,7 @@ namespace Gtk {
             fills.add (fill);
             paddings.add ((padding < 0) ? 0 : padding);
             child.set_parent (this);
+            queue_resize ();
         }
 
         public void append (Widget child) {
@@ -81,6 +82,7 @@ namespace Gtk {
             fills = nf;
             paddings = np;
             child.set_parent (this);
+            queue_resize ();
         }
 
         public void insert_child_after (Widget child, Widget? sibling) {
@@ -120,6 +122,7 @@ namespace Gtk {
             fills = nf;
             paddings = np;
             child.set_parent (this);
+            queue_resize ();
         }
 
         public void add (Widget child) {
@@ -134,6 +137,7 @@ namespace Gtk {
                     expands.remove_index (i);
                     fills.remove_index (i);
                     paddings.remove_index (i);
+                    queue_resize ();
                     return true;
                 }
             }
@@ -145,6 +149,52 @@ namespace Gtk {
                 return true;
             var c = children[i];
             return (orientation == Orientation.VERTICAL) ? c.vexpand : c.hexpand;
+        }
+
+        public override SizeRequestMode get_request_mode () {
+            for (int i = 0; i < children.length; i++) {
+                if (children[i].visible && children[i].get_request_mode () == SizeRequestMode.HEIGHT_FOR_WIDTH)
+                    return SizeRequestMode.HEIGHT_FOR_WIDTH;
+            }
+            return SizeRequestMode.CONSTANT_SIZE;
+        }
+
+        public override void measure_for (Orientation measure_orient, int for_size,
+                                          out int minimum, out int natural,
+                                          out int minimum_baseline, out int natural_baseline) {
+            minimum_baseline = -1;
+            natural_baseline = -1;
+            if (measure_orient == Orientation.VERTICAL && orientation == Orientation.VERTICAL && for_size >= 0) {
+                int total_h = 0;
+                int max_main = 0;
+                int vis_count = 0;
+                for (int i = 0; i < children.length; i++) {
+                    var c = children[i];
+                    if (!c.visible)
+                        continue;
+                    int avail_w = for_size - c.margin_start - c.margin_end;
+                    if (avail_w < 0) avail_w = 0;
+                    int ch_min = 0;
+                    int ch_nat = 0;
+                    c.measure_height_for_width (avail_w, out ch_min, out ch_nat);
+                    int mh = ch_min + c.margin_top + c.margin_bottom + paddings[i] * 2;
+                    if (mh > max_main) max_main = mh;
+                    total_h += mh;
+                    vis_count++;
+                }
+                if (homogeneous && vis_count > 0)
+                    total_h = max_main * vis_count;
+                if (vis_count > 1)
+                    total_h += (vis_count - 1) * spacing;
+                minimum = (req_h > total_h) ? req_h : total_h;
+                natural = minimum;
+                return;
+            }
+            int mw = 0;
+            int mh = 0;
+            measure (out mw, out mh);
+            minimum = (measure_orient == Orientation.HORIZONTAL) ? mw : mh;
+            natural = minimum;
         }
 
         public override void measure (out int min_w, out int min_h) {
@@ -213,7 +263,16 @@ namespace Gtk {
                     continue;
                 int cw = 0;
                 int ch = 0;
-                c.measure (out cw, out ch);
+                if (orientation == Orientation.VERTICAL && width > 0) {
+                    int cw_nat = 0;
+                    int ch_nat = 0;
+                    int max_w = width - c.margin_start - c.margin_end;
+                    if (max_w < 0) max_w = 0;
+                    c.measure_width_for_height (-1, out cw, out cw_nat);
+                    c.measure_height_for_width (max_w, out ch, out ch_nat);
+                } else {
+                    c.measure (out cw, out ch);
+                }
                 cws[i] = cw;
                 chs[i] = ch;
                 int pad = paddings[i] * 2;
@@ -229,16 +288,21 @@ namespace Gtk {
                 total_main += (vis_count - 1) * spacing;
 
             int extra = 0;
+            int extra_rem = 0;
             int homo_slot = 0;
+            int homo_rem = 0;
             if (homogeneous && vis_count > 0) {
                 int avail_main = (orientation == Orientation.VERTICAL) ? height : width;
                 avail_main -= (vis_count - 1) * spacing;
                 if (avail_main < 0) avail_main = 0;
                 homo_slot = avail_main / vis_count;
+                homo_rem = avail_main % vis_count;
             } else if (exp_count > 0) {
                 int avail = (orientation == Orientation.VERTICAL) ? (height - total_main) : (width - total_main);
-                if (avail > 0)
+                if (avail > 0) {
                     extra = avail / exp_count;
+                    extra_rem = avail % exp_count;
+                }
             }
 
             int cx = ax;
@@ -250,9 +314,21 @@ namespace Gtk {
                 int cw = cws[i];
                 int ch = chs[i];
                 int pad = paddings[i];
-                int bonus = child_expands (i) ? extra : 0;
+                int bonus = 0;
+                if (homogeneous) {
+                    if (homo_rem > 0) {
+                        bonus = 1;
+                        homo_rem--;
+                    }
+                } else if (child_expands (i)) {
+                    bonus = extra;
+                    if (extra_rem > 0) {
+                        bonus++;
+                        extra_rem--;
+                    }
+                }
                 if (orientation == Orientation.VERTICAL) {
-                    int slot_h = homogeneous ? homo_slot : (ch + c.margin_top + c.margin_bottom + bonus);
+                    int slot_h = homogeneous ? (homo_slot + bonus) : (ch + c.margin_top + c.margin_bottom + bonus);
                     int alloc_h = slot_h - c.margin_top - c.margin_bottom;
                     if (alloc_h < 0) alloc_h = 0;
                     int max_w = width - c.margin_start - c.margin_end;
@@ -266,7 +342,7 @@ namespace Gtk {
                     c.allocate (ox, cy + pad + c.margin_top, alloc_w, alloc_h);
                     cy += slot_h + pad * 2 + spacing;
                 } else {
-                    int slot_w = homogeneous ? homo_slot : (cw + c.margin_start + c.margin_end + bonus);
+                    int slot_w = homogeneous ? (homo_slot + bonus) : (cw + c.margin_start + c.margin_end + bonus);
                     int alloc_w = slot_w - c.margin_start - c.margin_end;
                     if (alloc_w < 0) alloc_w = 0;
                     int max_h = height - c.margin_top - c.margin_bottom;
@@ -303,7 +379,7 @@ namespace Gtk {
                 if (children[i].handle_key (key))
                     return true;
             }
-            return on_key_press (key);
+            return false;
         }
 
         public override bool on_pointer_motion (int mx, int my) {
@@ -328,6 +404,8 @@ namespace Gtk {
         }
 
         public override bool on_pointer_release (int mx, int my, int button) {
+            if (!visible || !sensitive)
+                return false;
             bool hit = false;
             for (int i = 0; i < children.length; i++) {
                 if (children[i].on_pointer_release (mx, my, button))
@@ -405,6 +483,36 @@ namespace Gtk {
             return (label != null && label.length > 0) ? 22 : 4;
         }
 
+        public override SizeRequestMode get_request_mode () {
+            if (child != null && child.visible)
+                return child.get_request_mode ();
+            return SizeRequestMode.CONSTANT_SIZE;
+        }
+
+        public override void measure_for (Orientation measure_orient, int for_size,
+                                          out int minimum, out int natural,
+                                          out int minimum_baseline, out int natural_baseline) {
+            minimum_baseline = -1;
+            natural_baseline = -1;
+            if (measure_orient == Orientation.VERTICAL && for_size >= 0 && child != null && child.visible) {
+                int avail_w = for_size - (pad + 1) * 2 - child.margin_start - child.margin_end;
+                if (avail_w < 0) avail_w = 0;
+                int ch_min = 0;
+                int ch_nat = 0;
+                child.measure_height_for_width (avail_w, out ch_min, out ch_nat);
+                int hh = header_height ();
+                int total = ch_min + child.margin_top + child.margin_bottom + hh + pad + 1;
+                minimum = (req_h > total) ? req_h : total;
+                natural = minimum;
+                return;
+            }
+            int mw = 0;
+            int mh = 0;
+            measure (out mw, out mh);
+            minimum = (measure_orient == Orientation.HORIZONTAL) ? mw : mh;
+            natural = minimum;
+        }
+
         public override void measure (out int min_w, out int min_h) {
             int cw = 40;
             int ch = 20;
@@ -422,13 +530,13 @@ namespace Gtk {
             y = ay;
             width = (aw < 0) ? 0 : aw;
             height = (ah < 0) ? 0 : ah;
-            if (child != null) {
+            if (child != null && child.visible) {
                 int hh = header_height ();
-                int cw = width - pad * 2;
-                int ch = height - hh - pad;
+                int cw = width - (pad + 1) * 2 - child.margin_start - child.margin_end;
+                int ch = height - hh - pad - 1 - child.margin_top - child.margin_bottom;
                 if (cw < 0) cw = 0;
                 if (ch < 0) ch = 0;
-                child.allocate (x + pad, y + hh, cw, ch);
+                child.allocate (x + pad + 1 + child.margin_start, y + hh + child.margin_top, cw, ch);
             }
         }
 
@@ -444,9 +552,14 @@ namespace Gtk {
             cr.rounded_rectangle ((double) x + 0.5, (double) y + 0.5, (double) (width - 1), (double) (height - 1), 6.0);
             cr.stroke ();
             if (label != null && label.length > 0) {
+                int tw = 0;
+                int th = 0;
+                measure_text_cached (label, 13.0, out tw, out th);
+                int avail = width - pad * 2 - tw;
+                int lx = x + pad + ((avail > 0) ? (int) ((double) avail * label_xalign) : 0);
                 // Lunar White (#F0F4F8)
                 cr.set_source_rgb (0.941, 0.957, 0.973);
-                TextHelper.draw_text (cr, label, x + pad, y + 4, 13.0);
+                TextHelper.draw_text (cr, label, lx, y + 4, 13.0);
             }
             if (child != null)
                 child.render (cr);
@@ -459,9 +572,7 @@ namespace Gtk {
         public override bool handle_key (int key) {
             if (!visible || !sensitive || child == null)
                 return false;
-            if (child.handle_key (key))
-                return true;
-            return on_key_press (key);
+            return child.handle_key (key);
         }
 
         public override bool on_pointer_motion (int mx, int my) {
@@ -477,7 +588,7 @@ namespace Gtk {
         }
 
         public override bool on_pointer_release (int mx, int my, int button) {
-            if (child == null)
+            if (!visible || !sensitive || child == null)
                 return false;
             return child.on_pointer_release (mx, my, button);
         }
@@ -502,15 +613,45 @@ namespace Gtk {
         public string title = "";
         public string subtitle = "";
         public bool show_title_buttons = true;
+        public string decoration_layout = ":close";
         private Label title_lbl;
+        private Widget? title_widget = null;
         private Button? close_btn = null;
 
         public HeaderBar () : base (Orientation.HORIZONTAL, 8) {
             title_lbl = new Label ("");
             title_lbl.font_size = 15.0;
+            title_widget = title_lbl;
             pack_start (title_lbl, true, true, 8);
             set_show_title_buttons (true);
         }
+
+        public void pack_end (Widget child) {
+            if (close_btn != null) {
+                remove ((!) close_btn);
+                pack_start (child, false, false, 4);
+                pack_start ((!) close_btn, false, false, 6);
+            } else {
+                pack_start (child, false, false, 4);
+            }
+        }
+
+        public void set_title_widget (Widget? w) {
+            if (title_widget != null)
+                remove ((!) title_widget);
+            title_widget = (w != null) ? w : title_lbl;
+            prepend ((!) title_widget);
+            queue_resize ();
+        }
+
+        public Widget? get_title_widget () { return title_widget; }
+
+        public void set_decoration_layout (string? layout) {
+            decoration_layout = (layout != null) ? (!) layout : ":close";
+            set_show_title_buttons (decoration_layout.contains ("close"));
+        }
+
+        public string get_decoration_layout () { return decoration_layout; }
 
         public void set_title (string? t) {
             title = (t != null) ? (!) t : "";
@@ -554,6 +695,22 @@ namespace Gtk {
             cr.rectangle ((double) x, (double) (y + height - 1), (double) width, 1.0);
             cr.fill ();
             base.draw (cr);
+            if (subtitle.length > 0 && title_lbl.width > 0) {
+                int tw = 0;
+                int th = 0;
+                measure_text_cached (title, title_lbl.font_size, out tw, out th);
+                int sx = title_lbl.x + tw + 12;
+                int max_x = title_lbl.x + title_lbl.width - 4;
+                if (sx < max_x) {
+                    cr.save ();
+                    cr.rectangle ((double) sx, (double) y, (double) (max_x - sx), (double) height);
+                    cr.clip ();
+                    // Titanium Mist (#8B9BB0)
+                    cr.set_source_rgb (0.545, 0.608, 0.690);
+                    TextHelper.draw_text (cr, subtitle, sx, y + (height - 12) / 2, 12.0);
+                    cr.restore ();
+                }
+            }
         }
     }
 }

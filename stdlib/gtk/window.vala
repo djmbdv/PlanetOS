@@ -27,6 +27,7 @@ namespace Gtk {
         public Widget? titlebar = null;
         public bool resizable = true;
         public bool decorated = true;
+        public weak GtkApplication? app_owner = null;
         private int default_w = 640;
         private int default_h = 420;
         private Window? gdk_win = null;
@@ -118,7 +119,14 @@ namespace Gtk {
             if (close_request ())
                 return;
             destroy ();
-            main_quit ();
+            if (app_owner != null) {
+                var app = app_owner;
+                app.remove_window (this);
+                if (app.get_windows ().length == 0)
+                    main_quit ();
+            } else {
+                main_quit ();
+            }
         }
 
         public void destroy () {
@@ -402,12 +410,14 @@ namespace Gtk {
                     return;
             }
             windows.add (w);
+            w.app_owner = this;
             hold ();
         }
 
         public void remove_window (GtkWindow w) {
             for (int i = 0; i < windows.length; i++) {
                 if (windows[i] == w) {
+                    w.app_owner = null;
                     windows.remove_index (i);
                     release ();
                     return;
