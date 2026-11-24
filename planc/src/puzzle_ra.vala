@@ -1338,9 +1338,90 @@ namespace Planc {
             // So frame_bytes + 8 * callee_list.length must be a multiple of 16 if has_calls!
             bool need_pad = has_calls && ((callee_list.length % 2) == 1);
             int total_sub = frame_bytes + (need_pad ? 8 : 0);
+            bool omit_frame = (total_sub == 0 && callee_list.length == 0
+                               && !(program_uses_heap && arr_locals.length > 0) && !has_calls);
 
-            emitter.push_rbp ();
-            emitter.mov_rsp_to_rbp ();
+            // Shrink-wrapping fast path for early-return guard at function entry
+            if (!omit_frame && f.body.length > 0
+                && (f.return_type == ValaType.INT || f.return_type == ValaType.VOID)
+                && !(program_uses_heap && arr_locals.length > 0)
+                && f.body[0] is IfStatement) {
+                var ifs = (IfStatement) f.body[0];
+                ReturnStatement? rs = null;
+                if (ifs.else_body == null) {
+                    if (ifs.then_body is ReturnStatement) {
+                        rs = (ReturnStatement) ifs.then_body;
+                    } else if (ifs.then_body is BlockStatement) {
+                        var blk = (BlockStatement) ifs.then_body;
+                        if (blk.statements.length == 1 && blk.statements[0] is ReturnStatement)
+                            rs = (ReturnStatement) blk.statements[0];
+                    }
+                }
+                if (rs != null && ifs.condition is BinaryExpr) {
+                    var cb = (BinaryExpr) ifs.condition;
+                    bool op_ok = (cb.op == "==" || cb.op == "!=" || cb.op == "<"
+                                  || cb.op == "<=" || cb.op == ">" || cb.op == ">=");
+                    int p_idx = -1;
+                    if (op_ok && cb.left is VarRef && cb.right is IntLiteral) {
+                        string pname = ((VarRef) cb.left).name;
+                        for (int pi = 0; pi < f.params.length; pi++) {
+                            if (f.params[pi].name == pname && f.params[pi].param_type != ValaType.ARRAY) {
+                                p_idx = pi;
+                                break;
+                            }
+                        }
+                    }
+                    int64 cmp_val = (p_idx >= 0) ? ((IntLiteral) cb.right).value : 0;
+                    if (p_idx >= 0 && cmp_val >= -2147483648 && cmp_val <= 2147483647) {
+                        bool ret_ok = false;
+                        bool ret_is_void = (f.return_type == ValaType.VOID && rs.value == null);
+                        bool ret_is_imm = false;
+                        int64 ret_imm = 0;
+                        int ret_pidx = -1;
+                        if (ret_is_void) {
+                            ret_ok = true;
+                        } else if (f.return_type == ValaType.INT && rs.value != null) {
+                            if (rs.value is IntLiteral) {
+                                ret_is_imm = true;
+                                ret_imm = ((IntLiteral) rs.value).value;
+                                ret_ok = true;
+                            } else if (rs.value is VarRef) {
+                                string rname = ((VarRef) rs.value).name;
+                                for (int pi = 0; pi < f.params.length; pi++) {
+                                    if (f.params[pi].name == rname && f.params[pi].param_type != ValaType.ARRAY) {
+                                        ret_pidx = pi;
+                                        ret_ok = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if (ret_ok) {
+                            var slow_lbl = emitter.new_label ();
+                            Reg lhs_r = phys_to_reg (abi_arg_phys (p_idx));
+                            if (cmp_val == 0) emit_test_rr (lhs_r, lhs_r);
+                            else emit_alu_ri (7, lhs_r, (int32) cmp_val);
+                            bool is_u = is_unsigned_name (f.params[p_idx].type_name);
+                            emitter.branch (inverted_br (cb.op, is_u), slow_lbl);
+                            if (ret_is_void) {
+                                emitter.xor_eax ();
+                            } else if (ret_is_imm) {
+                                emit_mov_ri (Reg.RAX, ret_imm);
+                            } else {
+                                emit_mov_rr (Reg.RAX, phys_to_reg (abi_arg_phys (ret_pidx)));
+                            }
+                            emitter.xor_edx ();
+                            emitter.ret ();
+                            emitter.bind (slow_lbl);
+                        }
+                    }
+                }
+            }
+
+            if (!omit_frame) {
+                emitter.push_rbp ();
+                emitter.mov_rsp_to_rbp ();
+            }
             if (total_sub > 0)
                 emitter.sub_rsp (total_sub);
             for (int i = 0; i < callee_list.length; i++)
@@ -1422,7 +1503,9 @@ namespace Planc {
                     }
                 }
             }
-            Label? epilogue_label = (ret_count > 1) ? emitter.new_label () : null;
+            Label? epilogue_label = (ret_count > 1 && (callee_list.length >= 2 || total_sub > 0
+                                                       || (program_uses_heap && arr_locals.length > 0)))
+                                    ? emitter.new_label () : null;
 
             for (int b = 0; b < blocks.length; b++) {
                 emitter.bind ((Label) blocks[b].label);
@@ -1834,7 +1917,8 @@ namespace Planc {
                                 emitter.pop_reg (callee_list[i]);
                             if (total_sub > 0)
                                 emitter.add_rsp (total_sub);
-                            emitter.pop_rbp ();
+                            if (!omit_frame)
+                                emitter.pop_rbp ();
                             emitter.ret ();
                             break;
                         }
@@ -1859,7 +1943,8 @@ namespace Planc {
                     emitter.pop_reg (callee_list[i]);
                 if (total_sub > 0)
                     emitter.add_rsp (total_sub);
-                emitter.pop_rbp ();
+                if (!omit_frame)
+                    emitter.pop_rbp ();
                 emitter.ret ();
             }
             if (!(program_uses_heap && arr_locals.length > 0)) {
@@ -1869,7 +1954,8 @@ namespace Planc {
                         emitter.pop_reg (callee_list[i]);
                     if (total_sub > 0)
                         emitter.add_rsp (total_sub);
-                    emitter.pop_rbp ();
+                    if (!omit_frame)
+                        emitter.pop_rbp ();
                     emitter.jmp_rel32 (tail_targets[ti]);
                 }
             }
