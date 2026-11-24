@@ -1692,6 +1692,7 @@ namespace Planc {
                     } else if (ins.op == IROp.BIN && (ins.sop == "<<" || ins.sop == ">>")) {
                         // Clobbers RCX (1)
                         uint32 no_cx = ~(1u << 1);
+                        if (ins.dst >= 0) allowed_mask[ins.dst] &= no_cx;
                         for (int w = 0; w < words; w++) {
                             uint64 m = cur_live[w];
                             while (m != 0) {
@@ -2380,8 +2381,10 @@ namespace Planc {
                                 Reg d = dst_reg_for (ins.dst, Reg.R10);
                                 emit_mov_rr (Reg.R10, l);
                                 emit_mov_rr (Reg.RCX, r);
-                                emit_mov_rr (d, Reg.R10);
-                                emit_shift_cl (ins.sop == "<<" ? 4 : (ins.is_unsigned ? 5 : 7), d);
+                                Reg sh_dst = (d == Reg.RCX) ? Reg.R11 : d;
+                                emit_mov_rr (sh_dst, Reg.R10);
+                                emit_shift_cl (ins.sop == "<<" ? 4 : (ins.is_unsigned ? 5 : 7), sh_dst);
+                                if (d == Reg.RCX) emit_mov_rr (Reg.RCX, Reg.R11);
                                 if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
                             } else if (ins.sop == "+" || ins.sop == "-" || ins.sop == "*"
                                        || ins.sop == "&" || ins.sop == "|" || ins.sop == "^") {
