@@ -1550,8 +1550,11 @@ namespace Planc {
                         for (int j = 0; j < inner.statements.length; j++)
                             out_stmts.add (inner.statements[j]);
                     } else {
-                        if (level >= 2 && opt_s is ForStatement)
+                        if (level >= 2 && opt_s is ForStatement) {
                             hoist_for_invariants ((ForStatement) opt_s, out_stmts);
+                            if (cur_prog != null)
+                                opt_s = try_unroll_for_4x ((ForStatement) opt_s);
+                        }
                         out_stmts.add (opt_s);
                     }
                     if (opt_s is ReturnStatement || opt_s is BreakStatement
@@ -1563,6 +1566,263 @@ namespace Planc {
             stmts.length = 0;
             for (int i = 0; i < out_stmts.length; i++)
                 stmts.add (out_stmts[i]);
+        }
+
+        private Expr unroll_subst_iv (Expr e, string iv, int64 off) {
+            if (off == 0) return e;
+            if (e is VarRef) {
+                if (((VarRef) e).name == iv) {
+                    return new BinaryExpr () {
+                        op = "+",
+                        left = e,
+                        right = new IntLiteral () { value = off, line = e.line, column = e.column },
+                        line = e.line,
+                        column = e.column
+                    };
+                }
+                return e;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = unroll_subst_iv (u.operand, iv, off);
+                return u;
+            }
+            if (e is IncDecExpr) {
+                var inc = (IncDecExpr) e;
+                inc.target = unroll_subst_iv (inc.target, iv, off);
+                return inc;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                b.left = unroll_subst_iv (b.left, iv, off);
+                b.right = unroll_subst_iv (b.right, iv, off);
+                return b;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = unroll_subst_iv (te.condition, iv, off);
+                te.then_expr = unroll_subst_iv (te.then_expr, iv, off);
+                te.else_expr = unroll_subst_iv (te.else_expr, iv, off);
+                return te;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                ix.target = unroll_subst_iv (ix.target, iv, off);
+                ix.index = unroll_subst_iv (ix.index, iv, off);
+                return ix;
+            }
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                ma.target = unroll_subst_iv (ma.target, iv, off);
+                return ma;
+            }
+            return e;
+        }
+
+        private bool unroll_stmt_ok (Statement? s) {
+            if (s == null) return false;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                if (blk.statements.length == 0 || blk.statements.length > 2) return false;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (!unroll_stmt_ok (blk.statements[i])) return false;
+                }
+                return true;
+            }
+            if (s is AssignStatement) {
+                return expr_is_inline_leaf (((AssignStatement) s).value);
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return expr_is_inline_leaf (ia.target)
+                    && expr_is_inline_leaf (ia.index)
+                    && expr_is_inline_leaf (ia.value);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return expr_is_inline_leaf (fa.target) && expr_is_inline_leaf (fa.value);
+            }
+            if (s is ExprStatement) {
+                var es = (ExprStatement) s;
+                return (es.expr is IncDecExpr) && expr_is_inline_leaf (((IncDecExpr) es.expr).target);
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return ifs.else_body == null
+                    && (ifs.condition is BinaryExpr)
+                    && expr_is_inline_leaf (ifs.condition)
+                    && unroll_stmt_ok (ifs.then_body);
+            }
+            return false;
+        }
+
+        private Statement unroll_clone_stmt (Statement s, string iv, int64 off) {
+            var p = (Program) cur_prog;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                var nb = new BlockStatement () { line = blk.line, column = blk.column };
+                for (int i = 0; i < blk.statements.length; i++)
+                    nb.statements.add (unroll_clone_stmt (blk.statements[i], iv, off));
+                return nb;
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                return new AssignStatement () {
+                    name = a.name,
+                    value = unroll_subst_iv (p.clone_expr_plain (a.value), iv, off),
+                    line = a.line,
+                    column = a.column
+                };
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return new IndexAssignStatement () {
+                    target = unroll_subst_iv (p.clone_expr_plain (ia.target), iv, off),
+                    index = unroll_subst_iv (p.clone_expr_plain (ia.index), iv, off),
+                    op = ia.op,
+                    value = unroll_subst_iv (p.clone_expr_plain (ia.value), iv, off),
+                    line = ia.line,
+                    column = ia.column
+                };
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return new FieldAssignStatement () {
+                    target = unroll_subst_iv (p.clone_expr_plain (fa.target), iv, off),
+                    field_name = fa.field_name,
+                    op = fa.op,
+                    value = unroll_subst_iv (p.clone_expr_plain (fa.value), iv, off),
+                    line = fa.line,
+                    column = fa.column
+                };
+            }
+            if (s is ExprStatement) {
+                var es = (ExprStatement) s;
+                return new ExprStatement () {
+                    expr = unroll_subst_iv (p.clone_expr_plain (es.expr), iv, off),
+                    line = es.line,
+                    column = es.column
+                };
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                return new IfStatement () {
+                    condition = unroll_subst_iv (p.clone_expr_plain (ifs.condition), iv, off),
+                    then_body = unroll_clone_stmt ((Statement) ifs.then_body, iv, off),
+                    line = ifs.line,
+                    column = ifs.column
+                };
+            }
+            return s;
+        }
+
+        private Statement try_unroll_for_4x (ForStatement fs) {
+            if (!(fs.init is VarDeclStatement) || !(fs.condition is BinaryExpr) || fs.step == null || fs.body == null)
+                return fs;
+            var vd = (VarDeclStatement) fs.init;
+            if (vd.decl_type != ValaType.INT || vd.is_weak || vd.is_unowned || vd.init == null)
+                return fs;
+            string iv = vd.name;
+            var cb = (BinaryExpr) fs.condition;
+            if (cb.op != "<" && cb.op != "<=") return fs;
+            if (!(cb.left is VarRef) || ((VarRef) cb.left).name != iv) return fs;
+            if (!(cb.right is IntLiteral || cb.right is VarRef)) return fs;
+            if (cb.right is VarRef && ((VarRef) cb.right).name == iv) return fs;
+            if (cb.right is IntLiteral && ((IntLiteral) cb.right).value < int64.MIN + 3) return fs;
+
+            bool step_ok = false;
+            if (fs.step is ExprStatement) {
+                var ses = (ExprStatement) fs.step;
+                if (ses.expr is IncDecExpr) {
+                    var inc = (IncDecExpr) ses.expr;
+                    if (inc.op == "++" && inc.target is VarRef && ((VarRef) inc.target).name == iv)
+                        step_ok = true;
+                }
+            } else if (fs.step is AssignStatement) {
+                var sa = (AssignStatement) fs.step;
+                if (sa.name == iv && sa.value is BinaryExpr) {
+                    var sb = (BinaryExpr) sa.value;
+                    if (sb.op == "+" && sb.left is VarRef && ((VarRef) sb.left).name == iv
+                        && sb.right is IntLiteral && ((IntLiteral) sb.right).value == 1)
+                        step_ok = true;
+                }
+            }
+            if (!step_ok) return fs;
+            if (!unroll_stmt_ok (fs.body)) return fs;
+
+            var mod = new GenericArray<string> ();
+            if (!collect_mod_stmt (fs.body, mod)) return fs;
+            if (arr_contains_str (mod, iv)) return fs;
+            if (cb.right is VarRef && arr_contains_str (mod, ((VarRef) cb.right).name)) return fs;
+
+            var p = (Program) cur_prog;
+            Expr end_minus_3 = (cb.right is IntLiteral)
+                ? (Expr) new IntLiteral () { value = ((IntLiteral) cb.right).value - 3, line = cb.line, column = cb.column }
+                : (Expr) new BinaryExpr () {
+                    op = "-",
+                    left = p.clone_expr_plain (cb.right),
+                    right = new IntLiteral () { value = 3, line = cb.line, column = cb.column },
+                    line = cb.line,
+                    column = cb.column
+                };
+            var u_cond = new BinaryExpr () {
+                op = cb.op,
+                left = new VarRef () { name = iv, line = cb.line, column = cb.column },
+                right = end_minus_3,
+                line = cb.line,
+                column = cb.column
+            };
+            var u_body = new BlockStatement () { line = fs.line, column = fs.column };
+            for (int k = 0; k < 4; k++) {
+                var cloned_b = unroll_clone_stmt (fs.body, iv, k);
+                if (cloned_b is BlockStatement) {
+                    var cbk = (BlockStatement) cloned_b;
+                    for (int bi = 0; bi < cbk.statements.length; bi++)
+                        u_body.statements.add (cbk.statements[bi]);
+                } else {
+                    u_body.statements.add (cloned_b);
+                }
+            }
+            u_body.statements.add (new AssignStatement () {
+                name = iv,
+                value = new BinaryExpr () {
+                    op = "+",
+                    left = new VarRef () { name = iv, line = fs.line, column = fs.column },
+                    right = new IntLiteral () { value = 4, line = fs.line, column = fs.column },
+                    line = fs.line,
+                    column = fs.column
+                },
+                line = fs.line,
+                column = fs.column
+            });
+
+            var r_body = new BlockStatement () { line = fs.line, column = fs.column };
+            var cloned_r = unroll_clone_stmt (fs.body, iv, 0);
+            if (cloned_r is BlockStatement) {
+                var crk = (BlockStatement) cloned_r;
+                for (int bi = 0; bi < crk.statements.length; bi++)
+                    r_body.statements.add (crk.statements[bi]);
+            } else {
+                r_body.statements.add (cloned_r);
+            }
+            r_body.statements.add (new AssignStatement () {
+                name = iv,
+                value = new BinaryExpr () {
+                    op = "+",
+                    left = new VarRef () { name = iv, line = fs.line, column = fs.column },
+                    right = new IntLiteral () { value = 1, line = fs.line, column = fs.column },
+                    line = fs.line,
+                    column = fs.column
+                },
+                line = fs.line,
+                column = fs.column
+            });
+
+            var outer = new BlockStatement () { line = fs.line, column = fs.column };
+            outer.statements.add ((Statement) fs.init);
+            outer.statements.add (new WhileStatement () { condition = u_cond, body = u_body, line = fs.line, column = fs.column });
+            outer.statements.add (new WhileStatement () { condition = p.clone_expr_plain ((Expr) fs.condition), body = r_body, line = fs.line, column = fs.column });
+            return outer;
         }
 
         private Statement? opt_stmt (Statement s) {

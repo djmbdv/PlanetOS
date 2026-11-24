@@ -594,6 +594,39 @@ namespace Planc {
             }
             if (s is IfStatement) {
                 var ifs = (IfStatement) s;
+                if (ifs.else_body == null && ifs.condition is BinaryExpr) {
+                    var cb = (BinaryExpr) ifs.condition;
+                    bool is_cmp = (cb.op == "==" || cb.op == "!=" || cb.op == "<"
+                                   || cb.op == "<=" || cb.op == ">" || cb.op == ">=");
+                    AssignStatement? asg = null;
+                    if (is_cmp) {
+                        if (ifs.then_body is AssignStatement) {
+                            asg = (AssignStatement) ifs.then_body;
+                        } else if (ifs.then_body is BlockStatement) {
+                            var blk = (BlockStatement) ifs.then_body;
+                            if (blk.statements.length == 1 && blk.statements[0] is AssignStatement)
+                                asg = (AssignStatement) blk.statements[0];
+                        }
+                    }
+                    if (asg != null && asg.value is BinaryExpr) {
+                        var ab = (BinaryExpr) asg.value;
+                        if ((ab.op == "+" || ab.op == "-") && ab.left is VarRef
+                            && ((VarRef) ab.left).name == asg.name && ab.right is IntLiteral) {
+                            int tv = lookup_var (asg.name);
+                            int64 k = ((IntLiteral) ab.right).value;
+                            if (tv >= 0 && !vreg_is_arr[tv] && k >= int32.MIN && k <= int32.MAX) {
+                                int cv = lower_expr (ifs.condition);
+                                int delta = cv;
+                                if (k != 1) {
+                                    delta = new_vreg ();
+                                    emit_ir (new IRInst () { op = IROp.BIN_IMM, sop = "*", dst = delta, lhs = cv, imm = k });
+                                }
+                                emit_ir (new IRInst () { op = IROp.BIN, sop = ab.op, dst = tv, lhs = tv, rhs = delta });
+                                return;
+                            }
+                        }
+                    }
+                }
                 int bb_then = new_bb ();
                 int bb_else = (ifs.else_body != null) ? new_bb () : -1;
                 int bb_end = new_bb ();
