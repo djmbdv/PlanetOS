@@ -5328,13 +5328,175 @@ namespace Planc {
         }
 
         private bool reg_alloc_func = false;
-        private int reg_alloc_next = 0;
+        private GenericArray<string> hot_reg_names = new GenericArray<string> ();
 
-        private void try_alloc_reg_slot (int slot, ValaType t) {
-            if (!reg_alloc_func || reg_alloc_next >= 4 || t == ValaType.STRUCT || is_fp_type (t))
+        private void add_var_weight (GenericArray<string> names, GenericArray<int> weights, string name, int w) {
+            if (name == "" || name == "this")
+                return;
+            for (int i = 0; i < names.length; i++) {
+                if (names[i] == name) {
+                    weights[i] = weights[i] + w;
+                    return;
+                }
+            }
+            names.add (name);
+            weights.add (w);
+        }
+
+        private void score_expr_weights (Expr? e, int w, GenericArray<string> names, GenericArray<int> weights) {
+            if (e == null) return;
+            if (e is VarRef) {
+                add_var_weight (names, weights, ((VarRef) e).name, w);
+                return;
+            }
+            if (e is UnaryExpr) { score_expr_weights (((UnaryExpr) e).operand, w, names, weights); return; }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                score_expr_weights (b.left, w, names, weights);
+                score_expr_weights (b.right, w, names, weights);
+                return;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                score_expr_weights (ix.target, w, names, weights);
+                score_expr_weights (ix.index, w, names, weights);
+                return;
+            }
+            if (e is MemberAccessExpr) { score_expr_weights (((MemberAccessExpr) e).target, w, names, weights); return; }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++)
+                    score_expr_weights (c.args[i], w, names, weights);
+                return;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                score_expr_weights (mc.target, w, names, weights);
+                for (int i = 0; i < mc.args.length; i++)
+                    score_expr_weights (mc.args[i], w, names, weights);
+                return;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                score_expr_weights (te.condition, w, names, weights);
+                score_expr_weights (te.then_expr, w, names, weights);
+                score_expr_weights (te.else_expr, w, names, weights);
+                return;
+            }
+            if (e is CoalesceExpr) {
+                var ce = (CoalesceExpr) e;
+                score_expr_weights (ce.left, w, names, weights);
+                score_expr_weights (ce.right, w, names, weights);
+                return;
+            }
+            if (e is TypeCheckExpr) { score_expr_weights (((TypeCheckExpr) e).operand, w, names, weights); return; }
+            if (e is ArrayNewExpr) { score_expr_weights (((ArrayNewExpr) e).length_expr, w, names, weights); return; }
+        }
+
+        private void score_stmt_weights (Statement? s, int w, GenericArray<string> names, GenericArray<int> weights) {
+            if (s == null) return;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                for (int i = 0; i < blk.statements.length; i++)
+                    score_stmt_weights (blk.statements[i], w, names, weights);
+                return;
+            }
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                add_var_weight (names, weights, d.name, w);
+                score_expr_weights (d.init, w, names, weights);
+                return;
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                add_var_weight (names, weights, a.name, w);
+                score_expr_weights (a.value, w, names, weights);
+                return;
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                score_expr_weights (fa.target, w, names, weights);
+                score_expr_weights (fa.value, w, names, weights);
+                return;
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                score_expr_weights (ia.target, w, names, weights);
+                score_expr_weights (ia.index, w, names, weights);
+                score_expr_weights (ia.value, w, names, weights);
+                return;
+            }
+            if (s is ReturnStatement) { score_expr_weights (((ReturnStatement) s).value, w, names, weights); return; }
+            if (s is ExprStatement) { score_expr_weights (((ExprStatement) s).expr, w, names, weights); return; }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                score_expr_weights (ifs.condition, w, names, weights);
+                score_stmt_weights (ifs.then_body, w, names, weights);
+                score_stmt_weights (ifs.else_body, w, names, weights);
+                return;
+            }
+            if (s is WhileStatement) {
+                var ws = (WhileStatement) s;
+                int nw = (w < 1000) ? w * 10 : w;
+                score_expr_weights (ws.condition, nw, names, weights);
+                score_stmt_weights (ws.body, nw, names, weights);
+                return;
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                int nw = (w < 1000) ? w * 10 : w;
+                score_stmt_weights (dw.body, nw, names, weights);
+                score_expr_weights (dw.condition, nw, names, weights);
+                return;
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                score_stmt_weights (fs.init, w, names, weights);
+                int nw = (w < 1000) ? w * 10 : w;
+                score_expr_weights (fs.condition, nw, names, weights);
+                score_stmt_weights (fs.step, nw, names, weights);
+                score_stmt_weights (fs.body, nw, names, weights);
+                return;
+            }
+        }
+
+        private void compute_hot_reg_vars (Function f) {
+            hot_reg_names = new GenericArray<string> ();
+            var names = new GenericArray<string> ();
+            var weights = new GenericArray<int> ();
+            for (int i = 0; i < f.params.length; i++) {
+                if (!f.params[i].is_ref && !f.params[i].is_out && f.params[i].param_type != ValaType.STRUCT && !is_fp_type (f.params[i].param_type))
+                    add_var_weight (names, weights, f.params[i].name, 1);
+            }
+            if (f.body != null) {
+                for (int i = 0; i < f.body.length; i++)
+                    score_stmt_weights (f.body[i], 1, names, weights);
+            }
+            for (int k = 0; k < 4 && k < names.length; k++) {
+                int best = -1;
+                int best_w = -1;
+                for (int i = 0; i < names.length; i++) {
+                    if (weights[i] > best_w) {
+                        best_w = weights[i];
+                        best = i;
+                    }
+                }
+                if (best < 0 || best_w <= 0) break;
+                hot_reg_names.add (names[best]);
+                weights[best] = -1;
+            }
+        }
+
+        private void try_alloc_reg_slot (int slot, ValaType t, string name) {
+            if (!reg_alloc_func || t == ValaType.STRUCT || is_fp_type (t))
                 return;
             Reg[] regs = { Reg.R12, Reg.R13, Reg.R14, Reg.R15 };
-            emitter.assign_slot_reg (slot, regs[reg_alloc_next++]);
+            for (int k = 0; k < hot_reg_names.length && k < 4; k++) {
+                if (hot_reg_names[k] == name) {
+                    emitter.assign_slot_reg (slot, regs[k]);
+                    return;
+                }
+            }
         }
 
         private static bool fn_has_ref_or_out (Function? f) {
@@ -5596,9 +5758,10 @@ namespace Planc {
             emitter.zero_local_batch (ref_temp_start, total_slots);
 
             reg_alloc_func = (opt_level >= 2 && !f.is_async && !f.is_dtor && !f.is_compact_free && f.from_lambda == null && !stmt_list_uses_addr_or_lambda (f.body));
-            reg_alloc_next = 0;
-            if (reg_alloc_func)
+            if (reg_alloc_func) {
+                compute_hot_reg_vars (f);
                 emitter.begin_reg_alloc (frame_bytes);
+            }
 
             var param_raw_slots = new int[f.params.length];
             var param_final_slots = new int[f.params.length];
@@ -5611,7 +5774,7 @@ namespace Planc {
                 bool by_ref = f.params[i].is_ref || f.params[i].is_out;
                 bool is_fp = !by_ref && is_fp_type (f.params[i].param_type);
                 if (!by_ref && f.params[i].param_type != ValaType.STRUCT)
-                    try_alloc_reg_slot (raw_slot, f.params[i].param_type);
+                    try_alloc_reg_slot (raw_slot, f.params[i].param_type, f.params[i].name);
                 if (is_fp && xmm_idx < 8) {
                     emitter.movq_rax_xmm (xmm_idx++);
                     emitter.store_local (raw_slot);
@@ -9479,7 +9642,7 @@ namespace Planc {
                 var slot = next_var_slot;
                 next_var_slot += nslots;
                 if (nslots == 1 && vtype != ValaType.STRUCT)
-                    try_alloc_reg_slot (slot, vtype);
+                    try_alloc_reg_slot (slot, vtype, d.name);
 
                 if (vtype == ValaType.STRUCT) {
                     var base_disp = struct_base_disp (slot, nslots);
@@ -10790,6 +10953,47 @@ namespace Planc {
             return false;
         }
 
+        private int local_var_slot_for_rcx (Expr? e) {
+            if (!(e is VarRef))
+                return -1;
+            var vr = (VarRef) e;
+            if (vr.target_del_type != "")
+                return -1;
+            var idx = lookup (vr.name);
+            if (idx < 0 || local_by_ref[idx])
+                return -1;
+            if (local_types[idx] == ValaType.STRUCT || is_fp_type (local_types[idx]))
+                return -1;
+            return local_slots[idx];
+        }
+
+        private static bool expr_may_mutate (Expr? e) {
+            if (e == null) return false;
+            if (e is CallExpr || e is MethodCallExpr || e is IncDecExpr
+                || e is ClassNewExpr || e is LambdaExpr || e is YieldExpr)
+                return true;
+            if (e is UnaryExpr) return expr_may_mutate (((UnaryExpr) e).operand);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_may_mutate (b.left) || expr_may_mutate (b.right);
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return expr_may_mutate (ix.target) || expr_may_mutate (ix.index);
+            }
+            if (e is MemberAccessExpr) return expr_may_mutate (((MemberAccessExpr) e).target);
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_may_mutate (te.condition) || expr_may_mutate (te.then_expr) || expr_may_mutate (te.else_expr);
+            }
+            if (e is CoalesceExpr) {
+                var ce = (CoalesceExpr) e;
+                return expr_may_mutate (ce.left) || expr_may_mutate (ce.right);
+            }
+            if (e is TypeCheckExpr) return expr_may_mutate (((TypeCheckExpr) e).operand);
+            return false;
+        }
+
         private void emit_cond_jump_if_false (Expr cond, Label target) throws SemanticError {
             if (opt_level >= 1 && cond is BinaryExpr && (!program_uses_heap || !expr_has_ref_temp (cond))) {
                 var b = (BinaryExpr) cond;
@@ -10817,13 +11021,19 @@ namespace Planc {
                                 return;
                             }
                         }
-                        gen_expr (b.left);
-                        emitter.push_rax ();
-                        push_depth++;
-                        gen_expr (b.right);
-                        emitter.mov_rcx_rax ();
-                        emitter.pop_rax ();
-                        push_depth--;
+                        int rhs_slot = local_var_slot_for_rcx (b.right);
+                        if (rhs_slot >= 0 && !expr_may_mutate (b.left)) {
+                            gen_expr (b.left);
+                            emitter.load_local_to_rcx (rhs_slot);
+                        } else {
+                            gen_expr (b.left);
+                            emitter.push_rax ();
+                            push_depth++;
+                            gen_expr (b.right);
+                            emitter.mov_rcx_rax ();
+                            emitter.pop_rax ();
+                            push_depth--;
+                        }
                         emitter.cmp_rax_rcx ();
                         emitter.branch (inverted_branch (b.op, is_u), target);
                         return;
@@ -12294,13 +12504,21 @@ namespace Planc {
                         return;
                     }
                 }
-                gen_expr (b.left);
-                emitter.push_rax ();
-                push_depth++;
-                gen_expr (b.right);
-                emitter.mov_rcx_rax ();
-                emitter.pop_rax ();
-                push_depth--;
+                int rhs_slot = (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER)
+                    ? local_var_slot_for_rcx (b.right)
+                    : -1;
+                if (rhs_slot >= 0 && !expr_may_mutate (b.left)) {
+                    gen_expr (b.left);
+                    emitter.load_local_to_rcx (rhs_slot);
+                } else {
+                    gen_expr (b.left);
+                    emitter.push_rax ();
+                    push_depth++;
+                    gen_expr (b.right);
+                    emitter.mov_rcx_rax ();
+                    emitter.pop_rax ();
+                    push_depth--;
+                }
                 if ((b.op == "==" || b.op == "!=") && (lt == ValaType.POINTER || rt == ValaType.POINTER)) {
                     var l_p1 = emitter.new_label ();
                     var l_p2 = emitter.new_label ();

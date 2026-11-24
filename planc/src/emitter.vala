@@ -944,6 +944,29 @@ namespace Planc {
             load_rbp_disp (slot_offset (slot));
         }
 
+        // mov rcx, [rbp - d] | mov rcx, rN
+        public void load_local_to_rcx (int slot) {
+            if (async_task_rbp_offset != 0) {
+                load_r10_async_task ();
+                code.u8 (0x49); code.u8 (0x8B); code.u8 (0x8A);
+                code.u32le ((uint32) (80 + slot * 8));
+                return;
+            }
+            int sr = get_slot_reg (slot);
+            if (sr >= 0) {
+                mov_reg_reg (Reg.RCX, (Reg) sr);
+                return;
+            }
+            int d = slot_offset (slot);
+            if (d >= -128 && d <= 127) {
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4D);
+                code.u8 ((uint8) d);
+            } else {
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x8D);
+                code.u32le ((uint32) d);
+            }
+        }
+
         // mov [rbp - d], rax                 48 89 45 d8 | 48 89 85 d32
         public void store_local (int slot) {
             if (async_task_rbp_offset != 0) {
