@@ -256,23 +256,27 @@ Own layout, without FHS:
 
 `/info` replaces `/proc` and `/sys` together, with a single stable format (`key: value`) consumable by `Planet.Config` (US-07).
 
-### 9.1 `/dev` and device handles (planned)
+### 9.1 `/dev` and device handles (implemented for byte devices)
 
 `/dev` is a devfs view generated on enumeration, never a stored tree. Opening
 `/dev/<name>` returns a **per-process handle with rights**, not a global integer
 ([08](08-io-data-path.md)). The handle is the only way to reach the device: a
 process that was not granted it cannot name it.
 
-- Byte devices (`/dev/serial0`, `/dev/console`, raw keyboard) are `Gio.InputStream`
-  and `OutputStream` subclasses. Filter chains and line discipline run in the
-  library, not in ring 0.
+- Byte devices (`/dev/serial0`, `/dev/console`, `/dev/null`) are
+  `Gio.InputStream`/`OutputStream` objects that also implement
+  `PollableInputStream`/`PollableOutputStream` and `FileDescriptorBased`. Filter
+  chains and line discipline run in the library, not in ring 0.
 - Framed devices (block, network, GPU) are a descriptor ring plus a doorbell.
   The kernel validates every descriptor; userland owns buffers and protocol.
 
-Current state: `SYS_OPEN` resolves only XFS and RAMFS
-([kernel/vfs.vala](../kernel/vfs.vala)), the fd table is global
-([kernel/layout.vala](../kernel/layout.vala)), and there is no devfs. Phase A and
-B1 of [08](08-io-data-path.md) close this.
+Current state: `SYS_OPEN` resolves `/dev/console`, `/dev/serial0` and `/dev/null`
+to `KIND_DEV` handles that carry no seek right; create, mkdir and rename are
+refused inside `/dev`
+([kernel/vfs.vala](../kernel/vfs.vala), [kernel/syscall.vala](../kernel/syscall.vala)).
+The fd table is per process with ownership, generation and rights
+(`kernel/syscall.vala`). Remaining from B1 of [08](08-io-data-path.md): `cat`
+through `/dev/serial0` driven by readiness instead of a blocking read.
 
 ## 10. SDK
 

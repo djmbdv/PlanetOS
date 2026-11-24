@@ -28,8 +28,9 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | `MainContext` with idle, timeout and fd watch | [stdlib/glib/mainloop.vala](../stdlib/glib/mainloop.vala) | implemented, 8 watches, 15 fds per poll |
 | Futex-like wait/wake on a user word | `SYS_WAIT_ADDR` / `SYS_WAKE_ADDR`, [kernel/syscall.vala](../kernel/syscall.vala) | implemented |
 | Zero-copy shared surface, app <-> compositor | [stdlib/gdk/window.vala](../stdlib/gdk/window.vala) | implemented, built on an unsafe map |
-| Device namespace (`/dev`) | [kernel/vfs.vala](../kernel/vfs.vala) | **missing**: `SYS_OPEN` resolves only XFS/RAMFS |
+| Device namespace (`/dev`) | [kernel/vfs.vala](../kernel/vfs.vala) | implemented (B1): `/dev/console`, `/dev/serial0`, `/dev/null` resolve to `KIND_DEV` handles that carry no seek right |
 | Handles with ownership, generation and rights | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A1.1/A1.2): 64 slots, `index \| generation << 8`, per-operation rights |
+| `Pollable`, `FileDescriptorBased`, `IOStream`, cancellable source | [stdlib/gio/types.vala](../stdlib/gio/types.vala), [stdlib/gio/streams.vala](../stdlib/gio/streams.vala) | implemented: `PollableInputStream`/`PollableOutputStream` on the file and device streams, `SimpleIOStream`, `Cancellable.create_source` |
 | Capability grant | `SYS_MAP_USER_AT`, [kernel/syscall.vala](../kernel/syscall.vala) | **missing**: maps any physical frame above 6 MiB |
 | Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A3): PML4 walk with read/write rights, guarded copy that recovers from a fault |
 | Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
@@ -140,19 +141,30 @@ internal unsafe module available only to the runtime and to the dlib loader.
 ### 5.1 Shape
 
 ```vala
-// Gio has no Pollable interface today; both types are part of this phase.
-public interface Pollable : Object {
-    public abstract bool ready (uint32 condition) throws IOError; // POLL.IN / POLL.OUT
+// Implemented in stdlib/gio/types.vala. `create_source` returns a Source that
+// the MainContext can watch, so a device stream plugs into the same event loop
+// as any other source.
+public interface PollableInputStream : Object {
+    public abstract bool is_readable ();
+    public abstract Source create_source (Cancellable? cancellable = null);
 }
 
-public class DeviceInputStream : Gio.InputStream, Pollable {
-    public DeviceInputStream (Sys.Handle handle, Sys.Rights rights);
+public interface PollableOutputStream : Object {
+    public abstract bool is_writable ();
+    public abstract Source create_source (Cancellable? cancellable = null);
+}
+
+public interface FileDescriptorBased : Object {
+    public abstract int get_fd ();
 }
 ```
 
-`Gio.File` for `/dev/<name>` returns these streams. No new stream base class is
-needed: `FilterInputStream`, `BufferedInputStream` and `DataInputStream` already
-exist ([stdlib/gio/streams.vala](../stdlib/gio/streams.vala)).
+`Gio.File` for `/dev/<name>` returns these streams: `read ()` gives a
+`FileInputStream` that is `PollableInputStream` and `FileDescriptorBased`,
+`append_to ()` gives the matching `FileOutputStream`, and `SimpleIOStream`
+pairs them into one `IOStream`. No new stream base class is needed:
+`FilterInputStream`, `BufferedInputStream` and `DataInputStream` already exist
+([stdlib/gio/streams.vala](../stdlib/gio/streams.vala)).
 
 ### 5.2 Composition
 
@@ -277,7 +289,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 | **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | Mapping an unowned frame fails; the compositor still attaches a client surface |
 | **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`). **A3.1 also done**: paths, `readdir` and `stat_ex` stage through the scratch, and `copy_guarded` moves 8 bytes per iteration. 20/20 QEMU cases green |
 | **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
-| **B1** | `devfs` and `Gio.File` for `/dev` | `open("/dev/serial0")` returns a stream and `cat` works through it |
+| **B1** | `devfs` and `Gio.File` for `/dev` | **Done for the namespace**: `gio_demo` opens `/dev/console`, checks `PollableInputStream`/`FileDescriptorBased`/`PollableOutputStream`/`is_writable` and closes the pair as one `IOStream` (`dev=ok` in `system`). Remaining: `cat` through `/dev/serial0` and a readiness-driven read |
 | **B2** | Filter chains and line discipline in userland | A line-discipline case passes; `SYS_READ_KEY` still works |
 | **C1** | Ring ABI, validation, `SYS_RING_KICK` | A malformed descriptor is rejected without touching the device |
 | **C2** | IRQ-driven block I/O (virtio-blk) | No spin loop in the block path; throughput case passes |
