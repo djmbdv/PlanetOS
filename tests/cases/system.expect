@@ -10,4 +10,5 @@
 =stale=ok
 =guard=ok
 =thread=ok
+=pool=ok
 !FAIL

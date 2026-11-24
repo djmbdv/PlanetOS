@@ -55,6 +55,7 @@ Impact scale:
 | **R-31** | A userland protocol stack blocks the main loop or copies per stage | High | 2 | One blocked `read` stalls every source; throughput collapses on packet paths | Coroutines for stream stages (VL-08), buffered byte streams, rings for framed devices |
 | **R-32** | `SYS_POLL` does not report real readiness and its capacity is too low | High | 2 | The loop spins on an open file, or watches past 8 sources are dropped | IO-06: handle-scoped readiness, dynamic watch array, no busy-poll |
 | **R-33** | Scanout stays a copy even when app/compositor is zero-copy | Medium | 1 | Frame time is dominated by `SYS_FB_BLIT_RECT` | Grant the framebuffer to the compositor and double-buffer; measured separately from the ring work |
+| **R-34** | The coroutine runtime cannot link into a program that imports a `.dlib` | High | 3 | `planc` fails with `call target out of range for __planc_async_enqueue`; observed with the unqualified `Mutex` intrinsic in `sys_demo`, which imports `glib.dlib` | Reproduced while adding the ThreadPool test. Until the linker resolves the async runtime against imports, dlib consumers must use `RecMutex`/`Cond` (or `Channel` outside async contexts); regression case pending |
 
 ## 4. Open decisions
 

@@ -116,9 +116,16 @@ Rules:
   `copy_guarded` records its frame; a kernel-mode page fault inside it is
   recovered by `copy_recover`, which returns 1 and lets the syscall fail with
   `EINVAL` instead of killing the task.
-- Paths are validated the same way but are still read in place by the VFS.
-  Copying them through the scratch is A3.1; until then a path buffer is
-  TOCTOU-free only because a single user task owns its address space.
+- Paths (A3.1, implemented): `copy_path` validates and copies into the staging
+  buffer (offset 0 and `MAX_PATH` for rename), and the VFS reads kernel memory.
+  Covered: open, create, unlink, rename, mkdir, readdir, stat, stat_ex, exec and
+  spawn.
+- `SYS_READDIR` and `SYS_STAT_EX` also stage their output through the scratch
+  and return it with `copy_guarded`, so their user buffers are written through
+  the same recoverable path.
+- Still validated but not staged: `SYS_PS`, `SYS_GETENV`, `SYS_KLOG_READ`,
+  `SYS_MOUSE_READ` and `SYS_FB_INFO` write short results directly to user
+  memory (A3.2).
 - Ring descriptors will be read through a kernel copy, never dereferenced in
   place (Phase C).
 
@@ -268,7 +275,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 |---|---|---|
 | **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 19/19 QEMU cases green. A dedicated per-process table remains an optional optimisation |
 | **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | Mapping an unowned frame fails; the compositor still attaches a client surface |
-| **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`); 19/19 QEMU cases green. Copying path buffers through the scratch remains as A3.1 |
+| **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`). **A3.1 also done**: paths, `readdir` and `stat_ex` stage through the scratch, and `copy_guarded` moves 8 bytes per iteration. 20/20 QEMU cases green |
 | **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
 | **B1** | `devfs` and `Gio.File` for `/dev` | `open("/dev/serial0")` returns a stream and `cat` works through it |
 | **B2** | Filter chains and line discipline in userland | A line-discipline case passes; `SYS_READ_KEY` still works |

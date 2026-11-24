@@ -16,6 +16,17 @@ private int probe_err = 0;
 private int thread_seen_tid = -1;
 private int thread_ran = 0;
 
+// RecMutex, not the unqualified `Mutex`: that name is the planc coroutine
+// intrinsic, which pulls the async runtime.
+private RecMutex pool_mutex = new RecMutex ();
+private int pool_sum = 0;
+
+private void pool_job (int data) {
+    pool_mutex.@lock ();
+    pool_sum = pool_sum + data;
+    pool_mutex.unlock ();
+}
+
 private uint8[]? demo_thread_body () {
     thread_seen_tid = Sys.tid ();
     thread_ran = 1;
@@ -221,6 +232,26 @@ int main (string[] args) {
         print ("thread=ok\n");
     else {
         print ("thread=FAIL\n");
+        fails++;
+    }
+
+    // 13. ThreadPool drains its queue on real workers.
+    pool_sum = 0;
+    var pool = new ThreadPool (pool_job, 2, false);
+    pool.push (1);
+    pool.push (2);
+    pool.push (3);
+    int spins = 0;
+    while (pool.unprocessed () > 0 && spins < 400) {
+        Sys.sleep_ms (5);
+        spins++;
+    }
+    int pending_left = (int) pool.unprocessed ();
+    pool.stop ();
+    if (pool_sum == 6 && pending_left == 0)
+        print ("pool=ok\n");
+    else {
+        print ("pool=FAIL\n");
         fails++;
     }
 

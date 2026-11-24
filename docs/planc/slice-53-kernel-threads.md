@@ -50,5 +50,21 @@ asserts that it differs from the main tid:
 thread=ok
 ```
 
-The full QEMU suite is 19/19. `ThreadPool` is now backed by real workers; no
-demo uses it yet, so its queue behaviour is unverified in the guest.
+`sys_demo` check 13 also creates a `ThreadPool` with two workers, pushes three
+jobs and waits for the queue to drain:
+
+```
+pool=ok
+```
+
+`ThreadPool` is backed by real workers and its queue parses in the guest. Two
+traps found while writing that check:
+
+- The unqualified `Mutex` is the `planc` coroutine intrinsic, not `GLib.Mutex`.
+  Naming it pulls the async runtime, and a program that imports `glib.dlib`
+  then fails to link (`R-34` in [07](../07-risks-and-decisions.md)). The test
+  uses `RecMutex`.
+- `GLib.Mutex` cannot be named as a qualified type in that compilation unit
+  (`unknown type 'GLib'`), so the workaround is the vapi-free `RecMutex`.
+
+The full QEMU suite is 20/20.

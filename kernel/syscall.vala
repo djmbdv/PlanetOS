@@ -139,7 +139,16 @@ namespace Planet.Kernel {
         mov %rsp, 8(%rax)
         mov %rbp, 16(%rax)
         movq $1, (%rax)
-    cg_loop:
+    cg8_loop:
+        cmp $8, %rdx
+        jl cg_tail
+        mov (%rsi), %rax
+        mov %rax, (%rdi)
+        add $8, %rsi
+        add $8, %rdi
+        sub $8, %rdx
+        jmp cg8_loop
+    cg_tail:
         cmp $0, %rdx
         jz cg_done
         mov (%rsi), %al
@@ -147,7 +156,7 @@ namespace Planet.Kernel {
         inc %rsi
         inc %rdi
         sub $1, %rdx
-        jmp cg_loop
+        jmp cg_tail
     cg_done:
         mov $0x107800, %rax
         movq $0, (%rax)
@@ -172,6 +181,21 @@ namespace Planet.Kernel {
 
     private bool path_ok (int ptr, int len) {
         return len > 0 && len <= MAX_PATH && user_ok (ptr, len);
+    }
+
+    // Copies a validated user path into the staging buffer at `off` and returns
+    // the kernel address. The VFS then reads kernel memory, so a concurrent
+    // change to the user buffer cannot alter a path that was already checked.
+    // Two paths fit: offsets 0 and MAX_PATH.
+    private int copy_path (int ptr, int len, int off) {
+        if (len <= 0 || len > MAX_PATH)
+            return -1;
+        if (!user_range_ok (ptr, len, false))
+            return -1;
+        int dst = KernelIo.scratch_addr () + off;
+        if (copy_guarded (dst, ptr, len) != 0)
+            return -1;
+        return dst;
     }
 
     private static int fd_kind_of (int slot) {
@@ -365,8 +389,11 @@ namespace Planet.Kernel {
             case 6: // SYS_OPEN(name_ptr, name_len)
                 if (!path_ok (a0, a1))
                     return fail (E_INVAL);
+                int kp6 = copy_path (a0, a1, 0);
+                if (kp6 < 0)
+                    return fail (E_INVAL);
                 int id = -1;
-                int kind = Vfs.resolve (a0, a1, out id);
+                int kind = Vfs.resolve (kp6, a1, out id);
                 int fd_kind = 0;
                 int fsz = 0;
                 if (kind == Vfs.KIND_XFS) {
@@ -457,13 +484,19 @@ namespace Planet.Kernel {
             case 13: // SYS_EXEC(name_ptr, name_len, cmdline_ptr)
                 if (!path_ok (a0, a1) || (a2 != 0 && !user_ok (a2, 1)))
                     return -1;
-                return ElfLoader.exec_from_xfs (a0, a1, a2);
+                int kp13 = copy_path (a0, a1, 0);
+                if (kp13 < 0)
+                    return fail (E_INVAL);
+                return ElfLoader.exec_from_xfs (kp13, a1, a2);
             case 14: // SYS_CREATE(path_ptr, path_len) -> fd
                 if (!path_ok (a0, a1))
                     return fail (E_INVAL);
+                int kp14 = copy_path (a0, a1, 0);
+                if (kp14 < 0)
+                    return fail (E_INVAL);
                 int base_ptr14 = 0;
                 int base_len14 = 0;
-                int parent14 = Vfs.resolve_parent (a0, a1, out base_ptr14, out base_len14);
+                int parent14 = Vfs.resolve_parent (kp14, a1, out base_ptr14, out base_len14);
                 if (parent14 < -1 || Vfs.reserved_name (base_ptr14, base_len14))
                     return fail (E_ACCES);
                 int fd_kind14 = 2;
@@ -506,7 +539,10 @@ namespace Planet.Kernel {
             case 16: // SYS_SPAWN(name_ptr, name_len, cmdline_ptr) -> tid
                 if (!path_ok (a0, a1) || (a2 != 0 && !user_ok (a2, 1)))
                     return fail (E_INVAL);
-                return ElfLoader.spawn_from_xfs (a0, a1, a2);
+                int kp16 = copy_path (a0, a1, 0);
+                if (kp16 < 0)
+                    return fail (E_INVAL);
+                return ElfLoader.spawn_from_xfs (kp16, a1, a2);
             case 17: // SYS_WAIT(tid) -> exit_code
                 return Sched.wait_tid (a0);
             case 18: // SYS_PS(buf, max_bytes) -> bytes
@@ -568,12 +604,15 @@ namespace Planet.Kernel {
             case 28: // SYS_UNLINK(path_ptr, path_len)
                 if (!path_ok (a0, a1))
                     return -1;
+                int kp28 = copy_path (a0, a1, 0);
+                if (kp28 < 0)
+                    return fail (E_INVAL);
                 int id28 = -1;
-                int kind28 = Vfs.resolve (a0, a1, out id28);
+                int kind28 = Vfs.resolve (kp28, a1, out id28);
                 if (kind28 == Vfs.KIND_XFS) {
                     int bp = 0;
                     int bl = 0;
-                    if (Vfs.resolve_parent (a0, a1, out bp, out bl) == -1)
+                    if (Vfs.resolve_parent (kp28, a1, out bp, out bl) == -1)
                         return Xfs.unlink_root (bp, bl);
                     return -1;
                 }
@@ -585,15 +624,19 @@ namespace Planet.Kernel {
             case 29: // SYS_RENAME(old_ptr, old_len, new_ptr, new_len)
                 if (!path_ok (a0, a1) || !path_ok (a2, a3))
                     return fail (E_INVAL);
+                int kp29a = copy_path (a0, a1, 0);
+                int kp29b = copy_path (a2, a3, MAX_PATH);
+                if (kp29a < 0 || kp29b < 0)
+                    return fail (E_INVAL);
                 int id29 = -1;
-                int kind29 = Vfs.resolve (a0, a1, out id29);
+                int kind29 = Vfs.resolve (kp29a, a1, out id29);
                 if (kind29 != Vfs.KIND_FILE && kind29 != Vfs.KIND_DIR)
                     return fail (E_NOENT);
                 if (id29 < 0)
                     return fail (E_ACCES); // the root cannot be renamed
                 int base_ptr29 = 0;
                 int base_len29 = 0;
-                int parent29 = Vfs.resolve_parent (a2, a3, out base_ptr29, out base_len29);
+                int parent29 = Vfs.resolve_parent (kp29b, a3, out base_ptr29, out base_len29);
                 if (parent29 < -1 || Vfs.reserved_name (base_ptr29, base_len29))
                     return fail (E_ACCES);
                 if (kind29 == Vfs.KIND_DIR && Vfs.is_descendant (parent29, id29))
@@ -603,9 +646,12 @@ namespace Planet.Kernel {
             case 30: // SYS_MKDIR(path_ptr, path_len)
                 if (!path_ok (a0, a1))
                     return fail (E_INVAL);
+                int kp30 = copy_path (a0, a1, 0);
+                if (kp30 < 0)
+                    return fail (E_INVAL);
                 int base_ptr30 = 0;
                 int base_len30 = 0;
-                int parent30 = Vfs.resolve_parent (a0, a1, out base_ptr30, out base_len30);
+                int parent30 = Vfs.resolve_parent (kp30, a1, out base_ptr30, out base_len30);
                 if (parent30 < -1 || Vfs.reserved_name (base_ptr30, base_len30))
                     return fail (E_ACCES);
                 if (parent30 == -1 && Xfs.lookup_root (base_ptr30, base_len30) > 0)
@@ -618,26 +664,39 @@ namespace Planet.Kernel {
             case 31: // SYS_READDIR(path_ptr, path_len, buf, max_bytes)
                 if (!path_ok (a0, a1) || !user_ok_w (a2, a3))
                     return fail (E_INVAL);
+                int kp31 = copy_path (a0, a1, 0);
+                if (kp31 < 0)
+                    return fail (E_INVAL);
                 int id31 = -1;
-                int kind31 = Vfs.resolve (a0, a1, out id31);
+                int kind31 = Vfs.resolve (kp31, a1, out id31);
                 if (kind31 != Vfs.KIND_DIR)
                     return fail (E_NOTDIR);
-                int n31_1 = Ramfs.list_children (id31, a2, a3);
+                int sc31 = KernelIo.scratch_addr ();
+                int want31 = (a3 > KernelIo.CHUNK) ? KernelIo.CHUNK : a3;
+                int n31_1 = Ramfs.list_children (id31, sc31, want31);
                 if (n31_1 < 0)
                     n31_1 = 0;
                 int n31_2 = 0;
-                if (id31 == -1 && a3 > n31_1)
-                    n31_2 = Xfs.list_root (a2 + n31_1, a3 - n31_1);
+                if (id31 == -1 && want31 > n31_1)
+                    n31_2 = Xfs.list_root (sc31 + n31_1, want31 - n31_1);
                 if (n31_2 < 0)
                     n31_2 = 0;
-                return n31_1 + n31_2;
+                int tot31 = n31_1 + n31_2;
+                if (tot31 > 0 && copy_guarded (a2, sc31, tot31) != 0)
+                    return fail (E_INVAL);
+                return tot31;
             case 32: // SYS_STAT(path_ptr, path_len) -> 0 none, 1 file, 2 dir
                 if (!path_ok (a0, a1)) {
                     Sched.set_errno (E_INVAL);
                     return 0;
                 }
+                int kp32 = copy_path (a0, a1, 0);
+                if (kp32 < 0) {
+                    Sched.set_errno (E_INVAL);
+                    return 0;
+                }
                 int id32 = -1;
-                int kind32 = Vfs.resolve (a0, a1, out id32);
+                int kind32 = Vfs.resolve (kp32, a1, out id32);
                 if (kind32 == Vfs.KIND_DIR)
                     return 2;
                 if (kind32 == Vfs.KIND_FILE || kind32 == Vfs.KIND_XFS)
@@ -741,8 +800,11 @@ namespace Planet.Kernel {
             case 55: // SYS_STAT_EX(path_ptr, path_len, out16) -> kind or 0
                 if (!path_ok (a0, a1) || !user_ok_w (a2, 16))
                     return fail (E_INVAL);
+                int kp55 = copy_path (a0, a1, 0);
+                if (kp55 < 0)
+                    return fail (E_INVAL);
                 int id55 = -1;
-                int kind55 = Vfs.resolve (a0, a1, out id55);
+                int kind55 = Vfs.resolve (kp55, a1, out id55);
                 int sz55 = 0;
                 int k55 = 0;
                 if (kind55 == Vfs.KIND_XFS) {
@@ -756,13 +818,16 @@ namespace Planet.Kernel {
                 } else {
                     return fail (E_NOENT);
                 }
+                int st55 = KernelLayout.SYSCALL_SCRATCH;
                 for (int b55 = 0; b55 < 16; b55++)
-                    mmio_write8 (a2 + b55, 0);
-                mmio_write8 (a2 + 0, k55);
-                mmio_write8 (a2 + 4, sz55 & 0xFF);
-                mmio_write8 (a2 + 5, (sz55 >> 8) & 0xFF);
-                mmio_write8 (a2 + 6, (sz55 >> 16) & 0xFF);
-                mmio_write8 (a2 + 7, (sz55 >> 24) & 0xFF);
+                    mmio_write8 (st55 + b55, 0);
+                mmio_write8 (st55 + 0, k55);
+                mmio_write8 (st55 + 4, sz55 & 0xFF);
+                mmio_write8 (st55 + 5, (sz55 >> 8) & 0xFF);
+                mmio_write8 (st55 + 6, (sz55 >> 16) & 0xFF);
+                mmio_write8 (st55 + 7, (sz55 >> 24) & 0xFF);
+                if (copy_guarded (a2, st55, 16) != 0)
+                    return fail (E_INVAL);
                 ok ();
                 return k55;
             case 56: // SYS_KLOG_WRITE(cat, level, msg_ptr, msg_len)
