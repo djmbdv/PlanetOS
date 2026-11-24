@@ -169,8 +169,25 @@ if (-not (Test-Path $Planc)) {
 
 function Invoke-Planc {
     param([string[]]$PlancArgs)
-    & $Planc @PlancArgs
-    if ($LASTEXITCODE -ne 0) {
+    # planc writes diagnostics (warnings included) to stderr. Under
+    # $ErrorActionPreference = 'Stop' PowerShell 5.1 turns that into a
+    # terminating NativeCommandError, which would make any warning fatal, so
+    # stderr is surfaced as plain text and only the exit code decides.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    if ($env:PLANC_TRACE) {
+        Write-Host ('planc ' + ($PlancArgs -join ' '))
+    }
+    & $Planc @PlancArgs 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) {
+            Write-Host $_.Exception.Message
+        } else {
+            Write-Host $_
+        }
+    }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    if ($code -ne 0) {
         Fail ('planc failed: ' + ($PlancArgs -join ' '))
     }
 }
