@@ -45,6 +45,42 @@ namespace Planet.Kernel {
     public extern void port_out8 (int port, int val);
 
     [AsmBody(@"
+        mov %edi, %edx
+        in %dx, %eax
+        ret
+    ")]
+    public extern int port_in32 (int port);
+
+    [AsmBody(@"
+        mov %edi, %edx
+        mov %esi, %eax
+        out %eax, %dx
+        ret
+    ")]
+    public extern void port_out32 (int port, int val);
+
+    [AsmBody(@"
+        # rdmsr(msr in edi) -> edx:eax, returned in rax
+        mov %edi, %ecx
+        rdmsr
+        shl $32, %rdx
+        or %rdx, %rax
+        ret
+    ")]
+    public extern int rdmsr64 (int msr);
+
+    [AsmBody(@"
+        # wrmsr(msr in edi, value in rsi)
+        mov %edi, %ecx
+        mov %rsi, %rax
+        mov %rax, %rdx
+        shr $32, %rdx
+        wrmsr
+        ret
+    ")]
+    public extern void wrmsr64 (int msr, int value);
+
+    [AsmBody(@"
         sti
         ret
     ")]
@@ -340,6 +376,40 @@ namespace Planet.Kernel {
             set_idt_gate_dpl (vec, handler_addr, 0);
         }
 
+        // --- Local APIC -----------------------------------------------------
+        // MSI-X delivers a message to the local APIC, so the kernel needs it
+        // enabled even though the 8259 still handles the legacy IRQs (C2).
+        private static int lapic_base = 0;
+
+        public static bool lapic_init () {
+            int apic_base = rdmsr64 (0x1B); // IA32_APIC_BASE
+            if ((apic_base & 0x800) == 0) {
+                wrmsr64 (0x1B, apic_base | 0x800);
+                apic_base = rdmsr64 (0x1B);
+            }
+            int apic_phys = apic_base & 0xFFFFF000;
+            if (apic_phys == 0)
+                return false;
+            Vmm.map_mmio_2m (apic_phys);
+            lapic_base = apic_phys;
+            // Spurious vector 0xFF, then accept every priority (TPR = 0).
+            mmio_write32 (lapic_base + 0xF0, 0x1FF);
+            mmio_write32 (lapic_base + 0x80, 0);
+            return true;
+        }
+
+        public static int lapic_id () {
+            if (lapic_base == 0)
+                return 0;
+            return (mmio_read32 (lapic_base + 0x20) >> 24) & 0xFF;
+        }
+
+        public static void lapic_eoi () {
+            if (lapic_base == 0)
+                return;
+            mmio_write32 (lapic_base + 0xB0, 0);
+        }
+
         public static void init_interrupts () {
             init_gdt_tss ();
             mmio_write64 (KernelLayout.TICK, 0);
@@ -358,6 +428,7 @@ namespace Planet.Kernel {
             mmio_write64 (KernelLayout.IDTR + 2, KernelLayout.IDT);
             load_idt (KernelLayout.IDTR);
             pic_pit_init ();
+            lapic_init ();
             cpu_sti ();
         }
 

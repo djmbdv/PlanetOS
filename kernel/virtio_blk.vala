@@ -23,8 +23,6 @@ namespace Planet.Kernel {
         call virtio_blk_irq_entry
         pop %rax
         mov %rax, %rsp
-        mov $0x20, %al
-        out %al, $0x20
         pop %r11
         pop %r10
         pop %r9
@@ -46,6 +44,7 @@ namespace Planet.Kernel {
 
     public static void virtio_blk_irq_entry () {
         VirtioBlk.irq_handler ();
+        Hal.lapic_eoi ();
     }
 
     public sealed class VirtioBlk : Object {
@@ -63,9 +62,12 @@ namespace Planet.Kernel {
         private static int blk_avail_idx = 0;
         private static int blk_last_used = 0;
         private static int blk_irqs = 0;
+        private static int blk_irq_wakes = 0;
         private static int blk_status = 0;
         private static int blk_capacity = 0;
         private static int blk_irq_line = 255;
+        private static int blk_msix_ready = 0;
+        private const int BLK_VECTOR = 64;
 
         private const int VENDOR_VIRTIO = 0x1AF4;
         private const int DEV_BLK_MODERN = 0x1042;
@@ -118,6 +120,7 @@ namespace Planet.Kernel {
         public static bool is_present () { return blk_found != 0; }
         public static int capacity_sectors () { return blk_capacity; }
         public static int irq_count () { return blk_irqs; }
+        public static int irq_wakes () { return blk_irq_wakes; }
 
         public static bool init () {
             int found_dev = -1;
@@ -148,9 +151,12 @@ namespace Planet.Kernel {
                 return false;
 
             int cap_ptr = cfg_read8 (found_dev, 0x34) & 0xFC;
+            int msix_cap = 0;
             while (cap_ptr != 0) {
                 int cap_id = cfg_read8 (found_dev, cap_ptr);
                 int next_ptr = cfg_read8 (found_dev, cap_ptr + 1) & 0xFC;
+                if (cap_id == 0x11)
+                    msix_cap = cap_ptr;
                 if (cap_id == 0x09) {
                     int cfg_type = cfg_read8 (found_dev, cap_ptr + 3);
                     int bar = cfg_read8 (found_dev, cap_ptr + 4);
@@ -178,6 +184,27 @@ namespace Planet.Kernel {
             blk_irq_line = cfg_read8 (found_dev, 0x3F);
             if (blk_irq_line > 15)
                 blk_irq_line = 11;
+
+            // MSI-X: point table entry 0 at this LAPIC and enable the capability.
+            if (msix_cap != 0) {
+                int tbl = pci_cfg_read32 (cfg_addr (found_dev, msix_cap + 4));
+                int bir = cfg_read8 (found_dev, msix_cap + 8);
+                int tbl_off = tbl & 0xFFFFF800;
+                int msix_bar = read_bar_addr (found_dev, bir);
+                if (msix_bar != 0) {
+                    Vmm.map_mmio_2m (msix_bar + tbl_off);
+                    int entry = msix_bar + tbl_off;
+                    int msg_addr = 0xFEE00000 | (Hal.lapic_id () << 12);
+                    mmio_write32 (entry + 0, msg_addr);
+                    mmio_write32 (entry + 4, 0);
+                    mmio_write32 (entry + 8, BLK_VECTOR);
+                    mmio_write32 (entry + 12, 0);
+                    int ctrl = pci_cfg_read32 (cfg_addr (found_dev, msix_cap));
+                    pci_cfg_write32 (cfg_addr (found_dev, msix_cap), ctrl | 0x80000000);
+                    blk_msix_ready = 1;
+                }
+            }
+            Hal.set_idt_gate_dpl (BLK_VECTOR, addr_isr_blk (), 0);
 
             mmio_write8 (blk_common_base + 20, 0);
             mmio_write8 (blk_common_base + 20, ST_ACK);
@@ -219,6 +246,14 @@ namespace Planet.Kernel {
             mmio_write64 (blk_common_base + 32, blk_vq_page);
             mmio_write64 (blk_common_base + 40, blk_vq_page + 512);
             mmio_write64 (blk_common_base + 48, blk_vq_page + 1024);
+            // MSI-X: config and queue 0 use table entry 0 (0xFFFF = none).
+            if (blk_msix_ready != 0) {
+                mmio_write16 (blk_common_base + 16, 0);
+                mmio_write16 (blk_common_base + 26, 0);
+            } else {
+                mmio_write16 (blk_common_base + 16, 0xFFFF);
+                mmio_write16 (blk_common_base + 26, 0xFFFF);
+            }
             mmio_write16 (blk_common_base + 28, 1);
 
             mmio_write8 (blk_common_base + 20,
@@ -234,7 +269,6 @@ namespace Planet.Kernel {
             }
 
             pic_unmask (blk_irq_line);
-            Hal.set_idt_gate_dpl (32 + blk_irq_line, addr_isr_blk (), 0);
 
             blk_found = 1;
             return true;
@@ -338,6 +372,7 @@ namespace Planet.Kernel {
                 return;
             blk_last_used = used_idx;
             blk_status = read_u8 (blk_req_page + 16);
+            blk_irq_wakes = blk_irq_wakes + 1;
             mmio_write32 (blk_req_page + 20, 1);
             Sched.wake_word (blk_req_page + 20, 1);
         }

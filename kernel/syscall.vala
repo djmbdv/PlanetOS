@@ -1433,7 +1433,7 @@ namespace Planet.Kernel {
                 ok ();
                 return a2 * 512;
             case 68: // SYS_BLK_STATS() -> irqs << 16 | capacity in MiB
-                return (VirtioBlk.irq_count () << 16)
+                return (VirtioBlk.irq_wakes () << 16)
                     | ((VirtioBlk.capacity_sectors () / 2048) & 0xFFFF);
             default:
                 return -1;
