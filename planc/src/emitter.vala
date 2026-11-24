@@ -87,7 +87,7 @@ namespace Planc {
     // (r8, r9) require a REX prefix.
     public enum Reg {
         RAX = 0, RCX = 1, RDX = 2, RBX = 3, RSP = 4, RBP = 5, RSI = 6, RDI = 7,
-        R8 = 8, R9 = 9;
+        R8 = 8, R9 = 9, R12 = 12, R13 = 13, R14 = 14, R15 = 15;
 
         public static bool is_extended (Reg r) {
             return r >= R8;
@@ -469,6 +469,20 @@ namespace Planc {
 
         // leave                              C9   (mov rsp, rbp; pop rbp)
         public void leave () {
+            if (reg_alloc_active) {
+                int disp = -(reg_alloc_frame_bytes + 32);
+                if (disp >= -128 && disp <= 127) {
+                    code.u8 (0x48); code.u8 (0x8D); code.u8 (0x65);
+                    code.u8 ((uint8) disp);
+                } else {
+                    code.u8 (0x48); code.u8 (0x8D); code.u8 (0xA5);
+                    code.u32le ((uint32) disp);
+                }
+                pop_reg (Reg.R15);
+                pop_reg (Reg.R14);
+                pop_reg (Reg.R13);
+                pop_reg (Reg.R12);
+            }
             code.u8 (0xC9);
         }
 
@@ -657,6 +671,62 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x34); code.u8 (0x24);
         }
 
+        private int[] slot_reg_map = new int[0];
+        private int reg_alloc_frame_bytes = 0;
+        private bool reg_alloc_active = false;
+
+        public void begin_reg_alloc (int frame_bytes) {
+            reg_alloc_frame_bytes = frame_bytes;
+            reg_alloc_active = true;
+            slot_reg_map = new int[0];
+            push_reg (Reg.R12);
+            push_reg (Reg.R13);
+            push_reg (Reg.R14);
+            push_reg (Reg.R15);
+        }
+
+        public void end_reg_alloc () {
+            reg_alloc_active = false;
+            reg_alloc_frame_bytes = 0;
+            slot_reg_map = new int[0];
+        }
+
+        public void assign_slot_reg (int slot, Reg r) {
+            if (!reg_alloc_active || slot < 0)
+                return;
+            if (slot >= slot_reg_map.length) {
+                int old_len = slot_reg_map.length;
+                var grown = new int[slot + 8];
+                for (int i = 0; i < old_len; i++)
+                    grown[i] = slot_reg_map[i];
+                for (int i = old_len; i < grown.length; i++)
+                    grown[i] = -1;
+                slot_reg_map = grown;
+            }
+            slot_reg_map[slot] = (int) r;
+        }
+
+        private int get_slot_reg (int slot) {
+            if (reg_alloc_active && slot >= 0 && slot < slot_reg_map.length)
+                return slot_reg_map[slot];
+            return -1;
+        }
+
+        public void mov_reg_reg (Reg dst, Reg src) {
+            if (dst == src) return;
+            uint8 rex = (uint8) (0x48 | (Reg.is_extended (src) ? 4 : 0) | (Reg.is_extended (dst) ? 1 : 0));
+            code.u8 (rex); code.u8 (0x89);
+            code.u8 ((uint8) (0xC0 | (((int) src & 7) << 3) | ((int) dst & 7)));
+        }
+
+        public void zero_reg (Reg dst) {
+            uint8 rex = (uint8) (0x40 | (Reg.is_extended (dst) ? 5 : 0));
+            if (rex != 0x40)
+                code.u8 (rex);
+            code.u8 (0x31);
+            code.u8 ((uint8) (0xC0 | (((int) dst & 7) << 3) | ((int) dst & 7)));
+        }
+
         // mov qword ptr [rbp + d], 0         48 C7 45 d8 00000000 | 48 C7 85 d32 00000000
         public void zero_local (int slot) {
             if (async_task_rbp_offset != 0) {
@@ -664,6 +734,11 @@ namespace Planc {
                 code.u8 (0x49); code.u8 (0xC7); code.u8 (0x82);
                 code.u32le ((uint32) (80 + slot * 8));
                 code.u32le (0);
+                return;
+            }
+            int sr = get_slot_reg (slot);
+            if (sr >= 0) {
+                zero_reg ((Reg) sr);
                 return;
             }
             code.u8 (0x48); code.u8 (0xC7);
@@ -861,6 +936,11 @@ namespace Planc {
                 return;
             }
             last_store_local_slot = -1;
+            int sr = get_slot_reg (slot);
+            if (sr >= 0) {
+                mov_reg_reg (Reg.RAX, (Reg) sr);
+                return;
+            }
             load_rbp_disp (slot_offset (slot));
         }
 
@@ -872,7 +952,12 @@ namespace Planc {
                 code.u32le ((uint32) (80 + slot * 8));
                 return;
             }
-            store_rbp_disp (slot_offset (slot));
+            int sr = get_slot_reg (slot);
+            if (sr >= 0) {
+                mov_reg_reg ((Reg) sr, Reg.RAX);
+            } else {
+                store_rbp_disp (slot_offset (slot));
+            }
             if (opt_level >= 1) {
                 last_store_local_slot = slot;
                 last_store_local_pos = code.length;
@@ -885,6 +970,9 @@ namespace Planc {
                 code.u8 (0x49); code.u8 (0x8D); code.u8 (0x82);
                 code.u32le ((uint32) (80 + slot * 8));
                 return;
+            }
+            if (get_slot_reg (slot) >= 0) {
+                Host.eprintln (@"planc: internal error: lea_local on register-allocated slot $slot");
             }
             lea_rax_rbp_disp (slot_offset (slot));
         }
@@ -899,6 +987,11 @@ namespace Planc {
                 code.u8 (rex); code.u8 (0x89);
                 code.u8 ((uint8) (0x80 | (src_low << 3) | 0x02));
                 code.u32le ((uint32) (80 + slot * 8));
+                return;
+            }
+            int sr = get_slot_reg (slot);
+            if (sr >= 0) {
+                mov_reg_reg ((Reg) sr, src);
                 return;
             }
             var d = slot_offset (slot);
@@ -1008,6 +1101,103 @@ namespace Planc {
         // cmp rax, rcx                       48 39 C8
         public void cmp_rax_rcx () {
             code.u8 (0x48); code.u8 (0x39); code.u8 (0xC8);
+        }
+
+        // sub rax, imm32                     48 FF C8 | 48 83 E8 imm8 | 48 2D imm32
+        public void sub_rax_imm (int disp) {
+            if (disp == 0)
+                return;
+            if (opt_level >= 2 && disp == 1) {
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC8); // dec %rax
+                return;
+            }
+            if (opt_level >= 2 && disp == -1) {
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC0); // inc %rax
+                return;
+            }
+            if (disp >= -128 && disp <= 127) {
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xE8);
+                code.u8 ((uint8) disp);
+            } else {
+                code.u8 (0x48); code.u8 (0x2D);
+                code.u32le ((uint32) disp);
+            }
+        }
+
+        // cmp rax, imm32                     48 83 F8 imm8 | 48 3D imm32
+        public void cmp_rax_imm (int32 v) {
+            if (v >= -128 && v <= 127) {
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xF8);
+                code.u8 ((uint8) v);
+            } else {
+                code.u8 (0x48); code.u8 (0x3D);
+                code.u32le ((uint32) v);
+            }
+        }
+
+        // imul rax, rax, imm32               48 6B C0 imm8 | 48 69 C0 imm32
+        public void imul_rax_imm (int32 v) {
+            if (v >= -128 && v <= 127) {
+                code.u8 (0x48); code.u8 (0x6B); code.u8 (0xC0);
+                code.u8 ((uint8) v);
+            } else {
+                code.u8 (0x48); code.u8 (0x69); code.u8 (0xC0);
+                code.u32le ((uint32) v);
+            }
+        }
+
+        // and rax, imm32                     48 83 E0 imm8 | 48 25 imm32
+        public void and_rax_imm (int32 v) {
+            if (v >= -128 && v <= 127) {
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xE0);
+                code.u8 ((uint8) v);
+            } else {
+                code.u8 (0x48); code.u8 (0x25);
+                code.u32le ((uint32) v);
+            }
+        }
+
+        // or rax, imm32                      48 83 C8 imm8 | 48 0D imm32
+        public void or_rax_imm (int32 v) {
+            if (v >= -128 && v <= 127) {
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xC8);
+                code.u8 ((uint8) v);
+            } else {
+                code.u8 (0x48); code.u8 (0x0D);
+                code.u32le ((uint32) v);
+            }
+        }
+
+        // xor rax, imm32                     48 83 F0 imm8 | 48 35 imm32
+        public void xor_rax_imm (int32 v) {
+            if (v >= -128 && v <= 127) {
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xF0);
+                code.u8 ((uint8) v);
+            } else {
+                code.u8 (0x48); code.u8 (0x35);
+                code.u32le ((uint32) v);
+            }
+        }
+
+        // shl rax, imm8                      48 D1 E0 | 48 C1 E0 imm8
+        public void shl_rax_imm (uint8 c) {
+            if (c == 0) return;
+            if (c == 1) { code.u8 (0x48); code.u8 (0xD1); code.u8 (0xE0); }
+            else { code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE0); code.u8 (c & 63); }
+        }
+
+        // sar rax, imm8                      48 D1 F8 | 48 C1 F8 imm8
+        public void sar_rax_imm (uint8 c) {
+            if (c == 0) return;
+            if (c == 1) { code.u8 (0x48); code.u8 (0xD1); code.u8 (0xF8); }
+            else { code.u8 (0x48); code.u8 (0xC1); code.u8 (0xF8); code.u8 (c & 63); }
+        }
+
+        // shr rax, imm8                      48 D1 E8 | 48 C1 E8 imm8
+        public void shr_rax_imm (uint8 c) {
+            if (c == 0) return;
+            if (c == 1) { code.u8 (0x48); code.u8 (0xD1); code.u8 (0xE8); }
+            else { code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE8); code.u8 (c & 63); }
         }
 
         // xor edx, edx                       31 D2

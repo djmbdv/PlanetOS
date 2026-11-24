@@ -5327,6 +5327,217 @@ namespace Planc {
             symbols.add (new Symbol (f.name, start, emitter.here () - start));
         }
 
+        private bool reg_alloc_func = false;
+        private int reg_alloc_next = 0;
+
+        private void try_alloc_reg_slot (int slot, ValaType t) {
+            if (!reg_alloc_func || reg_alloc_next >= 4 || t == ValaType.STRUCT || is_fp_type (t))
+                return;
+            Reg[] regs = { Reg.R12, Reg.R13, Reg.R14, Reg.R15 };
+            emitter.assign_slot_reg (slot, regs[reg_alloc_next++]);
+        }
+
+        private static bool fn_has_ref_or_out (Function? f) {
+            if (f == null) return false;
+            for (int i = 0; i < f.params.length; i++) {
+                if (f.params[i].is_ref || f.params[i].is_out) return true;
+            }
+            return false;
+        }
+
+        private static bool callable_matches_name (string fn_name, string target) {
+            return fn_name == target || fn_name.has_suffix ("__" + target);
+        }
+
+        private bool callable_name_has_ref_or_out (string name) {
+            if (fn_has_ref_or_out (program.find (name))) return true;
+            for (int ci = 0; ci < program.classes.length; ci++) {
+                var cd = program.classes[ci];
+                for (int mi = 0; mi < cd.methods.length; mi++) {
+                    if (callable_matches_name (cd.methods[mi].name, name) && fn_has_ref_or_out (cd.methods[mi])) return true;
+                }
+                for (int mi = 0; mi < cd.named_ctors.length; mi++) {
+                    if (callable_matches_name (cd.named_ctors[mi].name, name) && fn_has_ref_or_out (cd.named_ctors[mi])) return true;
+                }
+            }
+            for (int si = 0; si < program.structs.length; si++) {
+                var sd = program.structs[si];
+                for (int mi = 0; mi < sd.methods.length; mi++) {
+                    if (callable_matches_name (sd.methods[mi].name, name) && fn_has_ref_or_out (sd.methods[mi])) return true;
+                }
+            }
+            for (int ii = 0; ii < program.interfaces.length; ii++) {
+                var id = program.interfaces[ii];
+                for (int mi = 0; mi < id.methods.length; mi++) {
+                    if (callable_matches_name (id.methods[mi].name, name) && fn_has_ref_or_out (id.methods[mi])) return true;
+                }
+            }
+            for (int di = 0; di < program.delegates.length; di++) {
+                var dd = program.delegates[di];
+                for (int pi = 0; pi < dd.params.length; pi++) {
+                    if (dd.params[pi].is_ref || dd.params[pi].is_out) return true;
+                }
+            }
+            return false;
+        }
+
+        private bool expr_uses_addr_or_lambda (Expr? e) {
+            if (e == null) return false;
+            if (e is LambdaExpr || e is AddrOfExpr || e is IncDecExpr || e is VaArgExpr) return true;
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                if (u.op == "&") return true;
+                return expr_uses_addr_or_lambda (u.operand);
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_uses_addr_or_lambda (b.left) || expr_uses_addr_or_lambda (b.right);
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                if (callable_name_has_ref_or_out (c.callee)) return true;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (expr_uses_addr_or_lambda (c.args[i])) return true;
+                }
+                return false;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (callable_name_has_ref_or_out (mc.method_name)) return true;
+                if (expr_uses_addr_or_lambda (mc.target)) return true;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (expr_uses_addr_or_lambda (mc.args[i])) return true;
+                }
+                return false;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return expr_uses_addr_or_lambda (ix.target) || expr_uses_addr_or_lambda (ix.index);
+            }
+            if (e is MemberAccessExpr) return expr_uses_addr_or_lambda (((MemberAccessExpr) e).target);
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_uses_addr_or_lambda (te.condition)
+                    || expr_uses_addr_or_lambda (te.then_expr)
+                    || expr_uses_addr_or_lambda (te.else_expr);
+            }
+            if (e is ClassNewExpr) {
+                var ne = (ClassNewExpr) e;
+                unowned var cd = program.find_class (ne.class_name);
+                if (cd != null) {
+                    if (fn_has_ref_or_out (cd.ctor)) return true;
+                    for (int ci = 0; ci < cd.named_ctors.length; ci++) {
+                        if (fn_has_ref_or_out (cd.named_ctors[ci])) return true;
+                    }
+                }
+                for (int i = 0; i < ne.args.length; i++) {
+                    if (expr_uses_addr_or_lambda (ne.args[i])) return true;
+                }
+                return false;
+            }
+            if (e is ArrayNewExpr) return expr_uses_addr_or_lambda (((ArrayNewExpr) e).length_expr);
+            if (e is ArrayLiteralExpr) {
+                var al = (ArrayLiteralExpr) e;
+                for (int i = 0; i < al.elements.length; i++) {
+                    if (expr_uses_addr_or_lambda (al.elements[i])) return true;
+                }
+                return false;
+            }
+            if (e is StructLiteral) {
+                var sl = (StructLiteral) e;
+                for (int i = 0; i < sl.field_values.length; i++) {
+                    if (expr_uses_addr_or_lambda (sl.field_values[i])) return true;
+                }
+                return false;
+            }
+            if (e is TemplateExpr) {
+                var te = (TemplateExpr) e;
+                for (int i = 0; i < te.parts.length; i++) {
+                    if (expr_uses_addr_or_lambda (te.parts[i])) return true;
+                }
+                return false;
+            }
+            if (e is CoalesceExpr) {
+                var ce = (CoalesceExpr) e;
+                return expr_uses_addr_or_lambda (ce.left) || expr_uses_addr_or_lambda (ce.right);
+            }
+            if (e is TypeCheckExpr) return expr_uses_addr_or_lambda (((TypeCheckExpr) e).operand);
+            if (e is DerefExpr) return expr_uses_addr_or_lambda (((DerefExpr) e).target);
+            if (e is SliceExpr) {
+                var se = (SliceExpr) e;
+                return expr_uses_addr_or_lambda (se.target)
+                    || expr_uses_addr_or_lambda (se.start)
+                    || expr_uses_addr_or_lambda (se.end);
+            }
+            return false;
+        }
+
+        private bool stmt_uses_addr_or_lambda (Statement? s) {
+            if (s == null) return false;
+            if (s is TryStatement) return true;
+            if (s is BlockStatement) {
+                var b = (BlockStatement) s;
+                for (int i = 0; i < b.statements.length; i++) {
+                    if (stmt_uses_addr_or_lambda (b.statements[i])) return true;
+                }
+                return false;
+            }
+            if (s is IfStatement) {
+                var i = (IfStatement) s;
+                return expr_uses_addr_or_lambda (i.condition)
+                    || stmt_uses_addr_or_lambda (i.then_body)
+                    || stmt_uses_addr_or_lambda (i.else_body);
+            }
+            if (s is WhileStatement) {
+                var w = (WhileStatement) s;
+                return expr_uses_addr_or_lambda (w.condition) || stmt_uses_addr_or_lambda (w.body);
+            }
+            if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                return stmt_uses_addr_or_lambda (dw.body) || expr_uses_addr_or_lambda (dw.condition);
+            }
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                return stmt_uses_addr_or_lambda (fs.init)
+                    || expr_uses_addr_or_lambda (fs.condition)
+                    || stmt_uses_addr_or_lambda (fs.step)
+                    || stmt_uses_addr_or_lambda (fs.body);
+            }
+            if (s is ForeachStatement || s is SwitchStatement) return true;
+            if (s is VarDeclStatement) return expr_uses_addr_or_lambda (((VarDeclStatement) s).init);
+            if (s is ReturnStatement) return expr_uses_addr_or_lambda (((ReturnStatement) s).value);
+            if (s is ExprStatement) return expr_uses_addr_or_lambda (((ExprStatement) s).expr);
+            if (s is PrintStatement) return expr_uses_addr_or_lambda (((PrintStatement) s).value);
+            if (s is ExitStatement) return expr_uses_addr_or_lambda (((ExitStatement) s).value);
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                return expr_uses_addr_or_lambda (a.value);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return expr_uses_addr_or_lambda (fa.target) || expr_uses_addr_or_lambda (fa.value);
+            }
+            if (s is IndexAssignStatement) {
+                var ia = (IndexAssignStatement) s;
+                return expr_uses_addr_or_lambda (ia.target)
+                    || expr_uses_addr_or_lambda (ia.index)
+                    || expr_uses_addr_or_lambda (ia.value);
+            }
+            if (s is DerefAssignStatement) {
+                var da = (DerefAssignStatement) s;
+                return expr_uses_addr_or_lambda (da.target) || expr_uses_addr_or_lambda (da.value);
+            }
+            return false;
+        }
+
+        private bool stmt_list_uses_addr_or_lambda (GenericArray<Statement>? list) {
+            if (list == null) return false;
+            for (int i = 0; i < list.length; i++) {
+                if (stmt_uses_addr_or_lambda (list[i])) return true;
+            }
+            return false;
+        }
+
         private void generate_function (Function f) throws SemanticError {
             if (imported_syms != null && imported_syms.lookup (f.name) >= 0)
                 return;
@@ -5377,11 +5588,17 @@ namespace Planc {
 
             emitter.push_rbp ();
             emitter.mov_rsp_to_rbp ();
-            emitter.sub_rsp (align16 (8 * total_slots));
+            int frame_bytes = align16 (8 * total_slots);
+            emitter.sub_rsp (frame_bytes);
 
             // Zero all ref temp slots in the prologue so unevaluated
             // short-circuit branches never leave stack garbage in them.
             emitter.zero_local_batch (ref_temp_start, total_slots);
+
+            reg_alloc_func = (opt_level >= 2 && !f.is_async && !f.is_dtor && !f.is_compact_free && f.from_lambda == null && !stmt_list_uses_addr_or_lambda (f.body));
+            reg_alloc_next = 0;
+            if (reg_alloc_func)
+                emitter.begin_reg_alloc (frame_bytes);
 
             var param_raw_slots = new int[f.params.length];
             var param_final_slots = new int[f.params.length];
@@ -5393,6 +5610,8 @@ namespace Planc {
                 param_raw_slots[i] = raw_slot;
                 bool by_ref = f.params[i].is_ref || f.params[i].is_out;
                 bool is_fp = !by_ref && is_fp_type (f.params[i].param_type);
+                if (!by_ref && f.params[i].param_type != ValaType.STRUCT)
+                    try_alloc_reg_slot (raw_slot, f.params[i].param_type);
                 if (is_fp && xmm_idx < 8) {
                     emitter.movq_rax_xmm (xmm_idx++);
                     emitter.store_local (raw_slot);
@@ -5415,6 +5634,7 @@ namespace Planc {
             for (int i = 0; i < f.params.length; i++) {
                 var p = f.params[i];
                 bool by_ref = p.is_ref || p.is_out;
+                bool borrowed_this = (opt_level >= 1 && !f.is_async && p.name == "this" && p.param_type == ValaType.CLASS && !by_ref);
                 if (by_ref) {
                     if (p.is_out) {
                         if (is_ref_type (p.param_type)) {
@@ -5456,12 +5676,12 @@ namespace Planc {
                         if (sd != null && struct_has_string (sd))
                             ref_struct_at_rcx (sd, 0);
                     }
-                } else if (program_uses_heap && !p.unmanaged && is_ref_type (p.param_type)) {
+                } else if (program_uses_heap && !p.unmanaged && !borrowed_this && is_ref_type (p.param_type)) {
                     emitter.load_local (param_final_slots[i]);
                     emitter.mov_rdi_rax ();
                     emitter.call_rel32 ("__planc_ref");
                 }
-                push_local (p.name, p.param_type, p.type_name, param_final_slots[i], p.unmanaged || by_ref, by_ref);
+                push_local (p.name, p.param_type, p.type_name, param_final_slots[i], p.unmanaged || by_ref || borrowed_this, by_ref);
             }
 
             if (f.from_lambda != null) {
@@ -5489,6 +5709,7 @@ namespace Planc {
                 emitter.leave ();
                 emitter.ret ();
                 symbols.add (new Symbol (f.name, start, emitter.here () - start));
+                if (reg_alloc_func) { emitter.end_reg_alloc (); reg_alloc_func = false; }
                 return;
             }
 
@@ -5497,6 +5718,7 @@ namespace Planc {
                 emitter.leave ();
                 emitter.ret ();
                 symbols.add (new Symbol (f.name, start, emitter.here () - start));
+                if (reg_alloc_func) { emitter.end_reg_alloc (); reg_alloc_func = false; }
                 return;
             }
 
@@ -5558,6 +5780,10 @@ namespace Planc {
                 emitter.xor_eax ();
                 emitter.leave ();
                 emitter.ret ();
+            }
+            if (reg_alloc_func) {
+                emitter.end_reg_alloc ();
+                reg_alloc_func = false;
             }
 
             symbols.add (new Symbol (f.name, start, emitter.here () - start));
@@ -9252,6 +9478,8 @@ namespace Planc {
                 var nslots = type_slots (vtype, vtname);
                 var slot = next_var_slot;
                 next_var_slot += nslots;
+                if (nslots == 1 && vtype != ValaType.STRUCT)
+                    try_alloc_reg_slot (slot, vtype);
 
                 if (vtype == ValaType.STRUCT) {
                     var base_disp = struct_base_disp (slot, nslots);
@@ -9878,14 +10106,7 @@ namespace Planc {
 
                 var l_else = emitter.new_label ();
                 var l_end = emitter.new_label ();
-                gen_expr (i.condition);
-                emitter.push_rax ();
-                push_depth++;
-                cleanup_expr_temps (i.condition);
-                emitter.pop_rax ();
-                push_depth--;
-                emitter.test_rax_rax ();
-                emitter.branch (BranchKind.JE, l_else);
+                emit_cond_jump_if_false (i.condition, l_else);
 
                 if (nn_then != null)
                     add_all_non_null (nn_then);
@@ -9924,14 +10145,7 @@ namespace Planc {
                 break_scope_marks.add (locals.length);
                 continue_scope_marks.add (locals.length);
                 emitter.bind (l_start);
-                gen_expr (w.condition);
-                emitter.push_rax ();
-                push_depth++;
-                cleanup_expr_temps (w.condition);
-                emitter.pop_rax ();
-                push_depth--;
-                emitter.test_rax_rax ();
-                emitter.branch (BranchKind.JE, l_end);
+                emit_cond_jump_if_false (w.condition, l_end);
                 var before_w = clone_non_null ();
                 var nn_w = new GenericArray<string> ();
                 collect_non_null_when (w.condition, true, nn_w);
@@ -9995,14 +10209,7 @@ namespace Planc {
                     if (!is_int_like (ct))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"for condition must be bool or int, got $(type_label (ct, ct_name)) at $(fs.condition.line):$(fs.condition.column)");
-                    gen_expr (fs.condition);
-                    emitter.push_rax ();
-                    push_depth++;
-                    cleanup_expr_temps (fs.condition);
-                    emitter.pop_rax ();
-                    push_depth--;
-                    emitter.test_rax_rax ();
-                    emitter.branch (BranchKind.JE, l_end);
+                    emit_cond_jump_if_false (fs.condition, l_end);
                 }
                 var body_mark = locals.length;
                 gen_statement (fs.body);
@@ -10528,6 +10735,111 @@ namespace Planc {
             else cc = is_unsigned ? 0x93 : 0x9D;
             emitter.setcc_al (cc);
             emitter.movzx_eax_al ();
+        }
+
+        private static BranchKind inverted_branch (string op, bool is_unsigned = false) {
+            if (op == "==") return BranchKind.JNE;
+            if (op == "!=") return BranchKind.JE;
+            if (op == "<") return is_unsigned ? BranchKind.JAE : BranchKind.JGE;
+            if (op == "<=") return is_unsigned ? BranchKind.JA : BranchKind.JG;
+            if (op == ">") return is_unsigned ? BranchKind.JBE : BranchKind.JLE;
+            return is_unsigned ? BranchKind.JB : BranchKind.JL;
+        }
+
+        private bool expr_has_ref_temp (Expr? e) {
+            if (e == null) return false;
+            if (e.ref_temp_slot >= 0) return true;
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_has_ref_temp (b.left) || expr_has_ref_temp (b.right);
+            }
+            if (e is UnaryExpr) return expr_has_ref_temp (((UnaryExpr) e).operand);
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return expr_has_ref_temp (ix.target) || expr_has_ref_temp (ix.index);
+            }
+            if (e is MemberAccessExpr) return expr_has_ref_temp (((MemberAccessExpr) e).target);
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (expr_has_ref_temp (c.args[i])) return true;
+                }
+                return false;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (expr_has_ref_temp (mc.target)) return true;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (expr_has_ref_temp (mc.args[i])) return true;
+                }
+                return false;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_has_ref_temp (te.condition)
+                    || expr_has_ref_temp (te.then_expr)
+                    || expr_has_ref_temp (te.else_expr);
+            }
+            if (e is CoalesceExpr) {
+                var ce = (CoalesceExpr) e;
+                return expr_has_ref_temp (ce.left) || expr_has_ref_temp (ce.right);
+            }
+            if (e is TypeCheckExpr) return expr_has_ref_temp (((TypeCheckExpr) e).operand);
+            if (e is ClassNewExpr || e is ArrayNewExpr || e is ArrayLiteralExpr || e is TemplateExpr)
+                return true;
+            return false;
+        }
+
+        private void emit_cond_jump_if_false (Expr cond, Label target) throws SemanticError {
+            if (opt_level >= 1 && cond is BinaryExpr && (!program_uses_heap || !expr_has_ref_temp (cond))) {
+                var b = (BinaryExpr) cond;
+                if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+                    string lt_name = "";
+                    string rt_name = "";
+                    var lt = expr_type_full (b.left, out lt_name);
+                    var rt = expr_type_full (b.right, out rt_name);
+                    if (!is_fp_type (lt) && !is_fp_type (rt)
+                        && lt != ValaType.STRING && rt != ValaType.STRING
+                        && lt != ValaType.POINTER && rt != ValaType.POINTER
+                        && !is_delegate_type (program, lt, lt_name)
+                        && !is_delegate_type (program, rt, rt_name)) {
+                        string res_tn = promote_int_type (lt_name, rt_name);
+                        bool is_u = is_unsigned_int_type (res_tn);
+                        if (b.right is IntLiteral) {
+                            int64 imm = ((IntLiteral) b.right).value;
+                            if (imm >= int32.MIN && imm <= int32.MAX) {
+                                gen_expr (b.left);
+                                if (imm == 0)
+                                    emitter.test_rax_rax ();
+                                else
+                                    emitter.cmp_rax_imm ((int32) imm);
+                                emitter.branch (inverted_branch (b.op, is_u), target);
+                                return;
+                            }
+                        }
+                        gen_expr (b.left);
+                        emitter.push_rax ();
+                        push_depth++;
+                        gen_expr (b.right);
+                        emitter.mov_rcx_rax ();
+                        emitter.pop_rax ();
+                        push_depth--;
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (inverted_branch (b.op, is_u), target);
+                        return;
+                    }
+                }
+            }
+            gen_expr (cond);
+            if (program_uses_heap && expr_has_ref_temp (cond)) {
+                emitter.push_rax ();
+                push_depth++;
+                cleanup_expr_temps (cond);
+                emitter.pop_rax ();
+                push_depth--;
+            }
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, target);
         }
 
         private void gen_expr (Expr e) throws SemanticError {
@@ -11922,6 +12234,66 @@ namespace Planc {
                 var is_str_cmp = (b.op == "==" || b.op == "!=")
                               && lt == ValaType.STRING
                               && rt == ValaType.STRING;
+                if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
+                    && b.op != "/" && b.op != "%" && b.right is IntLiteral) {
+                    int64 imm = ((IntLiteral) b.right).value;
+                    bool shift_ok = (b.op != "<<" && b.op != ">>") || (imm >= 0 && imm < 64);
+                    if (shift_ok && imm >= int32.MIN && imm <= int32.MAX) {
+                        gen_expr (b.left);
+                        string res_tn = promote_int_type (lt_name, rt_name);
+                        bool is_u = is_unsigned_int_type (res_tn);
+                        bool is_u32 = is_unsigned_32 (res_tn);
+                        int32 imm32 = (int32) imm;
+                        switch (b.op) {
+                            case "+":
+                                emitter.add_rax_imm (imm32);
+                                if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                                if (is_u32) emit_int_narrow ("uint32");
+                                break;
+                            case "-":
+                                emitter.sub_rax_imm (imm32);
+                                if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                                if (is_u32) emit_int_narrow ("uint32");
+                                break;
+                            case "*":
+                                emitter.imul_rax_imm (imm32);
+                                if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                                if (is_u32) emit_int_narrow ("uint32");
+                                break;
+                            case "&":
+                                emitter.and_rax_imm (imm32);
+                                if (is_u32) emit_int_narrow ("uint32");
+                                break;
+                            case "|":
+                                emitter.or_rax_imm (imm32);
+                                if (is_u32) emit_int_narrow ("uint32");
+                                break;
+                            case "^":
+                                emitter.xor_rax_imm (imm32);
+                                if (is_u32) emit_int_narrow ("uint32");
+                                break;
+                            case "<<":
+                                emitter.shl_rax_imm ((uint8) imm32);
+                                if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                                break;
+                            case ">>":
+                                if (is_unsigned_int_type (lt_name))
+                                    emitter.shr_rax_imm ((uint8) imm32);
+                                else
+                                    emitter.sar_rax_imm ((uint8) imm32);
+                                if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                                break;
+                            default:
+                                if (imm32 == 0)
+                                    emitter.test_rax_rax ();
+                                else
+                                    emitter.cmp_rax_imm (imm32);
+                                setcc (b.op, is_u);
+                                break;
+                        }
+                        return;
+                    }
+                }
                 gen_expr (b.left);
                 emitter.push_rax ();
                 push_depth++;
