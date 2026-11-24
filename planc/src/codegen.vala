@@ -157,6 +157,9 @@ namespace Planc {
         private GenericArray<bool> local_is_user;
         private GenericArray<int> local_decl_line;
         private GenericArray<int> local_decl_col;
+        private GenericArray<bool> local_is_unowned;
+        private GenericArray<int> local_borrow_src;
+        private GenericArray<bool> local_borrow_dead;
         private bool in_check_pass = false;
         private int next_var_slot;
         private GenericArray<Expr> pending_struct_exprs;
@@ -273,6 +276,9 @@ namespace Planc {
             local_active = new GenericArray<bool> ();
             local_is_weak = new GenericArray<bool> ();
             local_is_compact = new GenericArray<bool> ();
+            local_is_unowned = new GenericArray<bool> ();
+            local_borrow_src = new GenericArray<int> ();
+            local_borrow_dead = new GenericArray<bool> ();
             break_labels = new GenericArray<Label> ();
             continue_labels = new GenericArray<Label> ();
             break_scope_marks = new GenericArray<int> ();
@@ -2687,6 +2693,9 @@ namespace Planc {
             local_active = new GenericArray<bool> ();
             local_is_weak = new GenericArray<bool> ();
             local_is_compact = new GenericArray<bool> ();
+            local_is_unowned = new GenericArray<bool> ();
+            local_borrow_src = new GenericArray<int> ();
+            local_borrow_dead = new GenericArray<bool> ();
             local_unmanaged = new GenericArray<bool> ();
             local_by_ref = new GenericArray<bool> ();
             local_used = new GenericArray<bool> ();
@@ -2708,8 +2717,39 @@ namespace Planc {
                         Host.eprintln (
                             @"planc: warning: unused variable '$(locals[i])' at $loc");
                 }
+                invalidate_borrows_of_idx (i);
                 local_active[i] = false;
             }
+        }
+
+        private void invalidate_borrows_of_idx (int src_idx) {
+            if (src_idx < 0) return;
+            for (int i = 0; i < locals.length; i++) {
+                if (local_active[i] && local_borrow_src[i] == src_idx)
+                    local_borrow_dead[i] = true;
+            }
+        }
+
+        private void set_borrow_from_expr (int dst_idx, Expr? src_expr) {
+            if (dst_idx < 0 || !local_is_unowned[dst_idx])
+                return;
+            if (src_expr is VarRef) {
+                int sidx = lookup (((VarRef) src_expr).name);
+                if (sidx >= 0) {
+                    if (!local_unmanaged[sidx] && !local_is_unowned[sidx] && !local_is_compact[sidx] && is_ref_type (local_types[sidx])) {
+                        local_borrow_src[dst_idx] = sidx;
+                        local_borrow_dead[dst_idx] = false;
+                        return;
+                    }
+                    if (local_is_unowned[sidx] && local_borrow_src[sidx] >= 0) {
+                        local_borrow_src[dst_idx] = local_borrow_src[sidx];
+                        local_borrow_dead[dst_idx] = local_borrow_dead[sidx];
+                        return;
+                    }
+                }
+            }
+            local_borrow_src[dst_idx] = -1;
+            local_borrow_dead[dst_idx] = false;
         }
 
         private GenericArray<string> clone_non_null () {
@@ -3269,6 +3309,9 @@ namespace Planc {
             local_is_user.add (false);
             local_decl_line.add (0);
             local_decl_col.add (0);
+            local_is_unowned.add (false);
+            local_borrow_src.add (-1);
+            local_borrow_dead.add (false);
         }
 
         private void emit_convert_to_weak () {
@@ -4031,6 +4074,8 @@ namespace Planc {
             }
             if (e is IndexExpr) {
                 var ix = (IndexExpr) e;
+                if (cd == null && ix.target is VarRef && ((VarRef) ix.target).name == vname)
+                    return expr_escapes_var (ix.index, vname, cd, is_this_check);
                 return expr_escapes_var (ix.target, vname, cd, is_this_check)
                     || expr_escapes_var (ix.index, vname, cd, is_this_check);
             }
@@ -4106,6 +4151,9 @@ namespace Planc {
             }
             if (s is IndexAssignStatement) {
                 var ia = (IndexAssignStatement) s;
+                if (cd == null && ia.target is VarRef && ((VarRef) ia.target).name == vname)
+                    return expr_escapes_var (ia.index, vname, cd, is_this_check)
+                        || expr_escapes_var (ia.value, vname, cd, is_this_check);
                 return expr_escapes_var (ia.target, vname, cd, is_this_check)
                     || expr_escapes_var (ia.index, vname, cd, is_this_check)
                     || expr_escapes_var (ia.value, vname, cd, is_this_check);
@@ -4153,6 +4201,24 @@ namespace Planc {
         private bool can_stack_alloc_var (Function f, VarDeclStatement d) {
             if (opt_level < 2 || f.is_async || f.from_lambda != null || d.is_weak || d.is_unowned)
                 return false;
+            if (d.init is ArrayNewExpr) {
+                var an = (ArrayNewExpr) d.init;
+                if (!(an.length_expr is IntLiteral))
+                    return false;
+                int64 len = ((IntLiteral) an.length_expr).value;
+                if (len < 0 || len > 64)
+                    return false;
+                if (is_ref_type (an.elem_type))
+                    return false;
+                if (!d.infer_type && d.decl_type != ValaType.ARRAY)
+                    return false;
+                if (f.body == null) return false;
+                for (int i = 0; i < f.body.length; i++) {
+                    if (stmt_escapes_var (f.body[i], d.name, null, false))
+                        return false;
+                }
+                return true;
+            }
             if (!(d.init is ClassNewExpr))
                 return false;
             var cn = (ClassNewExpr) d.init;
@@ -4328,6 +4394,8 @@ namespace Planc {
                         var cn_p = (ClassNewExpr) d.init;
                         for (int ci = 0; ci < cn_p.args.length; ci++)
                             prepare_expr (cn_p.args[ci], ref struct_temps, ref ref_temps);
+                    } else if (d.stack_alloc && d.init is ArrayNewExpr) {
+                        // Stack-allocated constant-length array: no ref_temp_slot needed
                     } else {
                         prepare_expr (d.init, ref struct_temps, ref ref_temps);
                     }
@@ -4365,12 +4433,21 @@ namespace Planc {
                     unowned var scd = program.find_class (((ClassNewExpr) d.init).class_name);
                     if (scd != null)
                         next_var_slot += 2 + class_total_field_slots (scd);
+                } else if (d.stack_alloc && d.init is ArrayNewExpr) {
+                    var an_p = (ArrayNewExpr) d.init;
+                    int len_p = (int) ((IntLiteral) an_p.length_expr).value;
+                    bool byte_arr_p = (an_p.elem_type == ValaType.INT)
+                        && (an_p.elem_type_name == "uint8" || an_p.elem_type_name == "int8");
+                    next_var_slot += 2 + (byte_arr_p ? ((len_p + 7) / 8) : len_p);
                 }
                 push_local (d.name, vt, vtname, slot, false, false, d.is_weak);
                 int uidx = locals.length - 1;
                 local_is_user[uidx] = (!d.name.has_prefix ("_") && !d.name.has_prefix ("#"));
                 local_decl_line[uidx] = d.line;
                 local_decl_col[uidx] = d.column;
+                local_is_unowned[uidx] = d.is_unowned;
+                if (d.is_unowned && d.init != null)
+                    set_borrow_from_expr (uidx, d.init);
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else
@@ -4381,6 +4458,9 @@ namespace Planc {
                 bool has_var_or_field = (lslot >= 0);
                 if (lslot >= 0) {
                     bind_delegate_target (a.value, local_types[lslot], local_type_names[lslot]);
+                    invalidate_borrows_of_idx (lslot);
+                    if (local_is_unowned[lslot])
+                        set_borrow_from_expr (lslot, a.value);
                 } else {
                     var gi = lookup_global (a.name);
                     if (gi >= 0) {
@@ -4683,7 +4763,10 @@ namespace Planc {
         private void prepare_expr (Expr e, ref int struct_temps, ref int ref_temps)
                 throws SemanticError {
             if (e is UnaryExpr) {
-                prepare_expr (((UnaryExpr) e).operand, ref struct_temps, ref ref_temps);
+                var ue = (UnaryExpr) e;
+                prepare_expr (ue.operand, ref struct_temps, ref ref_temps);
+                if (ue.op == "owned" && ue.operand is VarRef)
+                    invalidate_borrows_of_idx (lookup (((VarRef) ue.operand).name));
             } else if (e is SizeofExpr) {
                 var sz = (SizeofExpr) e;
                 if (sz.operand != null)
@@ -7220,6 +7303,8 @@ namespace Planc {
         private bool is_owned_expr (Expr e) throws SemanticError {
             if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is AddrOfExpr)
                 return true;
+            if (e is UnaryExpr && ((UnaryExpr) e).op == "owned")
+                return is_ref_type (expr_type (((UnaryExpr) e).operand));
             if (e is DerefExpr) {
                 string itn = "";
                 var it = expr_type_full (e, out itn);
@@ -8843,6 +8928,11 @@ namespace Planc {
                 var slot = lookup (v.name);
                 if (slot >= 0) {
                     local_used[slot] = true;
+                    if (in_check_pass && local_is_unowned[slot] && local_borrow_dead[slot]) {
+                        string loc = (current_file != "") ? @"$current_file:$(v.line):$(v.column)" : @"$(v.line):$(v.column)";
+                        Host.eprintln (@"planc: warning: use of dangling unowned '$(v.name)' at $loc");
+                        local_borrow_dead[slot] = false;
+                    }
                     tname = maybe_narrow_var (v.name, local_type_names[slot]);
                     return local_types[slot];
                 }
@@ -8914,6 +9004,10 @@ namespace Planc {
                 var u = (UnaryExpr) e;
                 string ot_name = "";
                 var ot = expr_type_full (u.operand, out ot_name);
+                if (u.op == "owned") {
+                    tname = ot_name;
+                    return ot;
+                }
                 if (u.op == "-" && is_fp_type (ot))
                     return ot;
                 if (!is_int_like (ot))
@@ -9757,15 +9851,30 @@ namespace Planc {
                         if (!type_compatible (current.return_type, current.return_type_name, rt, rt_name))
                             throw new SemanticError.RETURN_MISMATCH (
                                 @"function '$(current.name)' returns $(type_label (current.return_type, current.return_type_name)), got $(type_label (rt, rt_name)) at $(r.line):$(r.column)");
-                        gen_expr (r.value);
-                        if (is_fp_type (current.return_type)) {
-                            emit_fp_coerce (rt, current.return_type);
-                            emitter.movq_rax_xmm (0);
-                        } else if (current.return_type == ValaType.INT) {
-                            emit_int_narrow (current.return_type_name);
+                        bool rvo_moved = false;
+                        if (program_uses_heap && is_ref_type (current.return_type) && r.value is VarRef) {
+                            var rvr = (VarRef) r.value;
+                            int ridx = lookup (rvr.name);
+                            if (ridx >= 0 && !local_by_ref[ridx] && !local_unmanaged[ridx]
+                                && !local_is_compact[ridx] && !local_is_weak[ridx]
+                                && is_ref_type (local_types[ridx])
+                                && type_compatible (current.return_type, current.return_type_name, local_types[ridx], local_type_names[ridx])) {
+                                emitter.load_local (local_slots[ridx]);
+                                emitter.zero_local (local_slots[ridx]);
+                                rvo_moved = true;
+                            }
                         }
-                        if (is_ref_type (current.return_type))
-                            consume_ref_expr (r.value);
+                        if (!rvo_moved) {
+                            gen_expr (r.value);
+                            if (is_fp_type (current.return_type)) {
+                                emit_fp_coerce (rt, current.return_type);
+                                emitter.movq_rax_xmm (0);
+                            } else if (current.return_type == ValaType.INT) {
+                                emit_int_narrow (current.return_type_name);
+                            }
+                            if (is_ref_type (current.return_type))
+                                consume_ref_expr (r.value);
+                        }
                         if (current.return_type == ValaType.STRUCT) {
                             var n = type_slots (ValaType.STRUCT, current.return_type_name);
                             emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
@@ -9804,15 +9913,30 @@ namespace Planc {
                         if (!type_compatible (current.return_type, current.return_type_name, rt, rt_name))
                             throw new SemanticError.RETURN_MISMATCH (
                                 @"function '$(current.name)' returns $(type_label (current.return_type, current.return_type_name)), got $(type_label (rt, rt_name)) at $(r.line):$(r.column)");
-                        gen_expr (r.value);
-                        if (is_fp_type (current.return_type)) {
-                            emit_fp_coerce (rt, current.return_type);
-                            emitter.movq_rax_xmm (0);
-                        } else if (current.return_type == ValaType.INT) {
-                            emit_int_narrow (current.return_type_name);
+                        bool rvo_moved = false;
+                        if (program_uses_heap && is_ref_type (current.return_type) && r.value is VarRef) {
+                            var rvr = (VarRef) r.value;
+                            int ridx = lookup (rvr.name);
+                            if (ridx >= 0 && !local_by_ref[ridx] && !local_unmanaged[ridx]
+                                && !local_is_compact[ridx] && !local_is_weak[ridx]
+                                && is_ref_type (local_types[ridx])
+                                && type_compatible (current.return_type, current.return_type_name, local_types[ridx], local_type_names[ridx])) {
+                                emitter.load_local (local_slots[ridx]);
+                                emitter.zero_local (local_slots[ridx]);
+                                rvo_moved = true;
+                            }
                         }
-                        if (is_ref_type (current.return_type))
-                            consume_ref_expr (r.value);
+                        if (!rvo_moved) {
+                            gen_expr (r.value);
+                            if (is_fp_type (current.return_type)) {
+                                emit_fp_coerce (rt, current.return_type);
+                                emitter.movq_rax_xmm (0);
+                            } else if (current.return_type == ValaType.INT) {
+                                emit_int_narrow (current.return_type_name);
+                            }
+                            if (is_ref_type (current.return_type))
+                                consume_ref_expr (r.value);
+                        }
                         if (current.return_type == ValaType.STRUCT) {
                             var n = type_slots (ValaType.STRUCT, current.return_type_name);
                             emitter.lea_rcx_space (struct_ret_bss_offset, PatchSpace.BSS);
@@ -9916,6 +10040,24 @@ namespace Planc {
                         emit_instance_call_from_slot (slot, ctor_fn, cn_s.args);
                     for (int ci = 0; ci < cn_s.args.length; ci++)
                         cleanup_expr_temps (cn_s.args[ci]);
+                    push_local (d.name, vtype, vtname, slot, true, false, d.is_weak);
+                } else if (d.stack_alloc && d.init is ArrayNewExpr) {
+                    var an_s = (ArrayNewExpr) d.init;
+                    int len_s = (int) ((IntLiteral) an_s.length_expr).value;
+                    bool byte_arr_s = (an_s.elem_type == ValaType.INT)
+                        && (an_s.elem_type_name == "uint8" || an_s.elem_type_name == "int8");
+                    int arr_slots = 2 + (byte_arr_s ? ((len_s + 7) / 8) : len_s);
+                    var arr_slot = next_var_slot;
+                    next_var_slot += arr_slots;
+                    int base_disp = struct_base_disp (arr_slot, arr_slots);
+                    emitter.xor_eax ();
+                    emitter.store_rbp_disp (base_disp);
+                    for (int k = 2; k < arr_slots; k++)
+                        emitter.store_rbp_disp (base_disp + 8 * k);
+                    emitter.mov_rax_imm ((int64) len_s);
+                    emitter.store_rbp_disp (base_disp + 8);
+                    emitter.lea_rax_rbp_disp (base_disp);
+                    emitter.store_local (slot);
                     push_local (d.name, vtype, vtname, slot, true, false, d.is_weak);
                 } else if (vtype == ValaType.STRUCT) {
                     var base_disp = struct_base_disp (slot, nslots);
@@ -12614,23 +12756,45 @@ namespace Planc {
                 var u = (UnaryExpr) e;
                 string ot_name = "";
                 var ot = expr_type_full (u.operand, out ot_name);
-                gen_expr (u.operand);
-                if (u.op == "-" && is_fp_type (ot)) {
-                    emitter.mov_rax_imm ((ot == ValaType.FLOAT) ? (int64) 0x80000000 : (int64) 0x8000000000000000);
-                    emitter.movq_xmm_rax (1);
-                    emitter.pxor_xmm0_xmm1 ();
-                } else if (u.op == "-") {
-                    emitter.neg_rax ();
-                    if (is_unsigned_32 (ot_name))
-                        emit_int_narrow (ot_name);
-                } else if (u.op == "~") {
-                    emitter.not_rax ();
-                    if (is_unsigned_32 (ot_name))
-                        emit_int_narrow (ot_name);
+                if (u.op == "owned") {
+                    bool moved = false;
+                    if (u.operand is VarRef) {
+                        var vr = (VarRef) u.operand;
+                        int vidx = lookup (vr.name);
+                        if (vidx >= 0 && !local_by_ref[vidx] && !local_unmanaged[vidx]
+                            && !local_is_compact[vidx] && !local_is_weak[vidx]
+                            && is_ref_type (local_types[vidx])) {
+                            emitter.load_local (local_slots[vidx]);
+                            emitter.zero_local (local_slots[vidx]);
+                            moved = true;
+                        }
+                    }
+                    if (!moved) {
+                        gen_expr (u.operand);
+                        if (program_uses_heap && is_ref_type (ot) && !is_owned_expr (u.operand)) {
+                            emitter.mov_rdi_rax ();
+                            call_aligned ("__planc_ref");
+                        }
+                    }
                 } else {
-                    emitter.test_rax_rax ();
-                    emitter.setcc_al (0x94);
-                    emitter.movzx_eax_al ();
+                    gen_expr (u.operand);
+                    if (u.op == "-" && is_fp_type (ot)) {
+                        emitter.mov_rax_imm ((ot == ValaType.FLOAT) ? (int64) 0x80000000 : (int64) 0x8000000000000000);
+                        emitter.movq_xmm_rax (1);
+                        emitter.pxor_xmm0_xmm1 ();
+                    } else if (u.op == "-") {
+                        emitter.neg_rax ();
+                        if (is_unsigned_32 (ot_name))
+                            emit_int_narrow (ot_name);
+                    } else if (u.op == "~") {
+                        emitter.not_rax ();
+                        if (is_unsigned_32 (ot_name))
+                            emit_int_narrow (ot_name);
+                    } else {
+                        emitter.test_rax_rax ();
+                        emitter.setcc_al (0x94);
+                        emitter.movzx_eax_al ();
+                    }
                 }
             } else if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
@@ -14134,6 +14298,27 @@ namespace Planc {
             push_depth -= popped;
         }
 
+        private bool class_has_subclasses_cg (string cname) {
+            for (int i = 0; i < program.classes.length; i++) {
+                if (program.classes[i].base_name == cname)
+                    return true;
+            }
+            return false;
+        }
+
+        private bool can_devirtualize_method (Function m, Expr? target_expr) {
+            if (opt_level < 2 || m.vtable_slot < 0)
+                return false;
+            if (target_expr is ClassNewExpr)
+                return true;
+            if (m.owner_class != "") {
+                unowned var ocd = program.find_class (m.owner_class);
+                if (ocd != null && (ocd.is_sealed || !class_has_subclasses_cg (ocd.name)))
+                    return true;
+            }
+            return false;
+        }
+
         private void emit_instance_call_from_slot (int obj_slot, Function m, GenericArray<Expr> args)
                 throws SemanticError {
             var total_args = 1 + args.length;
@@ -14170,7 +14355,7 @@ namespace Planc {
 
             if (s == 0 && depth % 2 == 1)
                 emitter.sub_rsp (8);
-            if (m.vtable_slot >= 0) {
+            if (m.vtable_slot >= 0 && !can_devirtualize_method (m, null)) {
                 emitter.load_rdi_disp_to_rax (8);
                 emitter.call_rax_disp (24 + 8 * m.vtable_slot);
             } else if (m.iface_slot >= 0) {
@@ -14242,7 +14427,7 @@ namespace Planc {
             if (s == 0 && depth % 2 == 1)
                 emitter.sub_rsp (8);
 
-            if (!is_base && m.vtable_slot >= 0) {
+            if (!is_base && m.vtable_slot >= 0 && !can_devirtualize_method (m, target_expr)) {
                 emitter.load_rdi_disp_to_rax (8);
                 emitter.call_rax_disp (24 + 8 * m.vtable_slot);
             } else if (!is_base && m.iface_slot >= 0) {

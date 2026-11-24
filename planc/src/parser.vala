@@ -4473,6 +4473,22 @@ namespace Planc {
                     lexer = saved_lex;
                     current = saved_cur;
                 }
+                if (current.kind == TokenKind.IDENTIFIER && !current.is_escaped && current.text == "owned") {
+                    var saved_lex = lexer.clone_state ();
+                    var saved_cur = current;
+                    advance ();
+                    if (current.kind == TokenKind.RPAREN) {
+                        advance ();
+                        return new UnaryExpr () {
+                            op = "owned",
+                            operand = parse_unary (),
+                            line = l,
+                            column = c
+                        };
+                    }
+                    lexer = saved_lex;
+                    current = saved_cur;
+                }
                 if (current.kind == TokenKind.IDENTIFIER || (current.text == "void" && !current.is_escaped)) {
                     var saved_lex = lexer.clone_state ();
                     var saved_cur = current;

@@ -198,8 +198,59 @@ namespace Planc {
             return true;
         }
 
-        private static bool can_inline_fn (Function fn, int arg_count, int param_offset, GenericArray<Expr> args, Expr body_expr, ClassDecl? cd = null) {
-            if (fn.is_async || fn.is_asm_body || fn.can_throw || fn.is_varargs || fn.is_virtual || fn.is_override || fn.is_abstract)
+        private static int inline_seq = 0;
+
+        private static Expr? try_extract_inline_ret_expr (Function fn) {
+            if (fn.body == null) return null;
+            if (fn.body.length == 1 && fn.body[0] is ReturnStatement) {
+                return ((ReturnStatement) fn.body[0]).value;
+            }
+            if (fn.body.length == 1 && fn.body[0] is IfStatement) {
+                var ifs = (IfStatement) fn.body[0];
+                var r1 = unwrap_single_ret (ifs.then_body);
+                var r2 = unwrap_single_ret (ifs.else_body);
+                if (r1 != null && r2 != null) {
+                    return new TernaryExpr () {
+                        condition = ifs.condition,
+                        then_expr = r1,
+                        else_expr = r2,
+                        line = ifs.line,
+                        column = ifs.column
+                    };
+                }
+            }
+            if (fn.body.length == 2 && fn.body[0] is IfStatement && fn.body[1] is ReturnStatement) {
+                var ifs = (IfStatement) fn.body[0];
+                var r1 = (ifs.else_body == null) ? unwrap_single_ret (ifs.then_body) : null;
+                var r2 = ((ReturnStatement) fn.body[1]).value;
+                if (r1 != null && r2 != null) {
+                    return new TernaryExpr () {
+                        condition = ifs.condition,
+                        then_expr = r1,
+                        else_expr = r2,
+                        line = ifs.line,
+                        column = ifs.column
+                    };
+                }
+            }
+            return null;
+        }
+
+        private static Expr? unwrap_single_ret (Statement? s) {
+            if (s == null) return null;
+            if (s is ReturnStatement) return ((ReturnStatement) s).value;
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                if (blk.statements.length == 1 && blk.statements[0] is ReturnStatement)
+                    return ((ReturnStatement) blk.statements[0]).value;
+            }
+            return null;
+        }
+
+        private static bool can_inline_fn (Function fn, int arg_count, int param_offset, GenericArray<Expr> args, Expr body_expr, ClassDecl? cd = null, bool allow_devirt = false) {
+            if (fn.is_async || fn.is_asm_body || fn.can_throw || fn.is_varargs || fn.is_abstract)
+                return false;
+            if ((fn.is_virtual || fn.is_override) && !allow_devirt)
                 return false;
             if (fn.params.length != arg_count + param_offset)
                 return false;
@@ -262,13 +313,13 @@ namespace Planc {
                 for (int i = 0; i < c.args.length; i++)
                     c.args[i] = inline_expr (prog, c.args[i], vnames, vclasses);
                 unowned var fn = prog.find (c.callee);
-                if (fn != null && fn.body != null && fn.body.length == 1 && fn.body[0] is ReturnStatement) {
-                    var rs = (ReturnStatement) fn.body[0];
-                    if (rs.value != null && can_inline_fn (fn, c.args.length, 0, c.args, rs.value)) {
+                if (fn != null) {
+                    var body_e = try_extract_inline_ret_expr (fn);
+                    if (body_e != null && can_inline_fn (fn, c.args.length, 0, c.args, body_e)) {
                         var pnames = new GenericArray<string> ();
                         for (int i = 0; i < fn.params.length; i++)
                             pnames.add (fn.params[i].name);
-                        var cloned = prog.clone_expr_plain (rs.value);
+                        var cloned = prog.clone_expr_plain (body_e);
                         return subst_inline_expr (prog, cloned, pnames, c.args, null, null);
                     }
                 }
@@ -288,14 +339,13 @@ namespace Planc {
                         if (cd != null && (cd.base_name == "" || cd.base_name == "Object")) {
                             unowned var fn = find_class_method_opt (cd, mc.method_name);
                             int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
-                            if (fn != null && !fn.is_static
-                                && fn.body != null && fn.body.length == 1 && fn.body[0] is ReturnStatement) {
-                                var rs = (ReturnStatement) fn.body[0];
-                                if (rs.value != null && can_inline_fn (fn, mc.args.length, poff, mc.args, rs.value, cd)) {
+                            if (fn != null && !fn.is_static) {
+                                var body_e = try_extract_inline_ret_expr (fn);
+                                if (body_e != null && can_inline_fn (fn, mc.args.length, poff, mc.args, body_e, cd, true)) {
                                     var pnames = new GenericArray<string> ();
                                     for (int i = poff; i < fn.params.length; i++)
                                         pnames.add (fn.params[i].name);
-                                    var cloned = prog.clone_expr_plain (rs.value);
+                                    var cloned = prog.clone_expr_plain (body_e);
                                     return subst_inline_expr (prog, cloned, pnames, mc.args, cd, obj);
                                 }
                             }
@@ -305,6 +355,401 @@ namespace Planc {
                 return mc;
             }
             return e;
+        }
+
+        private static bool expr_only_uses_multi_scope (Program prog, Expr? e, Function fn, ClassDecl? cd, GenericArray<string> lnames) {
+            if (e == null) return true;
+            if (e is VarRef) {
+                string name = ((VarRef) e).name;
+                for (int i = 0; i < fn.params.length; i++) {
+                    if (fn.params[i].name == name) return true;
+                }
+                for (int i = 0; i < lnames.length; i++) {
+                    if (lnames[i] == name) return true;
+                }
+                if (cd != null && (name == "this" || cd_has_field (cd, name)))
+                    return true;
+                return false;
+            }
+            if (e is UnaryExpr) return expr_only_uses_multi_scope (prog, ((UnaryExpr) e).operand, fn, cd, lnames);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_only_uses_multi_scope (prog, b.left, fn, cd, lnames)
+                    && expr_only_uses_multi_scope (prog, b.right, fn, cd, lnames);
+            }
+            if (e is MemberAccessExpr) return expr_only_uses_multi_scope (prog, ((MemberAccessExpr) e).target, fn, cd, lnames);
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return expr_only_uses_multi_scope (prog, ix.target, fn, cd, lnames)
+                    && expr_only_uses_multi_scope (prog, ix.index, fn, cd, lnames);
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_only_uses_multi_scope (prog, te.condition, fn, cd, lnames)
+                    && expr_only_uses_multi_scope (prog, te.then_expr, fn, cd, lnames)
+                    && expr_only_uses_multi_scope (prog, te.else_expr, fn, cd, lnames);
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                unowned var cf = prog.find (c.callee);
+                if (cf == null || cf.owner_class != "") return false;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (!expr_only_uses_multi_scope (prog, c.args[i], fn, cd, lnames)) return false;
+                }
+                return true;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (mc.target == null || !expr_only_uses_multi_scope (prog, mc.target, fn, cd, lnames)) return false;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (!expr_only_uses_multi_scope (prog, mc.args[i], fn, cd, lnames)) return false;
+                }
+                return true;
+            }
+            return (e is IntLiteral) || (e is FloatLiteral) || (e is BoolLiteral)
+                || (e is StringLiteral) || (e is NullLiteral);
+        }
+
+        private static bool stmt_ok_for_multi_inline (Program prog, Statement? s, Function fn, ClassDecl? cd,
+                                                      GenericArray<string> lnames, bool allow_ret, bool is_last) {
+            if (s == null) return true;
+            string fn_name = fn.name;
+            if (s is ReturnStatement) {
+                if (!allow_ret || !is_last) return false;
+                var rs = (ReturnStatement) s;
+                return rs.value != null && !expr_calls_fn (rs.value, fn_name)
+                    && expr_only_uses_multi_scope (prog, rs.value, fn, cd, lnames);
+            }
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                if (expr_calls_fn (d.init, fn_name) || !expr_only_uses_multi_scope (prog, d.init, fn, cd, lnames))
+                    return false;
+                lnames.add (d.name);
+                return true;
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                bool lhs_ok = false;
+                for (int i = 0; i < fn.params.length; i++) {
+                    if (fn.params[i].name == a.name) { lhs_ok = true; break; }
+                }
+                for (int i = 0; i < lnames.length && !lhs_ok; i++) {
+                    if (lnames[i] == a.name) { lhs_ok = true; break; }
+                }
+                if (!lhs_ok && cd != null && cd_has_field (cd, a.name)) lhs_ok = true;
+                return lhs_ok && !expr_calls_fn (a.value, fn_name)
+                    && expr_only_uses_multi_scope (prog, a.value, fn, cd, lnames);
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return !expr_calls_fn (fa.target, fn_name) && !expr_calls_fn (fa.value, fn_name)
+                    && expr_only_uses_multi_scope (prog, fa.target, fn, cd, lnames)
+                    && expr_only_uses_multi_scope (prog, fa.value, fn, cd, lnames);
+            }
+            if (s is ExprStatement) {
+                var ex = ((ExprStatement) s).expr;
+                return !expr_calls_fn (ex, fn_name) && expr_only_uses_multi_scope (prog, ex, fn, cd, lnames);
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                if (expr_calls_fn (ifs.condition, fn_name) || !expr_only_uses_multi_scope (prog, ifs.condition, fn, cd, lnames))
+                    return false;
+                int m1 = lnames.length;
+                bool ok1 = stmt_ok_for_multi_inline (prog, ifs.then_body, fn, cd, lnames, false, false);
+                while (lnames.length > m1) lnames.remove_index (lnames.length - 1);
+                if (!ok1) return false;
+                bool ok2 = stmt_ok_for_multi_inline (prog, ifs.else_body, fn, cd, lnames, false, false);
+                while (lnames.length > m1) lnames.remove_index (lnames.length - 1);
+                return ok2;
+            }
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                int m1 = lnames.length;
+                for (int i = 0; i < blk.statements.length; i++) {
+                    if (!stmt_ok_for_multi_inline (prog, blk.statements[i], fn, cd, lnames, false, false)) {
+                        while (lnames.length > m1) lnames.remove_index (lnames.length - 1);
+                        return false;
+                    }
+                }
+                while (lnames.length > m1) lnames.remove_index (lnames.length - 1);
+                return true;
+            }
+            return false;
+        }
+
+        private static bool expr_calls_fn (Expr? e, string fn_name) {
+            if (e == null) return false;
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                if (c.callee == fn_name) return true;
+                for (int i = 0; i < c.args.length; i++) {
+                    if (expr_calls_fn (c.args[i], fn_name)) return true;
+                }
+                return false;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (mc.method_name == fn_name) return true;
+                if (expr_calls_fn (mc.target, fn_name)) return true;
+                for (int i = 0; i < mc.args.length; i++) {
+                    if (expr_calls_fn (mc.args[i], fn_name)) return true;
+                }
+                return false;
+            }
+            if (e is UnaryExpr) return expr_calls_fn (((UnaryExpr) e).operand, fn_name);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return expr_calls_fn (b.left, fn_name) || expr_calls_fn (b.right, fn_name);
+            }
+            if (e is MemberAccessExpr) return expr_calls_fn (((MemberAccessExpr) e).target, fn_name);
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                return expr_calls_fn (ix.target, fn_name) || expr_calls_fn (ix.index, fn_name);
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                return expr_calls_fn (te.condition, fn_name)
+                    || expr_calls_fn (te.then_expr, fn_name)
+                    || expr_calls_fn (te.else_expr, fn_name);
+            }
+            return false;
+        }
+
+        private static bool can_inline_multi_fn (Program prog, Function fn, int arg_count, int param_offset,
+                                                 ClassDecl? cd, bool allow_ret, bool allow_devirt) {
+            if (fn.is_async || fn.is_asm_body || fn.can_throw || fn.is_varargs || fn.is_abstract)
+                return false;
+            if (cd == null && fn.owner_class != "")
+                return false;
+            if ((fn.is_virtual || fn.is_override) && !allow_devirt)
+                return false;
+            if (fn.params.length != arg_count + param_offset)
+                return false;
+            for (int i = 0; i < fn.params.length; i++) {
+                if (fn.params[i].is_ref || fn.params[i].is_out || fn.params[i].param_type == ValaType.STRUCT)
+                    return false;
+            }
+            if (fn.body == null || fn.body.length == 0 || fn.body.length > 8)
+                return false;
+            var lnames = new GenericArray<string> ();
+            for (int i = 0; i < fn.body.length; i++) {
+                bool is_last = (i == fn.body.length - 1);
+                if (!stmt_ok_for_multi_inline (prog, fn.body[i], fn, cd, lnames, allow_ret, is_last))
+                    return false;
+            }
+            return true;
+        }
+
+        private static string? lookup_rename (GenericArray<string> old_n, GenericArray<string> new_n, string name) {
+            for (int i = old_n.length - 1; i >= 0; i--) {
+                if (old_n[i] == name) return new_n[i];
+            }
+            return null;
+        }
+
+        private static Expr subst_multi_expr (Program prog, Expr e,
+                                              GenericArray<string> old_n, GenericArray<string> new_n,
+                                              ClassDecl? cd, string? obj_var) {
+            if (e is VarRef) {
+                var vr = (VarRef) e;
+                string? rn = lookup_rename (old_n, new_n, vr.name);
+                if (rn != null)
+                    return new VarRef () { name = rn, line = e.line, column = e.column };
+                if (cd != null && obj_var != null) {
+                    if (vr.name == "this")
+                        return new VarRef () { name = obj_var, line = e.line, column = e.column };
+                    if (cd_has_field (cd, vr.name))
+                        return new MemberAccessExpr () {
+                            target = new VarRef () { name = obj_var, line = e.line, column = e.column },
+                            member = vr.name,
+                            line = e.line,
+                            column = e.column
+                        };
+                }
+                return e;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                u.operand = subst_multi_expr (prog, u.operand, old_n, new_n, cd, obj_var);
+                return u;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                b.left = subst_multi_expr (prog, b.left, old_n, new_n, cd, obj_var);
+                b.right = subst_multi_expr (prog, b.right, old_n, new_n, cd, obj_var);
+                return b;
+            }
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                ma.target = subst_multi_expr (prog, ma.target, old_n, new_n, cd, obj_var);
+                return ma;
+            }
+            if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                ix.target = subst_multi_expr (prog, ix.target, old_n, new_n, cd, obj_var);
+                ix.index = subst_multi_expr (prog, ix.index, old_n, new_n, cd, obj_var);
+                return ix;
+            }
+            if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                te.condition = subst_multi_expr (prog, te.condition, old_n, new_n, cd, obj_var);
+                te.then_expr = subst_multi_expr (prog, te.then_expr, old_n, new_n, cd, obj_var);
+                te.else_expr = subst_multi_expr (prog, te.else_expr, old_n, new_n, cd, obj_var);
+                return te;
+            }
+            if (e is CallExpr) {
+                var c = (CallExpr) e;
+                for (int i = 0; i < c.args.length; i++)
+                    c.args[i] = subst_multi_expr (prog, c.args[i], old_n, new_n, cd, obj_var);
+                return c;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (mc.target != null)
+                    mc.target = subst_multi_expr (prog, mc.target, old_n, new_n, cd, obj_var);
+                for (int i = 0; i < mc.args.length; i++)
+                    mc.args[i] = subst_multi_expr (prog, mc.args[i], old_n, new_n, cd, obj_var);
+                return mc;
+            }
+            return e;
+        }
+
+        private static Statement clone_subst_stmt (Program prog, Statement s, int seq,
+                                                   GenericArray<string> old_n, GenericArray<string> new_n,
+                                                   ClassDecl? cd, string? obj_var,
+                                                   string? assign_lhs, bool is_ret) {
+            if (s is VarDeclStatement) {
+                var d = (VarDeclStatement) s;
+                string rn = @"__inl_$(seq)_$(d.name)";
+                var nd = new VarDeclStatement () {
+                    name = rn,
+                    decl_type = d.decl_type,
+                    decl_type_name = d.decl_type_name,
+                    infer_type = d.infer_type,
+                    is_weak = d.is_weak,
+                    is_unowned = d.is_unowned,
+                    init = (d.init != null) ? subst_multi_expr (prog, prog.clone_expr_plain (d.init), old_n, new_n, cd, obj_var) : null,
+                    line = d.line,
+                    column = d.column
+                };
+                old_n.add (d.name);
+                new_n.add (rn);
+                return nd;
+            }
+            if (s is AssignStatement) {
+                var a = (AssignStatement) s;
+                var val = subst_multi_expr (prog, prog.clone_expr_plain (a.value), old_n, new_n, cd, obj_var);
+                string? rn = lookup_rename (old_n, new_n, a.name);
+                if (rn != null) {
+                    return new AssignStatement () {
+                        name = rn, value = val, line = a.line, column = a.column
+                    };
+                }
+                if (cd != null && obj_var != null && cd_has_field (cd, a.name)) {
+                    return new FieldAssignStatement () {
+                        target = new VarRef () { name = obj_var, line = a.line, column = a.column },
+                        field_name = a.name,
+                        op = "=",
+                        value = val,
+                        line = a.line,
+                        column = a.column
+                    };
+                }
+                return new AssignStatement () {
+                    name = a.name, value = val, line = a.line, column = a.column
+                };
+            }
+            if (s is FieldAssignStatement) {
+                var fa = (FieldAssignStatement) s;
+                return new FieldAssignStatement () {
+                    target = subst_multi_expr (prog, prog.clone_expr_plain (fa.target), old_n, new_n, cd, obj_var),
+                    field_name = fa.field_name,
+                    op = fa.op,
+                    value = subst_multi_expr (prog, prog.clone_expr_plain (fa.value), old_n, new_n, cd, obj_var),
+                    line = fa.line,
+                    column = fa.column
+                };
+            }
+            if (s is ExprStatement) {
+                var es = (ExprStatement) s;
+                return new ExprStatement () {
+                    expr = subst_multi_expr (prog, prog.clone_expr_plain (es.expr), old_n, new_n, cd, obj_var),
+                    line = es.line,
+                    column = es.column
+                };
+            }
+            if (s is IfStatement) {
+                var ifs = (IfStatement) s;
+                var nifs = new IfStatement () {
+                    condition = subst_multi_expr (prog, prog.clone_expr_plain (ifs.condition), old_n, new_n, cd, obj_var),
+                    line = ifs.line,
+                    column = ifs.column
+                };
+                if (ifs.then_body != null)
+                    nifs.then_body = clone_subst_stmt (prog, (!) ifs.then_body, seq, old_n, new_n, cd, obj_var, null, false);
+                if (ifs.else_body != null)
+                    nifs.else_body = clone_subst_stmt (prog, (!) ifs.else_body, seq, old_n, new_n, cd, obj_var, null, false);
+                return nifs;
+            }
+            if (s is BlockStatement) {
+                var blk = (BlockStatement) s;
+                var nblk = new BlockStatement () { line = blk.line, column = blk.column };
+                int mark = old_n.length;
+                for (int i = 0; i < blk.statements.length; i++)
+                    nblk.statements.add (clone_subst_stmt (prog, blk.statements[i], seq, old_n, new_n, cd, obj_var, null, false));
+                while (old_n.length > mark) old_n.remove_index (old_n.length - 1);
+                while (new_n.length > mark) new_n.remove_index (new_n.length - 1);
+                return nblk;
+            }
+            if (s is ReturnStatement) {
+                var rs = (ReturnStatement) s;
+                if (rs.value == null) {
+                    // `value = null` in an initializer list makes valac unref a
+                    // literal null and emits C that does not compile.
+                    var nr = new ReturnStatement ();
+                    nr.line = rs.line;
+                    nr.column = rs.column;
+                    return nr;
+                }
+                var rv = subst_multi_expr (prog, prog.clone_expr_plain ((!) rs.value), old_n, new_n, cd, obj_var);
+                if (is_ret) {
+                    return new ReturnStatement () { value = rv, line = rs.line, column = rs.column };
+                }
+                if (assign_lhs != null) {
+                    return new AssignStatement () { name = assign_lhs, value = rv, line = rs.line, column = rs.column };
+                }
+                return new ExprStatement () { expr = rv, line = rs.line, column = rs.column };
+            }
+            return s;
+        }
+
+        private static BlockStatement build_multi_inline_block (Program prog, Function fn, int poff,
+                                                                GenericArray<Expr> args, ClassDecl? cd, string? obj_var,
+                                                                string? assign_lhs, bool is_ret, int line, int col) {
+            inline_seq++;
+            int seq = inline_seq;
+            var blk = new BlockStatement () { line = line, column = col };
+            var old_n = new GenericArray<string> ();
+            var new_n = new GenericArray<string> ();
+            for (int i = 0; i < args.length; i++) {
+                var p = fn.params[poff + i];
+                string rn = @"__inl_$(seq)_$(p.name)";
+                blk.statements.add (new VarDeclStatement () {
+                    name = rn,
+                    decl_type = p.param_type,
+                    decl_type_name = p.type_name,
+                    infer_type = false,
+                    init = prog.clone_expr_plain (args[i]),
+                    line = line,
+                    column = col
+                });
+                old_n.add (p.name);
+                new_n.add (rn);
+            }
+            for (int i = 0; i < fn.body.length; i++) {
+                blk.statements.add (clone_subst_stmt (prog, fn.body[i], seq, old_n, new_n, cd, obj_var, assign_lhs, is_ret));
+            }
+            return blk;
         }
 
         private static Statement inline_stmt (Program prog, Statement s,
@@ -337,13 +782,60 @@ namespace Planc {
             }
             if (s is ReturnStatement) {
                 var rs = (ReturnStatement) s;
-                if (rs.value != null)
+                if (rs.value != null) {
                     rs.value = inline_expr (prog, rs.value, vnames, vclasses);
+                    if (rs.value is CallExpr) {
+                        var c = (CallExpr) rs.value;
+                        unowned var fn = prog.find (c.callee);
+                        if (fn != null && !fn.is_void && can_inline_multi_fn (prog, fn, c.args.length, 0, null, true, false))
+                            return build_multi_inline_block (prog, fn, 0, c.args, null, null, null, true, rs.line, rs.column);
+                    } else if (rs.value is MethodCallExpr) {
+                        var mc = (MethodCallExpr) rs.value;
+                        if (mc.target is VarRef) {
+                            string obj = ((VarRef) mc.target).name;
+                            string? cname = lookup_var_class (vnames, vclasses, obj);
+                            if (cname != null && !class_has_subclasses (prog, cname)) {
+                                unowned var cd = prog.find_class (cname);
+                                if (cd != null && (cd.base_name == "" || cd.base_name == "Object")) {
+                                    unowned var fn = find_class_method_opt (cd, mc.method_name);
+                                    int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
+                                    if (fn != null && !fn.is_static && !fn.is_void
+                                        && can_inline_multi_fn (prog, fn, mc.args.length, poff, cd, true, true))
+                                        return build_multi_inline_block (prog, fn, poff, mc.args, cd, obj, null, true, rs.line, rs.column);
+                                }
+                            }
+                        }
+                    }
+                }
                 return rs;
             }
             if (s is AssignStatement) {
                 var a = (AssignStatement) s;
                 a.value = inline_expr (prog, a.value, vnames, vclasses);
+                {
+                    if (a.value is CallExpr) {
+                        var c = (CallExpr) a.value;
+                        unowned var fn = prog.find (c.callee);
+                        if (fn != null && !fn.is_void && can_inline_multi_fn (prog, fn, c.args.length, 0, null, true, false))
+                            return build_multi_inline_block (prog, fn, 0, c.args, null, null, a.name, false, a.line, a.column);
+                    } else if (a.value is MethodCallExpr) {
+                        var mc = (MethodCallExpr) a.value;
+                        if (mc.target is VarRef) {
+                            string obj = ((VarRef) mc.target).name;
+                            string? cname = lookup_var_class (vnames, vclasses, obj);
+                            if (cname != null && !class_has_subclasses (prog, cname)) {
+                                unowned var cd = prog.find_class (cname);
+                                if (cd != null && (cd.base_name == "" || cd.base_name == "Object")) {
+                                    unowned var fn = find_class_method_opt (cd, mc.method_name);
+                                    int poff = (fn != null && fn.params.length >= 1 && fn.params[0].name == "this") ? 1 : 0;
+                                    if (fn != null && !fn.is_static && !fn.is_void
+                                        && can_inline_multi_fn (prog, fn, mc.args.length, poff, cd, true, true))
+                                        return build_multi_inline_block (prog, fn, poff, mc.args, cd, obj, a.name, false, a.line, a.column);
+                                }
+                            }
+                        }
+                    }
+                }
                 return a;
             }
             if (s is FieldAssignStatement) {
@@ -392,11 +884,19 @@ namespace Planc {
                                         };
                                     }
                                 }
+                                if (fn != null && !fn.is_static && can_inline_multi_fn (prog, fn, mc.args.length, poff, cd, false, true))
+                                    return build_multi_inline_block (prog, fn, poff, mc.args, cd, obj, null, false, es.line, es.column);
                             }
                         }
                     }
                 }
                 es.expr = inline_expr (prog, es.expr, vnames, vclasses);
+                if (es.expr is CallExpr) {
+                    var c = (CallExpr) es.expr;
+                    unowned var fn = prog.find (c.callee);
+                    if (fn != null && can_inline_multi_fn (prog, fn, c.args.length, 0, null, false, false))
+                        return build_multi_inline_block (prog, fn, 0, c.args, null, null, null, false, es.line, es.column);
+                }
                 return es;
             }
             if (s is IfStatement) {

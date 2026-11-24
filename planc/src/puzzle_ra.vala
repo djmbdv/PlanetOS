@@ -20,6 +20,7 @@ namespace Planc {
         TRE_JUMP,
         TAIL_CALL,
         ARR_NEW,
+        ARR_STACK,
         ARR_LOAD,
         ARR_STORE,
         ARR_LEN,
@@ -113,6 +114,7 @@ namespace Planc {
         private GenericArray<int> break_bbs = new GenericArray<int> ();
         private GenericArray<int> continue_bbs = new GenericArray<int> ();
         private GenericArray<int> arr_locals = new GenericArray<int> ();
+        private int stack_arr_bytes = 0;
         private string cur_fn_name = "";
         private int cur_nparams = 0;
         private int tre_loop_bb = -1;
@@ -1229,6 +1231,115 @@ namespace Planc {
         private bool[] used_callee = new bool[5]; // RBX, R12..R15
         private bool has_calls = false;
 
+        private void promote_stack_arrays (int nparams) {
+            int nv = next_vreg;
+            if (nv <= 0) return;
+            var def_count = new int[nv];
+            var def_inst = new IRInst?[nv];
+            for (int b = 0; b < blocks.length; b++) {
+                var insts = blocks[b].insts;
+                for (int ii = 0; ii < insts.length; ii++) {
+                    var ins = insts[ii];
+                    if (ins.dst >= 0 && ins.op != IROp.ARR_STORE) {
+                        def_count[ins.dst]++;
+                        def_inst[ins.dst] = ins;
+                    }
+                    if (ins.op == IROp.TRE_JUMP) {
+                        for (int pi = 0; pi < cur_nparams; pi++)
+                            def_count[pi]++;
+                    }
+                }
+            }
+
+            for (int b = 0; b < blocks.length; b++) {
+                var insts = blocks[b].insts;
+                for (int ii = 0; ii < insts.length; ii++) {
+                    var ins = insts[ii];
+                    if (ins.op != IROp.ARR_NEW) continue;
+                    int d = ins.dst;
+                    int lv = ins.lhs;
+                    if (d < nparams || lv < nparams || def_count[d] != 1 || def_count[lv] != 1) continue;
+                    var ldef = def_inst[lv];
+                    if (ldef == null || ldef.op != IROp.MOV_IMM) continue;
+                    int64 len = ldef.imm;
+                    if (len < 0 || len > 64) continue;
+
+                    // Determine target variable (either d directly or single MOV var_v = d)
+                    int d_uses = 0;
+                    int mov_target = -1;
+                    for (int bb = 0; bb < blocks.length; bb++) {
+                        var binsts = blocks[bb].insts;
+                        for (int jj = 0; jj < binsts.length; jj++) {
+                            var u = binsts[jj];
+                            if (u.lhs == d) {
+                                d_uses++;
+                                if (u.op == IROp.MOV && u.dst >= nparams && def_count[u.dst] == 1)
+                                    mov_target = u.dst;
+                            }
+                            if (u.rhs == d) d_uses++;
+                            if (u.op == IROp.ARR_STORE && u.dst == d) d_uses++;
+                            for (int ai = 0; ai < u.args.length; ai++) {
+                                if (u.args[ai] == d) d_uses++;
+                            }
+                        }
+                    }
+
+                    int target_v = -1;
+                    if (d_uses == 1 && mov_target >= 0) {
+                        target_v = mov_target;
+                    } else if (mov_target < 0) {
+                        target_v = d;
+                    } else {
+                        continue;
+                    }
+
+                    // Ensure target_v never escapes (only used in ARR_LOAD, ARR_STORE dst, ARR_LEN)
+                    bool safe = true;
+                    for (int bb = 0; bb < blocks.length && safe; bb++) {
+                        var binsts = blocks[bb].insts;
+                        for (int jj = 0; jj < binsts.length; jj++) {
+                            var u = binsts[jj];
+                            if (u == ins) continue;
+                            if (target_v != d && u.op == IROp.MOV && u.dst == target_v && u.lhs == d) continue;
+                            if (u.op == IROp.ARR_LOAD) {
+                                if (u.rhs == target_v || u.dst == target_v) { safe = false; break; }
+                                continue;
+                            }
+                            if (u.op == IROp.ARR_STORE) {
+                                if (u.lhs == target_v || u.rhs == target_v) { safe = false; break; }
+                                continue;
+                            }
+                            if (u.op == IROp.ARR_LEN) {
+                                if (u.dst == target_v) { safe = false; break; }
+                                continue;
+                            }
+                            if (u.dst == target_v || u.lhs == target_v || u.rhs == target_v) {
+                                safe = false;
+                                break;
+                            }
+                            for (int ai = 0; ai < u.args.length; ai++) {
+                                if (u.args[ai] == target_v) { safe = false; break; }
+                            }
+                        }
+                    }
+                    if (!safe) continue;
+
+                    int alloc_bytes = ((16 + (int) len * 8 + 15) & ~15);
+                    if (stack_arr_bytes + alloc_bytes > 2048) continue;
+
+                    for (int ai = arr_locals.length - 1; ai >= 0; ai--) {
+                        if (arr_locals[ai] == target_v)
+                            arr_locals.remove_index (ai);
+                    }
+                    stack_arr_bytes += alloc_bytes;
+                    ins.op = IROp.ARR_STACK;
+                    ins.lhs = -1;
+                    ins.imm = len;
+                    ins.target_bb = stack_arr_bytes;
+                }
+            }
+        }
+
         private void solve_puzzles (int nparams) {
             int nv = next_vreg;
             vreg_phys = new int[nv];
@@ -1808,12 +1919,13 @@ namespace Planc {
             }
 
             int frame_bytes = (num_spills > 0) ? ((8 * num_spills + 15) & ~15) : 0;
+            int total_frame_bytes = frame_bytes + stack_arr_bytes;
             // Ensure 16-byte stack alignment before CALLs:
-            // push rbp (8) + callee_list (8 * k) + frame_bytes (mult of 16).
+            // push rbp (8) + callee_list (8 * k) + total_frame_bytes (mult of 16).
             // Since CALL pushed 8 bytes return addr, rbp is 16-aligned!
-            // So frame_bytes + 8 * callee_list.length must be a multiple of 16 if has_calls!
+            // So total_frame_bytes + 8 * callee_list.length must be a multiple of 16 if has_calls!
             bool need_pad = has_calls && ((callee_list.length % 2) == 1);
-            int total_sub = frame_bytes + (need_pad ? 8 : 0);
+            int total_sub = total_frame_bytes + (need_pad ? 8 : 0);
             bool omit_frame = (total_sub == 0 && callee_list.length == 0
                                && !(program_uses_heap && arr_locals.length > 0) && !has_calls);
 
@@ -2164,6 +2276,30 @@ namespace Planc {
                             write_vreg_from (ins.dst, Reg.RAX);
                             break;
                         }
+                        case IROp.ARR_STACK: {
+                            int disp = -(frame_bytes + ins.target_bb);
+                            emit_lea_disp (Reg.R10, Reg.RBP, disp);
+                            code.u8 (0x45); code.u8 (0x31); code.u8 (0xDB); // xor r11d, r11d
+                            emit_rex (true, Reg.R11, Reg.R10);
+                            code.u8 (0x89); code.u8 (0x1A); // mov [r10], r11
+                            code.u8 (0x41); code.u8 (0xBB); code.u32le ((uint32) ins.imm); // mov r11d, len
+                            emit_rex (true, Reg.R11, Reg.R10);
+                            code.u8 (0x89); code.u8 (0x5A); code.u8 (8); // mov [r10 + 8], r11
+                            if (ins.imm > 0) {
+                                emitter.push_reg (Reg.RDI);
+                                emitter.push_reg (Reg.RCX);
+                                emitter.push_reg (Reg.RAX);
+                                emit_lea_disp (Reg.RDI, Reg.R10, 16);
+                                code.u8 (0xB9); code.u32le ((uint32) ins.imm); // mov ecx, len
+                                code.u8 (0x31); code.u8 (0xC0); // xor eax, eax
+                                code.u8 (0xF3); code.u8 (0x48); code.u8 (0xAB); // rep stosq
+                                emitter.pop_reg (Reg.RAX);
+                                emitter.pop_reg (Reg.RCX);
+                                emitter.pop_reg (Reg.RDI);
+                            }
+                            write_vreg_from (ins.dst, Reg.R10);
+                            break;
+                        }
                         case IROp.ARR_LEN: {
                             Reg av = read_vreg (ins.lhs, Reg.R10);
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
@@ -2507,6 +2643,7 @@ namespace Planc {
             if (!ra.bb_ends_with_term (ra.cur_bb))
                 ra.emit_ir (new IRInst () { op = IROp.RET_VOID });
 
+            ra.promote_stack_arrays (f.params.length);
             ra.solve_puzzles (f.params.length);
             ra.emit_machine_code (f, symbols);
             used_write_str = ra.used_write_str;
