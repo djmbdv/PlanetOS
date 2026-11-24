@@ -531,13 +531,9 @@ namespace Planet.Kernel {
     // own block before anything runs, which is what keeps userland away from
     // MMIO and DMA while there is no IOMMU.
     private static bool ring_header_ok (int rstart, int rlen, int entries) {
-        if (rstart <= 0)
+        if (rstart <= 0 || rlen < 64)
             return false;
-        if (rlen < 64)
-            return false;
-        if (entries <= 0)
-            return false;
-        if (entries > RING_MAX_ENTRIES)
+        if (entries <= 0 || entries > RING_MAX_ENTRIES)
             return false;
         if (rlen < 64 + entries * RING_ENTRY)
             return false;

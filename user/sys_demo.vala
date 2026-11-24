@@ -364,6 +364,8 @@ int main (string[] args) {
         Sys.free_page (blk_buf);
     // Sector 0 carries the XFS magic. The IRQ wake count is printed, not
     // asserted: MSI-X is programmed but delivery is still unverified (C2).
+    // One test per `if`: a three-term `&&` over int comparisons still flips on
+    // roughly one run in four with planc c0d89b2 (R-35 residual).
     bool blk_ok = true;
     if (blk_buf <= 0)
         blk_ok = false;
