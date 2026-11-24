@@ -388,6 +388,8 @@ namespace Planc {
                     } else {
                         emit_ir (new IRInst () { op = IROp.CMP_IMM_JMP_FALSE, sop = "==", lhs = lv, imm = 0, target_bb = bb_short });
                     }
+                    if (bb_rhs != cur_bb + 1)
+                        emit_ir (new IRInst () { op = IROp.JMP, target_bb = bb_rhs });
                     blocks[cur_bb].succs.add (bb_rhs);
                     blocks[cur_bb].succs.add (bb_short);
                     cur_bb = bb_rhs;
