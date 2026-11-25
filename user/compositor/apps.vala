@@ -447,6 +447,19 @@ namespace Wm {
                 }
                 return true;
             }
+            if (key == 0x87) { // Page Up -> scroll back
+                int max_off = (lines.length > 4) ? (lines.length - 4) : 0;
+                scroll_off += 10;
+                if (scroll_off > max_off)
+                    scroll_off = max_off;
+                return true;
+            }
+            if (key == 0x88) { // Page Down -> scroll forward
+                scroll_off -= 10;
+                if (scroll_off < 0)
+                    scroll_off = 0;
+                return true;
+            }
             if (key == 9) { // Tab -> autocomplete
                 if (input.length > 0) {
                     autocomplete ();
@@ -477,7 +490,7 @@ namespace Wm {
 
         public void draw (Context cr, int cx, int cy, int cw, int ch, bool focused, double ar, double ag, double ab) {
             // Obsidian Orbit (#0F1419)
-            cr.set_source_rgb (0.059, 0.078, 0.098);
+            cr.set_source_rgb (0.090, 0.090, 0.094);
             cr.rectangle (cx, cy, cw, ch);
             cr.fill ();
             int row_h = 18;
@@ -489,7 +502,7 @@ namespace Wm {
             int start = (end > hist_rows) ? (end - hist_rows) : 0;
             int y = cy + 8;
             // Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             for (int i = start; i < end; i++) {
                 TextHelper.draw_mono (cr, lines[i], cx + 10, y, 14.0);
                 y += row_h;

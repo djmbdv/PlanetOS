@@ -451,8 +451,8 @@ if (-not $NoBuild) {
         (Out-Path 'c2vala.elf') `
         (Join-Path $Root 'tools\c2vala_tests\cases\arith\main.c') `
         (Out-Path 'frag_pattern.spv') `
-        (Join-Path $Root 'assets\LiberationSans-Regular.ttf') `
-        (Join-Path $Root 'assets\LiberationMono-Regular.ttf') `
+        (Join-Path $Root 'assets\Tahoma.ttf') `
+        (Join-Path $Root 'assets\Consolas-Regular.ttf') `
         (Join-Path $Root 'cursor.svg') `
         (Out-Path 'pcm4.elf') `
         (Out-Path 'mathlib.dlib') `
@@ -465,6 +465,7 @@ if (-not $NoBuild) {
         (Out-Path 'sys_demo.elf') `
         (Out-Path 'mercury.elf') `
         (Out-Path 'curl.elf') `
+        (Join-Path $Root 'assets\winxp.jpg') `
         '--lib' (Lib-Dlib 'glib') '--lib' (Lib-Hlib 'glib') `
         '--lib' (Lib-Dlib 'gee') '--lib' (Lib-Hlib 'gee') `
         '--lib' (Lib-Dlib 'gio') '--lib' (Lib-Hlib 'gio') `

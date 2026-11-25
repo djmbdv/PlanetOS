@@ -551,10 +551,10 @@ namespace Gtk {
             if (!visible || width <= 0 || height <= 0)
                 return;
             // Slate Atmosphere (#182028) card fill & Stratosphere Line (#26323F) border
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.rounded_rectangle ((double) x, (double) y, (double) width, (double) height, 6.0);
             cr.fill ();
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.set_line_width (1.0);
             cr.rounded_rectangle ((double) x + 0.5, (double) y + 0.5, (double) (width - 1), (double) (height - 1), 6.0);
             cr.stroke ();
@@ -565,7 +565,7 @@ namespace Gtk {
                 int avail = width - pad * 2 - tw;
                 int lx = x + pad + ((avail > 0) ? (int) ((double) avail * label_xalign) : 0);
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 TextHelper.draw_text (cr, label, lx, y + 4, 13.0);
             }
             if (child != null)
@@ -702,8 +702,8 @@ namespace Gtk {
             if (!visible || width <= 0 || height <= 0)
                 return;
             cr.fill_gradient_v ((double) x, (double) y, (double) width, (double) height,
-                                0.129, 0.169, 0.212, 0.094, 0.125, 0.157);
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+                                0.175, 0.175, 0.182, 0.130, 0.130, 0.135);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rectangle ((double) x, (double) (y + height - 1), (double) width, 1.0);
             cr.fill ();
             base.draw (cr);
@@ -718,7 +718,7 @@ namespace Gtk {
                     cr.rectangle ((double) sx, (double) y, (double) (max_x - sx), (double) height);
                     cr.clip ();
                     // Titanium Mist (#8B9BB0)
-                    cr.set_source_rgb (0.545, 0.608, 0.690);
+                    cr.set_source_rgb (0.600, 0.600, 0.615);
                     TextHelper.draw_text (cr, subtitle, sx, y + (height - 12) / 2, 12.0);
                     cr.restore ();
                 }

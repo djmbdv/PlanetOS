@@ -18,7 +18,7 @@ import os
 import struct
 import sys
 
-ROOT_ARG_COUNT = 36  # image + 35 root files
+ROOT_ARG_COUNT = 37  # image + 36 root files
 
 
 def blk(b):
@@ -106,8 +106,8 @@ def main():
         (b"c2vala.elf", open(pos_args[19], "rb").read(), 0x81ED),
         (b"arith.c", open(pos_args[20], "rb").read(), 0x81A4),
         (b"frag_pattern.spv", open(pos_args[21], "rb").read(), 0x81A4),
-        (b"LiberationSans-Regular.ttf", open(pos_args[22], "rb").read(), 0x81A4),
-        (b"LiberationMono-Regular.ttf", open(pos_args[23], "rb").read(), 0x81A4),
+        (b"Tahoma.ttf", open(pos_args[22], "rb").read(), 0x81A4),
+        (b"Consolas-Regular.ttf", open(pos_args[23], "rb").read(), 0x81A4),
         (b"cursor.svg", open(pos_args[24], "rb").read(), 0x81A4),
         (b"pcm4.elf", open(pos_args[25], "rb").read(), 0x81ED),
         (b"mathlib.dlib", open(pos_args[26], "rb").read(), 0x81A4),
@@ -120,6 +120,7 @@ def main():
         (b"sys_demo.elf", open(pos_args[33], "rb").read(), 0x81ED),
         (b"mercury.elf", open(pos_args[34], "rb").read(), 0x81ED),
         (b"curl.elf", open(pos_args[35], "rb").read(), 0x81ED),
+        (b"winxp.jpg", open(pos_args[36], "rb").read(), 0x81A4),
     ]
 
     stdlib_specs = []

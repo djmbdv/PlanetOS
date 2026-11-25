@@ -260,7 +260,7 @@ namespace Gtk {
             if (cr == null || gdk_win == null)
                 return;
             // Slate Atmosphere (#182028) window surface
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.paint ();
 
             if (decorated) {
@@ -268,13 +268,13 @@ namespace Gtk {
                     titlebar.render (cr);
                 } else {
                     // Minimalist headerbar (Elevated Surface #212B36 -> Slate Atmosphere #182028)
-                    cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.129, 0.169, 0.212, 0.094, 0.125, 0.157);
+                    cr.fill_gradient_v (0.0, 0.0, (double) width, 38.0, 0.175, 0.175, 0.182, 0.130, 0.130, 0.135);
                     // Stratosphere Line (#26323F)
-                    cr.set_source_rgb (0.149, 0.196, 0.247);
+                    cr.set_source_rgb (0.210, 0.210, 0.218);
                     cr.rectangle (0.0, 38.0, (double) width, 1.0);
                     cr.fill ();
                     // Lunar White (#F0F4F8)
-                    cr.set_source_rgb (0.941, 0.957, 0.973);
+                    cr.set_source_rgb (0.920, 0.920, 0.925);
                     TextHelper.draw_text (cr, title, 14, 10, 16.0);
                 }
             }
@@ -283,10 +283,10 @@ namespace Gtk {
                 child.render (cr);
 
             if (!gdk_win.composited () && cur_mx >= 0 && cur_my >= 0) {
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 cr.rectangle ((double) cur_mx, (double) cur_my, 8.0, 12.0);
                 cr.fill ();
-                cr.set_source_rgb (0.059, 0.078, 0.098);
+                cr.set_source_rgb (0.090, 0.090, 0.094);
                 cr.set_line_width (1.0);
                 cr.rectangle ((double) cur_mx, (double) cur_my, 8.0, 12.0);
                 cr.stroke ();

@@ -96,9 +96,17 @@ namespace Planc {
         }
 
         private bool is_sizeof_type_name (string text) {
+            for (int i = 0; i < current_type_params.length; i++) {
+                if (current_type_params[i] == text)
+                    return true;
+            }
             if (is_int_type_name (text) || is_fp_type_name (text))
                 return true;
             if (text == "bool" || text == "string" || text == "void")
+            if (text == "bool" || text == "string" || text == "void"
+                || text == "Error" || text == "va_list"
+                || text == "GenericArray" || text == "Channel"
+                || text == "Mutex" || text == "Node")
                 return true;
             if (find_type_alias (text) >= 0)
                 return true;
@@ -106,6 +114,7 @@ namespace Planc {
                 || types_prog.find_struct (text) != null
                 || types_prog.find_enum (text) != null
                 || types_prog.find_interface (text) != null
+                || types_prog.find_delegate (text) != null
                 || types_prog.find_error_domain (text) != null;
         }
 
@@ -1426,6 +1435,18 @@ namespace Planc {
         }
 
         private int64 parse_const_atom (string msg, string owner_type = "") throws ParseError, LexError {
+            if (is_tok_kw (current, "sizeof")) {
+                advance ();
+                expect (TokenKind.LPAREN, "'('");
+                ValaType tt = ValaType.VOID;
+                string tn = "";
+                if (!parse_type_with_ns (out tt, out tn))
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expected a type in constant sizeof at $(current.line):$(current.column)");
+                parse_type_suffix (ref tt, ref tn);
+                expect (TokenKind.RPAREN, "')'");
+                return types_prog.sizeof_bytes (tt, tn);
+            }
             if (current.kind == TokenKind.LPAREN) {
                 advance ();
                 var inner = parse_const_int_expr (msg, owner_type);
@@ -4928,18 +4949,23 @@ namespace Planc {
                     var se = new SizeofExpr ();
                     se.line = l;
                     se.column = c;
-                    if (current.kind == TokenKind.IDENTIFIER && !current.is_escaped && is_sizeof_type_name (current.text)) {
-                        ValaType tt = ValaType.VOID;
-                        string tn = "";
-                        if (!parse_type (current.text, out tt, out tn, current.is_escaped))
-                            throw new ParseError.UNEXPECTED_TOKEN (
-                                @"expected a type in sizeof at $(current.line):$(current.column)");
-                        advance ();
+                    var saved_lx = lexer.clone_state ();
+                    var saved_cur = current;
+                    ValaType tt = ValaType.VOID;
+                    string tn = "";
+                    if (current.kind == TokenKind.IDENTIFIER && parse_type_with_ns (out tt, out tn)) {
                         parse_type_suffix (ref tt, ref tn);
                         parse_generic_type_args (ref tt, ref tn);
-                        se.target_type = tt;
-                        se.type_name = tn;
-                        se.is_type_form = true;
+                        if (current.kind == TokenKind.RPAREN) {
+                            se.target_type = tt;
+                            se.type_name = tn;
+                            se.is_type_form = true;
+                        } else {
+                            lexer = saved_lx;
+                            current = saved_cur;
+                            se.operand = parse_expr ();
+                            se.is_type_form = false;
+                        }
                     } else {
                         se.operand = parse_expr ();
                         se.is_type_form = false;

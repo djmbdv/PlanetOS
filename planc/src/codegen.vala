@@ -1116,35 +1116,11 @@ namespace Planc {
         }
 
         private int type_slots (ValaType t, string tname) {
-            if (t == ValaType.STRUCT) {
-                unowned var sd = program.find_struct (tname);
-                if (sd == null)
-                    return 1;
-                if (sd.is_union) {
-                    int max_s = 1;
-                    foreach (var fld in sd.fields) {
-                        int fs = type_slots (fld.field_type, fld.type_name);
-                        if (fs > max_s)
-                            max_s = fs;
-                    }
-                    return max_s;
-                }
-                int total = 0;
-                foreach (var fld in sd.fields)
-                    total += type_slots (fld.field_type, fld.type_name);
-                return total > 0 ? total : 1;
-            }
-            return 1;
+            return program.type_slots (t, tname);
         }
 
-        // sizeof: every scalar and reference occupies one 8-byte slot in this
-        // ABI, and a struct occupies `type_slots` of them.
         private int sizeof_bytes (ValaType t, string tname) {
-            if (t == ValaType.VOID)
-                return 0;
-            if (t == ValaType.STRUCT)
-                return 8 * type_slots (ValaType.STRUCT, strip_null (tname));
-            return 8;
+            return program.sizeof_bytes (t, tname);
         }
 
         private int struct_field_offset_slots (StructDecl sd, string fname, out unowned StructField? found) {            int slot_off = 0;
@@ -5024,9 +5000,7 @@ namespace Planc {
                 if (ue.op == "owned" && ue.operand is VarRef)
                     invalidate_borrows_of_idx (lookup (((VarRef) ue.operand).name));
             } else if (e is SizeofExpr) {
-                var sz = (SizeofExpr) e;
-                if (sz.operand != null)
-                    prepare_expr (sz.operand, ref struct_temps, ref ref_temps);
+                // `sizeof` does not evaluate its operand at runtime.
             } else if (e is VaArgExpr) {
                 prepare_expr (((VaArgExpr) e).target, ref struct_temps, ref ref_temps);
             } else if (e is TypeCheckExpr) {
@@ -10341,6 +10315,8 @@ namespace Planc {
                     init_t = vtype;
                     init_tname = vtname;
                 } else if (d.init != null) {
+                    coerce_byte_array_literal (d.init, vtype, vtname);
+                    init_t = expr_type_full (d.init, out init_tname);
                     coerce_byte_array_literal (d.init, vtype, vtname);
                     init_t = expr_type_full (d.init, out init_tname);
                     if (!type_compatible (vtype, vtname, init_t, init_tname))

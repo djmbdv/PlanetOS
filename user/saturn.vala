@@ -180,16 +180,16 @@ namespace SaturnIDE {
             if (!visible || width <= 0 || height <= 0)
                 return;
             // Editor background: Obsidian Orbit (#0F1419)
-            cr.set_source_rgb (0.059, 0.078, 0.098);
+            cr.set_source_rgb (0.090, 0.090, 0.094);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
 
             // Gutter background: Slate Atmosphere (#182028)
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.rectangle ((double) x, (double) y, (double) gutter_w, (double) height);
             cr.fill ();
             // Gutter separator: Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rectangle ((double) (x + gutter_w - 1), (double) y, 1.0, (double) height);
             cr.fill ();
 
@@ -201,7 +201,7 @@ namespace SaturnIDE {
                 int ly = y + i * line_h;
                 if (i == cy) {
                     // Active line: Elevated Surface (#212B36)
-                    cr.set_source_rgb (0.129, 0.169, 0.212);
+                    cr.set_source_rgb (0.175, 0.175, 0.182);
                     cr.rectangle ((double) (x + gutter_w), (double) ly, (double) (width - gutter_w), (double) line_h);
                     cr.fill ();
                 }
@@ -217,10 +217,10 @@ namespace SaturnIDE {
                         cr.set_source_rgb (0.063, 0.725, 0.506);
                     else if (has_keyword_prefix (ln))
                         // Celestial Cerulean (#3897F0)
-                        cr.set_source_rgb (0.220, 0.592, 0.941);
+                        cr.set_source_rgb (0.450, 0.455, 0.470);
                     else
                         // Lunar White (#F0F4F8)
-                        cr.set_source_rgb (0.941, 0.957, 0.973);
+                        cr.set_source_rgb (0.920, 0.920, 0.925);
                     TextHelper.draw_mono (cr, ln, x + gutter_w + 8, ly + 2, font_size);
                 }
                 if (i == cy && focused) {
@@ -229,7 +229,7 @@ namespace SaturnIDE {
                     // whole glyph run again.
                     int cw = (cx > 0) ? TextHelper.mono_advance (font_size) * cx : 0;
                     // Celestial Cerulean (#3897F0)
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                     cr.rectangle ((double) (x + gutter_w + 8 + cw), (double) (ly + 2), 2.0, (double) (line_h - 4));
                     cr.fill ();
                 }
@@ -754,8 +754,8 @@ namespace SaturnIDE {
         }
 
         init (args);
-        load_ttf ("LiberationSans-Regular.ttf");
-        TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
+        load_ttf ("Tahoma.ttf");
+        TextHelper.load_mono_ttf ("Consolas-Regular.ttf");
         if (self_test)
             return saturn_self_test ();
 

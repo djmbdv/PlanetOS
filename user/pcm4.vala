@@ -1,386 +1,1219 @@
-// Minimal pcm4 file manager for PlanetOS (Fase 3: Gio + Gtk).
+// pcm4 file manager for PlanetOS (ported architecture closer to djmbdv/pcm4, without icons/desktop-app).
 using Planet;
 using GLib;
 using Gio;
 using Gtk;
 
-class Pcm4State : Object {
-    public string cwd = "/";
-    public string selected_name = "";
-    public string clip_path = "";
-    public bool clip_cut = false;
-    public int item_count = 0;
-    public GenericArray<string> names = new GenericArray<string> ();
-    public GenericArray<bool> is_dirs = new GenericArray<bool> ();
-    public Entry? path_entry = null;
-    public ListView? list_view = null;
-    public Label? status_lbl = null;
-    public Label? preview_lbl = null;
-    public Notebook? nb = null;
-}
+namespace Pcmanfm {
 
-string join_child_path (string dir, string name) {
-    if (dir == "/" || dir.length == 0)
-        return "/" + name;
-    if (dir.has_suffix ("/"))
-        return dir + name;
-    return dir + "/" + name;
-}
+    public string join_child_path (string dir, string name) {
+        if (dir == "/" || dir.length == 0)
+            return "/" + name;
+        if (dir.has_suffix ("/"))
+            return dir + name;
+        return dir + "/" + name;
+    }
 
-void set_status (Pcm4State st, string msg) {
-    if (st.status_lbl != null)
-        st.status_lbl.set_text (msg);
-}
+    public string basename_for_path (string path) {
+        if (path == "/" || path.length == 0)
+            return "/";
+        var f = File.new_for_path (path);
+        string b = f.get_basename ();
+        return (b.length > 0) ? b : path;
+    }
 
-void load_dir (Pcm4State st, string dir_path) {
-    string target = (dir_path.length == 0) ? "/" : dir_path;
-    var items = new GenericArray<string> ();
-    var icons = new GenericArray<string> ();
-    var names = new GenericArray<string> ();
-    var dirs = new GenericArray<bool> ();
+    public class AppConfig : Object {
+        public string config_path = "_pcm4.conf";
+        public bool single_click = false;
+        public bool confirm_delete = true;
+        public bool show_hidden = false;
+        public bool show_statusbar = true;
+        public bool show_side_pane = true;
+        public bool always_show_tabs = true;
+        public string sort_by = "name";
+        public bool sort_descending = false;
+        public string home_path = "/";
+        public string terminal_emulator = "vte_sh.elf";
+        public int win_width = 1280;
+        public int win_height = 720;
+        public int splitter_pos = 190;
 
-    try {
-        var dir_file = File.new_for_path (target);
-        var en = dir_file.enumerate_children ();
-        while (true) {
-            var info = en.next_file ();
-            if (info == null)
-                break;
-            string nm = info.get_name ();
-            bool is_dir = (info.get_file_type () == FileType.DIRECTORY);
-            names.add (nm);
-            dirs.add (is_dir);
-            if (is_dir) {
-                items.add (nm + "/");
-                icons.add ("folder");
-            } else {
-                items.add (@"$nm ($(info.get_size ()) B)");
-                string ctype = info.get_content_type ();
-                if (ctype == "application/x-executable")
-                    icons.add ("application-x-executable");
-                else if (ctype == "text/plain" || ctype == "text/x-vala")
-                    icons.add ("text-x-generic");
-                else
-                    icons.add ("document-properties");
-            }
+        public AppConfig () {
         }
-        en.close ();
-    } catch (IOError e) {
-        set_status (st, @"Error reading $target: $(e.message)");
-        return;
-    }
 
-    st.cwd = target;
-    st.names = names;
-    st.is_dirs = dirs;
-    st.item_count = names.length;
-    st.selected_name = (names.length > 0) ? names[0] : "";
-    if (st.list_view != null)
-        st.list_view.set_items (items, icons);
-    if (st.path_entry != null)
-        st.path_entry.set_text (st.cwd);
-    set_status (st, @"$(st.cwd): $(st.item_count) items");
-}
-
-bool is_gui_elf (string nm) {
-    return nm == "gtk_demo.elf" || nm == "pcm4.elf" || nm == "cairo_demo.elf"
-        || nm == "spv_demo.elf" || nm == "vk_demo.elf" || nm == "pango_demo.elf"
-        || nm == "compositor.elf";
-}
-
-void run_cli_capture_argv (Pcm4State st, string[] argv, string label_nm) {
-    int out_fd = Sys.create ("_pcm4_out.txt");
-    if (out_fd < 0) {
-        set_status (st, @"Cannot capture output for $label_nm");
-        return;
-    }
-    Sys.sys (19, 0, out_fd, 0);
-    int tid = -1;
-    try {
-        Process.spawn_async (null, argv, null, SpawnFlags.SEARCH_PATH, null, out tid);
-    } catch (SpawnError se) {
-        Sys.sys (19, 0, 1, 0);
-        Sys.close (out_fd);
-        Sys.unlink ("_pcm4_out.txt");
-        set_status (st, @"Cannot run $label_nm: $(se.message)");
-        return;
-    }
-    int rc = (tid >= 0) ? Sys.wait (tid) : -1;
-    Sys.sys (19, 0, 1, 0);
-    Sys.close (out_fd);
-
-    string captured = "";
-    FileUtils.get_contents ("_pcm4_out.txt", out captured);
-    Sys.unlink ("_pcm4_out.txt");
-    string snippet = (captured.length > 480) ? captured.substring (0, 480) + "..." : captured;
-    if (st.preview_lbl != null)
-        st.preview_lbl.set_text (@"[$label_nm exit=$rc]\n$snippet");
-    if (st.nb != null)
-        st.nb.set_current_page (1);
-    set_status (st, @"Finished $label_nm (exit=$rc)");
-}
-
-void run_cli_capture (Pcm4State st, string fp, string label_nm) {
-    string[] argv = { fp };
-    run_cli_capture_argv (st, argv, label_nm);
-}
-
-void open_item (Pcm4State st, string name) {
-    if (name.length == 0)
-        return;
-    string full = join_child_path (st.cwd, name);
-    var f = File.new_for_path (full);
-    try {
-        var info = f.query_info ();
-        if (info.get_file_type () == FileType.DIRECTORY) {
-            load_dir (st, full);
-            return;
-        }
-        if (name.has_suffix (".desktop")) {
+        public void load () {
             var kf = new KeyFile ();
             try {
-                if (kf.load_from_file (full)) {
-                    string exec_nm = kf.get_string ("Desktop Entry", "Exec");
-                    string app_nm = kf.get_string ("Desktop Entry", "Name");
-                    if (app_nm.length == 0)
-                        app_nm = name;
-                    bool is_term = kf.get_boolean ("Desktop Entry", "Terminal");
-                    if (exec_nm.length > 0) {
-                        try {
-                            if (is_term) {
-                                var argv = Process.split_command_line (exec_nm);
-                                run_cli_capture_argv (st, argv, app_nm);
-                            } else {
-                                Process.spawn_command_line_async (exec_nm);
-                                set_status (st, @"Launched $app_nm");
+                if (!kf.load_from_file (config_path))
+                    return;
+            } catch (KeyFileError e) {
+                return;
+            }
+            try {
+                if (kf.has_key ("Behavior", "single_click"))
+                    single_click = kf.get_boolean ("Behavior", "single_click");
+                if (kf.has_key ("Behavior", "confirm_delete"))
+                    confirm_delete = kf.get_boolean ("Behavior", "confirm_delete");
+                if (kf.has_key ("Display", "show_hidden"))
+                    show_hidden = kf.get_boolean ("Display", "show_hidden");
+                if (kf.has_key ("Display", "show_statusbar"))
+                    show_statusbar = kf.get_boolean ("Display", "show_statusbar");
+                if (kf.has_key ("Display", "show_side_pane"))
+                    show_side_pane = kf.get_boolean ("Display", "show_side_pane");
+                if (kf.has_key ("Display", "always_show_tabs"))
+                    always_show_tabs = kf.get_boolean ("Display", "always_show_tabs");
+                if (kf.has_key ("Display", "sort_by"))
+                    sort_by = kf.get_string ("Display", "sort_by");
+                if (kf.has_key ("Display", "sort_descending"))
+                    sort_descending = kf.get_boolean ("Display", "sort_descending");
+                if (kf.has_key ("Advanced", "home_path"))
+                    home_path = kf.get_string ("Advanced", "home_path");
+                if (kf.has_key ("Advanced", "terminal_emulator"))
+                    terminal_emulator = kf.get_string ("Advanced", "terminal_emulator");
+            } catch (KeyFileError e) {
+                // Keep defaults on partial parse errors.
+            }
+        }
+
+        public bool save () {
+            var kf = new KeyFile ();
+            kf.set_boolean ("Behavior", "single_click", single_click);
+            kf.set_boolean ("Behavior", "confirm_delete", confirm_delete);
+            kf.set_boolean ("Display", "show_hidden", show_hidden);
+            kf.set_boolean ("Display", "show_statusbar", show_statusbar);
+            kf.set_boolean ("Display", "show_side_pane", show_side_pane);
+            kf.set_boolean ("Display", "always_show_tabs", always_show_tabs);
+            kf.set_string ("Display", "sort_by", sort_by);
+            kf.set_boolean ("Display", "sort_descending", sort_descending);
+            kf.set_string ("Advanced", "home_path", home_path);
+            kf.set_string ("Advanced", "terminal_emulator", terminal_emulator);
+            return kf.save_to_file (config_path);
+        }
+    }
+
+    public class FileEntry : Object {
+        public string name = "";
+        public bool is_dir = false;
+        public int size = 0;
+        public string ctype = "";
+        public bool is_hidden = false;
+
+        public FileEntry (string nm, bool dir, int sz, string ct) {
+            name = nm;
+            is_dir = dir;
+            size = sz;
+            ctype = ct;
+            is_hidden = nm.has_prefix (".");
+        }
+    }
+
+    public class TabPage : Box {
+        public string cwd = "/";
+        public string selected_name = "";
+        public int item_count = 0;
+        public GenericArray<FileEntry> entries = new GenericArray<FileEntry> ();
+        private GenericArray<string> history = new GenericArray<string> ();
+        private int history_idx = -1;
+        private AppConfig config;
+        private ScrolledWindow sc;
+        private ListView lv;
+
+        public signal void location_changed (string path);
+        public signal void selection_changed_entry (FileEntry? entry);
+        public signal void open_requested (string name);
+        public signal void status_message (string msg);
+
+        public TabPage (AppConfig cfg, string initial_path = "/") {
+            base (Orientation.VERTICAL, 0);
+            config = cfg;
+            sc = new ScrolledWindow ();
+            lv = new ListView ();
+            lv.focused = true;
+            lv.set_single_click_activate (config.single_click);
+            sc.set_child (lv);
+            pack_start (sc, true, true, 0);
+
+            lv.selection_changed.connect ((sender, idx) => {
+                if (idx >= 0 && idx < entries.length) {
+                    var ent = entries[idx];
+                    selected_name = ent.name;
+                    selection_changed_entry (ent);
+                } else {
+                    selected_name = "";
+                    selection_changed_entry (null);
+                }
+            });
+
+            lv.activate.connect ((sender, idx) => {
+                if (idx >= 0 && idx < entries.length)
+                    open_requested (entries[idx].name);
+            });
+
+            load_dir (initial_path, true);
+        }
+
+        public bool can_go_back () {
+            return history_idx > 0;
+        }
+
+        public bool can_go_forward () {
+            return history_idx >= 0 && history_idx + 1 < history.length;
+        }
+
+        public void go_back () {
+            if (!can_go_back ())
+                return;
+            history_idx--;
+            load_dir (history[history_idx], false);
+        }
+
+        public void go_forward () {
+            if (!can_go_forward ())
+                return;
+            history_idx++;
+            load_dir (history[history_idx], false);
+        }
+
+        public void go_up () {
+            var cur = File.new_for_path (cwd);
+            var par = cur.get_parent ();
+            string target = (par != null) ? par.get_path () : "/";
+            if (target != cwd)
+                load_dir (target, true);
+        }
+
+        public void reload () {
+            load_dir (cwd, false);
+        }
+
+        public void apply_config () {
+            lv.set_single_click_activate (config.single_click);
+            reload ();
+        }
+
+        public FileEntry? get_selected_entry () {
+            for (int i = 0; i < entries.length; i++) {
+                if (entries[i].name == selected_name)
+                    return entries[i];
+            }
+            return null;
+        }
+
+        private int compare_str (string a, string b) {
+            int n = (a.length < b.length) ? a.length : b.length;
+            for (int i = 0; i < n; i++) {
+                int ca = (int) a[i];
+                int cb = (int) b[i];
+                if (ca >= 'A' && ca <= 'Z') ca += 32;
+                if (cb >= 'A' && cb <= 'Z') cb += 32;
+                if (ca != cb)
+                    return (ca < cb) ? -1 : 1;
+            }
+            if (a.length != b.length)
+                return (a.length < b.length) ? -1 : 1;
+            return 0;
+        }
+
+        private int compare_entries (FileEntry a, FileEntry b) {
+            if (a.is_dir != b.is_dir)
+                return a.is_dir ? -1 : 1;
+            int cmp = 0;
+            if (config.sort_by == "size") {
+                if (a.size < b.size) cmp = -1;
+                else if (a.size > b.size) cmp = 1;
+                else cmp = compare_str (a.name, b.name);
+            } else if (config.sort_by == "type") {
+                cmp = compare_str (a.ctype, b.ctype);
+                if (cmp == 0)
+                    cmp = compare_str (a.name, b.name);
+            } else {
+                cmp = compare_str (a.name, b.name);
+            }
+            return config.sort_descending ? -cmp : cmp;
+        }
+
+        private void sort_entries (GenericArray<FileEntry> list) {
+            for (int i = 1; i < list.length; i++) {
+                var key = list[i];
+                int j = i - 1;
+                while (j >= 0 && compare_entries (list[j], key) > 0) {
+                    list[j + 1] = list[j];
+                    j--;
+                }
+                list[j + 1] = key;
+            }
+        }
+
+        public void load_dir (string dir_path, bool record_history = true) {
+            string target = (dir_path.length == 0) ? "/" : dir_path;
+            var raw = new GenericArray<FileEntry> ();
+
+            try {
+                var dir_file = File.new_for_path (target);
+                var en = dir_file.enumerate_children ();
+                while (true) {
+                    var info = en.next_file ();
+                    if (info == null)
+                        break;
+                    string nm = info.get_name ();
+                    if (!config.show_hidden && nm.has_prefix ("."))
+                        continue;
+                    bool is_dir = (info.get_file_type () == FileType.DIRECTORY);
+                    int sz = (int) info.get_size ();
+                    string ctype = is_dir ? "inode/directory" : info.get_content_type ();
+                    raw.add (new FileEntry (nm, is_dir, sz, ctype));
+                }
+                en.close ();
+            } catch (IOError e) {
+                status_message (@"Error reading $target: $(e.message)");
+                return;
+            }
+
+            sort_entries (raw);
+
+            var items = new GenericArray<string> ();
+            var icons = new GenericArray<string> ();
+            for (int i = 0; i < raw.length; i++) {
+                var ent = raw[i];
+                if (ent.is_dir) {
+                    items.add (@"[DIR] $(ent.name)/");
+                    icons.add ("folder");
+                } else {
+                    items.add (@"$(ent.name)  ($(ent.size) B)  [$(ent.ctype)]");
+                    if (ent.ctype == "application/x-executable")
+                        icons.add ("application-x-executable");
+                    else if (ent.ctype == "text/plain" || ent.ctype == "text/x-vala")
+                        icons.add ("text-x-generic");
+                    else
+                        icons.add ("document-properties");
+                }
+            }
+
+            cwd = target;
+            entries = raw;
+            item_count = entries.length;
+            selected_name = (entries.length > 0) ? entries[0].name : "";
+            lv.set_items (items, icons);
+
+            if (record_history) {
+                while (history.length > history_idx + 1)
+                    history.remove_index (history.length - 1);
+                if (history.length == 0 || history[history.length - 1] != cwd) {
+                    history.add (cwd);
+                    history_idx = history.length - 1;
+                }
+            }
+
+            location_changed (cwd);
+            status_message (@"$cwd: $item_count items");
+        }
+    }
+
+    public class MainWindow : GtkApplicationWindow {
+        private AppConfig config;
+        private string clip_path = "";
+        private bool clip_cut = false;
+
+        private Entry path_entry;
+        private Button btn_back;
+        private Button btn_fwd;
+        private Button btn_hidden;
+        private Button btn_sort;
+
+        private Paned paned;
+        private ListBox sidebar;
+        private GenericArray<string> place_paths = new GenericArray<string> ();
+        private GenericArray<string> place_labels = new GenericArray<string> ();
+
+        private Notebook tabs_nb;
+        private GenericArray<TabPage> tab_pages = new GenericArray<TabPage> ();
+
+        private Box right_box;
+        private Box prompt_bar;
+        private Label prompt_lbl;
+        private Entry prompt_entry;
+        private Button prompt_ok;
+        private Button prompt_cancel;
+        private string prompt_mode = "";
+        private string prompt_target = "";
+
+        private Notebook aux_nb;
+        private Box aux_panel;
+        private bool aux_visible = false;
+        private Label preview_lbl;
+
+        // Preferences controls (mirroring pref-dialog.vala)
+        private CheckButton pref_single_click;
+        private CheckButton pref_confirm_del;
+        private CheckButton pref_show_hidden;
+        private CheckButton pref_show_status;
+        private CheckButton pref_show_sidebar;
+        private CheckButton pref_always_tabs;
+        private CheckButton pref_sort_desc;
+        private Label pref_sort_by_lbl;
+        private Entry pref_home_entry;
+        private Entry pref_term_entry;
+
+        // Connect server controls (mirroring connect-server-dialog.vala)
+        private Label conn_scheme_lbl;
+        private int conn_scheme_idx = 0;
+        private Entry conn_host;
+        private Entry conn_port;
+        private Entry conn_path;
+        private Entry conn_user;
+        private Label conn_status;
+
+        private Label status_lbl;
+
+        public MainWindow (GtkApplication app, AppConfig cfg, string[]? initial_dirs = null) {
+            base (app, cfg.win_width, cfg.win_height);
+            config = cfg;
+            set_title ("pcm4 - PlanetOS File Manager");
+
+            var root = new Box (Orientation.VERTICAL, 6);
+
+            // Row 1: Navigation + Path bar
+            var nav_bar = new Box (Orientation.HORIZONTAL, 4);
+            btn_back = new Button ("<");
+            btn_fwd = new Button (">");
+            var btn_up = new Button ("Up");
+            var btn_home = new Button ("Home");
+            var btn_ref = new Button ("Refresh");
+            path_entry = new Entry ("/");
+            path_entry.placeholder = "Path...";
+            var btn_newtab = new Button ("+Tab");
+            var btn_closetab = new Button ("xTab");
+
+            nav_bar.pack_start (btn_back);
+            nav_bar.pack_start (btn_fwd);
+            nav_bar.pack_start (btn_up);
+            nav_bar.pack_start (btn_home);
+            nav_bar.pack_start (btn_ref);
+            nav_bar.pack_start (path_entry, true, true, 0);
+            nav_bar.pack_start (btn_newtab);
+            nav_bar.pack_start (btn_closetab);
+
+            // Row 2: File Operations + View + Tools
+            var act_bar = new Box (Orientation.HORIZONTAL, 4);
+            var btn_mkdir = new Button ("Mkdir");
+            var btn_rename = new Button ("Rename");
+            var btn_copy = new Button ("Copy");
+            var btn_cut = new Button ("Cut");
+            var btn_paste = new Button ("Paste");
+            var btn_del = new Button ("Delete");
+            btn_hidden = new Button (config.show_hidden ? "Hidden:On" : "Hidden:Off");
+            btn_sort = new Button (sort_button_label ());
+            var btn_bmark = new Button ("+Place");
+            var btn_conn = new Button ("Connect");
+            var btn_prefs = new Button ("Prefs");
+            var btn_aux = new Button ("Panel");
+
+            act_bar.pack_start (btn_mkdir);
+            act_bar.pack_start (btn_rename);
+            act_bar.pack_start (btn_copy);
+            act_bar.pack_start (btn_cut);
+            act_bar.pack_start (btn_paste);
+            act_bar.pack_start (btn_del);
+            act_bar.pack_start (new Separator (Orientation.VERTICAL));
+            act_bar.pack_start (btn_hidden);
+            act_bar.pack_start (btn_sort);
+            act_bar.pack_start (btn_bmark);
+            act_bar.pack_start (btn_conn);
+            act_bar.pack_start (btn_prefs);
+            act_bar.pack_start (btn_aux);
+
+            // Inline prompt bar (for Mkdir, Rename, Confirm Delete)
+            prompt_bar = new Box (Orientation.HORIZONTAL, 6);
+            prompt_lbl = new Label ("");
+            prompt_entry = new Entry ("");
+            prompt_ok = new Button ("OK");
+            prompt_cancel = new Button ("Cancel");
+            prompt_bar.pack_start (prompt_lbl);
+            prompt_bar.pack_start (prompt_entry, true, true, 0);
+            prompt_bar.pack_start (prompt_ok);
+            prompt_bar.pack_start (prompt_cancel);
+            prompt_bar.set_visible (false);
+
+            // Main paned: Sidebar + Tabs/Aux
+            paned = new Paned (Orientation.HORIZONTAL);
+            paned.set_position (config.splitter_pos);
+            paned.set_size_request (1200, 520);
+
+            sidebar = new ListBox ();
+            rebuild_places ();
+            paned.set_start_child (sidebar);
+            sidebar.set_visible (config.show_side_pane);
+
+            right_box = new Box (Orientation.VERTICAL, 6);
+            tabs_nb = new Notebook ();
+            tabs_nb.set_show_tabs (config.always_show_tabs);
+
+            aux_panel = build_aux_panel ();
+            aux_panel.set_visible (false);
+
+            right_box.pack_start (tabs_nb, true, true, 0);
+            right_box.pack_start (aux_panel, false, true, 0);
+            paned.set_end_child (right_box);
+
+            status_lbl = new Label ("Ready");
+            status_lbl.set_visible (config.show_statusbar);
+
+            root.pack_start (nav_bar);
+            root.pack_start (act_bar);
+            root.pack_start (prompt_bar);
+            root.pack_start (paned, true, true, 0);
+            root.pack_start (status_lbl);
+            set_child (root);
+
+            // Connect signals
+            btn_back.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t != null) t.go_back ();
+            });
+            btn_fwd.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t != null) t.go_forward ();
+            });
+            btn_up.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t != null) t.go_up ();
+            });
+            btn_home.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t != null) t.load_dir (config.home_path, true);
+            });
+            btn_ref.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t != null) t.reload ();
+            });
+            path_entry.activate.connect ((s) => {
+                var t = current_tab ();
+                if (t != null) t.load_dir (path_entry.get_text (), true);
+            });
+            btn_newtab.clicked.connect ((s) => {
+                var t = current_tab ();
+                add_tab ((t != null) ? t.cwd : config.home_path);
+            });
+            btn_closetab.clicked.connect ((s) => {
+                close_current_tab ();
+            });
+
+            tabs_nb.switch_page.connect ((s, page, pnum) => {
+                sync_header_for_tab ();
+            });
+
+            sidebar.row_activated.connect ((s, row) => {
+                if (row == null) return;
+                int idx = row.get_index ();
+                if (idx >= 0 && idx < place_paths.length) {
+                    var t = current_tab ();
+                    if (t != null) t.load_dir (place_paths[idx], true);
+                }
+            });
+
+            btn_mkdir.clicked.connect ((s) => {
+                show_prompt ("mkdir", "", "New folder name:", "new_folder");
+            });
+
+            btn_rename.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t == null || t.selected_name.length == 0) {
+                    set_status ("Select an item to rename");
+                    return;
+                }
+                show_prompt ("rename", t.selected_name, @"Rename $(t.selected_name) to:", t.selected_name);
+            });
+
+            btn_copy.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t == null || t.selected_name.length == 0) return;
+                clip_path = join_child_path (t.cwd, t.selected_name);
+                clip_cut = false;
+                set_status (@"Copied: $(t.selected_name)");
+            });
+
+            btn_cut.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t == null || t.selected_name.length == 0) return;
+                clip_path = join_child_path (t.cwd, t.selected_name);
+                clip_cut = true;
+                set_status (@"Cut: $(t.selected_name)");
+            });
+
+            btn_paste.clicked.connect ((s) => {
+                do_paste ();
+            });
+
+            btn_del.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t == null || t.selected_name.length == 0) return;
+                if (config.confirm_delete) {
+                    show_prompt ("delete", t.selected_name, @"Delete '$(t.selected_name)'?", "");
+                } else {
+                    do_delete (join_child_path (t.cwd, t.selected_name));
+                }
+            });
+
+            btn_hidden.clicked.connect ((s) => {
+                config.show_hidden = !config.show_hidden;
+                btn_hidden.set_label (config.show_hidden ? "Hidden:On" : "Hidden:Off");
+                pref_show_hidden.set_active (config.show_hidden);
+                apply_config_all_tabs ();
+            });
+
+            btn_sort.clicked.connect ((s) => {
+                cycle_sort ();
+            });
+
+            btn_bmark.clicked.connect ((s) => {
+                var t = current_tab ();
+                if (t == null) return;
+                add_place (t.cwd, basename_for_path (t.cwd));
+                set_status (@"Bookmarked $(t.cwd)");
+            });
+
+            btn_conn.clicked.connect ((s) => {
+                show_aux_page (2);
+            });
+
+            btn_prefs.clicked.connect ((s) => {
+                sync_prefs_ui ();
+                show_aux_page (1);
+            });
+
+            btn_aux.clicked.connect ((s) => {
+                aux_visible = !aux_visible;
+                aux_panel.set_visible (aux_visible);
+            });
+
+            prompt_ok.clicked.connect ((s) => { commit_prompt (); });
+            prompt_entry.activate.connect ((s) => { commit_prompt (); });
+            prompt_cancel.clicked.connect ((s) => { hide_prompt (); });
+
+            // Open initial tabs
+            if (initial_dirs != null && initial_dirs.length > 0) {
+                for (int i = 0; i < initial_dirs.length; i++)
+                    add_tab (initial_dirs[i]);
+            } else {
+                add_tab (config.home_path);
+            }
+        }
+
+        private Box build_aux_panel () {
+            var box = new Box (Orientation.VERTICAL, 4);
+            aux_nb = new Notebook ();
+
+            // Page 0: Preview / Info
+            var sc_prev = new ScrolledWindow ();
+            preview_lbl = new Label ("Select a text file to preview or run a CLI tool.");
+            sc_prev.set_child (preview_lbl);
+            aux_nb.append_page (sc_prev, "Preview");
+
+            // Page 1: Preferences (pref-dialog.vala)
+            var pref_box = new Box (Orientation.VERTICAL, 6);
+            pref_single_click = new CheckButton ("Single-click to activate items", config.single_click);
+            pref_confirm_del = new CheckButton ("Confirm before deleting files", config.confirm_delete);
+            pref_show_hidden = new CheckButton ("Show hidden files (.*)", config.show_hidden);
+            pref_show_status = new CheckButton ("Show status bar", config.show_statusbar);
+            pref_show_sidebar = new CheckButton ("Show places sidebar", config.show_side_pane);
+            pref_always_tabs = new CheckButton ("Always show tab bar", config.always_show_tabs);
+            pref_sort_desc = new CheckButton ("Sort descending", config.sort_descending);
+
+            var sort_row = new Box (Orientation.HORIZONTAL, 6);
+            pref_sort_by_lbl = new Label (@"Sort by: $(config.sort_by)");
+            var btn_s_name = new Button ("Name");
+            var btn_s_size = new Button ("Size");
+            var btn_s_type = new Button ("Type");
+            sort_row.pack_start (pref_sort_by_lbl);
+            sort_row.pack_start (btn_s_name);
+            sort_row.pack_start (btn_s_size);
+            sort_row.pack_start (btn_s_type);
+
+            var home_row = new Box (Orientation.HORIZONTAL, 6);
+            home_row.pack_start (new Label ("Home path:"));
+            pref_home_entry = new Entry (config.home_path);
+            home_row.pack_start (pref_home_entry, true, true, 0);
+
+            var term_row = new Box (Orientation.HORIZONTAL, 6);
+            term_row.pack_start (new Label ("Terminal:"));
+            pref_term_entry = new Entry (config.terminal_emulator);
+            term_row.pack_start (pref_term_entry, true, true, 0);
+
+            var pref_btns = new Box (Orientation.HORIZONTAL, 6);
+            var btn_pref_save = new Button ("Apply & Save");
+            var btn_pref_close = new Button ("Hide Panel");
+            pref_btns.pack_start (btn_pref_save);
+            pref_btns.pack_start (btn_pref_close);
+
+            pref_box.pack_start (pref_single_click);
+            pref_box.pack_start (pref_confirm_del);
+            pref_box.pack_start (pref_show_hidden);
+            pref_box.pack_start (pref_show_status);
+            pref_box.pack_start (pref_show_sidebar);
+            pref_box.pack_start (pref_always_tabs);
+            pref_box.pack_start (pref_sort_desc);
+            pref_box.pack_start (sort_row);
+            pref_box.pack_start (home_row);
+            pref_box.pack_start (term_row);
+            pref_box.pack_start (pref_btns);
+
+            btn_s_name.clicked.connect ((s) => {
+                config.sort_by = "name";
+                pref_sort_by_lbl.set_text ("Sort by: name");
+            });
+            btn_s_size.clicked.connect ((s) => {
+                config.sort_by = "size";
+                pref_sort_by_lbl.set_text ("Sort by: size");
+            });
+            btn_s_type.clicked.connect ((s) => {
+                config.sort_by = "type";
+                pref_sort_by_lbl.set_text ("Sort by: type");
+            });
+            btn_pref_save.clicked.connect ((s) => {
+                apply_prefs_from_ui ();
+            });
+            btn_pref_close.clicked.connect ((s) => {
+                aux_visible = false;
+                aux_panel.set_visible (false);
+            });
+            aux_nb.append_page (pref_box, "Preferences");
+
+            // Page 2: Connect to Server (connect-server-dialog.vala)
+            var conn_box = new Box (Orientation.VERTICAL, 6);
+            var row_type = new Box (Orientation.HORIZONTAL, 6);
+            conn_scheme_lbl = new Label ("Scheme: sftp (port 22)");
+            var btn_scheme = new Button ("Cycle Scheme");
+            row_type.pack_start (conn_scheme_lbl);
+            row_type.pack_start (btn_scheme);
+
+            var row_hp = new Box (Orientation.HORIZONTAL, 6);
+            conn_host = new Entry ("");
+            conn_host.placeholder = "Host (e.g. 10.0.2.2)";
+            conn_port = new Entry ("22");
+            conn_user = new Entry ("");
+            conn_user.placeholder = "User (optional)";
+            conn_path = new Entry ("/");
+            conn_path.placeholder = "Path";
+            row_hp.pack_start (new Label ("Host:"));
+            row_hp.pack_start (conn_host, true, true, 0);
+            row_hp.pack_start (new Label ("Port:"));
+            row_hp.pack_start (conn_port);
+            row_hp.pack_start (new Label ("User:"));
+            row_hp.pack_start (conn_user);
+
+            var row_path = new Box (Orientation.HORIZONTAL, 6);
+            row_path.pack_start (new Label ("Remote path:"));
+            row_path.pack_start (conn_path, true, true, 0);
+            var btn_do_conn = new Button ("Connect");
+            row_path.pack_start (btn_do_conn);
+
+            conn_status = new Label ("Enter server details to connect.");
+            conn_box.pack_start (row_type);
+            conn_box.pack_start (row_hp);
+            conn_box.pack_start (row_path);
+            conn_box.pack_start (conn_status);
+
+            btn_scheme.clicked.connect ((s) => {
+                string[] schemes = { "sftp", "ftp", "dav" };
+                string[] ports = { "22", "21", "80" };
+                conn_scheme_idx = (conn_scheme_idx + 1) % 3;
+                conn_scheme_lbl.set_text (@"Scheme: $(schemes[conn_scheme_idx]) (port $(ports[conn_scheme_idx]))");
+                conn_port.set_text (ports[conn_scheme_idx]);
+            });
+            btn_do_conn.clicked.connect ((s) => {
+                string[] schemes = { "sftp", "ftp", "dav" };
+                string host = conn_host.get_text ().strip ();
+                if (host.length == 0) {
+                    conn_status.set_text ("Host is required.");
+                    return;
+                }
+                string usr = conn_user.get_text ().strip ();
+                string prt = conn_port.get_text ().strip ();
+                string pth = conn_path.get_text ().strip ();
+                if (pth.length == 0) pth = "/";
+                if (!pth.has_prefix ("/")) pth = "/" + pth;
+                string auth = (usr.length > 0) ? @"$usr@$host" : host;
+                string port_part = (prt.length > 0) ? @":$prt" : "";
+                string uri = @"$(schemes[conn_scheme_idx])://$auth$port_part$pth";
+                conn_status.set_text (@"GVfs remote mount not available on PlanetOS yet; target URI: $uri");
+                set_status (@"Remote URI: $uri");
+            });
+            aux_nb.append_page (conn_box, "Connect");
+
+            box.pack_start (aux_nb, true, true, 0);
+            return box;
+        }
+
+        private void show_aux_page (int idx) {
+            aux_visible = true;
+            aux_panel.set_visible (true);
+            aux_nb.set_current_page (idx);
+        }
+
+        private void sync_prefs_ui () {
+            pref_single_click.set_active (config.single_click);
+            pref_confirm_del.set_active (config.confirm_delete);
+            pref_show_hidden.set_active (config.show_hidden);
+            pref_show_status.set_active (config.show_statusbar);
+            pref_show_sidebar.set_active (config.show_side_pane);
+            pref_always_tabs.set_active (config.always_show_tabs);
+            pref_sort_desc.set_active (config.sort_descending);
+            pref_sort_by_lbl.set_text (@"Sort by: $(config.sort_by)");
+            pref_home_entry.set_text (config.home_path);
+            pref_term_entry.set_text (config.terminal_emulator);
+        }
+
+        private void apply_prefs_from_ui () {
+            config.single_click = pref_single_click.get_active ();
+            config.confirm_delete = pref_confirm_del.get_active ();
+            config.show_hidden = pref_show_hidden.get_active ();
+            config.show_statusbar = pref_show_status.get_active ();
+            config.show_side_pane = pref_show_sidebar.get_active ();
+            config.always_show_tabs = pref_always_tabs.get_active ();
+            config.sort_descending = pref_sort_desc.get_active ();
+            string hp = pref_home_entry.get_text ().strip ();
+            if (hp.length > 0) config.home_path = hp;
+            string tm = pref_term_entry.get_text ().strip ();
+            if (tm.length > 0) config.terminal_emulator = tm;
+
+            status_lbl.set_visible (config.show_statusbar);
+            sidebar.set_visible (config.show_side_pane);
+            update_tab_bar_visibility ();
+            btn_hidden.set_label (config.show_hidden ? "Hidden:On" : "Hidden:Off");
+            btn_sort.set_label (sort_button_label ());
+            apply_config_all_tabs ();
+            bool ok = config.save ();
+            set_status (ok ? "Preferences saved" : "Preferences applied (save failed)");
+        }
+
+        private string sort_button_label () {
+            string arrow = config.sort_descending ? "v" : "^";
+            return @"Sort:$(config.sort_by)$arrow";
+        }
+
+        private void cycle_sort () {
+            if (config.sort_by == "name" && !config.sort_descending) {
+                config.sort_descending = true;
+            } else if (config.sort_by == "name" && config.sort_descending) {
+                config.sort_by = "size";
+                config.sort_descending = false;
+            } else if (config.sort_by == "size" && !config.sort_descending) {
+                config.sort_descending = true;
+            } else if (config.sort_by == "size" && config.sort_descending) {
+                config.sort_by = "type";
+                config.sort_descending = false;
+            } else if (config.sort_by == "type" && !config.sort_descending) {
+                config.sort_descending = true;
+            } else {
+                config.sort_by = "name";
+                config.sort_descending = false;
+            }
+            btn_sort.set_label (sort_button_label ());
+            pref_sort_by_lbl.set_text (@"Sort by: $(config.sort_by)");
+            pref_sort_desc.set_active (config.sort_descending);
+            apply_config_all_tabs ();
+        }
+
+        private void rebuild_places () {
+            sidebar.remove_all ();
+            place_paths = new GenericArray<string> ();
+            place_labels = new GenericArray<string> ();
+            add_place_internal (config.home_path, "Home");
+            if (config.home_path != "/")
+                add_place_internal ("/", "/ (XFS)");
+        }
+
+        private void add_place_internal (string path, string label) {
+            for (int i = 0; i < place_paths.length; i++) {
+                if (place_paths[i] == path)
+                    return;
+            }
+            place_paths.add (path);
+            place_labels.add (label);
+            var row = new Box (Orientation.HORIZONTAL, 6);
+            row.pack_start (new Label (label));
+            sidebar.append (row);
+        }
+
+        public void add_place (string path, string label) {
+            add_place_internal (path, label);
+        }
+
+        public void add_tab (string dir_path) {
+            var page = new TabPage (config, dir_path);
+            tab_pages.add (page);
+            int idx = tabs_nb.append_page (page, basename_for_path (page.cwd));
+
+            page.location_changed.connect ((s, path) => {
+                int pnum = tabs_nb.page_num (page);
+                if (pnum >= 0)
+                    tabs_nb.set_tab_label_text (page, basename_for_path (path));
+                if (page == current_tab ())
+                    sync_header_for_tab ();
+            });
+
+            page.selection_changed_entry.connect ((s, ent) => {
+                if (page == current_tab () && ent != null) {
+                    string kind = ent.is_dir ? "dir" : @"$(ent.size) B";
+                    set_status (@"Selected: $(ent.name) ($kind)");
+                }
+            });
+
+            page.open_requested.connect ((s, nm) => {
+                open_item (page, nm);
+            });
+
+            page.status_message.connect ((s, msg) => {
+                if (page == current_tab ())
+                    set_status (msg);
+            });
+
+            tabs_nb.set_current_page (idx);
+            update_tab_bar_visibility ();
+            sync_header_for_tab ();
+        }
+
+        private void close_current_tab () {
+            if (tabs_nb.get_n_pages () <= 1) {
+                set_status ("Cannot close last tab");
+                return;
+            }
+            int idx = tabs_nb.get_current_page ();
+            if (idx >= 0 && idx < tab_pages.length) {
+                tabs_nb.remove_page (idx);
+                tab_pages.remove_index (idx);
+                update_tab_bar_visibility ();
+                sync_header_for_tab ();
+            }
+        }
+
+        private void update_tab_bar_visibility () {
+            bool show = config.always_show_tabs || (tabs_nb.get_n_pages () > 1);
+            tabs_nb.set_show_tabs (show);
+        }
+
+        public TabPage? current_tab () {
+            int idx = tabs_nb.get_current_page ();
+            if (idx >= 0 && idx < tab_pages.length)
+                return tab_pages[idx];
+            return null;
+        }
+
+        public int current_item_count () {
+            var t = current_tab ();
+            return (t != null) ? t.item_count : 0;
+        }
+
+        public string current_cwd () {
+            var t = current_tab ();
+            return (t != null) ? t.cwd : "/";
+        }
+
+        private void sync_header_for_tab () {
+            var t = current_tab ();
+            if (t == null)
+                return;
+            path_entry.set_text (t.cwd);
+            btn_back.set_sensitive (t.can_go_back ());
+            btn_fwd.set_sensitive (t.can_go_forward ());
+            set_status (@"$(t.cwd): $(t.item_count) items");
+        }
+
+        private void apply_config_all_tabs () {
+            for (int i = 0; i < tab_pages.length; i++)
+                tab_pages[i].apply_config ();
+        }
+
+        private void set_status (string msg) {
+            status_lbl.set_text (msg);
+        }
+
+        private void show_prompt (string mode, string target, string label_text, string initial_text) {
+            prompt_mode = mode;
+            prompt_target = target;
+            prompt_lbl.set_text (label_text);
+            if (mode == "delete") {
+                prompt_entry.set_visible (false);
+            } else {
+                prompt_entry.set_visible (true);
+                prompt_entry.set_text (initial_text);
+                prompt_entry.focused = true;
+            }
+            prompt_bar.set_visible (true);
+        }
+
+        private void hide_prompt () {
+            prompt_mode = "";
+            prompt_target = "";
+            prompt_bar.set_visible (false);
+        }
+
+        private void commit_prompt () {
+            var t = current_tab ();
+            if (t == null) {
+                hide_prompt ();
+                return;
+            }
+            string mode = prompt_mode;
+            string target = prompt_target;
+            string val = prompt_entry.get_text ().strip ();
+            hide_prompt ();
+
+            if (mode == "mkdir") {
+                if (val.length == 0) return;
+                string dir_path = join_child_path (t.cwd, val);
+                try {
+                    File.new_for_path (dir_path).make_directory ();
+                    t.reload ();
+                    set_status (@"Created $dir_path");
+                } catch (IOError e) {
+                    set_status (@"Mkdir failed: $(e.message)");
+                }
+            } else if (mode == "rename") {
+                if (val.length == 0 || val == target) return;
+                var src = File.new_for_path (join_child_path (t.cwd, target));
+                var dst = File.new_for_path (join_child_path (t.cwd, val));
+                try {
+                    src.move (dst, FileCopyFlags.NONE);
+                    t.reload ();
+                    set_status (@"Renamed $target -> $val");
+                } catch (IOError e) {
+                    set_status (@"Rename failed: $(e.message)");
+                }
+            } else if (mode == "delete") {
+                do_delete (join_child_path (t.cwd, target));
+            }
+        }
+
+        private void copy_recursive (File src, File dst) throws IOError {
+            var info = src.query_info ();
+            if (info.get_file_type () == FileType.DIRECTORY) {
+                if (!dst.query_exists ())
+                    dst.make_directory ();
+                var en = src.enumerate_children ();
+                while (true) {
+                    var child = en.next_file ();
+                    if (child == null) break;
+                    string nm = child.get_name ();
+                    copy_recursive (src.get_child (nm), dst.get_child (nm));
+                }
+                en.close ();
+            } else {
+                src.copy (dst, FileCopyFlags.OVERWRITE);
+            }
+        }
+
+        private void delete_recursive (File target) throws IOError {
+            var info = target.query_info ();
+            if (info.get_file_type () == FileType.DIRECTORY) {
+                var en = target.enumerate_children ();
+                while (true) {
+                    var child = en.next_file ();
+                    if (child == null) break;
+                    delete_recursive (target.get_child (child.get_name ()));
+                }
+                en.close ();
+            }
+            target.delete ();
+        }
+
+        private void do_paste () {
+            var t = current_tab ();
+            if (t == null) return;
+            if (clip_path.length == 0) {
+                set_status ("Clipboard empty");
+                return;
+            }
+            var src = File.new_for_path (clip_path);
+            string base_nm = src.get_basename ();
+            string dst_name = clip_cut ? base_nm : ("copy_" + base_nm);
+            var dst = File.new_for_path (join_child_path (t.cwd, dst_name));
+            try {
+                if (clip_cut) {
+                    src.move (dst, FileCopyFlags.OVERWRITE);
+                    clip_path = "";
+                    clip_cut = false;
+                } else {
+                    copy_recursive (src, dst);
+                }
+                t.reload ();
+                set_status (@"Pasted $dst_name");
+            } catch (IOError e) {
+                set_status (@"Paste failed: $(e.message)");
+            }
+        }
+
+        private void do_delete (string full_path) {
+            var t = current_tab ();
+            if (t == null) return;
+            try {
+                delete_recursive (File.new_for_path (full_path));
+                t.reload ();
+                set_status (@"Deleted $full_path");
+            } catch (IOError e) {
+                set_status (@"Delete failed: $(e.message)");
+            }
+        }
+
+        private bool is_gui_elf (string nm) {
+            return nm == "gtk_demo.elf" || nm == "pcm4.elf" || nm == "cairo_demo.elf"
+                || nm == "spv_demo.elf" || nm == "vk_demo.elf" || nm == "pango_demo.elf"
+                || nm == "compositor.elf";
+        }
+
+        private void run_cli_capture_argv (string[] argv, string label_nm) {
+            int out_fd = Sys.create ("_pcm4_out.txt");
+            if (out_fd < 0) {
+                set_status (@"Cannot capture output for $label_nm");
+                return;
+            }
+            Sys.sys (19, 0, out_fd, 0);
+            int tid = -1;
+            try {
+                Process.spawn_async (null, argv, null, SpawnFlags.SEARCH_PATH, null, out tid);
+            } catch (SpawnError se) {
+                Sys.sys (19, 0, 1, 0);
+                Sys.close (out_fd);
+                Sys.unlink ("_pcm4_out.txt");
+                set_status (@"Cannot run $label_nm: $(se.message)");
+                return;
+            }
+            int rc = (tid >= 0) ? Sys.wait (tid) : -1;
+            Sys.sys (19, 0, 1, 0);
+            Sys.close (out_fd);
+
+            string captured = "";
+            FileUtils.get_contents ("_pcm4_out.txt", out captured);
+            Sys.unlink ("_pcm4_out.txt");
+            string snippet = (captured.length > 480) ? captured.substring (0, 480) + "..." : captured;
+            preview_lbl.set_text (@"[$label_nm exit=$rc]\n$snippet");
+            show_aux_page (0);
+            set_status (@"Finished $label_nm (exit=$rc)");
+        }
+
+        private void run_cli_capture (string fp, string label_nm) {
+            string[] argv = { fp };
+            run_cli_capture_argv (argv, label_nm);
+        }
+
+        private void open_item (TabPage page, string name) {
+            if (name.length == 0)
+                return;
+            string full = join_child_path (page.cwd, name);
+            var f = File.new_for_path (full);
+            try {
+                var info = f.query_info ();
+                if (info.get_file_type () == FileType.DIRECTORY) {
+                    page.load_dir (full, true);
+                    return;
+                }
+                if (name.has_suffix (".desktop")) {
+                    var kf = new KeyFile ();
+                    try {
+                        if (kf.load_from_file (full)) {
+                            string exec_nm = kf.get_string ("Desktop Entry", "Exec");
+                            string app_nm = kf.get_string ("Desktop Entry", "Name");
+                            if (app_nm.length == 0)
+                                app_nm = name;
+                            bool is_term = kf.get_boolean ("Desktop Entry", "Terminal");
+                            if (exec_nm.length > 0) {
+                                try {
+                                    if (is_term) {
+                                        var argv = Process.split_command_line (exec_nm);
+                                        run_cli_capture_argv (argv, app_nm);
+                                    } else {
+                                        Process.spawn_command_line_async (exec_nm);
+                                        set_status (@"Launched $app_nm");
+                                    }
+                                } catch (SpawnError se) {
+                                    set_status (@"Launch error: $(se.message)");
+                                }
+                                return;
                             }
-                        } catch (SpawnError se) {
-                            set_status (st, @"Launch error: $(se.message)");
                         }
+                    } catch (KeyFileError ke) {
+                        set_status (@"Desktop entry error: $(ke.message)");
                         return;
                     }
                 }
-            } catch (KeyFileError ke) {
-                set_status (st, @"Desktop entry error: $(ke.message)");
-                return;
+                string ctype = info.get_content_type ();
+                if (ctype == "application/x-executable" || name.has_suffix (".plan")) {
+                    string fp = full.has_prefix ("/") ? full.substring (1, full.length - 1) : full;
+                    if (!is_gui_elf (name)) {
+                        run_cli_capture (fp, name);
+                        return;
+                    }
+                    var app = AppInfo.get_default_for_type (ctype);
+                    if (app != null) {
+                        var files = new GenericArray<File> ();
+                        files.add (f);
+                        app.launch (files);
+                        set_status (@"Launched $name");
+                        return;
+                    }
+                }
+                string contents = "";
+                if (FileUtils.get_contents (full, out contents)) {
+                    string snippet = (contents.length > 480) ? contents.substring (0, 480) + "..." : contents;
+                    preview_lbl.set_text (snippet);
+                    show_aux_page (0);
+                    set_status (@"Opened $name ($(contents.length) bytes)");
+                } else {
+                    set_status (@"Cannot read $name");
+                }
+            } catch (IOError e) {
+                set_status (@"Open error: $(e.message)");
             }
         }
-        string ctype = info.get_content_type ();
-        if (ctype == "application/x-executable" || name.has_suffix (".plan")) {
-            string fp = full.has_prefix ("/") ? full.substring (1, full.length - 1) : full;
-            if (!is_gui_elf (name)) {
-                run_cli_capture (st, fp, name);
-                return;
+    }
+
+    public class PcmanfmApp : GtkApplication {
+        public AppConfig config;
+        private bool once_mode = false;
+        private string[]? start_dirs = null;
+        private MainWindow? main_win = null;
+
+        public PcmanfmApp (bool once, string[]? dirs) {
+            base ("org.lxde.pcmanfm");
+            once_mode = once;
+            start_dirs = dirs;
+            config = new AppConfig ();
+            config.load ();
+            activate.connect ((s) => {
+                on_activate ();
+            });
+        }
+
+        private void on_activate () {
+            if (main_win == null) {
+                load_ttf ("Tahoma.ttf");
+                TextHelper.load_mono_ttf ("Consolas-Regular.ttf");
+                main_win = new MainWindow (this, config, start_dirs);
             }
-            var app = AppInfo.get_default_for_type (ctype);
-            if (app != null) {
-                var files = new GenericArray<File> ();
-                files.add (f);
-                app.launch (files);
-                set_status (st, @"Launched $name");
-                return;
+            print (@"pcm4: dir=$(main_win.current_cwd ()) items=$(main_win.current_item_count ()) ok\n");
+            if (once_mode) {
+                main_win.run (true);
+                remove_window ((GtkWindow) main_win);
             }
         }
-        string contents = "";
-        if (FileUtils.get_contents (full, out contents)) {
-            string snippet = (contents.length > 240) ? contents.substring (0, 240) + "..." : contents;
-            if (st.preview_lbl != null)
-                st.preview_lbl.set_text (snippet);
-            if (st.nb != null)
-                st.nb.set_current_page (1);
-            set_status (st, @"Opened $name ($(contents.length) bytes)");
-        } else {
-            set_status (st, @"Cannot read $name");
-        }
-    } catch (IOError e) {
-        set_status (st, @"Open error: $(e.message)");
     }
 }
 
 int main (string[] args) {
     bool once = false;
+    var dirs = new GenericArray<string> ();
     for (int i = 1; i < args.length; i++) {
         if (args[i] == "--once")
             once = true;
+        else if (!args[i].has_prefix ("--"))
+            dirs.add (args[i]);
     }
-
-    init (args);
-    load_ttf ("LiberationSans-Regular.ttf");
-    TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
-
-    var st = new Pcm4State ();
-
-    var win = new GtkWindow (1280, 720);
-    win.set_title ("pcm4 - PlanetOS File Manager");
-
-    var root = new Box (Orientation.VERTICAL, 8);
-    var toolbar = new Box (Orientation.HORIZONTAL, 6);
-
-    var btn_up = new Button ("Up");
-    var btn_ref = new Button ("Refresh");
-    var btn_copy = new Button ("Copy");
-    var btn_cut = new Button ("Cut");
-    var btn_paste = new Button ("Paste");
-    var btn_del = new Button ("Delete");
-    var btn_mkdir = new Button ("Mkdir");
-    var entry = new Entry ("/");
-    entry.placeholder = "Path...";
-
-    toolbar.pack_start (btn_up);
-    toolbar.pack_start (btn_ref);
-    toolbar.pack_start (btn_copy);
-    toolbar.pack_start (btn_cut);
-    toolbar.pack_start (btn_paste);
-    toolbar.pack_start (btn_del);
-    toolbar.pack_start (btn_mkdir);
-    toolbar.pack_start (entry);
-
-    var paned = new Paned (Orientation.HORIZONTAL);
-    paned.set_position (180);
-    paned.set_size_request (1200, 540);
-
-    var sidebar = new ListBox ();
-    var row_root = new Box (Orientation.HORIZONTAL, 6);
-    row_root.pack_start (new Image.from_icon_name ("folder", 18));
-    row_root.pack_start (new Label ("/ (XFS)"));
-    sidebar.append (row_root);
-
-    var row_hello = new Box (Orientation.HORIZONTAL, 6);
-    row_hello.pack_start (new Image.from_icon_name ("text-x-generic", 18));
-    row_hello.pack_start (new Label ("hello.txt"));
-    sidebar.append (row_hello);
-    paned.set_start_child (sidebar);
-
-    var nb = new Notebook ();
-    var sc_files = new ScrolledWindow ();
-    var lv = new ListView ();
-    lv.focused = true;
-    sc_files.set_child (lv);
-    nb.append_page (sc_files, "Files");
-
-    var sc_prev = new ScrolledWindow ();
-    var preview_lbl = new Label ("Select a text file to preview.");
-    sc_prev.set_child (preview_lbl);
-    nb.append_page (sc_prev, "Preview");
-
-    paned.set_end_child (nb);
-
-    var status_lbl = new Label ("Ready");
-
-    st.path_entry = entry;
-    st.list_view = lv;
-    st.status_lbl = status_lbl;
-    st.preview_lbl = preview_lbl;
-    st.nb = nb;
-
-    btn_up.clicked.connect ((sender) => {
-        var cur = File.new_for_path (st.cwd);
-        var par = cur.get_parent ();
-        load_dir (st, (par != null) ? par.get_path () : "/");
-    });
-
-    btn_ref.clicked.connect ((sender) => {
-        load_dir (st, st.cwd);
-    });
-
-    entry.activate.connect ((sender) => {
-        load_dir (st, entry.get_text ());
-    });
-
-    lv.selection_changed.connect ((sender, idx) => {
-        if (idx >= 0 && idx < st.names.length) {
-            st.selected_name = st.names[idx];
-            set_status (st, @"Selected: $(st.selected_name)");
-        }
-    });
-
-    lv.activate.connect ((sender, idx) => {
-        if (idx >= 0 && idx < st.names.length)
-            open_item (st, st.names[idx]);
-    });
-
-    sidebar.row_activated.connect ((sender, row) => {
-        if (row == null)
-            return;
-        int idx = row.get_index ();
-        if (idx == 0)
-            load_dir (st, "/");
-        else if (idx == 1)
-            open_item (st, "hello.txt");
-    });
-
-    btn_copy.clicked.connect ((sender) => {
-        if (st.selected_name.length == 0)
-            return;
-        st.clip_path = join_child_path (st.cwd, st.selected_name);
-        st.clip_cut = false;
-        set_status (st, @"Copied: $(st.selected_name)");
-    });
-
-    btn_cut.clicked.connect ((sender) => {
-        if (st.selected_name.length == 0)
-            return;
-        st.clip_path = join_child_path (st.cwd, st.selected_name);
-        st.clip_cut = true;
-        set_status (st, @"Cut: $(st.selected_name)");
-    });
-
-    btn_paste.clicked.connect ((sender) => {
-        if (st.clip_path.length == 0) {
-            set_status (st, "Clipboard empty");
-            return;
-        }
-        var src = File.new_for_path (st.clip_path);
-        string base_nm = src.get_basename ();
-        string dst_name = st.clip_cut ? base_nm : ("copy_" + base_nm);
-        var dst = File.new_for_path (join_child_path (st.cwd, dst_name));
-        try {
-            if (st.clip_cut) {
-                src.move (dst, FileCopyFlags.OVERWRITE);
-                st.clip_path = "";
-                st.clip_cut = false;
-            } else {
-                src.copy (dst, FileCopyFlags.OVERWRITE);
-            }
-            load_dir (st, st.cwd);
-            set_status (st, @"Pasted $dst_name");
-        } catch (IOError e) {
-            set_status (st, @"Paste failed: $(e.message)");
-        }
-    });
-
-    btn_del.clicked.connect ((sender) => {
-        if (st.selected_name.length == 0)
-            return;
-        string target = join_child_path (st.cwd, st.selected_name);
-        try {
-            File.new_for_path (target).delete ();
-            load_dir (st, st.cwd);
-            set_status (st, @"Deleted $target");
-        } catch (IOError e) {
-            set_status (st, @"Delete failed: $(e.message)");
-        }
-    });
-
-    btn_mkdir.clicked.connect ((sender) => {
-        string dir_path = join_child_path (st.cwd, "new_folder");
-        try {
-            File.new_for_path (dir_path).make_directory ();
-            load_dir (st, st.cwd);
-            set_status (st, @"Created $dir_path");
-        } catch (IOError e) {
-            set_status (st, @"Mkdir failed: $(e.message)");
-        }
-    });
-
-    root.pack_start (toolbar);
-    root.pack_start (paned);
-    root.pack_start (status_lbl);
-    win.set_child (root);
-
-    load_dir (st, "/");
-    print (@"pcm4: dir=$(st.cwd) items=$(st.item_count) ok\n");
-
-    win.run (once);
-    return 0;
+    string[]? dir_arr = null;
+    if (dirs.length > 0) {
+        dir_arr = new string[dirs.length];
+        for (int i = 0; i < dirs.length; i++)
+            dir_arr[i] = dirs[i];
+    }
+    var app = new Pcmanfm.PcmanfmApp (once, dir_arr);
+    return app.run (args);
 }

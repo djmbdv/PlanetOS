@@ -1042,6 +1042,38 @@ namespace Planc {
             return (i >= 0) ? structs[i] : null;
         }
 
+        public int type_slots (ValaType t, string tname) {
+            if (t == ValaType.STRUCT) {
+                unowned var sd = find_struct (tname);
+                if (sd == null)
+                    return 1;
+                if (sd.is_union) {
+                    int max_s = 1;
+                    foreach (var fld in sd.fields) {
+                        int fs = type_slots (fld.field_type, fld.type_name);
+                        if (fs > max_s)
+                            max_s = fs;
+                    }
+                    return max_s;
+                }
+                int total = 0;
+                foreach (var fld in sd.fields)
+                    total += type_slots (fld.field_type, fld.type_name);
+                return total > 0 ? total : 1;
+            }
+            return 1;
+        }
+
+        // sizeof: every scalar and reference occupies one 8-byte slot in this
+        // ABI, and a struct occupies `type_slots` of them.
+        public int sizeof_bytes (ValaType t, string tname) {
+            if (t == ValaType.VOID)
+                return 0;
+            if (t == ValaType.STRUCT)
+                return 8 * type_slots (ValaType.STRUCT, tname);
+            return 8;
+        }
+
         public unowned ClassDecl? find_class (string name) {
             while (class_idx_len < classes.length) {
                 class_idx.put (classes[class_idx_len].name, class_idx_len);
@@ -1576,6 +1608,25 @@ namespace Planc {
                 return new UnaryExpr () {
                     op = o.op,
                     operand = clone_expr (o.operand, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
+            if (e is SizeofExpr) {
+                var o = (SizeofExpr) e;
+                if (o.is_type_form) {
+                    var tt = o.target_type;
+                    var tn = o.type_name;
+                    substitute_type (ref tt, ref tn, tparams, targs, targ_names);
+                    return new SizeofExpr () {
+                        target_type = tt,
+                        type_name = tn,
+                        is_type_form = true,
+                        line = o.line, column = o.column
+                    };
+                }
+                return new SizeofExpr () {
+                    operand = (o.operand != null) ? clone_expr (o.operand, tparams, targs, targ_names) : null,
+                    is_type_form = false,
                     line = o.line, column = o.column
                 };
             }

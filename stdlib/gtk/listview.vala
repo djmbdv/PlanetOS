@@ -90,12 +90,12 @@ namespace Gtk {
                 return;
             if (selected) {
                 // Celestial Cerulean (#3897F0)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
             } else if (hovered) {
                 // Elevated Surface (#212B36)
-                cr.set_source_rgb (0.129, 0.169, 0.212);
+                cr.set_source_rgb (0.175, 0.175, 0.182);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
             }
@@ -574,12 +574,12 @@ namespace Gtk {
                 int ry = y + i * row_height;
                 if (i == selected_index) {
                     // Celestial Cerulean (#3897F0)
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                     cr.rectangle ((double) x, (double) ry, (double) width, (double) row_height);
                     cr.fill ();
                 } else if (i == hovered_index) {
                     // Elevated Surface (#212B36)
-                    cr.set_source_rgb (0.129, 0.169, 0.212);
+                    cr.set_source_rgb (0.175, 0.175, 0.182);
                     cr.rectangle ((double) x, (double) ry, (double) width, (double) row_height);
                     cr.fill ();
                 }
@@ -589,7 +589,7 @@ namespace Gtk {
                     tx = x + row_height + 4;
                 }
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 TextHelper.draw_text (cr, labels[i], tx, ry + (row_height - 16) / 2, font_size);
             }
             cr.restore ();
@@ -640,10 +640,26 @@ namespace Gtk {
             }
             if (key == 0x85) {
                 set_selected (0);
+                scroll_to (0);
                 return true;
             }
             if (key == 0x86) {
                 set_selected (labels.length - 1);
+                scroll_to (labels.length - 1);
+                return true;
+            }
+            if (key == 0x87) { // Page Up
+                int pg = (height > row_height) ? (height / row_height) : 8;
+                int nxt = (selected_index > pg) ? (selected_index - pg) : 0;
+                set_selected (nxt);
+                scroll_to (nxt);
+                return true;
+            }
+            if (key == 0x88) { // Page Down
+                int pg = (height > row_height) ? (height / row_height) : 8;
+                int nxt = (selected_index + pg < labels.length) ? (selected_index + pg) : (labels.length - 1);
+                set_selected (nxt);
+                scroll_to (nxt);
                 return true;
             }
             if ((key == '\n' || key == '\r') && selected_index >= 0) {

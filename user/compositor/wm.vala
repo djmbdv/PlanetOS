@@ -70,9 +70,9 @@ namespace Wm {
         private bool shader_ok = false;
         private int backend_id = 0;
         // Default accent: Celestial Cerulean (#3897F0)
-        private double acc_r = 0.220;
-        private double acc_g = 0.592;
-        private double acc_b = 0.941;
+        private double acc_r = 0.450;
+        private double acc_g = 0.455;
+        private double acc_b = 0.470;
         private int[] dmg;
         private int[] last;
         private int last_n = 0;
@@ -139,12 +139,15 @@ namespace Wm {
             notes_lay.set_spacing (4);
             notes_lay.set_text ("notes\nopenbox interaction model\ngala style shadows + dock\n100% vala, no mutter\ngdk + cairo framebuffer\nspir-v accent pipeline");
             // highlight the last line ("spir-v accent pipeline")
-            notes_lay.add_color_attribute (103, 125, 0.220, 0.592, 0.941);
+            notes_lay.add_color_attribute (103, 125, 0.450, 0.455, 0.470);
             pattern_node = null;
             zone = TimeZone.new_local ();
             places = new BookmarkFile ();
             load_places ();
             load_cursor_svg ();
+            load_wallpaper ();
+            var mac = new uint8[6];
+            net_connected = (Sys.net_mac (mac) == 0);
         }
 
         // --- calendar / places ----------------------------------------
@@ -275,6 +278,58 @@ namespace Wm {
         // --- plumbing -------------------------------------------------
 
         private bool hw_cursor = false;
+        private bool net_connected = false;
+        private ImageSurface? wallpaper_surf = null;
+        private bool wallpaper_ok = false;
+
+        private static uint8[]? read_bytes (string path) {
+            int fd = Sys.open (path);
+            if (fd < 0)
+                return null;
+            int sz = Sys.file_size (fd);
+            if (sz <= 0 || sz > 8 * 1024 * 1024) {
+                Sys.close (fd);
+                return null;
+            }
+            var buf = new uint8[sz];
+            int got = 0;
+            var chunk = new uint8[4096];
+            while (got < sz) {
+                int want = sz - got;
+                if (want > 4096) want = 4096;
+                int r = Sys.read (fd, chunk, want);
+                if (r <= 0) break;
+                for (int i = 0; i < r; i++)
+                    buf[got + i] = chunk[i];
+                got += r;
+            }
+            Sys.close (fd);
+            if (got != sz)
+                return null;
+            return buf;
+        }
+
+        private void load_wallpaper () {
+            uint8[]? jpg = read_bytes ("winxp.jpg");
+            if (jpg == null) {
+                print ("compositor: wallpaper read_bytes(winxp.jpg) failed\n");
+                return;
+            }
+            var surf = new ImageSurface (Format.ARGB32, SCREEN_W, SCREEN_H);
+            if (!surf.is_valid ())
+                return;
+            int iw = 0;
+            int ih = 0;
+            if (!StbImage.decode_scaled_to_buf ((!) jpg, surf.buf_addr, SCREEN_W, SCREEN_H, out iw, out ih)) {
+                string err = StbImage.stbi_failure_reason ();
+                print (@"compositor: wallpaper decode failed bytes=$(((!) jpg).length) iw=$iw ih=$ih err=$err\n");
+                surf.destroy ();
+                return;
+            }
+            print (@"compositor: wallpaper ok $(iw)x$(ih)\n");
+            wallpaper_surf = surf;
+            wallpaper_ok = true;
+        }
 
         private static string? read_text (string path) {
             int fd = Sys.open (path);
@@ -342,9 +397,9 @@ namespace Wm {
                 return;
             var cr = new Context (surf);
             cr.clear ();
-            cr.set_source_rgba (0.059, 0.078, 0.098, 0.85);
+            cr.set_source_rgba (0.090, 0.090, 0.094, 0.85);
             path.fill_translated (cr, 1.2, 1.2);
-            cr.set_source_rgba (0.941, 0.957, 0.973, 1.0);
+            cr.set_source_rgba (0.920, 0.920, 0.925, 1.0);
             path.fill (cr);
             cursor_pix = new uint8[CURSOR_TEX * CURSOR_TEX * 4];
             int minx = CURSOR_TEX;
@@ -720,6 +775,7 @@ namespace Wm {
                 damage (cx, cy + ch - 30, cw, 30);
             }
             damage (SCREEN_W - 440, 0, 440, TOP_H);
+            damage (SCREEN_W - 180, SCREEN_H - DOCK_H, 180, DOCK_H);
         }
 
         // Culling: a window (or a bar) that does not touch the current clip is
@@ -1627,16 +1683,11 @@ namespace Wm {
         // --- scene ----------------------------------------------------
 
         public void seed () {
-            TextHelper.load_ttf ("LiberationSans-Regular.ttf");
-            TextHelper.load_mono_ttf ("LiberationMono-Regular.ttf");
-            add ("terminal", 48, 56, 420, 240, Kind.TERMINAL);
-            add ("shader", 500, 56, 360, 240, Kind.SHADER);
-            add ("clock", 880, 56, 340, 240, Kind.CLOCK);
-            add ("calendar", 880, 316, 340, 300, Kind.CALENDAR);
-            add ("places", 48, 316, 400, 130, Kind.PLACES);
-            add ("gtk-demo", 48, 466, 400, 210, Kind.GTK);
-            add ("pcm4", 480, 316, 380, 360, Kind.FILES);
-            focus_nth (6);
+            TextHelper.load_ttf ("Tahoma.ttf");
+            TextHelper.load_mono_ttf ("Consolas-Regular.ttf");
+            add ("terminal", 48, 56, 560, 360, Kind.TERMINAL);
+            add ("calendar", 880, 56, 340, 300, Kind.CALENDAR);
+            focus_nth (0);
         }
 
         public int add_demo () {
@@ -1709,6 +1760,13 @@ namespace Wm {
         public int background_skips () { return bg_skips; }
 
         private void draw_background (Context cr) {
+            if (wallpaper_ok && wallpaper_surf != null) {
+                cr.blit_surface ((!) wallpaper_surf, 0, 0, SCREEN_W, SCREEN_H);
+                cr.set_source_rgba (acc_r, acc_g, acc_b, 0.14);
+                cr.rectangle (0, TOP_H, SCREEN_W, 2);
+                cr.fill ();
+                return;
+            }
             if (pattern_ok) {
                 draw_pattern (cr);
                 return;
@@ -1717,9 +1775,9 @@ namespace Wm {
             for (int i = 0; i < bands; i++) {
                 double t = (double) i / (double) (bands - 1);
                 // Obsidian Orbit (#0F1419) to Slate Atmosphere (#182028)
-                double r = 0.059 + 0.035 * t;
-                double g = 0.078 + 0.047 * t;
-                double b = 0.098 + 0.059 * t;
+                double r = 0.085 + 0.045 * t;
+                double g = 0.085 + 0.045 * t;
+                double b = 0.090 + 0.048 * t;
                 cr.set_source_rgb (r, g, b);
                 cr.rectangle (0, (double) (i * SCREEN_H) / (double) bands, SCREEN_W,
                               (double) SCREEN_H / (double) bands + 1.0);
@@ -1744,7 +1802,7 @@ namespace Wm {
             if (!rect_hits (cr, 0, 0, SCREEN_W, TOP_H))
                 return;
             // Obsidian Orbit (#0F1419)
-            cr.set_source_rgb (0.059, 0.078, 0.098);
+            cr.set_source_rgb (0.090, 0.090, 0.094);
             cr.rectangle (0, 0, SCREEN_W, TOP_H);
             cr.fill ();
             cr.set_source_rgb (acc_r, acc_g, acc_b);
@@ -1752,7 +1810,7 @@ namespace Wm {
             cr.fill ();
 
             // Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             TextHelper.draw_text (cr, "PlanetOS", 14, 6, 15.0);
 
             string t = "desktop";
@@ -1763,7 +1821,7 @@ namespace Wm {
             TextHelper.draw_text (cr, t, 110, 6, 15.0);
 
             // Titanium Mist (#8B9BB0)
-            cr.set_source_rgb (0.545, 0.608, 0.690);
+            cr.set_source_rgb (0.600, 0.600, 0.615);
             TextHelper.draw_mono (cr, @"$(count ()) win", SCREEN_W - 190, 6, 14.0);
             // Wall-clock date and time in the configured zone (TZ/PLANET_TZ).
             int now_s = (int) get_real_time_seconds ();
@@ -1835,7 +1893,7 @@ namespace Wm {
             cr.fill ();
 
             // Window body: Slate Atmosphere (#182028)
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.rectangle (w.x, w.y, w.w, w.h);
             cr.fill ();
 
@@ -1848,28 +1906,28 @@ namespace Wm {
 
             // Title bar: Elevated Surface (#212B36) focused, Slate Atmosphere (#182028) unfocused
             if (foc) {
-                cr.set_source_rgb (0.129, 0.169, 0.212);
+                cr.set_source_rgb (0.175, 0.175, 0.182);
             } else {
-                cr.set_source_rgb (0.094, 0.125, 0.157);
+                cr.set_source_rgb (0.130, 0.130, 0.135);
             }
             cr.rectangle (w.x + 1, w.y + 1, w.w - 2, TITLE_H);
             cr.fill ();
 
             // 1px titlebar bottom separator: Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rectangle (w.x + 1, w.y + TITLE_H, w.w - 2, 1);
             cr.fill ();
 
             // Title text: Lunar White (#F0F4F8) focused, Titanium Mist (#8B9BB0) unfocused
             if (foc)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
             else
-                cr.set_source_rgb (0.545, 0.608, 0.690);
+                cr.set_source_rgb (0.600, 0.600, 0.615);
             TextHelper.draw_text (cr, w.title, w.x + 12, w.y + BORDER + 4, 15.0);
 
             int by = w.btn_y ();
             // Maximize: Elevated Surface (#212B36), Close: Crimson Alert (#EF4444)
-            cr.set_source_rgb (0.129, 0.169, 0.212);
+            cr.set_source_rgb (0.175, 0.175, 0.182);
             cr.rectangle (w.max_x (), by, BTN, BTN);
             cr.fill ();
             cr.set_source_rgb (0.937, 0.267, 0.267);
@@ -1878,14 +1936,14 @@ namespace Wm {
 
             // Crisp 1px border: Celestial Cerulean (#3897F0) focused, Stratosphere Line (#26323F) unfocused
             if (foc)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
             else
-                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.set_line_width (1);
             cr.rectangle (w.x, w.y, w.w, w.h);
             cr.stroke ();
             // Button icons: Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             cr.set_line_width (1);
             int mx0 = w.max_x () + 4;
             cr.rectangle (mx0, by + 4, 8, 8);
@@ -1936,14 +1994,14 @@ namespace Wm {
                 w.term.draw (cr, cx, cy, cw, ch, w.id == focused_id, acc_r, acc_g, acc_b);
             } else if (w.kind == Kind.CLOCK) {
                 // Slate Atmosphere (#182028)
-                cr.set_source_rgb (0.094, 0.125, 0.157);
+                cr.set_source_rgb (0.130, 0.130, 0.135);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 int rad = clock_radius (cw, ch);
                 int ccx = cx + cw / 2;
                 int ccy = cy + ch / 2;
                 // Stratosphere Line (#26323F)
-                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.set_source_rgb (0.210, 0.210, 0.218);
                 cr.set_line_width (2);
                 cr.arc (ccx, ccy, rad, 0, 6.28);
                 cr.stroke ();
@@ -1959,7 +2017,7 @@ namespace Wm {
                 int ang = min * 6;
                 int hx = hand_x (ccx, ang, rad - 10);
                 int hy = hand_y (ccy, ang, rad - 10);
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 cr.set_line_width (2);
                 cr.move_to (ccx, ccy);
                 cr.line_to (hx, hy);
@@ -1971,16 +2029,16 @@ namespace Wm {
                 cr.move_to (ccx, ccy);
                 cr.line_to (sx, sy);
                 cr.stroke ();
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 cr.arc (ccx, ccy, 3, 0, 6.28);
                 cr.fill ();
 
                 // Titanium Mist (#8B9BB0)
-                cr.set_source_rgb (0.545, 0.608, 0.690);
+                cr.set_source_rgb (0.600, 0.600, 0.615);
                 TextHelper.draw_mono (cr, @"T+$(pad2 (min)):$(pad2 (sec))", cx + 12, cy + ch - 28, 15.0);
             } else if (w.kind == Kind.SHADER) {
                 // Slate Atmosphere (#182028)
-                cr.set_source_rgb (0.094, 0.125, 0.157);
+                cr.set_source_rgb (0.130, 0.130, 0.135);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 cr.set_source_rgb (acc_r, acc_g, acc_b);
@@ -1988,15 +2046,15 @@ namespace Wm {
                 cr.fill ();
                 cr.set_line_width (1);
                 // Stratosphere Line (#26323F)
-                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.set_source_rgb (0.210, 0.210, 0.218);
                 cr.rectangle (cx + 14, cy + 16, 56, 56);
                 cr.stroke ();
 
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 TextHelper.draw_text (cr, "spir-v frag", cx + 84, cy + 18, 16.0);
                 // Titanium Mist (#8B9BB0)
-                cr.set_source_rgb (0.545, 0.608, 0.690);
+                cr.set_source_rgb (0.600, 0.600, 0.615);
                 if (shader_ok)
                     TextHelper.draw_mono (cr, @"words $(shader.words)", cx + 84, cy + 38, 14.0);
                 else
@@ -2020,7 +2078,7 @@ namespace Wm {
                 TextHelper.draw_mono (cr, gmsg, cx + 14, cy + 116, 14.0);
             } else if ((w.kind == Kind.GTK || w.kind == Kind.FILES) && w.gtk_root != null) {
                 // Slate Atmosphere (#182028)
-                cr.set_source_rgb (0.094, 0.125, 0.157);
+                cr.set_source_rgb (0.130, 0.130, 0.135);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 int gx = cx + 12;
@@ -2040,7 +2098,7 @@ namespace Wm {
                 w.gtk_root.draw (cr);
             } else if (w.kind == Kind.EXT) {
                 // Slate Atmosphere (#182028)
-                cr.set_source_rgb (0.094, 0.125, 0.157);
+                cr.set_source_rgb (0.130, 0.130, 0.135);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 if (w.ext_shm_surf != null) {
@@ -2049,7 +2107,7 @@ namespace Wm {
                     cr.blit_surface (w.ext_surf, cx, cy, cw, ch);
                 } else {
                     // Titanium Mist (#8B9BB0)
-                    cr.set_source_rgb (0.545, 0.608, 0.690);
+                    cr.set_source_rgb (0.600, 0.600, 0.615);
                     TextHelper.draw_mono (cr, "Starting GUI app...", cx + 16, cy + 20, 14.0);
                 }
             } else if (w.kind == Kind.CALENDAR) {
@@ -2058,12 +2116,12 @@ namespace Wm {
                 draw_places (cr, w, cx, cy, cw, ch);
             } else {
                 // Slate Atmosphere (#182028)
-                cr.set_source_rgb (0.094, 0.125, 0.157);
+                cr.set_source_rgb (0.130, 0.130, 0.135);
                 cr.rectangle (cx, cy, cw, ch);
                 cr.fill ();
                 // One Pango layout with a colour attribute run on the last line.
                 // Titanium Mist (#8B9BB0)
-                cr.set_source_rgb (0.545, 0.608, 0.690);
+                cr.set_source_rgb (0.600, 0.600, 0.615);
                 show_layout_at (cr, notes_lay, cx + 14, cy + 12);
             }
         }
@@ -2072,7 +2130,7 @@ namespace Wm {
         // date/time in the configured zone (GLib.TimeZone + GLib.DateTime).
         private void draw_calendar (Context cr, Win w, int cx, int cy, int cw, int ch) {
             // Slate Atmosphere (#182028)
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.rectangle (cx, cy, cw, ch);
             cr.fill ();
             if (cw < 220 || ch < 190)
@@ -2089,10 +2147,10 @@ namespace Wm {
             }
 
             // Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             TextHelper.draw_text (cr, @"$(month_name (mon)) $(year)", cx + 12, cy + 8, 16.0);
             // Titanium Mist (#8B9BB0)
-            cr.set_source_rgb (0.545, 0.608, 0.690);
+            cr.set_source_rgb (0.600, 0.600, 0.615);
             TextHelper.draw_mono (cr, @"$(zone.get_identifier ()) $(zone.offset_string (now_s))", cx + 12, cy + 30, 13.0);
 
             string[] labels = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
@@ -2100,7 +2158,7 @@ namespace Wm {
             int grid_y = cy + 56;
             int cell_w = (cw - 24) / 7;
             // Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             for (int i = 0; i < 7; i++)
                 TextHelper.draw_mono (cr, labels[i], grid_x + i * cell_w + 4, grid_y, 12.0);
 
@@ -2123,7 +2181,7 @@ namespace Wm {
                     cr.rectangle (grid_x + col * cell_w, cyy - 3, cell_w - 2, 21);
                     cr.fill ();
                     // Obsidian Orbit (#0F1419) for contrast on the accent.
-                    cr.set_source_rgb (0.059, 0.078, 0.098);
+                    cr.set_source_rgb (0.090, 0.090, 0.094);
                 } else {
                     // Lunar White
                     cr.set_source_rgb (0.827, 0.851, 0.878);
@@ -2140,10 +2198,10 @@ namespace Wm {
         // Places list read from `places.gbk` (GLib.BookmarkFile); the path
         // shown is the one GLib.Uri extracts from the bookmark's file URI.
         private void draw_places (Context cr, Win w, int cx, int cy, int cw, int ch) {
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.rectangle (cx, cy, cw, ch);
             cr.fill ();
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             string head = places_signed ? "Places (hmac ok)" : "Places";
             TextHelper.draw_text (cr, head, cx + 12, cy + 8, 15.0);
             var uris = places.get_uris ();
@@ -2168,7 +2226,7 @@ namespace Wm {
                 cr.set_source_rgb (0.827, 0.851, 0.878);
                 TextHelper.draw_mono (cr, path, cx + 36, y, 13.0);
                 // Titanium Mist (#8B9BB0)
-                cr.set_source_rgb (0.545, 0.608, 0.690);
+                cr.set_source_rgb (0.600, 0.600, 0.615);
                 TextHelper.draw_mono (cr, title, cx + 200, y, 13.0);
                 y += 20;
             }
@@ -2201,11 +2259,11 @@ namespace Wm {
             if (!rect_hits (cr, 0, y0, SCREEN_W, DOCK_H))
                 return;
             // Dock surface: Slate Atmosphere (#182028)
-            cr.set_source_rgb (0.094, 0.125, 0.157);
+            cr.set_source_rgb (0.130, 0.130, 0.135);
             cr.rectangle (0, y0, SCREEN_W, DOCK_H);
             cr.fill ();
             // 1px divider: Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rectangle (0, y0, SCREEN_W, 1);
             cr.fill ();
 
@@ -2219,27 +2277,56 @@ namespace Wm {
                 int by = y0 + 5;
                 if (foc)
                     // Elevated Surface (#212B36)
-                    cr.set_source_rgb (0.129, 0.169, 0.212);
+                    cr.set_source_rgb (0.175, 0.175, 0.182);
                 else
                     // Obsidian Orbit (#0F1419)
-                    cr.set_source_rgb (0.059, 0.078, 0.098);
+                    cr.set_source_rgb (0.090, 0.090, 0.094);
                 cr.rectangle (bx, by, DOCK_BTN_W, DOCK_H - 10);
                 cr.fill ();
                 if (foc) {
                     // Celestial Cerulean (#3897F0)
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                     cr.rectangle (bx, by + DOCK_H - 12, DOCK_BTN_W, 2);
                     cr.fill ();
                 }
                 cr.set_font_size (16);
                 if (foc)
                     // Lunar White (#F0F4F8)
-                    cr.set_source_rgb (0.941, 0.957, 0.973);
+                    cr.set_source_rgb (0.920, 0.920, 0.925);
                 else
                     // Titanium Mist (#8B9BB0)
-                    cr.set_source_rgb (0.545, 0.608, 0.690);
+                    cr.set_source_rgb (0.600, 0.600, 0.615);
                 draw_dock_label (cr, w.title, bx + 10, by + 5);
             }
+
+            // Right side of bottom bar: Network status icon + Clock
+            int nx = SCREEN_W - 154;
+            int ny = y0 + 12;
+            if (net_connected) {
+                cr.set_source_rgb (0.250, 0.780, 0.420);
+            } else {
+                cr.set_source_rgb (0.780, 0.280, 0.280);
+            }
+            // 3 signal bars
+            cr.rectangle (nx + 0, ny + 10, 4, 6);
+            cr.fill ();
+            cr.rectangle (nx + 6, ny + 6, 4, 10);
+            cr.fill ();
+            cr.rectangle (nx + 12, ny + 2, 4, 14);
+            cr.fill ();
+            if (!net_connected) {
+                cr.set_line_width (2);
+                cr.move_to (nx - 1, ny + 15);
+                cr.line_to (nx + 17, ny + 1);
+                cr.stroke ();
+            }
+            cr.set_source_rgb (0.600, 0.600, 0.615);
+            TextHelper.draw_mono (cr, net_connected ? "NET" : "OFF", nx + 22, y0 + 12, 12.0);
+
+            var dt = DateTime.now_utc ().to_timezone (zone);
+            string tstr = dt.format ("%H:%M:%S");
+            cr.set_source_rgb (0.920, 0.920, 0.925);
+            TextHelper.draw_mono (cr, tstr, SCREEN_W - 92, y0 + 11, 14.0);
         }
 
         private void draw_cursor (Context cr, int mx, int my) {
@@ -2261,7 +2348,7 @@ namespace Wm {
             cr.move_to (x + 6, y + 11);
             cr.line_to (x + 10, y + 17);
             cr.stroke ();
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             cr.move_to (x, y);
             cr.line_to (x, y + 14);
             cr.stroke ();

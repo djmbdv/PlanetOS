@@ -398,23 +398,23 @@ namespace Gtk {
             if (has_frame || hovered || pressed) {
                 if (pressed)
                     // Obsidian Orbit (#0F1419)
-                    cr.set_source_rgb (0.059, 0.078, 0.098);
+                    cr.set_source_rgb (0.090, 0.090, 0.094);
                 else if (hovered)
                     // Elevated Surface (#212B36)
-                    cr.set_source_rgb (0.129, 0.169, 0.212);
+                    cr.set_source_rgb (0.175, 0.175, 0.182);
                 else
                     // Slate Atmosphere (#182028)
-                    cr.set_source_rgb (0.094, 0.125, 0.157);
+                    cr.set_source_rgb (0.130, 0.130, 0.135);
                 cr.rectangle ((double) x, (double) y, (double) width, (double) height);
                 cr.fill ();
                 if (has_frame) {
                     cr.set_line_width (1.0);
                     if (hovered || pressed)
                         // Celestial Cerulean (#3897F0)
-                        cr.set_source_rgb (0.220, 0.592, 0.941);
+                        cr.set_source_rgb (0.450, 0.455, 0.470);
                     else
                         // Subtle Border (#324253, 0.6)
-                        cr.set_source_rgba (0.196, 0.259, 0.325, 0.6);
+                        cr.set_source_rgba (0.280, 0.280, 0.290, 0.6);
                     cr.rectangle ((double) x + 0.5, (double) y + 0.5, (double) (width - 1), (double) (height - 1));
                     cr.stroke ();
                 }
@@ -440,10 +440,10 @@ namespace Gtk {
             int ty = y + (height - th) / 2;
             if (sensitive)
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
             else
                 // Dim Carbon (#526275)
-                cr.set_source_rgb (0.322, 0.384, 0.459);
+                cr.set_source_rgb (0.360, 0.360, 0.370);
             TextHelper.draw_text (cr, label, tx, ty, font_size);
         }
 
@@ -745,19 +745,19 @@ namespace Gtk {
                 return;
             if (focused)
                 // Elevated Surface (#212B36)
-                cr.set_source_rgb (0.129, 0.169, 0.212);
+                cr.set_source_rgb (0.175, 0.175, 0.182);
             else
                 // Obsidian Orbit (#0F1419)
-                cr.set_source_rgb (0.059, 0.078, 0.098);
+                cr.set_source_rgb (0.090, 0.090, 0.094);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
             cr.set_line_width (1.0);
             if (focused)
                 // Celestial Cerulean (#3897F0)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
             else
                 // Stratosphere Line (#26323F)
-                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
 
@@ -799,23 +799,23 @@ namespace Gtk {
                 if (de <= disp.length && de > ds) {
                     int sx0 = FontRegistry.measure_string_px (slot, disp, 0, ds, px_sz);
                     int sx1 = FontRegistry.measure_string_px (slot, disp, 0, de, px_sz);
-                    cr.set_source_rgba (0.220, 0.592, 0.941, 0.35);
+                    cr.set_source_rgba (0.450, 0.455, 0.470, 0.35);
                     cr.rectangle ((double) (x + 10 + sx0 - scroll_x), (double) (y + 5), (double) (sx1 - sx0), (double) (height - 10));
                     cr.fill ();
                 }
             }
             if (disp.length > 0) {
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 show_layout_at (cr, l, x + 10 - scroll_x, ty);
             } else if (placeholder.length > 0) {
                 // Titanium Mist (#8B9BB0)
-                cr.set_source_rgb (0.545, 0.608, 0.690);
+                cr.set_source_rgb (0.600, 0.600, 0.615);
                 show_layout_at (cr, l, x + 10, ty);
             }
             if (focused && cursor_on) {
                 // Celestial Cerulean (#3897F0)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
                 cr.rectangle ((double) (x + 10 + cur_tw - scroll_x), (double) (y + 6), 2.0, (double) (height - 12));
                 cr.fill ();
             }
@@ -1059,11 +1059,11 @@ namespace Gtk {
             int by = y + (height - 18) / 2;
             if (active) {
                 // Celestial Cerulean (#3897F0)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
                 cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.fill ();
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 cr.set_line_width (2.0);
                 cr.move_to ((double) (bx + 4), (double) (by + 9));
                 cr.line_to ((double) (bx + 8), (double) (by + 13));
@@ -1073,14 +1073,14 @@ namespace Gtk {
                 cr.stroke ();
             } else {
                 // Obsidian Orbit (#0F1419)
-                cr.set_source_rgb (0.059, 0.078, 0.098);
+                cr.set_source_rgb (0.090, 0.090, 0.094);
                 cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.fill ();
                 cr.set_line_width (1.0);
                 if (hovered)
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                 else
-                    cr.set_source_rgba (0.196, 0.259, 0.325, 0.6);
+                    cr.set_source_rgba (0.280, 0.280, 0.290, 0.6);
                 cr.rectangle ((double) bx, (double) by, 18.0, 18.0);
                 cr.stroke ();
             }
@@ -1089,7 +1089,7 @@ namespace Gtk {
             measure_text_cached (label, font_size, out tw, out th);
             int ty = y + (height - th) / 2;
             // Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             TextHelper.draw_text (cr, label, bx + 26, ty, font_size);
         }
 
@@ -1201,28 +1201,28 @@ namespace Gtk {
             if (!visible || width <= 2 || height <= 2)
                 return;
             // Obsidian Orbit (#0F1419)
-            cr.set_source_rgb (0.059, 0.078, 0.098);
+            cr.set_source_rgb (0.090, 0.090, 0.094);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.fill ();
             if (pulse_mode) {
                 int pw = (width - 2) / 4;
                 if (pw < 8) pw = 8;
                 int px = x + 1 + (int) ((double) (width - 2 - pw) * (pulse_pos / 0.75));
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
                 cr.rectangle ((double) px, (double) (y + 1), (double) pw, (double) (height - 2));
                 cr.fill ();
             } else {
                 int fw = (int) ((double) (width - 2) * fraction);
                 if (fw > 2) {
                     // Celestial Cerulean (#3897F0)
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                     cr.rectangle ((double) (x + 1), (double) (y + 1), (double) fw, (double) (height - 2));
                     cr.fill ();
                 }
             }
             cr.set_line_width (1.0);
             // Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rectangle ((double) x, (double) y, (double) width, (double) height);
             cr.stroke ();
             if (show_text && text.length > 0) {
@@ -1235,7 +1235,7 @@ namespace Gtk {
                 cr.rectangle ((double) (x + 2), (double) (y + 1), (double) (width - 4), (double) (height - 2));
                 cr.clip ();
                 // Lunar White (#F0F4F8)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 TextHelper.draw_text (cr, text, tx, ty, font_size);
                 cr.restore ();
             }
@@ -1271,7 +1271,7 @@ namespace Gtk {
             if (!visible)
                 return;
             // Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             if (orientation == Orientation.VERTICAL)
                 cr.rectangle ((double) (x + width / 2), (double) y, 1.0, (double) height);
             else
@@ -1343,18 +1343,18 @@ namespace Gtk {
             int sy = y + (height - sh) / 2;
             if (active)
                 // Celestial Cerulean (#3897F0)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
             else if (hovered)
                 // Elevated Surface (#212B36)
-                cr.set_source_rgb (0.129, 0.169, 0.212);
+                cr.set_source_rgb (0.175, 0.175, 0.182);
             else
                 // Stratosphere Line (#26323F)
-                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rounded_rectangle ((double) sx, (double) sy, (double) sw, (double) sh, (double) (sh / 2));
             cr.fill ();
             int kx = active ? (sx + sw - sh + 2) : (sx + 2);
             // Lunar White (#F0F4F8)
-            cr.set_source_rgb (0.941, 0.957, 0.973);
+            cr.set_source_rgb (0.920, 0.920, 0.925);
             cr.rounded_rectangle ((double) kx, (double) (sy + 2), (double) (sh - 4), (double) (sh - 4), (double) ((sh - 4) / 2));
             cr.fill ();
         }
@@ -1552,20 +1552,20 @@ namespace Gtk {
                     return;
                 int tx = x + width / 2 - 2;
                 int fill_h = (int) (frac * (double) track_h);
-                cr.set_source_rgb (0.149, 0.196, 0.247);
+                cr.set_source_rgb (0.210, 0.210, 0.218);
                 cr.rounded_rectangle ((double) tx, (double) (y + pad), 4.0, (double) track_h, 2.0);
                 cr.fill ();
                 if (fill_h > 0) {
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                     cr.rounded_rectangle ((double) tx, (double) (y + pad), 4.0, (double) fill_h, 2.0);
                     cr.fill ();
                 }
                 int kx = x + width / 2 - 6;
                 int ky = y + pad + fill_h - 6;
                 if (dragging)
-                    cr.set_source_rgb (0.941, 0.957, 0.973);
+                    cr.set_source_rgb (0.920, 0.920, 0.925);
                 else
-                    cr.set_source_rgb (0.220, 0.592, 0.941);
+                    cr.set_source_rgb (0.450, 0.455, 0.470);
                 cr.rounded_rectangle ((double) kx, (double) ky, 12.0, 12.0, 6.0);
                 cr.fill ();
                 return;
@@ -1578,21 +1578,21 @@ namespace Gtk {
             int fill_w = (int) (frac * (double) track_w);
 
             // Stratosphere Line (#26323F)
-            cr.set_source_rgb (0.149, 0.196, 0.247);
+            cr.set_source_rgb (0.210, 0.210, 0.218);
             cr.rounded_rectangle ((double) (x + pad), (double) ty, (double) track_w, 4.0, 2.0);
             cr.fill ();
             if (fill_w > 0) {
                 // Celestial Cerulean (#3897F0)
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
                 cr.rounded_rectangle ((double) (x + pad), (double) ty, (double) fill_w, 4.0, 2.0);
                 cr.fill ();
             }
             int kx = x + pad + fill_w - 6;
             int ky = y + height / 2 - 6;
             if (dragging)
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
             else
-                cr.set_source_rgb (0.220, 0.592, 0.941);
+                cr.set_source_rgb (0.450, 0.455, 0.470);
             cr.rounded_rectangle ((double) kx, (double) ky, 12.0, 12.0, 6.0);
             cr.fill ();
             if (draw_value) {
@@ -1601,7 +1601,7 @@ namespace Gtk {
                 int vw = 0;
                 int vh = 0;
                 measure_text_cached (vs, 11.0, out vw, out vh);
-                cr.set_source_rgb (0.941, 0.957, 0.973);
+                cr.set_source_rgb (0.920, 0.920, 0.925);
                 TextHelper.draw_text (cr, vs, x + width - vw - 4, y + 2, 11.0);
             }
         }

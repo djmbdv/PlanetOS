@@ -4370,13 +4370,17 @@ namespace C2Vala {
                 if (li != null && li.is_array)
                     return 2;
             }
-            // `void *` is already a byte array in the generated Vala.
-            if (!ct.is_char_ptr () && ((CType) ct.inner).is_scalar ("void"))
+            // Any scalar pointer other than `char *` (e.g. `void *`, `uint8 *`,
+            // `int *`) is always emitted as a Vala array `T[]` (view 2).
+            var ct_inner = (CType) ct.inner;
+            if (ct_inner.kind == CTypeKind.SCALAR && !ct_inner.is_scalar ("char"))
                 return 2;
             if (is_alloc_call (e))
                 return 2;
             if (e is ExprCast) {
                 var ce = (ExprCast) e;
+                if (ce.target_type.is_char_ptr ())
+                    return 1;
                 if (ce.target_type.kind == CTypeKind.PTR && ce.target_type.inner != null
                     && !is_scalar_ptr_type (ce.target_type)) {
                     var inner_ct = (CType) ce.target_type.inner;
@@ -4728,6 +4732,25 @@ namespace C2Vala {
             return out_s;
         }
 
+        private string emit_sizeof_ctype (CType ct) throws RefuseError {
+            if (ct.kind == CTypeKind.SCALAR) {
+                if (ct.is_scalar ("void"))
+                    return "0";
+                return @"sizeof ($(vala_type (ct, false)))";
+            }
+            if (ct.kind == CTypeKind.ENUM)
+                return "sizeof (int)";
+            if (ct.kind == CTypeKind.ARRAY && ct.inner != null) {
+                string esz = emit_sizeof_ctype ((CType) ct.inner);
+                if (ct.array_len != null) {
+                    string al = emit_expr ((CExpr) ct.array_len);
+                    return @"((int) ($al) * (int) ($esz))";
+                }
+                return esz;
+            }
+            return @"$(type_size_bytes (ct))";
+        }
+
         private int64 type_size_bytes (CType ct, int depth = 0) {
             if (depth > 16)
                 return 8;
@@ -4929,8 +4952,15 @@ namespace C2Vala {
                     return "null";
                 }
                 string vt = vala_type (c.target_type, false);
-                if (vt.has_suffix ("[]"))
+                if (vt.has_suffix ("[]")) {
+                    var cit = infer_type (c.expr);
+                    if (cit != null && cit.kind == CTypeKind.PTR && ptr_view (c.expr, cit) == 1
+                        && c.target_type.kind == CTypeKind.PTR && c.target_type.inner != null
+                        && (c.target_type.is_void_ptr () || c.target_type.inner.is_scalar ("uint8")
+                            || c.target_type.inner.is_scalar ("uchar")))
+                        return @"$(wrap_operand (emit_expr (c.expr))).data";
                     return emit_expr (c.expr);
+                }
                 if (vt == "string") {
                     string inner_c = emit_expr (c.expr);
                     var ict = infer_type (c.expr);
@@ -5040,33 +5070,22 @@ namespace C2Vala {
                 return @"$(emit_expr (va.ap)).arg<$(vala_type (va.target_type, false))> ()";
             }
             if (e is ExprSizeofType) {
-                var st = (ExprSizeofType) e;
-                if (st.target_type.kind == CTypeKind.SCALAR)
-                    return @"sizeof ($(st.target_type.name))";
-                if (st.target_type.kind == CTypeKind.ENUM)
-                    return "sizeof (int)";
-                return @"$(type_size_bytes (st.target_type))";
+                return emit_sizeof_ctype (((ExprSizeofType) e).target_type);
             }
             if (e is ExprSizeofExpr) {
                 var se = (ExprSizeofExpr) e;
                 var it = infer_type (se.expr);
                 if (it != null) {
                     if (it.kind == CTypeKind.ARRAY && it.inner != null) {
-                        int64 esz = type_size_bytes ((CType) it.inner);
+                        string esz = emit_sizeof_ctype ((CType) it.inner);
                         if (it.array_len != null) {
                             string al = emit_expr ((CExpr) it.array_len);
-                            return @"((int) ($al) * $esz)";
+                            return @"((int) ($al) * (int) ($esz))";
                         }
-                        if (se.expr is ExprIdent) {
-                            string iname = esc_ident (((ExprIdent) se.expr).name);
-                            return @"($iname.length * $esz)";
-                        }
+                        string arr_s = wrap_operand (emit_expr (se.expr));
+                        return @"($arr_s.length * (int) ($esz))";
                     }
-                    if (it.kind == CTypeKind.SCALAR)
-                        return @"sizeof ($(it.name))";
-                    if (it.kind == CTypeKind.ENUM)
-                        return "sizeof (int)";
-                    return @"$(type_size_bytes (it))";
+                    return emit_sizeof_ctype (it);
                 }
                 refuse_loc (e.file, e.line, "sizeof of a non-scalar");
             }

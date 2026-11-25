@@ -192,7 +192,7 @@ int main (string[] args) {
     lay.clear_attributes ();
 
     // TrueType (libschrift) + UTF-8 multibyte integration
-    bool ttf_ok = FontRegistry.load_ttf ("LiberationSans-Regular.ttf");
+    bool ttf_ok = FontRegistry.load_ttf ("Tahoma.ttf");
     check (ttf_ok, "ttf-load");
     if (ttf_ok) {
         var tlay = new Layout (ctx);
