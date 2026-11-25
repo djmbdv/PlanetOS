@@ -60,6 +60,8 @@ namespace Planc {
         public bool need_build_args = false;
         public bool need_str_has_prefix = false;
         public bool need_str_has_suffix = false;
+        public bool need_str_ascii_casecmp = false;
+        public bool need_str_ascii_ncasecmp = false;
         public bool need_utf8_char_count = false;
         public bool need_utf8_get_char = false;
         public bool need_lock = false;
@@ -227,6 +229,8 @@ namespace Planc {
         private bool need_build_args = false;
         private bool need_str_has_prefix = false;
         private bool need_str_has_suffix = false;
+        private bool need_str_ascii_casecmp = false;
+        private bool need_str_ascii_ncasecmp = false;
         private bool need_utf8_char_count = false;
         private bool need_utf8_get_char = false;
         private bool need_lock = false;
@@ -551,7 +555,8 @@ namespace Planc {
             need_is_instance = false; need_mem_panic = false; need_null_panic = false;
             need_cast_panic = false; need_leak_panic = false; need_overflow_panic = false;
             need_iface_lookup = false; need_build_args = false; need_str_has_prefix = false;
-            need_str_has_suffix = false; need_utf8_char_count = false; need_utf8_get_char = false;
+            need_str_has_suffix = false; need_str_ascii_casecmp = false; need_str_ascii_ncasecmp = false;
+            need_utf8_char_count = false; need_utf8_get_char = false;
             need_lock = false; need_compact_free = false; need_utf8_validate = false;
             need_str_index_of = false; need_str_last_index_of = false;
             need_str_index_of_char = false; need_str_last_index_of_char = false;
@@ -595,6 +600,7 @@ namespace Planc {
             r.need_leak_panic = need_leak_panic; r.need_overflow_panic = need_overflow_panic;
             r.need_iface_lookup = need_iface_lookup; r.need_build_args = need_build_args;
             r.need_str_has_prefix = need_str_has_prefix; r.need_str_has_suffix = need_str_has_suffix;
+            r.need_str_ascii_casecmp = need_str_ascii_casecmp; r.need_str_ascii_ncasecmp = need_str_ascii_ncasecmp;
             r.need_utf8_char_count = need_utf8_char_count; r.need_utf8_get_char = need_utf8_get_char;
             r.need_lock = need_lock; r.need_compact_free = need_compact_free;
             r.need_utf8_validate = need_utf8_validate; r.need_str_index_of = need_str_index_of;
@@ -689,6 +695,8 @@ namespace Planc {
             if (r.need_build_args) need_build_args = true;
             if (r.need_str_has_prefix) need_str_has_prefix = true;
             if (r.need_str_has_suffix) need_str_has_suffix = true;
+            if (r.need_str_ascii_casecmp) need_str_ascii_casecmp = true;
+            if (r.need_str_ascii_ncasecmp) need_str_ascii_ncasecmp = true;
             if (r.need_utf8_char_count) need_utf8_char_count = true;
             if (r.need_utf8_get_char) need_utf8_get_char = true;
             if (r.need_lock) need_lock = true;
@@ -2491,6 +2499,14 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_str_has_suffix ();
                 symbols.add (new Symbol ("__planc_str_has_suffix", start, emitter.here () - start));
+            }
+            if (need_str_ascii_casecmp || need_str_ascii_ncasecmp) {
+                var start_c = emitter.here ();
+                emitter.emit_rt_str_ascii_casecmp ();
+                symbols.add (new Symbol ("__planc_str_ascii_casecmp", start_c, emitter.here () - start_c));
+                var start_n = emitter.here ();
+                emitter.emit_rt_str_ascii_ncasecmp ();
+                symbols.add (new Symbol ("__planc_str_ascii_ncasecmp", start_n, emitter.here () - start_n));
             }
             if (need_utf8_char_count) {
                 var start = emitter.here ();
@@ -5274,6 +5290,10 @@ namespace Planc {
                         need_str_has_prefix = true;
                     else if (bi_kind == "str_has_suffix")
                         need_str_has_suffix = true;
+                    else if (bi_kind == "str_ascii_casecmp")
+                        need_str_ascii_casecmp = true;
+                    else if (bi_kind == "str_ascii_ncasecmp")
+                        need_str_ascii_ncasecmp = true;
                     else if (bi_kind == "str_substring")
                         need_str_slice = true;
                     else if (bi_kind == "str_strip") {
@@ -7316,6 +7336,16 @@ namespace Planc {
                     ret_t = ValaType.BOOL;
                     return true;
                 }
+                if (mc.method_name == "ascii_casecmp") {
+                    kind = "str_ascii_casecmp";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "ascii_ncasecmp") {
+                    kind = "str_ascii_ncasecmp";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
             }
             return false;
         }
@@ -8340,7 +8370,7 @@ namespace Planc {
                 if (mc.args.length != 0)
                     throw new SemanticError.WRONG_ARG_COUNT (
                         @"strip expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
-            } else if (kind == "str_has_prefix" || kind == "str_has_suffix") {
+            } else if (kind == "str_has_prefix" || kind == "str_has_suffix" || kind == "str_ascii_casecmp") {
                 if (mc.args.length != 1)
                     throw new SemanticError.WRONG_ARG_COUNT (
                         @"$(mc.method_name) expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
@@ -8349,6 +8379,20 @@ namespace Planc {
                 if (!type_compatible (ValaType.STRING, "", at, an))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument 1 of '$(mc.method_name)' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+            } else if (kind == "str_ascii_ncasecmp") {
+                if (mc.args.length != 2)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"ascii_ncasecmp expects 2 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string a0n = "";
+                var a0t = expr_type_full (mc.args[0], out a0n);
+                if (!type_compatible (ValaType.STRING, "", a0t, a0n))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of 'ascii_ncasecmp' expects string, got $(type_label (a0t, a0n)) at $(mc.args[0].line):$(mc.args[0].column)");
+                string a1n = "";
+                var a1t = expr_type_full (mc.args[1], out a1n);
+                if (!is_int_like (a1t))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 2 of 'ascii_ncasecmp' expects integer, got $(type_label (a1t, a1n)) at $(mc.args[1].line):$(mc.args[1].column)");
             } else if (kind == "str_contains") {
                 if (mc.args.length != 1)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -8881,6 +8925,10 @@ namespace Planc {
                         tname = "unichar";
                     else if (bi_kind == "char_digit_value" || bi_kind == "char_xdigit_value")
                         tname = "int";
+                    else if ((bi_kind == "int_parse" || bi_kind == "int_abs_static") && mc.target is VarRef)
+                        tname = ((VarRef) mc.target).name;
+                    else if (bi_kind == "int_abs" && mc.target != null)
+                        expr_type_full (mc.target, out tname);
                     else if (bi_kind == "chan_recv") {
                         string tn = "";
                         if (mc.target != null)
@@ -14335,6 +14383,52 @@ namespace Planc {
                     need_str_has_suffix = true;
                     call_aligned ("__planc_str_has_suffix");
                 }
+                return;
+            }
+            if (kind == "str_ascii_casecmp") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'ascii_casecmp()' requires a string receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.STRING, tn);
+                emitter.push_rax ();
+                push_depth++;
+                string an = "";
+                expr_type_full (mc.args[0], out an);
+                gen_expr (mc.args[0]);
+                emit_null_check_if_nullable (ValaType.STRING, an);
+                emitter.mov_rsi_rax ();
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                need_str_ascii_casecmp = true;
+                call_aligned ("__planc_str_ascii_casecmp");
+                return;
+            }
+            if (kind == "str_ascii_ncasecmp") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'ascii_ncasecmp()' requires a string receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (mc.target, out tn);
+                gen_expr (mc.target);
+                emit_null_check_if_nullable (ValaType.STRING, tn);
+                emitter.push_rax ();
+                push_depth++;
+                string a0n = "";
+                expr_type_full (mc.args[0], out a0n);
+                gen_expr (mc.args[0]);
+                emit_null_check_if_nullable (ValaType.STRING, a0n);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (mc.args[1]);
+                emitter.mov_rdx_rax ();
+                emitter.pop_reg (Reg.RSI);
+                emitter.pop_reg (Reg.RDI);
+                push_depth -= 2;
+                need_str_ascii_ncasecmp = true;
+                call_aligned ("__planc_str_ascii_ncasecmp");
                 return;
             }
             if (kind == "str_char_count" || kind == "str_validate") {

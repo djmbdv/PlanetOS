@@ -588,6 +588,7 @@ Consequences that must be respected:
 - **Numeric & parsing intrinsics (`codegen.vala`, `emitter.vala`)**:
   - `double` and `float` support `is_nan ()` (`ucomisd`/`ucomiss xmm0, xmm0` + `setp`), `is_finite ()`, `is_infinity ()` (`1` for `+inf`, `-1` for `-inf`, `0` otherwise), and `abs ()` both as instance methods (`x.is_nan ()`) and static-style type calls (`double.is_nan (x)`).
   - Signed integer types (`int`, `int64`, `int32`, `int16`, `int8`, `short`, `long`, `ssize_t`, etc.) support `abs ()` both as instance (`x.abs ()`) and static-style (`int.abs (x)`) calls via branchless `cqo; xor rax, rdx; sub rax, rdx` (unsigned types are a no-op).
-  - `int.parse ()` (`__planc_str_to_int`) skips all C `isspace` ASCII whitespace (`' '` and `'\t'`..`'\r'`, codes `9..13`) and stops at trailing non-digits, matching C `atoi` / `c_atoi` semantics (covered by [math_int_fp_intrinsics.vala](../planc/tests/valid/math_int_fp_intrinsics.vala)).
+  - `int.parse ()` (`__planc_str_to_int`) skips all C `isspace` ASCII whitespace (`' '` and `'\t'`..`'\r'`, codes `9..13`) and stops at trailing non-digits, matching C `atoi` / `c_atoi` semantics, and `expr_type_full ()` preserves the exact integer `tname` for `<inttype>.parse ()` and `<inttype>.abs ()` (e.g., `uint64.parse ()` stays unsigned).
+  - `string.ascii_casecmp (s2)` and `string.ascii_ncasecmp (s2, n)` (`__planc_str_ascii_casecmp` / `__planc_str_ascii_ncasecmp`) run as zero-allocation, null-safe, unsigned-byte x86-64 intrinsics with unsigned `size_t` bounds checks (covered by [math_int_fp_intrinsics.vala](../planc/tests/valid/math_int_fp_intrinsics.vala)).
 
 

@@ -2902,6 +2902,116 @@ namespace Planc {
             ret ();
         }
 
+        // int __planc_str_ascii_casecmp(string* rdi, string* rsi)
+        // Sets rdx = UINT64_MAX and falls through to __planc_str_ascii_ncasecmp.
+        public void emit_rt_str_ascii_casecmp () {
+            // mov rdx, -1 (48 C7 C2 FF FF FF FF)
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC2);
+            code.u8 (0xFF); code.u8 (0xFF); code.u8 (0xFF); code.u8 (0xFF);
+        }
+
+        // int __planc_str_ascii_ncasecmp(string* rdi, string* rsi, size_t rdx)
+        public void emit_rt_str_ascii_ncasecmp () {
+            var l_zero = new_label ();
+            var l_s1_null = new_label ();
+            var l_s2_null = new_label ();
+            var l_loop = new_label ();
+            var l_after_loop = new_label ();
+            var l_s1_shorter = new_label ();
+            var l_cmp_c2 = new_label ();
+            var l_cmp_diff = new_label ();
+
+            // test rdx, rdx; je l_zero
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2);
+            branch (BranchKind.JE, l_zero);
+
+            // null guards: (null, null)->0, (null, s2)->-1, (s1, null)->1
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF); // test rdi, rdi
+            branch (BranchKind.JE, l_s1_null);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6); // test rsi, rsi
+            branch (BranchKind.JE, l_s2_null);
+
+            // r8 = [rdi + 8], r9 = [rsi + 8], r10 = min(r8, r9, rdx)
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08);
+            code.u8 (0x4C); code.u8 (0x8B); code.u8 (0x4E); code.u8 (0x08);
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0xC2); // mov r10, r8
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xC1); // cmp r9, r8
+            code.u8 (0x73); code.u8 (0x03);                 // jae +3
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0xCA); // mov r10, r9
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xD2); // cmp rdx, r10
+            code.u8 (0x73); code.u8 (0x03);                 // jae +3
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xD2); // mov r10, rdx
+
+            // rdi += 16, rsi += 16, rcx = 0
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x10);
+            code.u8 (0x31); code.u8 (0xC9);                 // xor ecx, ecx
+
+            bind (l_loop);
+            code.u8 (0x4C); code.u8 (0x39); code.u8 (0xD1); // cmp rcx, r10
+            branch (BranchKind.JAE, l_after_loop);
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x0F); // movzx eax, byte [rdi + rcx]
+            code.u8 (0x44); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x1C); code.u8 (0x0E); // movzx r11d, byte [rsi + rcx]
+
+            // if ('A' <= al <= 'Z') al += 32
+            code.u8 (0x83); code.u8 (0xF8); code.u8 (65);
+            branch (BranchKind.JB, l_cmp_c2);
+            code.u8 (0x83); code.u8 (0xF8); code.u8 (90);
+            branch (BranchKind.JA, l_cmp_c2);
+            code.u8 (0x83); code.u8 (0xC0); code.u8 (32);
+
+            bind (l_cmp_c2);
+            // if ('A' <= r11b <= 'Z') r11d += 32
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xFB); code.u8 (65);
+            branch (BranchKind.JB, l_cmp_diff);
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xFB); code.u8 (90);
+            branch (BranchKind.JA, l_cmp_diff);
+            code.u8 (0x41); code.u8 (0x83); code.u8 (0xC3); code.u8 (32);
+
+            bind (l_cmp_diff);
+            code.u8 (0x44); code.u8 (0x29); code.u8 (0xD8); // sub eax, r11d
+            var l_next = new_label ();
+            branch (BranchKind.JE, l_next);
+            code.u8 (0x48); code.u8 (0x98);                 // cdqe
+            ret ();
+
+            bind (l_next);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC1); // inc rcx
+            branch (BranchKind.JMP, l_loop);
+
+            bind (l_after_loop);
+            code.u8 (0x49); code.u8 (0x39); code.u8 (0xD2); // cmp r10, rdx
+            branch (BranchKind.JE, l_zero);
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xC8); // cmp r8, r9
+            branch (BranchKind.JE, l_zero);
+            branch (BranchKind.JB, l_s1_shorter);
+            // s1 longer: return (int)(uint8)s1[r10]
+            code.u8 (0x42); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x17); // movzx eax, byte [rdi + r10]
+            ret ();
+
+            bind (l_s1_shorter);
+            // s1 shorter: return -(int)(uint8)s2[r10]
+            code.u8 (0x42); code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x04); code.u8 (0x16); // movzx eax, byte [rsi + r10]
+            code.u8 (0xF7); code.u8 (0xD8);                 // neg eax
+            code.u8 (0x48); code.u8 (0x98);                 // cdqe
+            ret ();
+
+            bind (l_s1_null);
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xF6); // test rsi, rsi
+            branch (BranchKind.JE, l_zero);
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC0); // mov rax, -1
+            code.u8 (0xFF); code.u8 (0xFF); code.u8 (0xFF); code.u8 (0xFF);
+            ret ();
+
+            bind (l_s2_null);
+            mov_eax (1);
+            ret ();
+
+            bind (l_zero);
+            xor_eax ();
+            ret ();
+        }
+
         // int64 __planc_utf8_char_count(string* rdi)
         public void emit_rt_utf8_char_count () {
             var l_loop = new_label ();

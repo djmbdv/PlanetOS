@@ -664,11 +664,10 @@ namespace GLib {
         }
 
         public static int ascii_strncasecmp (string s1, string s2, size_t n) {
-            int limit = (int) n;
-            if (limit <= 0)
+            if (n == 0)
                 return 0;
-            int min_len = (s1.length < s2.length) ? s1.length : s2.length;
-            int cmp_len = (min_len < limit) ? min_len : limit;
+            size_t min_len = (size_t) ((s1.length < s2.length) ? s1.length : s2.length);
+            int cmp_len = (min_len < n) ? (int) min_len : (int) n;
             for (int i = 0; i < cmp_len; i++) {
                 uint8 c1 = s1[i];
                 uint8 c2 = s2[i];
@@ -677,7 +676,7 @@ namespace GLib {
                 if (c1 != c2)
                     return (int) c1 - (int) c2;
             }
-            if (cmp_len == limit || s1.length == s2.length)
+            if ((size_t) cmp_len == n || s1.length == s2.length)
                 return 0;
             return (s1.length < s2.length) ? -((int) s2[cmp_len]) : (int) s1[cmp_len];
         }
