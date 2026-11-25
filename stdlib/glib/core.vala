@@ -64,6 +64,14 @@ namespace GLib {
         log_message (domain, LogLevelFlags.DEBUG, msg);
     }
 
+    public int ascii_strcasecmp (string s1, string s2) {
+        return Str.ascii_strcasecmp (s1, s2);
+    }
+
+    public int ascii_strncasecmp (string s1, string s2, size_t n) {
+        return Str.ascii_strncasecmp (s1, s2, n);
+    }
+
     // stderr goes to both the console and the kernel ring (GLib.g_printerr).
     public void printerr (string s) {
         print (s);
@@ -638,6 +646,40 @@ namespace GLib {
                 buf[i] = (c >= 'a' && c <= 'z') ? (c - 32) : c;
             }
             return __planc_host_bytes_to_str (buf, n);
+        }
+
+        public static int ascii_strcasecmp (string s1, string s2) {
+            int n = (s1.length < s2.length) ? s1.length : s2.length;
+            for (int i = 0; i < n; i++) {
+                uint8 c1 = s1[i];
+                uint8 c2 = s2[i];
+                if (c1 >= 'A' && c1 <= 'Z') c1 = (uint8) (c1 + 32);
+                if (c2 >= 'A' && c2 <= 'Z') c2 = (uint8) (c2 + 32);
+                if (c1 != c2)
+                    return (int) c1 - (int) c2;
+            }
+            if (s1.length == s2.length)
+                return 0;
+            return (s1.length < s2.length) ? -((int) s2[n]) : (int) s1[n];
+        }
+
+        public static int ascii_strncasecmp (string s1, string s2, size_t n) {
+            int limit = (int) n;
+            if (limit <= 0)
+                return 0;
+            int min_len = (s1.length < s2.length) ? s1.length : s2.length;
+            int cmp_len = (min_len < limit) ? min_len : limit;
+            for (int i = 0; i < cmp_len; i++) {
+                uint8 c1 = s1[i];
+                uint8 c2 = s2[i];
+                if (c1 >= 'A' && c1 <= 'Z') c1 = (uint8) (c1 + 32);
+                if (c2 >= 'A' && c2 <= 'Z') c2 = (uint8) (c2 + 32);
+                if (c1 != c2)
+                    return (int) c1 - (int) c2;
+            }
+            if (cmp_len == limit || s1.length == s2.length)
+                return 0;
+            return (s1.length < s2.length) ? -((int) s2[cmp_len]) : (int) s1[cmp_len];
         }
 
         public static bool has_prefix (string str, string prefix) {

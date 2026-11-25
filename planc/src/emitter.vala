@@ -1144,6 +1144,16 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x09); code.u8 (0xC8);
         }
 
+        // xor rax, rdx                       48 31 D0
+        public void xor_rax_rdx () {
+            code.u8 (0x48); code.u8 (0x31); code.u8 (0xD0);
+        }
+
+        // sub rax, rdx                       48 29 D0
+        public void sub_rax_rdx () {
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xD0);
+        }
+
         // xor rax, rcx                       48 31 C8
         public void xor_rax_rcx () {
             code.u8 (0x48); code.u8 (0x31); code.u8 (0xC8);
@@ -3368,7 +3378,9 @@ namespace Planc {
             code.u8 (0x83); code.u8 (0xF8); code.u8 (32);   // cmp eax, ' '
             branch (BranchKind.JE, l_ws_next);
             code.u8 (0x83); code.u8 (0xF8); code.u8 (9);    // cmp eax, '\t'
-            branch (BranchKind.JE, l_ws_next);
+            branch (BranchKind.JL, l_sign);
+            code.u8 (0x83); code.u8 (0xF8); code.u8 (13);   // cmp eax, '\r'
+            branch (BranchKind.JLE, l_ws_next);
             branch (BranchKind.JMP, l_sign);
             bind (l_ws_next);
             code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7); // inc rdi
@@ -4408,8 +4420,10 @@ namespace Planc {
 
         public void pxor_xmm0_xmm1 ()  { code.u8 (0x66); code.u8 (0x0F); code.u8 (0xEF); code.u8 (0xC1); }
 
+        public void ucomisd_xmm0_xmm0 () { code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC0); }
         public void ucomisd_xmm0_xmm1 () { code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC1); }
         public void ucomisd_xmm1_xmm0 () { code.u8 (0x66); code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC8); }
+        public void ucomiss_xmm0_xmm0 () { code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC0); }
         public void ucomiss_xmm0_xmm1 () { code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC1); }
         public void ucomiss_xmm1_xmm0 () { code.u8 (0x0F); code.u8 (0x2E); code.u8 (0xC8); }
 

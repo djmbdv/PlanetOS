@@ -585,5 +585,9 @@ Consequences that must be respected:
   - `SpirvBackend` registers `gl_FragCoord` lazily only when `frag_coord_*()` is used, exposes `sin`/`cos`/`tan`/`pow`/`exp`/`log`/`exp2`/`log2` (`GLSL.std.450`), and supports `%` (`OpSMod`/`OpFMod`).
   - `Spv.Module` pre-decodes constants/variables/entry offset once in `evaluate()`, restricts output color updates in `OpStore` to `output_id`, copies vector components in `OpLoad`, and implements `OpConvertSToF`, `OpSNegate`, `OpFNegate`, `OpIAdd`, `OpISub`, `OpIMul`, `OpSDiv`, `OpSMod`, and `OpFMod`.
   - `Gsk.ShaderNode` reuses its block buffer, clips `draw_cairo()` to the active clip rect (with a `draw_rgba()` fast path when `step == 1`), and `Gsk.VulkanRenderer` caches Venus shader modules/pipelines per `Spv.Module`.
+- **Numeric & parsing intrinsics (`codegen.vala`, `emitter.vala`)**:
+  - `double` and `float` support `is_nan ()` (`ucomisd`/`ucomiss xmm0, xmm0` + `setp`), `is_finite ()`, `is_infinity ()` (`1` for `+inf`, `-1` for `-inf`, `0` otherwise), and `abs ()` both as instance methods (`x.is_nan ()`) and static-style type calls (`double.is_nan (x)`).
+  - Signed integer types (`int`, `int64`, `int32`, `int16`, `int8`, `short`, `long`, `ssize_t`, etc.) support `abs ()` both as instance (`x.abs ()`) and static-style (`int.abs (x)`) calls via branchless `cqo; xor rax, rdx; sub rax, rdx` (unsigned types are a no-op).
+  - `int.parse ()` (`__planc_str_to_int`) skips all C `isspace` ASCII whitespace (`' '` and `'\t'`..`'\r'`, codes `9..13`) and stops at trailing non-digits, matching C `atoi` / `c_atoi` semantics (covered by [math_int_fp_intrinsics.vala](../planc/tests/valid/math_int_fp_intrinsics.vala)).
 
 

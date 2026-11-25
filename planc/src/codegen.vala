@@ -5255,7 +5255,8 @@ namespace Planc {
                 string bi_kind = "";
                 ValaType bi_ret = ValaType.VOID;
                 if (is_builtin_method_call (mc, out bi_kind, out bi_ret)) {
-                    if (bi_kind != "int_parse" && bi_kind != "float_parse" && bi_kind != "double_parse" && bi_kind != "uintptr_from_pointer" && mc.target != null)
+                    bool skip_target = (mc.target is VarRef && is_type_name (((VarRef) mc.target).name));
+                    if (!skip_target && bi_kind != "uintptr_from_pointer" && mc.target != null)
                         prepare_expr (mc.target, ref struct_temps, ref ref_temps);
                     foreach (var a in mc.args)
                         prepare_expr (a, ref struct_temps, ref ref_temps);
@@ -7102,6 +7103,11 @@ namespace Planc {
                     ret_t = ValaType.INT;
                     return true;
                 }
+                if (is_int_type_name_cg (vn) && is_type_name (vn) && mc.method_name == "abs") {
+                    kind = "int_abs_static";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
                 if ((vn == "uintptr" || vn == "uintptr_t") && is_type_name (vn) && mc.method_name == "from_pointer") {
                     kind = "uintptr_from_pointer";
                     ret_t = ValaType.INT;
@@ -7111,6 +7117,29 @@ namespace Planc {
                     kind = (vn == "float") ? "float_parse" : "double_parse";
                     ret_t = (vn == "float") ? ValaType.FLOAT : ValaType.DOUBLE;
                     return true;
+                }
+                if (is_fp_type_name_cg (vn) && is_type_name (vn)) {
+                    bool is_f32 = (vn == "float");
+                    if (mc.method_name == "is_nan") {
+                        kind = is_f32 ? "float_is_nan_static" : "double_is_nan_static";
+                        ret_t = ValaType.BOOL;
+                        return true;
+                    }
+                    if (mc.method_name == "is_finite") {
+                        kind = is_f32 ? "float_is_finite_static" : "double_is_finite_static";
+                        ret_t = ValaType.BOOL;
+                        return true;
+                    }
+                    if (mc.method_name == "is_infinity") {
+                        kind = is_f32 ? "float_is_infinity_static" : "double_is_infinity_static";
+                        ret_t = ValaType.INT;
+                        return true;
+                    }
+                    if (mc.method_name == "abs") {
+                        kind = is_f32 ? "float_abs_static" : "double_abs_static";
+                        ret_t = is_f32 ? ValaType.FLOAT : ValaType.DOUBLE;
+                        return true;
+                    }
                 }
                 if (is_type_name (vn))
                     return false;
@@ -7160,6 +7189,11 @@ namespace Planc {
                 ret_t = ValaType.POINTER;
                 return true;
             }
+            if (tt == ValaType.INT && mc.method_name == "abs") {
+                kind = "int_abs";
+                ret_t = ValaType.INT;
+                return true;
+            }
             if (tt == ValaType.INT) {
                 var mn = mc.method_name;
                 if (mn == "isalnum" || mn == "isalpha" || mn == "iscntrl" || mn == "isdigit"
@@ -7180,6 +7214,29 @@ namespace Planc {
                 kind = (tt == ValaType.FLOAT) ? "float_to_string" : "double_to_string";
                 ret_t = ValaType.STRING;
                 return true;
+            }
+            if (is_fp_type (tt)) {
+                bool is_f32 = (tt == ValaType.FLOAT);
+                if (mc.method_name == "is_nan") {
+                    kind = is_f32 ? "float_is_nan" : "double_is_nan";
+                    ret_t = ValaType.BOOL;
+                    return true;
+                }
+                if (mc.method_name == "is_finite") {
+                    kind = is_f32 ? "float_is_finite" : "double_is_finite";
+                    ret_t = ValaType.BOOL;
+                    return true;
+                }
+                if (mc.method_name == "is_infinity") {
+                    kind = is_f32 ? "float_is_infinity" : "double_is_infinity";
+                    ret_t = ValaType.INT;
+                    return true;
+                }
+                if (mc.method_name == "abs") {
+                    kind = is_f32 ? "float_abs" : "double_abs";
+                    ret_t = tt;
+                    return true;
+                }
             }
             if (tt == ValaType.ERROR) {
                 if (mc.method_name == "matches") {
@@ -8210,10 +8267,35 @@ namespace Planc {
                 if (!type_compatible (ValaType.STRING, "", at, an))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"argument 1 of 'parse' expects string, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
-            } else if (kind == "int_to_string" || kind == "float_to_string" || kind == "double_to_string") {
+            } else if (kind == "int_to_string" || kind == "float_to_string" || kind == "double_to_string"
+                || kind == "int_abs" || kind == "float_is_nan" || kind == "double_is_nan"
+                || kind == "float_is_finite" || kind == "double_is_finite"
+                || kind == "float_is_infinity" || kind == "double_is_infinity"
+                || kind == "float_abs" || kind == "double_abs") {
                 if (mc.args.length != 0)
                     throw new SemanticError.WRONG_ARG_COUNT (
-                        @"to_string expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                        @"$(mc.method_name) expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+            } else if (kind == "int_abs_static") {
+                if (mc.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"abs expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!is_int_like (at))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of 'abs' expects integer, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+            } else if (kind == "float_is_nan_static" || kind == "double_is_nan_static"
+                || kind == "float_is_finite_static" || kind == "double_is_finite_static"
+                || kind == "float_is_infinity_static" || kind == "double_is_infinity_static"
+                || kind == "float_abs_static" || kind == "double_abs_static") {
+                if (mc.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"$(mc.method_name) expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!is_numeric_type (at))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of '$(mc.method_name)' expects numeric value, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
             } else if (kind == "uintptr_from_pointer") {
                 if (mc.args.length != 1)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -13987,6 +14069,127 @@ namespace Planc {
                 call_aligned ("__planc_double_to_str");
                 if (program_uses_heap && mc.ref_temp_slot >= 0)
                     emitter.store_local (mc.ref_temp_slot);
+                return;
+            }
+            if (kind == "int_abs" || kind == "int_abs_static") {
+                bool is_static = (kind == "int_abs_static");
+                Expr arg_expr = is_static ? mc.args[0] : mc.target;
+                if (arg_expr == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'abs()' requires a receiver at $(mc.line):$(mc.column)");
+                string tn = "";
+                expr_type_full (arg_expr, out tn);
+                gen_expr (arg_expr);
+                if (!is_unsigned_int_type (tn)) {
+                    emitter.cqo ();
+                    emitter.xor_rax_rdx ();
+                    emitter.sub_rax_rdx ();
+                }
+                return;
+            }
+            if (kind == "float_is_nan" || kind == "double_is_nan"
+                || kind == "float_is_nan_static" || kind == "double_is_nan_static") {
+                bool is_f32 = kind.has_prefix ("float_");
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                if (arg_expr == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'is_nan()' requires a receiver at $(mc.line):$(mc.column)");
+                gen_expr (arg_expr);
+                if (is_f32) {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.FLOAT);
+                    emitter.ucomiss_xmm0_xmm0 ();
+                } else {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.DOUBLE);
+                    emitter.ucomisd_xmm0_xmm0 ();
+                }
+                emitter.setcc_al (0x9A); // setp al
+                emitter.movzx_eax_al ();
+                return;
+            }
+            if (kind == "float_is_finite" || kind == "double_is_finite"
+                || kind == "float_is_finite_static" || kind == "double_is_finite_static") {
+                bool is_f32 = kind.has_prefix ("float_");
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                if (arg_expr == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'is_finite()' requires a receiver at $(mc.line):$(mc.column)");
+                gen_expr (arg_expr);
+                if (is_f32) {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.FLOAT);
+                    emitter.movq_rax_xmm (0);
+                    emitter.code.u8 (0xD1); emitter.code.u8 (0xE0); // shl eax, 1
+                    emitter.code.u8 (0x3D); emitter.code.u32le (0xFF000000U); // cmp eax, 0xFF000000
+                } else {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.DOUBLE);
+                    emitter.movq_rax_xmm (0);
+                    emitter.code.u8 (0x48); emitter.code.u8 (0xD1); emitter.code.u8 (0xE0); // shl rax, 1
+                    emitter.shr_rax_imm (53);
+                    emitter.cmp_rax_imm (0x7FF);
+                }
+                emitter.setcc_al (0x92); // setb al
+                emitter.movzx_eax_al ();
+                return;
+            }
+            if (kind == "float_is_infinity" || kind == "double_is_infinity"
+                || kind == "float_is_infinity_static" || kind == "double_is_infinity_static") {
+                bool is_f32 = kind.has_prefix ("float_");
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                if (arg_expr == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'is_infinity()' requires a receiver at $(mc.line):$(mc.column)");
+                gen_expr (arg_expr);
+                var l_not_inf = emitter.new_label ();
+                var l_done = emitter.new_label ();
+                if (is_f32) {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.FLOAT);
+                    emitter.movq_rax_xmm (0);
+                    emitter.mov_rcx_rax ();
+                    emitter.code.u8 (0xD1); emitter.code.u8 (0xE0); // shl eax, 1
+                    emitter.code.u8 (0x3D); emitter.code.u32le (0xFF000000U); // cmp eax, 0xFF000000
+                    emitter.branch (BranchKind.JNE, l_not_inf);
+                    emitter.mov_rax_rcx ();
+                    emitter.code.u8 (0xC1); emitter.code.u8 (0xF8); emitter.code.u8 (31); // sar eax, 31
+                    emitter.code.u8 (0x83); emitter.code.u8 (0xC8); emitter.code.u8 (1);  // or eax, 1
+                    emitter.sign_extend_rax (32);
+                } else {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.DOUBLE);
+                    emitter.movq_rax_xmm (0);
+                    emitter.mov_rcx_rax ();
+                    emitter.code.u8 (0x48); emitter.code.u8 (0xD1); emitter.code.u8 (0xE0); // shl rax, 1
+                    emitter.code.u8 (0x48); emitter.code.u8 (0xBA); // mov rdx, 0xFFE0000000000000
+                    emitter.code.u64le (0xFFE0000000000000UL);
+                    emitter.code.u8 (0x48); emitter.code.u8 (0x39); emitter.code.u8 (0xD0); // cmp rax, rdx
+                    emitter.branch (BranchKind.JNE, l_not_inf);
+                    emitter.mov_rax_rcx ();
+                    emitter.code.u8 (0x48); emitter.code.u8 (0xC1); emitter.code.u8 (0xF8); emitter.code.u8 (63); // sar rax, 63
+                    emitter.code.u8 (0x48); emitter.code.u8 (0x83); emitter.code.u8 (0xC8); emitter.code.u8 (1);  // or rax, 1
+                }
+                emitter.branch (BranchKind.JMP, l_done);
+                emitter.bind (l_not_inf);
+                emitter.xor_eax ();
+                emitter.bind (l_done);
+                return;
+            }
+            if (kind == "float_abs" || kind == "double_abs"
+                || kind == "float_abs_static" || kind == "double_abs_static") {
+                bool is_f32 = kind.has_prefix ("float_");
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                if (arg_expr == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'abs()' requires a receiver at $(mc.line):$(mc.column)");
+                gen_expr (arg_expr);
+                if (is_f32) {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.FLOAT);
+                    emitter.movq_rax_xmm (0);
+                    emitter.and_eax_imm32 (0x7fffffffU);
+                    emitter.movq_xmm_rax (0);
+                } else {
+                    emit_fp_coerce (expr_type (arg_expr), ValaType.DOUBLE);
+                    emitter.movq_rax_xmm (0);
+                    emitter.code.u8 (0x48); emitter.code.u8 (0xD1); emitter.code.u8 (0xE0); // shl rax, 1
+                    emitter.code.u8 (0x48); emitter.code.u8 (0xD1); emitter.code.u8 (0xE8); // shr rax, 1
+                    emitter.movq_xmm_rax (0);
+                }
                 return;
             }
             if (kind == "async_run") {

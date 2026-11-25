@@ -1,0 +1,11 @@
+abs: 42 17 0 1000000000000
+abs_s: 42 99 1000000000000
+d_nan: true true false false
+d_fin: true false false false
+d_inf: 1 -1 0 0
+d_abs: 3.5 12.5
+f_nan: true true false false
+f_fin: true false false false
+f_inf: 1 -1 0 0
+f_abs: 1.75 6.25
+parse: 123 -42 77 0
