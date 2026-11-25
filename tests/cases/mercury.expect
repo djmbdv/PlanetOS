@@ -1,3 +1,4 @@
 mercury:mac=
 =mercury:icmp=ok
+~mercury:udp=ok yiaddr=10\.0\.2\.
 =mercury:summary ok=1
