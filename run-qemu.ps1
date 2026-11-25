@@ -95,6 +95,36 @@ function To-QemuPath([string]$Path) {
     return $Path.Replace('\', '/')
 }
 
+# Windows path -> MSYS2 path (/c/Users/...). Building it here instead of
+# shelling out to `cygpath` keeps PowerShell 5.1 native-argument quoting from
+# eating the backslashes.
+function To-MsysPath([string]$Path) {
+    $p = $Path -replace '\\', '/'
+    if ($p -match '^([A-Za-z]):(.*)$') {
+        $p = '/' + $Matches[1].ToLower() + $Matches[2]
+    }
+    return $p
+}
+
+function Invoke-Bash([string]$Command) {
+    # valac/gcc write warnings to stderr, and PowerShell 5.1 turns native
+    # stderr into a terminating NativeCommandError under
+    # $ErrorActionPreference = 'Stop'. Surface it as plain text and let the
+    # exit code decide instead.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    & $Bash -lc $Command 2>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.ErrorRecord]) {
+            Write-Host $_.Exception.Message
+        } else {
+            Write-Host $_
+        }
+    }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = $prev
+    return $code
+}
+
 # --- MSYS2 discovery -------------------------------------------------------
 
 $MsysCandidates = @()
@@ -146,16 +176,32 @@ if (-not (Test-Path $Planc)) {
         $Planc = $PlancNoExt
     }
 }
-if (-not (Test-Path $Planc)) {
+# A stage-0 planc built before the last pull rejects the newest flags
+# ("unknown option: --nostdlib"), so rebuild it when its sources are newer and
+# a build is actually going to run.
+$NeedPlanc = -not (Test-Path $Planc)
+if (-not $NeedPlanc -and -not $NoBuild) {
+    $plancTime = (Get-Item $Planc).LastWriteTime
+    $newestSrc = Get-ChildItem -Path @(
+        (Join-Path $Root 'planc\src\*.vala'),
+        (Join-Path $Root 'planc\stage0\*.vala')
+    ) -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($newestSrc -and $newestSrc.LastWriteTime -gt $plancTime) {
+        $NeedPlanc = $true
+    }
+}
+if ($NeedPlanc) {
     # tools/build-planc-host.sh is the MSYS2 UCRT64 valac path; planc/build.sh
     # needs the Linux Vala oracle and only works where that is installed.
     Write-Step 'Building the stage-0 planc with valac (tools/build-planc-host.sh)...'
-    $rootUnix = (& $Bash -lc ('cygpath -m "' + $Root + '"')).Trim()
-    & $Bash -lc ("cd '" + $rootUnix + "' && ./tools/build-planc-host.sh")
-    if ($LASTEXITCODE -ne 0) {
-        & $Bash -lc ("cd '" + $rootUnix + "' && ./planc/build.sh")
+    $rootUnix = To-MsysPath $Root
+    $bootCode = Invoke-Bash ("cd '" + $rootUnix + "' && ./tools/build-planc-host.sh")
+    if ($bootCode -ne 0) {
+        $bootCode = Invoke-Bash ("cd '" + $rootUnix + "' && ./planc/build.sh")
     }
-    if ($LASTEXITCODE -ne 0) {
+    if ($bootCode -ne 0) {
         Fail 'planc bootstrap failed (tools/build-planc-host.sh and planc/build.sh)'
     }
     if (Test-Path (Join-Path $Root 'planc\build\planc.exe')) {
@@ -286,6 +332,8 @@ if (-not $NoBuild) {
         (Join-Path $StdDir 'gtk\window.vala')
     )
     $CompositorSrcs = @(
+        (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'),
+        (Join-Path $StdDir 'gdk\stb_image.vala'),
         (Join-Path $UserDir 'compositor\apps.vala'),
         (Join-Path $UserDir 'compositor\win.vala'),
         (Join-Path $UserDir 'compositor\wm.vala'),
@@ -348,22 +396,21 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', (Join-Path $UserDir 'sys_demo.vala'), '-o', (Out-Path 'sys_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'mercury.vala'), '-o', (Out-Path 'mercury.elf'))
 
-    # c2vala.elf is skipped while tools/c2vala is work in progress: its
-    # sources do not compile yet. Re-enable this unit once they do.
-    # $C2valaDir = Join-Path $Root 'tools\c2vala'
-    # Invoke-Planc (@(
-    #     '--target=planetos', $Opt, $LibFlags,
-    #     (Join-Path $SrcDir 'buffer.vala'),
-    #     (Join-Path $SrcDir 'host_planetos.vala'),
-    #     (Join-Path $C2valaDir 'ast.vala'),
-    #     (Join-Path $C2valaDir 'preproc.vala'),
-    #     (Join-Path $C2valaDir 'lexer.vala'),
-    #     (Join-Path $C2valaDir 'parser.vala'),
-    #     (Join-Path $C2valaDir 'ptr_analyzer.vala'),
-    #     (Join-Path $C2valaDir 'translator.vala'),
-    #     (Join-Path $C2valaDir 'main.vala'),
-    #     '-o', (Out-Path 'c2vala.elf')
-    # ))
+    $C2valaDir = Join-Path $Root 'tools\c2vala'
+    Invoke-Planc (@(
+        '--target=planetos', $Opt, $LibFlags,
+        (Join-Path $SrcDir 'buffer.vala'),
+        (Join-Path $SrcDir 'host_planetos.vala'),
+        (Join-Path $C2valaDir 'ast.vala'),
+        (Join-Path $C2valaDir 'preproc.vala'),
+        (Join-Path $C2valaDir 'lexer.vala'),
+        (Join-Path $C2valaDir 'parser.vala'),
+        (Join-Path $C2valaDir 'ptr_analyzer.vala'),
+        (Join-Path $C2valaDir 'translator_models.vala'),
+        (Join-Path $C2valaDir 'translator.vala'),
+        (Join-Path $C2valaDir 'main.vala'),
+        '-o', (Out-Path 'c2vala.elf')
+    ))
 
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xA00000', '--import-lib=gee', (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xB00000', '--import-lib=gee', (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'vte_sh.elf'))
