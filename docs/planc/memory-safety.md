@@ -17,8 +17,19 @@ Cada bloque del heap lleva una cabecera de 16 bytes delante de los datos:
 |--------|-------|-----------|
 | `+0` | `refcount` | `u32`; `0` = bloque liberado, `0xDEADDEAD` = envenenado, `0xFFFFFFFE` = *dying* |
 | `+4` | `kind` | `0` array de bytes, `1` array de referencias, `2` instancia de clase, `3` `[Compact]` |
+| `+5` | `class` | clase de tamaño `0..7` (32…4096 bytes) o `255` para bloques grandes |
 | `+6` | `magic` | `0x504C` (`"PL"`) |
-| `+8` | `len` / `vtable` | longitud para arrays, puntero a vtable para clases |
+| `+8` | `len` / `vtable` / next | longitud para arrays, puntero a vtable para clases, enlace de la lista libre una vez liberado |
+| `+12` | `pages` | sólo bloques grandes: páginas reservadas, para poder reutilizar el bloque |
+
+Los bloques de hasta 4096 bytes se reciclan en ocho *free lists* por clase de
+tamaño. Los bloques mayores se encadenan en una lista LIFO cuyo tamaño se guarda
+en `+12`; una asignación grande reutiliza el primer bloque con al menos las
+páginas necesarias (búsqueda acotada a 64 entradas). Sin ese reciclaje, cada
+array de más de 4 KiB perdía sus páginas para siempre.
+
+Cuando no hay memoria, el runtime aborta con `planc: panic: out of memory`, un
+diagnóstico distinto del de doble `free` o bloque corrupto.
 
 Los datos empiezan en `+16`, por lo que `sizeof` de `planc` es un slot de 8 bytes
 por escalar (no el tamaño de C).

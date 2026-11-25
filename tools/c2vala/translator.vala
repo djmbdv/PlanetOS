@@ -1197,10 +1197,13 @@ namespace C2Vala {
                 int si2 = slice_ord[si2_i];
                 string sfn = slice_names[si2];
                 string svt = slice_vtypes[si2];
+                // An array element type makes `$svt[]` a 2-dimensional array,
+                // whose `.length` needs the outermost dimension.
+                string alen = svt.has_suffix ("[]") ? "arr.length[0]" : "arr.length";
                 sb.append (@"private static $svt[] $sfn ($svt[] arr, int off) {\n");
                 sb.append ("    if (off <= 0) return arr;\n");
-                sb.append ("    if (off >= arr.length) return new " + svt + "[0];\n");
-                sb.append ("    int n = arr.length - off;\n");
+                sb.append ("    if (off >= " + alen + ") return new " + svt + "[0];\n");
+                sb.append ("    int n = " + alen + " - off;\n");
                 sb.append (@"    $svt[] res = new $svt[n];\n");
                 sb.append ("    for (int i = 0; i < n; i++) res[i] = arr[off + i];\n");
                 sb.append ("    return res;\n");
@@ -1211,9 +1214,11 @@ namespace C2Vala {
                 int cai = copy_ord[cai_i];
                 string cfn = copy_arr_names[cai];
                 string cvt = copy_arr_vtypes[cai];
+                string dlen = cvt.has_suffix ("[]") ? "dst.length[0]" : "dst.length";
+                string slen = cvt.has_suffix ("[]") ? "src.length[0]" : "src.length";
                 sb.append (@"private static void $cfn ($cvt[] dst, int doff, $cvt[] src, int soff, int n) {\n");
                 sb.append ("    for (int i = 0; i < n; i++) {\n");
-                sb.append ("        if (doff + i < dst.length && soff + i < src.length)\n");
+                sb.append ("        if (doff + i < " + dlen + " && soff + i < " + slen + ")\n");
                 sb.append ("            dst[doff + i] = src[soff + i];\n");
                 sb.append ("    }\n");
                 sb.append ("}\n\n");
@@ -5424,7 +5429,11 @@ namespace C2Vala {
                             return @"((int) ($al) * (int) ($esz))";
                         }
                         string arr_s = wrap_operand (emit_expr (se.expr));
-                        return @"($arr_s.length * (int) ($esz))";
+                        // An array of arrays is 2-dimensional in Vala, so its
+                        // outermost length needs an explicit dimension.
+                        string lsel = vala_type ((CType) it.inner, false).has_suffix ("[]")
+                            ? ".length[0]" : ".length";
+                        return @"($arr_s$lsel * (int) ($esz))";
                     }
                     return emit_sizeof_ctype (it);
                 }

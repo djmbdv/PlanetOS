@@ -1793,12 +1793,16 @@ namespace Planc {
             symbols.add (new Symbol ("__planc_weak_clear", s_clr, here () - s_clr));
         }
 
-        public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1, bool target_planetos = false) {
+        public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1, bool target_planetos = false, Label? oom_panic_lbl = null) {
+            Label oom_lbl = (oom_panic_lbl != null) ? oom_panic_lbl : mem_panic_lbl;
             var l_class_loop = new_label ();
             var l_found_class = new_label ();
             var l_arena_carve = new_label ();
             var l_new_slab = new_label ();
             var l_init_header = new_label ();
+            var l_large_search = new_label ();
+            var l_large_alloc = new_label ();
+            var l_large_reuse = new_label ();
 
             push_rbp ();
             mov_rsp_to_rbp ();
@@ -1839,7 +1843,35 @@ namespace Planc {
             code.u8 (0x83); code.u8 (0xF9); code.u8 (0x08);
             branch (BranchKind.JL, l_class_loop);
 
-            // Large allocation (> 4096)
+            // Large allocation (> 4096). Reuse a freed large block when one is
+            // big enough: without this list every array above 4 KiB leaked its
+            // pages forever, which no real workload (e.g. DOOM) survives.
+            // r11d = pages needed = (r14 + 4095) >> 12
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);                  // mov rax, r14
+            code.u8 (0x48); code.u8 (0x05); code.u32le (4095);                // add rax, 4095
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE8); code.u8 (0x0C);   // shr rax, 12
+            code.u8 (0x41); code.u8 (0x89); code.u8 (0xC3);                   // mov r11d, eax
+            // lea r8, [rbx + 104] (free_large head)
+            code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x83); code.u32le (104);
+            code.u8 (0x41); code.u8 (0xB9); code.u32le (64);                  // mov r9d, 64 (bounded walk)
+            bind (l_large_search);
+            code.u8 (0x49); code.u8 (0x8B); code.u8 (0x10);                   // mov rdx, [r8]
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2);                   // test rdx, rdx
+            branch (BranchKind.JE, l_large_alloc);
+            code.u8 (0x44); code.u8 (0x3B); code.u8 (0x5A); code.u8 (0x0C);   // cmp r11d, [rdx + 12]
+            branch (BranchKind.JBE, l_large_reuse);
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x42); code.u8 (0x08);   // lea r8, [rdx + 8]
+            code.u8 (0x41); code.u8 (0xFF); code.u8 (0xC9);                   // dec r9d
+            branch (BranchKind.JNE, l_large_search);
+            branch (BranchKind.JMP, l_large_alloc);
+            bind (l_large_reuse);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x42); code.u8 (0x08);   // mov rax, [rdx + 8]
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0x00);                   // mov [r8], rax
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD0);                   // mov rax, rdx
+            code.u8 (0xB1); code.u8 (0xFF);                                   // mov cl, 255
+            branch (BranchKind.JMP, l_init_header);
+
+            bind (l_large_alloc);
             if (target_planetos) {
                 // rdi = (r14 + 4095) >> 12 (num_pages)
                 code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7); // mov rdi, r14
@@ -1848,7 +1880,15 @@ namespace Planc {
                 mov_eax (3);
                 int80 ();
                 test_rax_rax ();
-                branch (BranchKind.JE, mem_panic_lbl);
+                branch (BranchKind.JE, oom_lbl);
+                // Remember the block's page count so `free` can hand it back.
+                // mov rdi, rax; mov rax, r14; add rax, 4095; shr rax, 12
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xC7);
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);
+                code.u8 (0x48); code.u8 (0x05); code.u32le (4095);
+                code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE8); code.u8 (0x0C);
+                code.u8 (0x89); code.u8 (0x47); code.u8 (0x0C);               // mov [rdi + 12], eax
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xF8);               // mov rax, rdi
                 code.u8 (0xB1); code.u8 (0xFF); // mov cl, 255
                 branch (BranchKind.JMP, l_init_header);
             } else {
@@ -1866,7 +1906,7 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x81); code.u8 (0xC6); code.u32le (4096);
             emit_mmap_anon_rw ();
             test_rax_rax ();
-            branch (BranchKind.JS, mem_panic_lbl);
+            branch (BranchKind.JS, oom_lbl);
             // mov r12, rax                    49 89 C4
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4);
             if (!target_windows) {
@@ -1949,7 +1989,7 @@ namespace Planc {
             if (free_heap_bss_off >= 0) {
                 // Freestanding static 256 KiB BSS heap: only valid if [rbx + 24] == 0
                 code.u8 (0x48); code.u8 (0x83); code.u8 (0x7B); code.u8 (0x18); code.u8 (0x00);
-                branch (BranchKind.JNE, mem_panic_lbl);
+                branch (BranchKind.JNE, oom_lbl);
                 code.u8 (0x4C); code.u8 (0x8D); code.u8 (0x25); // lea r12, [rip + free_heap_bss_off]
                 record_rip (free_heap_bss_off, PatchSpace.BSS);
                 code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
@@ -1971,7 +2011,7 @@ namespace Planc {
                 pop_reg (Reg.RDX);
                 pop_reg (Reg.RCX);
                 test_rax_rax ();
-                branch (BranchKind.JE, mem_panic_lbl);
+                branch (BranchKind.JE, oom_lbl);
                 code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4); // mov r12, rax
                 code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE0);
                 code.u8 (0x48); code.u8 (0x01); code.u8 (0xD0);
@@ -1988,9 +2028,15 @@ namespace Planc {
             mov_esi_imm (0x11000);
             emit_mmap_anon_rw ();
             test_rax_rax ();
-            branch (BranchKind.JS, mem_panic_lbl);
+            branch (BranchKind.JS, oom_lbl);
             // mov r12, rax
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xC4);
+            // Record the page count for the large free list:
+            // mov rax, r14; add rax, 4095; shr rax, 12; mov [r12 + 12], eax
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF0);
+            code.u8 (0x48); code.u8 (0x05); code.u32le (4095);
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE8); code.u8 (0x0C);
+            code.u8 (0x41); code.u8 (0x89); code.u8 (0x44); code.u8 (0x24); code.u8 (0x0C);
             // mprotect(r12 + 0x10000, 4096, 0)
             code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7);
             code.u8 (0x48); code.u8 (0x81); code.u8 (0xC7); code.u32le (0x10000);
@@ -2204,6 +2250,7 @@ namespace Planc {
         public void emit_rt_unref (int bss_base, Label mem_panic_lbl, bool debug_memory = false) {
             var l_ret = new_label ();
             var l_free_self = new_label ();
+            var l_push_large = new_label ();
             var l_class_dtor = new_label ();
             var l_elem_loop = new_label ();
             var l_elem_done = new_label ();
@@ -2341,7 +2388,7 @@ namespace Planc {
             code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x4F); code.u8 (0x05);
             // cmp ecx, 8                      83 F9 08
             code.u8 (0x83); code.u8 (0xF9); code.u8 (0x08);
-            branch (BranchKind.JAE, l_ret);
+            branch (BranchKind.JAE, l_push_large);
             // Acquire allocator spinlock [rdx + 96]
             var l_unref_lock = new_label ();
             var l_unref_locked = new_label ();
@@ -2364,6 +2411,26 @@ namespace Planc {
             // mov [rdx + rcx*8 + 32], rdi     48 89 7C CA 20
             code.u8 (0x48); code.u8 (0x89); code.u8 (0x7C); code.u8 (0xCA); code.u8 (0x20);
             // Release spinlock: mov dword ptr [rdx + 96], 0
+            code.u8 (0xC7); code.u8 (0x42); code.u8 (0x60); code.u32le (0);
+            branch (BranchKind.JMP, l_ret);
+
+            bind (l_push_large);
+            // Blocks above 4096 bytes (class byte 255) go on a single LIFO list
+            // so their pages can be handed out again; the page count stored at
+            // [+12] is what the allocator matches against.
+            var l_large_lock = new_label ();
+            var l_large_locked = new_label ();
+            bind (l_large_lock);
+            code.u8 (0xB8); code.u32le (1);
+            code.u8 (0x87); code.u8 (0x42); code.u8 (0x60);
+            code.u8 (0x85); code.u8 (0xC0);
+            branch (BranchKind.JE, l_large_locked);
+            code.u8 (0xF3); code.u8 (0x90);
+            branch (BranchKind.JMP, l_large_lock);
+            bind (l_large_locked);
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x82); code.u32le (104); // mov rax, [rdx + 104]
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x47); code.u8 (0x08);   // mov [rdi + 8], rax
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xBA); code.u32le (104); // mov [rdx + 104], rdi
             code.u8 (0xC7); code.u8 (0x42); code.u8 (0x60); code.u32le (0);
 
             bind (l_ret);

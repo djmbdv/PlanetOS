@@ -29,6 +29,7 @@ namespace Planc {
         public Label overflow_panic_label;
         public Label bounds_panic_label;
         public Label mem_panic_label;
+        public Label oom_panic_label;
         public Label null_panic_label;
         public Label cast_panic_label;
         public Label leak_panic_label;
@@ -52,6 +53,7 @@ namespace Planc {
         public bool need_uint_to_str = false;
         public bool need_is_instance = false;
         public bool need_mem_panic = false;
+        public bool need_oom_panic = false;
         public bool need_null_panic = false;
         public bool need_cast_panic = false;
         public bool need_leak_panic = false;
@@ -274,6 +276,7 @@ namespace Planc {
         private bool need_uint_to_str = false;
         private bool need_is_instance = false;
         private bool need_mem_panic = false;
+        private bool need_oom_panic = false;
         private bool need_uaf_panic = false;
         private Label uaf_panic_label = new Label ();
         private bool need_check_ref = false;
@@ -326,6 +329,7 @@ namespace Planc {
 
         private Label bounds_panic_label;
         private Label mem_panic_label;
+        private Label oom_panic_label;
         private Label null_panic_label;
         private Label cast_panic_label;
         private Label leak_panic_label;
@@ -361,6 +365,7 @@ namespace Planc {
             del_thunk_syms = new GenericArray<string> ();
             bounds_panic_label = emitter.new_label ();
             mem_panic_label = emitter.new_label ();
+            oom_panic_label = emitter.new_label ();
             null_panic_label = emitter.new_label ();
             cast_panic_label = emitter.new_label ();
             leak_panic_label = emitter.new_label ();
@@ -416,7 +421,7 @@ namespace Planc {
             if (main_takes_args)
                 need_build_args = true;
             if (program_uses_heap) {
-                alloc_bss_offset = emitter.add_bss_bytes (104);
+                alloc_bss_offset = emitter.add_bss_bytes (112);
                 async_bss_offset = emitter.add_bss_bytes (64);
                 sig_bss_offset = emitter.add_bss_bytes (8);
                 if (freestanding)
@@ -601,6 +606,7 @@ namespace Planc {
             overflow_panic_label = new Label ();
             bounds_panic_label = emitter.new_label ();
             mem_panic_label = emitter.new_label ();
+            oom_panic_label = emitter.new_label ();
             null_panic_label = emitter.new_label ();
             cast_panic_label = emitter.new_label ();
             leak_panic_label = emitter.new_label ();
@@ -615,6 +621,7 @@ namespace Planc {
             need_ref = false; need_unref = false; need_str_concat = false;
             need_str_slice = false; need_str_strip = false; need_int_to_str = false; need_uint_to_str = false;
             need_is_instance = false; need_mem_panic = false; need_null_panic = false;
+            need_oom_panic = false;
             need_cast_panic = false; need_leak_panic = false; need_overflow_panic = false;
             need_iface_lookup = false; need_build_args = false; need_str_has_prefix = false;
             need_str_has_suffix = false; need_str_ascii_casecmp = false; need_str_ascii_ncasecmp = false;
@@ -646,6 +653,7 @@ namespace Planc {
             r.overflow_panic_label = overflow_panic_label;
             r.bounds_panic_label = bounds_panic_label;
             r.mem_panic_label = mem_panic_label;
+            r.oom_panic_label = oom_panic_label;
             r.null_panic_label = null_panic_label;
             r.cast_panic_label = cast_panic_label;
             r.leak_panic_label = leak_panic_label;
@@ -658,6 +666,7 @@ namespace Planc {
             r.need_str_concat = need_str_concat; r.need_str_slice = need_str_slice; r.need_str_strip = need_str_strip;
             r.need_int_to_str = need_int_to_str; r.need_uint_to_str = need_uint_to_str;
             r.need_is_instance = need_is_instance; r.need_mem_panic = need_mem_panic;
+            r.need_oom_panic = need_oom_panic;
             r.need_null_panic = need_null_panic; r.need_cast_panic = need_cast_panic;
             r.need_leak_panic = need_leak_panic; r.need_overflow_panic = need_overflow_panic;
             r.need_iface_lookup = need_iface_lookup; r.need_build_args = need_build_args;
@@ -708,6 +717,7 @@ namespace Planc {
                 if (b.label == r.overflow_panic_label) b.label = overflow_panic_label;
                 else if (b.label == r.bounds_panic_label) b.label = bounds_panic_label;
                 else if (b.label == r.mem_panic_label) b.label = mem_panic_label;
+                else if (b.label == r.oom_panic_label) b.label = oom_panic_label;
                 else if (b.label == r.null_panic_label) b.label = null_panic_label;
                 else if (b.label == r.cast_panic_label) b.label = cast_panic_label;
                 else if (b.label == r.leak_panic_label) b.label = leak_panic_label;
@@ -749,6 +759,7 @@ namespace Planc {
             if (r.need_uint_to_str) need_uint_to_str = true;
             if (r.need_is_instance) need_is_instance = true;
             if (r.need_mem_panic) need_mem_panic = true;
+            if (r.need_oom_panic) need_oom_panic = true;
             if (r.need_null_panic) need_null_panic = true;
             if (r.need_cast_panic) need_cast_panic = true;
             if (r.need_leak_panic) need_leak_panic = true;
@@ -2482,8 +2493,9 @@ namespace Planc {
                 symbols.add (new Symbol ("__planc_write_uint", start, emitter.here () - start));
             }
             if (need_alloc || need_ref || need_unref) {
+                need_oom_panic = true;
                 var start_alloc = emitter.here ();
-                emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label, freestanding_heap_off, target_planetos);
+                emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label, freestanding_heap_off, target_planetos, oom_panic_label);
                 symbols.add (new Symbol ("__planc_alloc", start_alloc, emitter.here () - start_alloc));
 
                 var start_ref = emitter.here ();
@@ -2693,6 +2705,8 @@ namespace Planc {
                             "planc: panic: index out of bounds\n");
             emit_panic_sym (need_mem_panic, mem_panic_label, "__planc_mem_panic",
                             "planc: panic: memory error (double free or corrupted block)\n");
+            emit_panic_sym (need_oom_panic, oom_panic_label, "__planc_oom_panic",
+                            "planc: panic: out of memory\n");
             emit_panic_sym (need_uaf_panic, uaf_panic_label, "__planc_uaf_panic",
                             "planc: panic: use after free or corrupted reference (debug memory)\n");
             emit_panic_sym (need_null_panic, null_panic_label, "__planc_null_panic",
