@@ -43,7 +43,7 @@ echo "Building PlanetOS kernel and userland..."
 OPT="${PLANC_OPT:--O2}"
 GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/filestream.vala" "$ROOT/stdlib/glib/utils.vala" "$ROOT/stdlib/glib/test_option.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/glib/process.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/glib/variant.vala" "$ROOT/stdlib/glib/time.vala" "$ROOT/stdlib/glib/thread.vala" "$ROOT/stdlib/glib/uuid.vala" "$ROOT/stdlib/glib/bit.vala" "$ROOT/stdlib/glib/memory.vala" "$ROOT/stdlib/glib/slice.vala" "$ROOT/stdlib/glib/atomic.vala" "$ROOT/stdlib/glib/bytes.vala" "$ROOT/stdlib/glib/codec.vala" "$ROOT/stdlib/glib/hashtable.vala" "$ROOT/stdlib/glib/queue.vala" "$ROOT/stdlib/glib/uri.vala" "$ROOT/stdlib/glib/bookmark.vala")
 GEE_SRCS=("$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/stdlib/gee/trees.vala")
-GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/converter.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala" "$ROOT/stdlib/gio/planet.vala" "$ROOT/stdlib/gio/net.vala" "$ROOT/stdlib/gio/tls.vala" "$ROOT/stdlib/gio/subprocess.vala")
+GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/converter.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala" "$ROOT/stdlib/gio/planet.vala" "$ROOT/stdlib/gio/stack.vala" "$ROOT/stdlib/gio/net.vala" "$ROOT/stdlib/gio/tls.vala" "$ROOT/stdlib/gio/dns.vala" "$ROOT/stdlib/gio/subprocess.vala")
 CAIRO_SRCS=("$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala")
 GDK_SRCS=("$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala")
 GSK_SRCS=("$ROOT/stdlib/gsk/path.vala" "$ROOT/stdlib/gsk/types.vala" "$ROOT/stdlib/gsk/nodes.vala" "$ROOT/stdlib/gsk/renderer.vala")
@@ -76,6 +76,7 @@ python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gee "$ROOT/user/wc.vala" -o "$OUT/wc.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gio "$ROOT/user/gio_demo.vala" -o "$OUT/gio_demo.elf"
+"$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gee --import-lib=gio "$ROOT/user/curl.vala" -o "$OUT/curl.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gobject "$ROOT/user/gobject_demo.vala" -o "$OUT/gobject_demo.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gmodule "$ROOT/user/gmodule_demo.vala" -o "$OUT/gmodule_demo.elf"
 "$PLANC" $OPT --target=planetos --nostdlib "$ROOT/user/mathlib.vala" -o "$OUT/mathlib.dlib"
@@ -156,7 +157,7 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
     "$OUT/spv_demo.elf" "$OUT/gio_demo.elf" \
     "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" \
-    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/vk_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$ROOT/assets/LiberationSans-Regular.ttf" "$ROOT/assets/LiberationMono-Regular.ttf" "$ROOT/cursor.svg" "$OUT/pcm4.elf" "$OUT/mathlib.dlib" "$OUT/plan_demo.plan" "$OUT/vte_sh.elf" "$OUT/pluto.elf" "$OUT/saturn.elf" "$OUT/jsmn_demo.elf" "$OUT/c2vala_sdk.vala" "$OUT/sys_demo.elf" "$OUT/mercury.elf" \
+    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/vk_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$ROOT/assets/LiberationSans-Regular.ttf" "$ROOT/assets/LiberationMono-Regular.ttf" "$ROOT/cursor.svg" "$OUT/pcm4.elf" "$OUT/mathlib.dlib" "$OUT/plan_demo.plan" "$OUT/vte_sh.elf" "$OUT/pluto.elf" "$OUT/saturn.elf" "$OUT/jsmn_demo.elf" "$OUT/c2vala_sdk.vala" "$OUT/sys_demo.elf" "$OUT/mercury.elf" "$OUT/curl.elf" \
     --lib "$LIBDIR/glib/glib.dlib" --lib "$LIBDIR/glib/glib.hlib" \
     --lib "$LIBDIR/gee/gee.dlib" --lib "$LIBDIR/gee/gee.hlib" \
     --lib "$LIBDIR/gio/gio.dlib" --lib "$LIBDIR/gio/gio.hlib" \

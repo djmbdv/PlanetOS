@@ -868,13 +868,14 @@ namespace GLib {
         }
 
         private void ensure (int extra) {
-            if (extra <= 0 || used + extra < 0 || used + extra <= buf.length)
+            if (extra <= 0 || extra <= buf.length - used)
                 return;
+            int needed = used + extra;
             int ncap = (buf.length > 0) ? (buf.length * 2) : 64;
-            while (ncap > 0 && ncap < used + extra)
+            while (ncap > 0 && ncap < needed)
                 ncap = ncap * 2;
             if (ncap <= 0)
-                ncap = used + extra;
+                ncap = needed;
             var nbuf = new uint8[ncap];
             if (used > 0)
                 Memory.copy (Sys.byte_arr_addr (nbuf), Sys.byte_arr_addr (buf), (size_t) used);

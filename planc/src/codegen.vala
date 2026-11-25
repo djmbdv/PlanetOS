@@ -3693,6 +3693,32 @@ namespace Planc {
             return true;
         }
 
+        private bool find_array_list_inner (string tt_name, out int inner_off_bytes, out ValaType et, out string et_name) {
+            inner_off_bytes = -1;
+            et = ValaType.INT;
+            et_name = "";
+            var cname = strip_null (tt_name);
+            if (!cname.has_prefix ("ArrayList__"))
+                return false;
+            unowned var cd = program.find_class (cname);
+            if (cd == null)
+                return false;
+            foreach (var sub in program.classes) {
+                if (sub.name != cd.name && is_subclass_of (sub.name, cd.name)) {
+                    if (sub.find_own_method ("iterator") != null)
+                        return false;
+                }
+            }
+            unowned ClassField? icf = null;
+            int slot_off = class_field_offset_slots (cd, "inner", out icf);
+            if (slot_off < 0 || icf == null)
+                return false;
+            if (!find_generic_array_elem (icf.type_name, out et, out et_name))
+                return false;
+            inner_off_bytes = 16 + 8 * slot_off;
+            return true;
+        }
+
         private bool resolve_foreach_iterable (ValaType ct, string ct_name,
                                                out unowned Function? iter_m,
                                                out unowned Function? next_m,
@@ -4854,18 +4880,20 @@ namespace Planc {
                 ValaType et = ValaType.INT;
                 string et_name = "";
                 bool is_ga = (ct == ValaType.CLASS) && find_generic_array_elem (ct_name, out et, out et_name);
+                int al_inner_off = -1;
+                bool is_al = (ct == ValaType.CLASS) && !is_ga && find_array_list_inner (ct_name, out al_inner_off, out et, out et_name);
                 unowned Function? iter_m = null;
                 unowned Function? next_m = null;
                 unowned Function? get_m = null;
-                bool is_iter = (ct != ValaType.ARRAY && !is_ga)
+                bool is_iter = (ct != ValaType.ARRAY && !is_ga && !is_al)
                     && resolve_foreach_iterable (ct, ct_name, out iter_m, out next_m, out get_m);
-                if (ct != ValaType.ARRAY && !is_ga && !is_iter)
+                if (ct != ValaType.ARRAY && !is_ga && !is_al && !is_iter)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"foreach requires an array or iterable collection, got $(type_label (ct, ct_name)) at $(fe.collection.line):$(fe.collection.column)");
                 if (is_iter) {
                     et = get_m.return_type;
                     et_name = get_m.return_type_name;
-                } else if (!is_ga) {
+                } else if (!is_ga && !is_al) {
                     parse_array_elem (ct_name, out et, out et_name);
                 }
                 ValaType vtype = fe.infer_type ? et : fe.elem_type;
@@ -4877,21 +4905,26 @@ namespace Planc {
                     throw new SemanticError.DUPLICATE_VARIABLE (
                         @"duplicate variable: $(fe.var_name) at $(fe.line):$(fe.column)");
                 var col_mark = locals.length;
+                if (is_al) {
+                    var al_slot = next_var_slot++;
+                    push_local (@"#fe_al_$(col_mark)", ValaType.CLASS, strip_null (ct_name), al_slot, false);
+                }
                 var cslot = next_var_slot++;
                 if (is_iter) {
                     push_local (@"#fe_col_$(col_mark)", iter_m.return_type, strip_null (iter_m.return_type_name), cslot, false);
                 } else {
-                    push_local (@"#fe_col_$(col_mark)", is_ga ? ValaType.CLASS : ValaType.ARRAY, strip_null (ct_name), cslot, false);
+                    push_local (@"#fe_col_$(col_mark)", (is_ga || is_al) ? ValaType.CLASS : ValaType.ARRAY,
+                                is_al ? "GenericArray" : strip_null (ct_name), cslot, is_al);
                     var islot = next_var_slot++;
                     push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", islot, false);
-                    if (!is_ga) {
+                    if (!is_ga && !is_al) {
                         var lslot = next_var_slot++;
                         push_local (@"#fe_len_$(col_mark)", ValaType.INT, "", lslot, true);
                     }
                 }
 
                 var eslot = next_var_slot++;
-                push_local (fe.var_name, vtype, vtname, eslot, false);
+                push_local (fe.var_name, vtype, vtname, eslot, !is_iter && fe.is_unowned);
 
                 prepare_stmt (fe.body, ref struct_temps, ref ref_temps);
                 deactivate_from (col_mark);
@@ -11145,18 +11178,20 @@ namespace Planc {
                 ValaType et = ValaType.INT;
                 string et_name = "";
                 bool is_ga = (ct == ValaType.CLASS) && find_generic_array_elem (ct_name, out et, out et_name);
+                int al_inner_off = -1;
+                bool is_al = (ct == ValaType.CLASS) && !is_ga && find_array_list_inner (ct_name, out al_inner_off, out et, out et_name);
                 unowned Function? iter_m = null;
                 unowned Function? next_m = null;
                 unowned Function? get_m = null;
-                bool is_iter = (ct != ValaType.ARRAY && !is_ga)
+                bool is_iter = (ct != ValaType.ARRAY && !is_ga && !is_al)
                     && resolve_foreach_iterable (ct, ct_name, out iter_m, out next_m, out get_m);
-                if (ct != ValaType.ARRAY && !is_ga && !is_iter)
+                if (ct != ValaType.ARRAY && !is_ga && !is_al && !is_iter)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"foreach requires an array or iterable collection, got $(type_label (ct, ct_name)) at $(fe.collection.line):$(fe.collection.column)");
                 if (is_iter) {
                     et = get_m.return_type;
                     et_name = get_m.return_type_name;
-                } else if (!is_ga) {
+                } else if (!is_ga && !is_al) {
                     parse_array_elem (ct_name, out et, out et_name);
                 }
                 ValaType vtype = fe.infer_type ? et : fe.elem_type;
@@ -11169,6 +11204,9 @@ namespace Planc {
                         @"duplicate variable: $(fe.var_name) at $(fe.line):$(fe.column)");
 
                 var col_mark = locals.length;
+                int al_slot = -1;
+                if (is_al)
+                    al_slot = next_var_slot++;
                 var col_slot = next_var_slot++;
                 int idx_slot = -1;
                 int len_slot = -1;
@@ -11185,6 +11223,18 @@ namespace Planc {
                     push_depth--;
                     emitter.store_local (col_slot);
                     push_local (@"#fe_col_$(col_mark)", iter_m.return_type, strip_null (iter_m.return_type_name), col_slot, false);
+                } else if (is_al) {
+                    idx_slot = next_var_slot++;
+                    consume_ref_expr (fe.collection);
+                    emitter.store_local (al_slot);
+                    cleanup_expr_temps (fe.collection);
+                    push_local (@"#fe_al_$(col_mark)", ValaType.CLASS, strip_null (ct_name), al_slot, false);
+                    emitter.load_local (al_slot);
+                    emitter.load_rax_disp (al_inner_off);
+                    emitter.store_local (col_slot);
+                    emitter.zero_local (idx_slot);
+                    push_local (@"#fe_col_$(col_mark)", ValaType.CLASS, "GenericArray", col_slot, true);
+                    push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
                 } else {
                     idx_slot = next_var_slot++;
                     consume_ref_expr (fe.collection);
@@ -11212,7 +11262,7 @@ namespace Planc {
                 continue_scope_marks.add (iter_mark);
 
                 var eslot = next_var_slot++;
-                push_local (fe.var_name, vtype, vtname, eslot, false);
+                push_local (fe.var_name, vtype, vtname, eslot, !is_iter && fe.is_unowned);
 
                 emitter.bind (l_cond);
                 if (is_iter) {
@@ -11227,11 +11277,12 @@ namespace Planc {
                         emit_int_narrow (vtname);
                     emitter.store_local (eslot);
                 } else {
+                    bool is_ga_fast = is_ga || is_al;
                     if (len_slot >= 0) {
                         emitter.load_local (len_slot);
                     } else {
                         emitter.load_local (col_slot);
-                        emitter.load_rax_disp (is_ga ? 24 : 8);
+                        emitter.load_rax_disp (is_ga_fast ? 24 : 8);
                     }
                     emitter.mov_rcx_rax ();
                     emitter.load_local (idx_slot);
@@ -11241,10 +11292,10 @@ namespace Planc {
                     emitter.load_local (idx_slot);
                     emitter.mov_rcx_rax ();
                     emitter.load_local (col_slot);
-                    if (is_ga)
+                    if (is_ga_fast)
                         emitter.load_rax_disp (16);
                     bool fe_signed_b = false;
-                    bool fe_byte = is_ga
+                    bool fe_byte = is_ga_fast
                         ? (et == ValaType.INT && is_byte_array_type (et_name, out fe_signed_b))
                         : (ct == ValaType.ARRAY && is_byte_array_type (ct_name, out fe_signed_b));
                     if (fe_byte) {
@@ -11258,7 +11309,7 @@ namespace Planc {
                     }
                     if (vtype == ValaType.INT)
                         emit_int_narrow (vtname);
-                    if (program_uses_heap && is_ref_type (vtype)) {
+                    if (program_uses_heap && is_ref_type (vtype) && !fe.is_unowned) {
                         emitter.mov_rdi_rax ();
                         call_aligned ("__planc_ref");
                     }

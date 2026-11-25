@@ -3101,10 +3101,10 @@ namespace Planc {
             branch (BranchKind.JNS, l_ok_start);
             code.u8 (0x31); code.u8 (0xD2); // xor edx, edx
             bind (l_ok_start);
-            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC9); // test r9, r9
-            branch (BranchKind.JNE, l_loop);
             code.u8 (0x4C); code.u8 (0x39); code.u8 (0xC2); // cmp rdx, r8
             branch (BranchKind.JG, l_not_found);
+            code.u8 (0x4D); code.u8 (0x85); code.u8 (0xC9); // test r9, r9
+            branch (BranchKind.JNE, l_loop);
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xD0); // mov rax, rdx
             ret ();
             bind (l_loop);

@@ -252,38 +252,6 @@ namespace Gio {
         }
     }
 
-    public class Resolver : Object {
-        private static Resolver? default_resolver;
-
-        public static Resolver get_default () {
-            if (default_resolver == null)
-                default_resolver = new Resolver ();
-            return (!) default_resolver;
-        }
-
-        public GenericArray<InetAddress> lookup_by_name (string hostname, Cancellable? cancellable = null) throws IOError {
-            if (cancellable != null && cancellable.is_cancelled ())
-                throw new IOError.CANCELLED ("Resolver.lookup_by_name cancelled");
-            var res = new GenericArray<InetAddress> ();
-            var literal = InetAddress.new_from_string (hostname);
-            if (literal != null) {
-                res.add ((!) literal);
-                return res;
-            }
-            if (hostname == "localhost" || hostname == "planetos.local") {
-                res.add (new InetAddress.loopback (SocketFamily.IPV4));
-                return res;
-            }
-            if (hostname == "gateway" || hostname == "slirp") {
-                var gw = InetAddress.new_from_string ("10.0.2.2");
-                if (gw != null)
-                    res.add ((!) gw);
-                return res;
-            }
-            throw new IOError.HOST_NOT_FOUND (@"Unknown host: $hostname");
-        }
-    }
-
     public interface DatagramBased : Object {
         public abstract int condition_check (int condition);
     }
@@ -395,6 +363,7 @@ namespace Gio {
         private GenericArray<Socket>? accept_queue = null;
         private SocketPipe? rx_pipe = null;
         private SocketPipe? tx_pipe = null;
+        private VirtioTcpSession? tcp_session = null;
 
         public Socket (SocketFamily family, SocketType type, SocketProtocol protocol) throws IOError {
             if (family == SocketFamily.INVALID || type == SocketType.INVALID)
@@ -525,6 +494,12 @@ namespace Gio {
             remote_addr = address;
             if (address is InetSocketAddress) {
                 var isa = (InetSocketAddress) address;
+                var ia = isa.get_inet_address ();
+                var ip_b = (ia != null) ? ((!) ia).to_bytes () : new uint8[0];
+                if (ip_b.length == 4 && ip_b[0] != 127) {
+                    tcp_session = VirtioNetStack.get_default ().open_tcp (ip_b, isa.get_port ());
+                    return true;
+                }
                 var listener = find_listener ((int) isa.get_port ());
                 if (listener != null && ((!) listener).accept_queue != null) {
                     var c_to_s = new SocketPipe ();
@@ -548,6 +523,8 @@ namespace Gio {
                 throw new IOError.CANCELLED ("Socket.send cancelled");
             if (closed)
                 throw new IOError.CLOSED ("Socket is closed");
+            if (tcp_session != null)
+                return ((!) tcp_session).send (buffer);
             if (tx_pipe == null)
                 throw new IOError.FAILED ("Socket has no connected peer");
             return ((!) tx_pipe).write_bytes (buffer);
@@ -558,6 +535,8 @@ namespace Gio {
                 throw new IOError.CANCELLED ("Socket.receive cancelled");
             if (closed)
                 throw new IOError.CLOSED ("Socket is closed");
+            if (tcp_session != null)
+                return ((!) tcp_session).receive (buffer);
             if (rx_pipe == null)
                 throw new IOError.FAILED ("Socket has no connected peer");
             int got = ((!) rx_pipe).read_bytes (buffer);
@@ -619,12 +598,16 @@ namespace Gio {
         }
 
         public InputStream get_input_stream () {
+            if (tcp_session != null)
+                return new VirtioSocketInputStream (this);
             if (rx_pipe != null)
                 return new PipeInputStream ((!) rx_pipe);
             return new MemoryInputStream ();
         }
 
         public OutputStream get_output_stream () {
+            if (tcp_session != null)
+                return new VirtioSocketOutputStream (this);
             if (tx_pipe != null)
                 return new PipeOutputStream ((!) tx_pipe);
             return new MemoryOutputStream ();
@@ -643,6 +626,8 @@ namespace Gio {
         public bool is_rx_eof () {
             if (closed)
                 return true;
+            if (tcp_session != null)
+                return ((!) tcp_session).peer_fin;
             return (rx_pipe != null) ? ((!) rx_pipe).is_eof () : true;
         }
 
@@ -651,11 +636,34 @@ namespace Gio {
                 return true;
             closed = true;
             listening = false;
+            if (tcp_session != null)
+                ((!) tcp_session).close ();
             if (handle >= 3) {
                 Sys.close (handle);
                 handle = -1;
             }
             return true;
+        }
+    }
+
+    private class VirtioSocketInputStream : InputStream {
+        private Socket sock;
+        public VirtioSocketInputStream (Socket s) { this.sock = s; }
+        public override int read (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
+            if (closed) throw new IOError.CLOSED ("Stream closed");
+            int n = sock.receive (buffer, cancellable);
+            if (n == 0 && sock.is_rx_eof ())
+                return -1;
+            return n;
+        }
+    }
+
+    private class VirtioSocketOutputStream : OutputStream {
+        private Socket sock;
+        public VirtioSocketOutputStream (Socket s) { this.sock = s; }
+        public override int write (uint8[] buffer, Cancellable? cancellable = null) throws IOError {
+            if (closed) throw new IOError.CLOSED ("Stream closed");
+            return sock.send (buffer, cancellable);
         }
     }
 
@@ -735,13 +743,19 @@ namespace Gio {
 
         public SocketConnection connect_to_host (string host_and_port, uint16 default_port, Cancellable? cancellable = null) throws IOError {
             var na = NetworkAddress.parse (host_and_port, default_port);
-            var isa = new InetSocketAddress.from_string (na.get_hostname (), na.get_port ());
+            var addrs = Resolver.get_default ().lookup_by_name (na.get_hostname (), cancellable);
+            if (addrs.length == 0)
+                throw new IOError.HOST_NOT_FOUND (@"Cannot resolve $(na.get_hostname ())");
+            var isa = new InetSocketAddress (addrs[0], na.get_port ());
             return connect (isa, cancellable);
         }
 
         public TlsClientConnection connect_to_host_tls (string host_and_port, uint16 default_port, Cancellable? cancellable = null) throws IOError {
             var na = NetworkAddress.parse (host_and_port, default_port);
-            var isa = new InetSocketAddress.from_string (na.get_hostname (), na.get_port ());
+            var addrs = Resolver.get_default ().lookup_by_name (na.get_hostname (), cancellable);
+            if (addrs.length == 0)
+                throw new IOError.HOST_NOT_FOUND (@"Cannot resolve $(na.get_hostname ())");
+            var isa = new InetSocketAddress (addrs[0], na.get_port ());
             var conn = connect (isa, cancellable);
             try {
                 var tconn = TlsClientConnection.create (conn, na);

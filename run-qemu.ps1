@@ -253,8 +253,10 @@ if (-not $NoBuild) {
         (Join-Path $StdDir 'gio\file.vala'),
         (Join-Path $StdDir 'gio\models.vala'),
         (Join-Path $StdDir 'gio\planet.vala'),
+        (Join-Path $StdDir 'gio\stack.vala'),
         (Join-Path $StdDir 'gio\net.vala'),
         (Join-Path $StdDir 'gio\tls.vala'),
+        (Join-Path $StdDir 'gio\dns.vala'),
         (Join-Path $StdDir 'gio\subprocess.vala')
     )
     $CairoSrcs = @(
@@ -324,6 +326,7 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'banner.vala'), '-o', (Out-Path 'banner.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', (Join-Path $UserDir 'wc.vala'), '-o', (Out-Path 'wc.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'gio_demo.vala'), '-o', (Out-Path 'gio_demo.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', '--import-lib=gio', (Join-Path $UserDir 'curl.vala'), '-o', (Out-Path 'curl.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gobject', (Join-Path $UserDir 'gobject_demo.vala'), '-o', (Out-Path 'gobject_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gmodule', (Join-Path $UserDir 'gmodule_demo.vala'), '-o', (Out-Path 'gmodule_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
@@ -461,6 +464,7 @@ if (-not $NoBuild) {
         (Out-Path 'c2vala_sdk.vala') `
         (Out-Path 'sys_demo.elf') `
         (Out-Path 'mercury.elf') `
+        (Out-Path 'curl.elf') `
         '--lib' (Lib-Dlib 'glib') '--lib' (Lib-Hlib 'glib') `
         '--lib' (Lib-Dlib 'gee') '--lib' (Lib-Hlib 'gee') `
         '--lib' (Lib-Dlib 'gio') '--lib' (Lib-Hlib 'gio') `

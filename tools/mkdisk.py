@@ -18,7 +18,7 @@ import os
 import struct
 import sys
 
-ROOT_ARG_COUNT = 35  # image + 34 root files
+ROOT_ARG_COUNT = 36  # image + 35 root files
 
 
 def blk(b):
@@ -119,6 +119,7 @@ def main():
         (b"c2vala_sdk.vala", open(pos_args[32], "rb").read(), 0x81A4),
         (b"sys_demo.elf", open(pos_args[33], "rb").read(), 0x81ED),
         (b"mercury.elf", open(pos_args[34], "rb").read(), 0x81ED),
+        (b"curl.elf", open(pos_args[35], "rb").read(), 0x81ED),
     ]
 
     stdlib_specs = []

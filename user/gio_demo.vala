@@ -826,7 +826,7 @@ namespace GioDemo {
             check ("gio-net-addr", ip != null && ((!) ip).to_string () == "10.0.2.15"
                                    && isa.to_string () == "10.0.2.2:8080");
             var cli = new SocketClient ();
-            var conn = cli.connect_to_host ("10.0.2.2:80", 80);
+            var conn = cli.connect_to_host ("127.0.0.1:80", 80);
             check ("gio-net-socket", conn.get_socket ().is_connected ());
             conn.close ();
 
@@ -1009,6 +1009,16 @@ namespace GioDemo {
         bool aead_ok = dh_ok && dec != null && ((!) dec).length == 5 && ((!) dec)[0] == (uint8) 'h';
         check ("gio-tls-x25519-aead", aead_ok);
 
+        // AVX2 8-block ChaCha20 + BMI2 mulx Poly1305 large-buffer AEAD round-trip (1536 bytes)
+        var big_pt = new uint8[1536];
+        for (int bi = 0; bi < big_pt.length; bi++)
+            big_pt[bi] = (uint8) ((bi * 17 + 3) & 0xFF);
+        var big_ct = TlsCrypto.aead_seal (ss_a, nonce, aad, big_pt);
+        uint8[]? big_dec = TlsCrypto.aead_open (ss_b, nonce, aad, big_ct);
+        bool simd_aead_ok = big_dec != null && ((!) big_dec).length == 1536
+                            && TlsCrypto.ct_memcmp (big_pt, 0, (!) big_dec, 0, 1536);
+        check ("gio-tls-avx2-bmi2", simd_aead_ok);
+
         // Full TLS 1.3 handshake + encrypted stream over TlsServerConnection <-> TlsClientConnection
         bool tls_hs_ok = false;
         try {
@@ -1056,6 +1066,80 @@ namespace GioDemo {
             tls_hs_ok = false;
         }
         check ("gio-tls-handshake", tls_hs_ok);
+
+        // DNS wire (RFC 1035 + pointer loop-guard) & RFC 9156 QNAME minimisation
+        var q = DnsWire.encode_query (0x4242, "one.one.one.one", DnsRecord.TYPE_A);
+        var dm = DnsWire.decode_message (q);
+        uint8[] loop_pkt = { 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0xC0, 0x0C, 0, 1, 0, 1 };
+        var bad_dm = DnsWire.decode_message (loop_pkt);
+        var steps = DnsWire.qname_minimise_steps ("a.b.example.com");
+        bool dns_wire_ok = dm != null && ((!) dm).id == 0x4242 && ((!) dm).qname == "one.one.one.one"
+                           && bad_dm == null && steps.length == 4
+                           && steps[0] == "com" && steps[1] == "example.com" && steps[3] == "a.b.example.com";
+        check ("gio-dns-wire", dns_wire_ok);
+
+        // DNS-over-TLS (RFC 7858, 2-byte BE length prefix over TLS 1.3) + Resolver lookup_by_name / lookup_service
+        bool dot_ok = false;
+        try {
+            var dlis = new SocketListener ();
+            uint16 dport = dlis.add_any_inet_port ();
+            var dsrv_thread = new Thread ("dot-srv", () => {
+                int served = 0;
+                for (int w = 0; w < 200 && served < 2; w++) {
+                    try {
+                        Object? o = null;
+                        var sc = dlis.accept (out o);
+                        var tsrv = TlsServerConnection.create (sc);
+                        tsrv.handshake ();
+                        var req_bytes = DnsWire.read_dot_frame (tsrv.get_input_stream ());
+                        var req_msg = DnsWire.decode_message (req_bytes);
+                        if (req_msg != null) {
+                            var rm = (!) req_msg;
+                            var ans = new GenericArray<DnsRecord> ();
+                            if (rm.qtype == DnsRecord.TYPE_A) {
+                                var rr = new DnsRecord ();
+                                rr.name = rm.qname;
+                                rr.rtype = DnsRecord.TYPE_A;
+                                rr.ttl = 120;
+                                rr.rdata = { 93, 184, 216, 34 };
+                                ans.add (rr);
+                            } else if (rm.qtype == DnsRecord.TYPE_SRV) {
+                                var r1 = new DnsRecord ();
+                                r1.name = rm.qname;
+                                r1.rtype = DnsRecord.TYPE_SRV;
+                                r1.priority = 20; r1.weight = 5; r1.port = 8443; r1.target = "b.example.com";
+                                var r2 = new DnsRecord ();
+                                r2.name = rm.qname;
+                                r2.rtype = DnsRecord.TYPE_SRV;
+                                r2.priority = 10; r2.weight = 10; r2.port = 443; r2.target = "a.example.com";
+                                ans.add (r1);
+                                ans.add (r2);
+                            }
+                            var rep = DnsWire.encode_reply (rm.id, rm.qname, rm.qtype, ans);
+                            tsrv.get_output_stream ().write (DnsWire.encode_dot_frame (rep));
+                            tsrv.get_output_stream ().flush ();
+                        }
+                        tsrv.close ();
+                        served++;
+                    } catch (Error e) {
+                        Sys.sleep_ms (5);
+                    }
+                }
+                return null;
+            });
+
+            var resv = new Resolver ();
+            resv.set_dot_server ("127.0.0.1", dport, TlsCertificateFlags.NONE);
+            var addrs = resv.lookup_by_name ("planet.example");
+            var srvs = resv.lookup_service ("https", "tcp", "example.com");
+            dot_ok = addrs.length == 1 && addrs[0].to_string () == "93.184.216.34"
+                     && srvs.length == 2 && srvs[0].get_hostname () == "a.example.com" && srvs[0].get_port () == 443;
+            dsrv_thread.join ();
+            dlis.close ();
+        } catch (Error e) {
+            dot_ok = false;
+        }
+        check ("gio-dns-dot", dot_ok);
     }
 
     private void demo_regex () {
