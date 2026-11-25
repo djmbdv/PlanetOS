@@ -5111,6 +5111,12 @@ namespace Planc {
                 } else {
                     prepare_expr (b.right, ref struct_temps, ref ref_temps);
                 }
+                if (b.op == "in" && expr_type (b.right) == ValaType.ARRAY) {
+                    b.in_needle_slot = next_var_slot++;
+                    b.in_arr_slot = next_var_slot++;
+                    b.in_idx_slot = next_var_slot++;
+                    b.in_len_slot = next_var_slot++;
+                }
             } else if (e is MemberAccessExpr) {
                 var ma = (MemberAccessExpr) e;
                 prepare_expr (ma.target, ref struct_temps, ref ref_temps);
@@ -9476,6 +9482,25 @@ namespace Planc {
                 } else {
                     rt = expr_type_full (b.right, out rt_name);
                 }
+                if (b.op == "in") {
+                    if (rt == ValaType.STRING) {
+                        if (lt != ValaType.STRING)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"'in' on a string requires a string operand, got $(type_label (lt, lt_name)) at $(b.line):$(b.column)");
+                        return ValaType.BOOL;
+                    }
+                    if (rt != ValaType.ARRAY)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'in' requires an array or string on the right, got $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+                    ValaType et = ValaType.INT;
+                    string etn = "";
+                    parse_array_elem (rt_name, out et, out etn);
+                    if (!type_compatible (et, etn, lt, lt_name)
+                        && !type_compatible (lt, lt_name, et, etn))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"cannot look up $(type_label (lt, lt_name)) in $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+                    return ValaType.BOOL;
+                }
                 if (b.op == "+" && lt == ValaType.STRING && rt == ValaType.STRING
                     && !is_nullable_type (lt, lt_name) && !is_nullable_type (rt, rt_name)) {
                     return ValaType.STRING;
@@ -13345,6 +13370,10 @@ namespace Planc {
                 }
             } else if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
+                if (b.op == "in") {
+                    gen_in (b);
+                    return;
+                }
                 if (b.op == "&&") {
                     gen_and (b);
                     return;
@@ -13898,6 +13927,104 @@ namespace Planc {
             emitter.bind (l_true);
             emitter.mov_rax_imm (1);
             emitter.bind (l_end);
+        }
+
+        private void gen_in (BinaryExpr b) throws SemanticError {
+            string lt_name = "";
+            string rt_name = "";
+            var lt = expr_type_full (b.left, out lt_name);
+            var rt = expr_type_full (b.right, out rt_name);
+            if (rt == ValaType.STRING) {
+                gen_expr (b.right);
+                emit_null_check_if_nullable (ValaType.STRING, rt_name);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (b.left);
+                emit_null_check_if_nullable (ValaType.STRING, lt_name);
+                emitter.mov_rsi_rax ();
+                emitter.xor_edx ();
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                need_str_index_of = true;
+                call_aligned ("__planc_str_index_of");
+                emitter.test_rax_rax ();
+                emitter.setcc_al (0x99); // setns: index >= 0
+                emitter.movzx_eax_al ();
+                return;
+            }
+            if (b.in_arr_slot < 0)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"internal: 'in' temporaries were not prepared at $(b.line):$(b.column)");
+            ValaType et = ValaType.INT;
+            string etn = "";
+            parse_array_elem (rt_name, out et, out etn);
+            gen_expr (b.left);
+            if (is_fp_type (lt))
+                emitter.movq_rax_xmm (0);
+            emitter.store_local (b.in_needle_slot);
+            gen_expr (b.right);
+            emit_null_check_if_nullable (rt, rt_name);
+            emitter.store_local (b.in_arr_slot);
+            emitter.zero_local (b.in_idx_slot);
+            emitter.load_local (b.in_arr_slot);
+            emitter.load_rax_disp (8);
+            emitter.store_local (b.in_len_slot);
+            var l_loop = emitter.new_label ();
+            var l_found = emitter.new_label ();
+            var l_next = emitter.new_label ();
+            var l_miss = emitter.new_label ();
+            var l_done = emitter.new_label ();
+            emitter.bind (l_loop);
+            emitter.load_local (b.in_len_slot);
+            emitter.mov_rcx_rax ();
+            emitter.load_local (b.in_idx_slot);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JAE, l_miss);
+            emitter.load_local (b.in_idx_slot);
+            emitter.mov_rcx_rax ();
+            emitter.load_local (b.in_arr_slot);
+            bool signed_b = false;
+            if (is_byte_array_type (rt_name, out signed_b)) {
+                emitter.load_byte_rax_rcx_16 ();
+                if (signed_b)
+                    emitter.sign_extend_rax (8);
+            } else {
+                emitter.load_qword_rax_rcx_16 ();
+                if (is_fp_type (et))
+                    emitter.movq_xmm_rax (0);
+                else if (et == ValaType.INT)
+                    emit_int_narrow (etn);
+            }
+            if (is_fp_type (et) || is_fp_type (lt)) {
+                emitter.load_local (b.in_needle_slot);
+                emitter.movq_xmm_rax (1);
+                emitter.ucomisd_xmm0_xmm1 ();
+                emitter.branch (BranchKind.JP, l_next); // NaN never matches
+                emitter.branch (BranchKind.JE, l_found);
+            } else if (lt == ValaType.STRING || et == ValaType.STRING) {
+                emitter.mov_rdi_rax ();
+                emitter.load_local (b.in_needle_slot);
+                emitter.mov_rsi_rax ();
+                need_str_eq = true;
+                call_aligned ("__planc_str_eq");
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JNE, l_found);
+            } else {
+                emitter.load_local_to_rcx (b.in_needle_slot);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JE, l_found);
+            }
+            emitter.bind (l_next);
+            emitter.load_local (b.in_idx_slot);
+            emitter.add_rax_imm (1);
+            emitter.store_local (b.in_idx_slot);
+            emitter.branch (BranchKind.JMP, l_loop);
+            emitter.bind (l_found);
+            emitter.mov_rax_imm (1);
+            emitter.branch (BranchKind.JMP, l_done);
+            emitter.bind (l_miss);
+            emitter.xor_eax ();
+            emitter.bind (l_done);
         }
 
         private void emit_char_range_jump (int lo, int hi, Label l_hit) {

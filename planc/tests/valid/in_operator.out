@@ -1,0 +1,10 @@
+int yes
+int no
+str yes
+lit yes
+sub yes
+sub no
+fp yes
+u8 yes
+var yes
+empty no

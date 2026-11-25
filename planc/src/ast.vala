@@ -149,9 +149,14 @@ namespace Planc {
     }
 
     public class BinaryExpr : Expr {
-        public string op { get; set; }      // + - * / % << >> & | ^ < > <= >= == != && ||
+        public string op { get; set; }      // + - * / % << >> & | ^ < > <= >= == != && || in
         public Expr left { get; set; }
         public Expr right { get; set; }
+        // `.in` temporaries: needle, array header, index and length slots.
+        public int in_needle_slot { get; set; default = -1; }
+        public int in_arr_slot { get; set; default = -1; }
+        public int in_idx_slot { get; set; default = -1; }
+        public int in_len_slot { get; set; default = -1; }
     }
 
     public class CallExpr : Expr {

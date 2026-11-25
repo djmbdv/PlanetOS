@@ -4310,6 +4310,16 @@ namespace Planc {
                 left.line = l;
                 left.column = c;
             }
+            while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
+                   && current.text == "in") {
+                var l = left.line;
+                var c = left.column;
+                advance ();
+                var right = parse_shift (null);
+                left = new BinaryExpr () { op = "in", left = left, right = right };
+                left.line = l;
+                left.column = c;
+            }
             return left;
         }
 
