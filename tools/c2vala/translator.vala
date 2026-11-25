@@ -2057,6 +2057,69 @@ namespace C2Vala {
             return 0;
         }
 
+        // Fixed-size scalar array fields of a byte-view struct (e.g. patch_t's
+        // `int columnofs[8]`) must read from the backing bytes: a plain
+        // `int[]` field is null for `.at` views and C code indexes it.
+        private void emit_byte_view_array (StrBuilder sb, StructField f, string fn, string vt, ref int foff, bool is_last) {
+            string elem = vt.has_suffix ("[]") ? vt.substring (0, vt.length - 2) : "uint8";
+            int alen = (f.ctype.array_len is ExprInt) ? (int) ((ExprInt) f.ctype.array_len).val : 0;
+            int eb = (f.ctype.inner != null) ? (int) type_size_bytes ((CType) f.ctype.inner) : 1;
+            if (eb < 1)
+                eb = 1;
+            foff = (foff + eb - 1) & ~(eb - 1);
+            string off_s = @"_off + $(foff)";
+            string rd;
+            string wr;
+            if (elem == "float") {
+                rd = @"c_u32_to_f32 (c_u_get_u32_at ((!) _c2v_data, $off_s + _i * 4))";
+                wr = @"c_u_set_u32_at ((!) _c2v_data, $off_s + _i * 4, c_f32_to_u32 (value[_i]))";
+            } else if (elem == "double") {
+                rd = @"c_u64_to_f64 (c_u_get_u64_at ((!) _c2v_data, $off_s + _i * 8))";
+                wr = @"c_u_set_u64_at ((!) _c2v_data, $off_s + _i * 8, c_f64_to_u64 (value[_i]))";
+            } else if (eb == 1) {
+                rd = @"(($elem) c_u_get_u8_at ((!) _c2v_data, $off_s + _i))";
+                wr = @"c_u_set_u8_at ((!) _c2v_data, $off_s + _i, (uint8) value[_i])";
+            } else if (eb == 2) {
+                rd = @"(($elem) c_u_get_u16_at ((!) _c2v_data, $off_s + _i * 2))";
+                wr = @"c_u_set_u16_at ((!) _c2v_data, $off_s + _i * 2, (uint16) value[_i])";
+            } else if (eb == 4) {
+                rd = @"(($elem) c_u_get_u32_at ((!) _c2v_data, $off_s + _i * 4))";
+                wr = @"c_u_set_u32_at ((!) _c2v_data, $off_s + _i * 4, (uint32) value[_i])";
+            } else {
+                rd = @"(($elem) c_u_get_u64_at ((!) _c2v_data, $off_s + _i * 8))";
+                wr = @"c_u_set_u64_at ((!) _c2v_data, $off_s + _i * 8, (uint64) value[_i])";
+            }
+            sb.append (@"    private $vt _$fn = new $elem[$(alen)];\n");
+            sb.append (@"    public $vt $fn {\n");
+            sb.append ("        get {\n");
+            sb.append (@"            if (_c2v_data == null) return _$fn;\n");
+            // A trailing array in a C struct is a flexible member: the byte
+            // buffer, not the declared length, bounds it (e.g. patch_t's
+            // columnofs[8] holds `width` entries).
+            string count_s;
+            if (is_last) {
+                sb.append (@"            int _n = (((!) _c2v_data).length - ($off_s)) / $eb;\n");
+                sb.append ("            if (_n < 0) _n = 0;\n");
+                count_s = "_n";
+            } else {
+                count_s = @"$(alen)";
+            }
+            sb.append (@"            $elem[] _r = new $elem[$count_s];\n");
+            sb.append (@"            for (int _i = 0; _i < $count_s; _i++)\n");
+            sb.append (@"                _r[_i] = $rd;\n");
+            sb.append ("            return _r;\n");
+            sb.append ("        }\n");
+            sb.append ("        set {\n");
+            sb.append (@"            if (_c2v_data == null) { _$fn = value; return; }\n");
+            if (is_last)
+                sb.append (@"            int _n = (((!) _c2v_data).length - ($off_s)) / $eb;\n");
+            sb.append (@"            for (int _i = 0; _i < $count_s && _i < value.length; _i++)\n");
+            sb.append (@"                $wr;\n");
+            sb.append ("        }\n");
+            sb.append ("    }\n");
+            foff += alen * eb;
+        }
+
         private void emit_struct (StrBuilder sb, StructDef sd) throws RefuseError {
             if (sd.name == "_c2v_FILE" || sd.name == "FILE" || sd.name == "tm"
                 || sd.name == "_c2v_pthread_t" || sd.name == "pthread_mutex_t"
@@ -2214,6 +2277,10 @@ namespace C2Vala {
                         }
                         sb.append ("    }\n");
                         foff += nb;
+                    } else if (need_byte_view && f.ctype.kind == CTypeKind.ARRAY
+                               && f.ctype.array_len is ExprInt && f.ctype.inner != null
+                               && (f.ctype.inner.kind == CTypeKind.SCALAR || f.ctype.inner.kind == CTypeKind.ENUM)) {
+                        emit_byte_view_array (sb, f, fn, vt, ref foff, i == sd.fields.length - 1);
                     } else {
                         sb.append (@"    public $vt $fn;\n");
                         if (f.ctype.kind == CTypeKind.ARRAY && vt == "uint8[]" && f.ctype.array_len is ExprInt)
@@ -2285,6 +2352,10 @@ namespace C2Vala {
                             }
                             sb.append ("    }\n");
                             foff += nb;
+                        } else if (need_byte_view && f.ctype.kind == CTypeKind.ARRAY
+                                   && f.ctype.array_len is ExprInt && f.ctype.inner != null
+                                   && (f.ctype.inner.kind == CTypeKind.SCALAR || f.ctype.inner.kind == CTypeKind.ENUM)) {
+                            emit_byte_view_array (sb, f, fn, vt, ref foff, i == sd.fields.length - 1);
                         } else {
                             sb.append (@"    public $vt $fn;\n");
                             if (f.ctype.kind == CTypeKind.ARRAY && vt == "uint8[]" && f.ctype.array_len is ExprInt)
@@ -4959,10 +5030,13 @@ namespace C2Vala {
             if (ct.kind == CTypeKind.SCALAR) {
                 if (ct.is_scalar ("void"))
                     return "0";
-                return @"sizeof ($(vala_type (ct, false)))";
+                // C's sizeof, not planc's slot-based sizeof: planc reports one
+                // 8-byte slot for every scalar, so `9 * sizeof(char)` would be
+                // 72 instead of 9 and overflow the target array.
+                return @"$(type_size_bytes (ct))";
             }
             if (ct.kind == CTypeKind.ENUM)
-                return "sizeof (int)";
+                return "4";
             if (ct.kind == CTypeKind.ARRAY && ct.inner != null) {
                 string esz = emit_sizeof_ctype ((CType) ct.inner);
                 if (ct.array_len != null) {

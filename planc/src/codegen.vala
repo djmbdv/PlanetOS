@@ -7377,6 +7377,9 @@ namespace Planc {
             } else if (program.find_struct (raw) != null || program.find_delegate (raw) != null) {
                 et = ValaType.STRUCT;
                 et_name = raw;
+            } else if (raw.has_suffix ("[]")) {
+                et = ValaType.ARRAY;
+                et_name = raw.substring (0, raw.length - 2);
             } else {
                 et = ValaType.ENUM;
                 et_name = raw;
@@ -8700,6 +8703,8 @@ namespace Planc {
                     tname = "?";
                 else if (an.elem_type == ValaType.INT && an.elem_type_name != "" && an.elem_type_name != "int")
                     tname = an.elem_type_name;
+                else if (an.elem_type == ValaType.ARRAY)
+                    tname = an.elem_type_name + "[]";
                 else if (an.elem_type == ValaType.ENUM || an.elem_type == ValaType.CLASS
                          || an.elem_type == ValaType.INTERFACE
                          || an.elem_type == ValaType.STRUCT
