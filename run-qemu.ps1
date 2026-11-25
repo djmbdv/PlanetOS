@@ -72,7 +72,8 @@ param(
     [switch]$Virtio,
     [switch]$Venus,
     [switch]$VirtioGl,
-    [switch]$Sdl
+    [switch]$Sdl,
+    [switch]$DebugMemory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -214,7 +215,14 @@ if ($NeedPlanc) {
 }
 
 function Invoke-Planc {
-    param([string[]]$PlancArgs)
+    # Arrays are accepted as elements (e.g. $Opt = @('-O2','--debug-memory'))
+    # and flattened here: [string[]] would otherwise join them into one token.
+    param([object[]]$PlancArgs)
+    $FlatArgs = @()
+    foreach ($Pa in $PlancArgs) {
+        if ($Pa -is [array]) { $FlatArgs += $Pa } else { $FlatArgs += $Pa }
+    }
+    $PlancArgs = $FlatArgs
     # planc writes diagnostics (warnings included) to stderr. Under
     # $ErrorActionPreference = 'Stop' PowerShell 5.1 turns that into a
     # terminating NativeCommandError, which would make any warning fatal, so
@@ -256,8 +264,11 @@ function Out-Path([string]$Name) {
 if (-not $NoBuild) {
     Write-Step 'Building PlanetOS kernel and userland...'
 
-    $Opt = '-O2'
-    if ($env:PLANC_OPT) { $Opt = $env:PLANC_OPT }
+    $Opt = @('-O2')
+    if ($env:PLANC_OPT) { $Opt = @($env:PLANC_OPT) }
+    # Diagnostic build: the allocator never recycles a freed block, so a
+    # stale reference panics instead of aliasing a new allocation.
+    if ($DebugMemory) { $Opt += '--debug-memory' }
 
     $PlanetSys = Join-Path $StdDir 'planet_sys.vala'
     $GlibSrcs = @(
@@ -379,13 +390,13 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', '--import-lib=gio', (Join-Path $UserDir 'curl.vala'), '-o', (Out-Path 'curl.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gobject', (Join-Path $UserDir 'gobject_demo.vala'), '-o', (Out-Path 'gobject_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gmodule', (Join-Path $UserDir 'gmodule_demo.vala'), '-o', (Out-Path 'gmodule_demo.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
+    Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $StdDir 'planet_math_kernels.vala'), (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gmodule', (Join-Path $UserDir 'plan_demo.vala'), '-o', (Out-Path 'plan_demo.plan'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--import-lib=gdk', (Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf'))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_planet.vala'), '-o', (Out-Path 'frag.spv'))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_pattern.vala'), '-o', (Out-Path 'frag_pattern.spv'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=spirv', '--import-lib=cairo', '--import-lib=gdk', (Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=spirv', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=unsafe', (Join-Path $UserDir 'spv_demo.vala'), '-o', (Out-Path 'spv_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', (Join-Path $UserDir 'vk_demo.vala'), '-o', (Out-Path 'vk_demo.elf'))
     Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--image-base=0xE00000', '--import-lib=unsafe', '--import-lib=gio', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=pango', '--import-lib=spirv', '--import-lib=venus', '--import-lib=gsk', '--import-lib=gtk') + $CompositorSrcs + @('-o', (Out-Path 'compositor.elf')))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--import-lib=pango', (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf'))

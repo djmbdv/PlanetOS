@@ -3,6 +3,22 @@
 // (runtime shims, .dlib/.plan loaders, SharedSurface, and low-level tests).
 namespace Planet {
 
+    public delegate void ThreadEntry (int arg);
+
+    [AsmBody(@"
+        # code address of a delegate: [0] = code, [8] = target
+        mov %rdi, %rax
+        ret
+    ")]
+    private extern int __entry_blob (ThreadEntry entry);
+
+    [AsmBody(@"
+        # first word of the delegate blob (the code pointer)
+        mov (%rdi), %rax
+        ret
+    ")]
+    private extern int __entry_code (int blob);
+
     [AsmBody(@"
         # __call_ptr2(fn in rdi, a0 in rsi, a1 in rdx) -> rax
         mov %rdi, %rax
@@ -110,6 +126,12 @@ namespace Planet {
             if (addr < Sys.USER_MIN_ADDR || addr > Sys.USER_MAX_ADDR - 4)
                 return;
             __sys_poke32 (addr, val);
+        }
+
+        // Address of a thread entry point, for raw SYS_SPAWN-style syscalls.
+        // The asm lives here (trusted stdlib) instead of in user code.
+        public static int entry_addr (ThreadEntry entry) {
+            return __entry_code (__entry_blob (entry));
         }
 
         public static int call_ptr2 (int fn_addr, int a0, int a1) {

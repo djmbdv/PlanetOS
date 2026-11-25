@@ -33,11 +33,6 @@ private uint8[]? demo_thread_body () {
     return null;
 }
 
-[AsmBody(@"
-    lea fd_probe_worker(%rip), %rax
-    ret
-")]
-private extern int addr_fd_probe ();
 
 public void fd_probe_worker (int arg) {
     var buf = new uint8[1];
@@ -162,7 +157,7 @@ int main (string[] args) {
     probe_fd = owned_fd;
     probe_rc = -2;
     probe_err = 0;
-    int probe_tid = Sys.sys (27, addr_fd_probe (), 0, 0);
+    int probe_tid = Sys.sys (27, Unsafe.entry_addr (fd_probe_worker), 0, 0);
     if (probe_tid > 0)
         Sys.wait (probe_tid);
     if (owned_fd >= 3 && probe_rc == -1 && probe_err == Sys.EBADF)

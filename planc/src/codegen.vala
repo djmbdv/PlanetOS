@@ -120,13 +120,19 @@ namespace Planc {
         public bool strict_ownership { get; set; default = false; }
 
         private static bool asm_file_allowed (string file) {
-            var p = file.replace ("\\", "/");
             // `.hlib` files are prebuilt library headers: their asm was already
             // vetted when the library was compiled from trusted sources.
-            if (p.has_suffix (".hlib"))
+            if (file.has_suffix (".hlib"))
                 return true;
-            return p.has_prefix ("stdlib/") || p.has_prefix ("kernel/") || p.has_prefix ("planetrt/")
-                || p.contains ("/stdlib/") || p.contains ("/kernel/") || p.contains ("/planetrt/");
+            if (file.has_prefix ("stdlib/") || file.has_prefix ("stdlib\\")
+                || file.has_prefix ("kernel/") || file.has_prefix ("kernel\\")
+                || file.has_prefix ("planetrt/") || file.has_prefix ("planetrt\\"))
+                return true;
+            if (file.contains ("/stdlib/") || file.contains ("\\stdlib\\")
+                || file.contains ("/kernel/") || file.contains ("\\kernel\\")
+                || file.contains ("/planetrt/") || file.contains ("\\planetrt\\"))
+                return true;
+            return false;
         }
 
         private void check_borrow_escape (Expr? value, int line, int column, string where) throws SemanticError {
@@ -14693,7 +14699,7 @@ namespace Planc {
         private void gen_arr_resize (MethodCallExpr mc) throws SemanticError {
             ValaType lt = ValaType.ARRAY;
             string lt_name = "";
-            gen_lvalue_addr (mc.target, out lt, out lt_name);
+            gen_lvalue_addr ((!) mc.target, out lt, out lt_name);
             if (lt != ValaType.ARRAY)
                 throw new SemanticError.TYPE_MISMATCH (
                     @"resize requires an array receiver, got $(type_label (lt, lt_name)) at $(mc.line):$(mc.column)");
@@ -14798,8 +14804,8 @@ namespace Planc {
 
         private void gen_arr_move (MethodCallExpr mc) throws SemanticError {
             string ttn = "";
-            var tt = expr_type_full (mc.target, out ttn);
-            gen_expr (mc.target);
+            var tt = expr_type_full ((!) mc.target, out ttn);
+            gen_expr ((!) mc.target);
             emit_null_check_if_nullable (tt, ttn);
             emitter.store_local (mc.bi_slot1);
             bool signed_b = false;
@@ -15088,7 +15094,7 @@ namespace Planc {
             }
             if (kind == "int_abs" || kind == "int_abs_static") {
                 bool is_static = (kind == "int_abs_static");
-                Expr arg_expr = is_static ? mc.args[0] : mc.target;
+                Expr arg_expr = is_static ? mc.args[0] : (!) mc.target;
                 if (arg_expr == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'abs()' requires a receiver at $(mc.line):$(mc.column)");
@@ -15105,7 +15111,7 @@ namespace Planc {
             if (kind == "float_is_nan" || kind == "double_is_nan"
                 || kind == "float_is_nan_static" || kind == "double_is_nan_static") {
                 bool is_f32 = kind.has_prefix ("float_");
-                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : (!) mc.target;
                 if (arg_expr == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'is_nan()' requires a receiver at $(mc.line):$(mc.column)");
@@ -15124,7 +15130,7 @@ namespace Planc {
             if (kind == "float_is_finite" || kind == "double_is_finite"
                 || kind == "float_is_finite_static" || kind == "double_is_finite_static") {
                 bool is_f32 = kind.has_prefix ("float_");
-                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : (!) mc.target;
                 if (arg_expr == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'is_finite()' requires a receiver at $(mc.line):$(mc.column)");
@@ -15148,7 +15154,7 @@ namespace Planc {
             if (kind == "float_is_infinity" || kind == "double_is_infinity"
                 || kind == "float_is_infinity_static" || kind == "double_is_infinity_static") {
                 bool is_f32 = kind.has_prefix ("float_");
-                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : (!) mc.target;
                 if (arg_expr == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'is_infinity()' requires a receiver at $(mc.line):$(mc.column)");
@@ -15188,7 +15194,7 @@ namespace Planc {
             if (kind == "float_abs" || kind == "double_abs"
                 || kind == "float_abs_static" || kind == "double_abs_static") {
                 bool is_f32 = kind.has_prefix ("float_");
-                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : mc.target;
+                Expr arg_expr = kind.has_suffix ("_static") ? mc.args[0] : (!) mc.target;
                 if (arg_expr == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'abs()' requires a receiver at $(mc.line):$(mc.column)");

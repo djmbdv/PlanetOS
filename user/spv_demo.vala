@@ -11,12 +11,6 @@ private int th_sat_y = 300;
 private int th_ticks = 0;
 private int th_pulse_milli = 1000;
 
-[AsmBody(@"
-    # Devuelve la direccion de la funcion orbit_worker para SYS_THREAD_SPAWN
-    lea orbit_worker(%rip), %rax
-    ret
-")]
-private extern int addr_orbit_worker ();
 
 public void orbit_worker (int arg) {
     // Hilo de fisica/orbita en segundo plano: usa solo aritmetica entera para no tocar XMM
@@ -78,7 +72,7 @@ int main (string[] args) {
     var cr = win.create_cairo_context ();
 
     th_running = 1;
-    int worker_tid = once ? -1 : Sys.sys (27, addr_orbit_worker (), 0, 0);
+    int worker_tid = once ? -1 : Sys.sys (27, Unsafe.entry_addr (orbit_worker), 0, 0);
 
     int frame = 0;
     int last_tick = -1;

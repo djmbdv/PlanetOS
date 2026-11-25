@@ -1,80 +1,17 @@
 // PlanetOS mathlib.dlib: scalar math (translated from C via c2vala) + native x86-64-v3 (SSE4.1/AVX2/FMA3) SIMD.
+//
+// The SIMD kernels live in stdlib/planet_math_kernels.vala, the only place
+// allowed to carry [AsmBody]; this dlib forwards to them so the exported
+// dlib_* symbols stay unchanged.
 
-[AsmBody(@"
-    # dlib_sqrt(x in xmm0) -> xmm0 (SSE2 sqrtsd)
-    .byte 0xf2, 0x0f, 0x51, 0xc0
-    ret
-")]
-public extern double dlib_sqrt (double x);
-
-[AsmBody(@"
-    # dlib_floor(x in xmm0) -> SSE4.1 roundsd $0x09
-    .byte 0x66, 0x0f, 0x3a, 0x0b, 0xc0, 0x09
-    ret
-")]
-public extern double dlib_floor (double x);
-
-[AsmBody(@"
-    # dlib_ceil(x in xmm0) -> SSE4.1 roundsd $0x0a
-    .byte 0x66, 0x0f, 0x3a, 0x0b, 0xc0, 0x0a
-    ret
-")]
-public extern double dlib_ceil (double x);
-
-[AsmBody(@"
-    # dlib_fma(a in xmm0, b in xmm1, c in xmm2) -> FMA3 vfmadd213sd (a * b + c)
-    .byte 0xc4, 0xe2, 0xf1, 0xa9, 0xc2
-    ret
-")]
-public extern double dlib_fma (double a, double b, double c);
-
-[AsmBody(@"
-    # dlib_vec4_add(dst in rdi, a in rsi, b in rdx) -> 4x float64 AVX2 256-bit vaddpd
-    .byte 0xc5, 0xfd, 0x10, 0x06
-    .byte 0xc5, 0xfd, 0x10, 0x0a
-    .byte 0xc5, 0xfd, 0x58, 0xc1
-    .byte 0xc5, 0xfd, 0x11, 0x07
-    .byte 0xc5, 0xf8, 0x77
-    ret
-")]
-public extern void dlib_vec4_add (int dst, int a, int b);
-
-[AsmBody(@"
-    # dlib_vec4_sub(dst in rdi, a in rsi, b in rdx) -> 4x float64 AVX2 256-bit vsubpd
-    .byte 0xc5, 0xfd, 0x10, 0x06
-    .byte 0xc5, 0xfd, 0x10, 0x0a
-    .byte 0xc5, 0xfd, 0x5c, 0xc1
-    .byte 0xc5, 0xfd, 0x11, 0x07
-    .byte 0xc5, 0xf8, 0x77
-    ret
-")]
-public extern void dlib_vec4_sub (int dst, int a, int b);
-
-[AsmBody(@"
-    # dlib_vec4_mul(dst in rdi, a in rsi, b in rdx) -> 4x float64 AVX2 256-bit vmulpd
-    .byte 0xc5, 0xfd, 0x10, 0x06
-    .byte 0xc5, 0xfd, 0x10, 0x0a
-    .byte 0xc5, 0xfd, 0x59, 0xc1
-    .byte 0xc5, 0xfd, 0x11, 0x07
-    .byte 0xc5, 0xf8, 0x77
-    ret
-")]
-public extern void dlib_vec4_mul (int dst, int a, int b);
-
-[AsmBody(@"
-    # dlib_vec4_dot(a in rdi, b in rsi) -> double in xmm0 (AVX2 vmulpd + horizontal sum)
-    .byte 0xc5, 0xfd, 0x10, 0x07
-    .byte 0xc5, 0xfd, 0x10, 0x0e
-    .byte 0xc5, 0xfd, 0x59, 0xc1
-    .byte 0xc4, 0xe3, 0x7d, 0x19, 0xc1, 0x01
-    .byte 0xc5, 0xf9, 0x58, 0xc1
-    .byte 0xc5, 0xf9, 0xc6, 0xc8, 0x01
-    .byte 0xc5, 0xfb, 0x58, 0xc1
-    .byte 0xc5, 0xf8, 0x77
-    ret
-")]
-public extern double dlib_vec4_dot (int a, int b);
-
+public double dlib_sqrt (double x) { return Planet.math_sqrt (x); }
+public double dlib_floor (double x) { return Planet.math_floor (x); }
+public double dlib_ceil (double x) { return Planet.math_ceil (x); }
+public double dlib_fma (double a, double b, double c) { return Planet.math_fma (a, b, c); }
+public void dlib_vec4_add (int dst, int a, int b) { Planet.math_vec4_add (dst, a, b); }
+public void dlib_vec4_sub (int dst, int a, int b) { Planet.math_vec4_sub (dst, a, b); }
+public void dlib_vec4_mul (int dst, int a, int b) { Planet.math_vec4_mul (dst, a, b); }
+public double dlib_vec4_dot (int a, int b) { return Planet.math_vec4_dot (a, b); }
 public double dlib_vec4_len (int a) {
     return dlib_sqrt (dlib_vec4_dot (a, a));
 }

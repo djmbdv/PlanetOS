@@ -268,13 +268,23 @@ namespace Planc {
             if (current.kind != TokenKind.LBRACKET)
                 return false;
             var lx = lexer.clone_state ();
-            var t = lx.next ();
+            Token t;
+            try {
+                t = lx.next ();
+            } catch (LexError e) {
+                return false;
+            }
             if (t.kind == TokenKind.RBRACKET)
                 return true;
             if (t.kind != TokenKind.COMMA)
                 return false;
-            while (t.kind == TokenKind.COMMA)
-                t = lx.next ();
+            while (t.kind == TokenKind.COMMA) {
+                try {
+                    t = lx.next ();
+                } catch (LexError e2) {
+                    return false;
+                }
+            }
             return t.kind == TokenKind.RBRACKET;
         }
 
