@@ -106,6 +106,11 @@ namespace Planet.Kernel {
         return mmio_read64 (next_tcb + 8);
     }
 
+    // Preemptive timer IRQ0 handler (vector 32, interrupt gate -> IF=0 on entry).
+    // Precondition: IDT gate clears IF; cld guarantees ascending string ops.
+    // Saves all 15 GPRs on the active kernel stack, passes RSP to sched_tick(rsp)
+    // which returns the next task's saved RSP (and switches CR3/TSS.RSP0 if needed),
+    // sends PIC EOI (0x20 -> port 0x20), restores GPRs, and returns via iretq.
     [AsmBody(@"
         cld
         push %rax
@@ -472,7 +477,7 @@ namespace Planet.Kernel {
         }
 
         private static int reap_zombie (int tid) {
-            int irq = cpu_irq_save ();
+            uint64 irq = cpu_irq_save ();
             int saved_cr3 = vmm_read_cr3 ();
             if (saved_cr3 != KernelLayout.PAGE_TABLES)
                 vmm_write_cr3 (KernelLayout.PAGE_TABLES);

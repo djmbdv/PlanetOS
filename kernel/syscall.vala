@@ -373,25 +373,25 @@ namespace Planet.Kernel {
         return KernelLayout.GRANT_ACL + index * 16;
     }
 
-    private static void alloc_track (int phys, int pages) {
-        int owner = Sched.current_cr3 ();
+    private static void alloc_track (uint64 phys, uint32 pages) {
+        uint32 owner = (uint32) Sched.current_cr3 ();
         if (owner == 0)
             return;
-        if (phys <= 0 || pages <= 0)
+        if (phys == 0 || pages == 0)
             return;
         int i = 0;
         while (i < ALLOC_SLOTS) {
             int a = alloc_slot (i);
-            int cur = mmio_read64 (a);
+            uint64 cur = (uint64) mmio_read64 (a);
             if (cur == 0) {
-                mmio_write64 (a, phys);
-                mmio_write32 (a + 8, pages);
-                mmio_write32 (a + 12, owner);
+                mmio_write64 (a, (int) phys);
+                mmio_write32 (a + 8, (int) pages);
+                mmio_write32 (a + 12, (int) owner);
                 return;
             }
             if (cur == phys) {
-                mmio_write32 (a + 8, pages);
-                mmio_write32 (a + 12, owner);
+                mmio_write32 (a + 8, (int) pages);
+                mmio_write32 (a + 12, (int) owner);
                 return;
             }
             i = i + 1;
@@ -1574,6 +1574,11 @@ namespace Planet.Kernel {
         }
     }
 
+    // Syscall entry (int 0x80, DPL=3 interrupt gate -> IF=0 on entry).
+    // Precondition: cld guarantees ascending string ops for Vala/kernel helpers.
+    // Preserves caller-clobbered registers not in SysV return (rcx, rdx, rsi, rdi,
+    // r8-r11), remaps ABI (rax=num, rdi=a0, rsi=a1, rdx=a2) -> (rdi, rsi, rdx, rcx),
+    // calls syscall_dispatch, and returns to Ring 3 via iretq with result in rax.
     [AsmBody(@"
         # int 0x80 entry: rax=num, rdi=a0, rsi=a1, rdx=a2, r8=a3 -> returns in rax
         cld

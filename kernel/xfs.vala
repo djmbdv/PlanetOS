@@ -4,6 +4,11 @@
 
 namespace Planet.Kernel {
 
+    // Fast non-overlapping kernel memcpy (dst in rdi, src in rsi, len in rdx).
+    // Precondition: dst and src do not overlap; cld ensures ascending copy.
+    // Uses .byte opcodes for cld (0xfc), rep movsq (0xf3 0x48 0xa5), and
+    // rep movsb (0xf3 0xa4) because planc's inline assembler does not emit them.
+    // Clobbers: rdi, rsi, rdx, rcx (all SysV caller-saved).
     [AsmBody(@"
         # xfs_memcpy(dst in rdi, src in rsi, len in rdx): cld + 8-byte rep movsq + tail rep movsb
         test %rdx, %rdx

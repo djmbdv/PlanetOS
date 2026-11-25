@@ -34,6 +34,9 @@ namespace Planet.Kernel {
     ")]
     public extern void zero_page_4k (int phys_addr);
 
+    // Fills a freed 4 KiB page with 0xAA poison pattern to catch use-after-free.
+    // Precondition: phys_addr is 4 KiB-aligned and mapped RW in the active CR3
+    // (callers enter KernelLayout.PAGE_TABLES with IF=0 via cpu_irq_save).
     [AsmBody(@"
         # poison_page_4k(phys_addr in rdi) with 0xAA
         mov %rdi, %rax
@@ -264,7 +267,7 @@ namespace Planet.Kernel {
             int frame = phys / PAGE_SIZE;
             if (frame >= pmm_total_frames)
                 return;
-            int irq = cpu_irq_save ();
+            uint64 irq = cpu_irq_save ();
             int m = read_meta (frame);
             if (meta_is_free (m)) {
                 pmm_double_free_count = pmm_double_free_count + 1;
@@ -327,7 +330,7 @@ namespace Planet.Kernel {
             if (req_order >= MAX_ORDER)
                 return 0;
 
-            int irq = cpu_irq_save ();
+            uint64 irq = cpu_irq_save ();
             int j = req_order;
             while (j < MAX_ORDER && avail_head (j) == NIL)
                 j = j + 1;

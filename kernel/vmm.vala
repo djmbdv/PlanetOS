@@ -27,6 +27,14 @@ namespace Planet.Kernel {
 
     public sealed class Vmm : Object {
         private const int MAX_SPLIT_ADDR = 0x40000000; // 1 GiB identity map
+        private const uint64 PTE_PRESENT   = 0x01;
+        private const uint64 PTE_WRITABLE  = 0x02;
+        private const uint64 PTE_USER      = 0x04;
+        private const uint64 PTE_PS        = 0x80;
+        private const uint64 PTE_SUP_RW    = PTE_PRESENT | PTE_WRITABLE;
+        private const uint64 PTE_USER_RO   = PTE_PRESENT | PTE_USER;
+        private const uint64 PTE_USER_RW   = PTE_PRESENT | PTE_WRITABLE | PTE_USER;
+        private const uint64 PTE_ADDR_MASK = ~0xFFF;
 
         private static bool ensure_pt_in_pd (int pd_base, int addr, bool user_dir, out int pt_base) {
             pt_base = 0;
@@ -34,25 +42,25 @@ namespace Planet.Kernel {
                 return false;
             int pd_idx = addr >> 21;
             int pde_addr = pd_base + pd_idx * 8;
-            int pde = mmio_read64 (pde_addr);
-            if ((pde & 0x01) == 0)
+            uint64 pde = (uint64) mmio_read64 (pde_addr);
+            if ((pde & PTE_PRESENT) == 0)
                 return false;
             // Already split into a 4 KiB PT (PS bit 7 == 0)
-            if ((pde & 0x80) == 0) {
-                if (user_dir && (pde & 0x04) == 0)
-                    mmio_write64 (pde_addr, pde | 0x07);
-                pt_base = pde & ~0xFFF;
+            if ((pde & PTE_PS) == 0) {
+                if (user_dir && (pde & PTE_USER) == 0)
+                    mmio_write64 (pde_addr, (int) (pde | PTE_USER_RW));
+                pt_base = (int) (pde & PTE_ADDR_MASK);
                 return true;
             }
             // Split 2 MiB page into 512 x 4 KiB pages (supervisor-only by default)
             int pt = Pmm.alloc_frame ();
             if (pt == 0)
                 return false;
-            int region_base = pd_idx << 21;
+            uint64 region_base = (uint64) (pd_idx << 21);
             for (int i = 0; i < 512; i++) {
-                mmio_write64 (pt + i * 8, (region_base + i * 4096) | 0x03);
+                mmio_write64 (pt + i * 8, (int) ((region_base + (uint64) (i * 4096)) | PTE_SUP_RW));
             }
-            mmio_write64 (pde_addr, pt | (user_dir ? 0x07 : 0x03));
+            mmio_write64 (pde_addr, (int) ((uint64) pt | (user_dir ? PTE_USER_RW : PTE_SUP_RW)));
             pt_base = pt;
             return true;
         }
@@ -124,14 +132,14 @@ namespace Planet.Kernel {
                 return;
             int va = vaddr & ~0xFFF;
             int pa = paddr & ~0xFFF;
-            int pf = (flags == 0x05) ? 0x05 : ((flags == 0x03) ? 0x03 : 0x07);
+            uint64 pf = (flags == 0x05) ? PTE_USER_RO : ((flags == 0x03) ? PTE_SUP_RW : PTE_USER_RW);
             int pdpt = mmio_read64 (cr3) & ~0xFFF;
             int pd = mmio_read64 (pdpt) & ~0xFFF;
             int pt_base = 0;
             if (!ensure_pt_in_pd (pd, va, true, out pt_base))
                 return;
             int pt_idx = (va >> 12) & 0x1FF;
-            mmio_write64 (pt_base + pt_idx * 8, pa | pf);
+            mmio_write64 (pt_base + pt_idx * 8, (int) ((uint64) pa | pf));
             if (vmm_read_cr3 () == cr3)
                 vmm_invlpg (va);
         }

@@ -9,6 +9,12 @@ namespace Planet.Kernel {
     ")]
     public extern void jump_to_entry (int entry_addr, int stack_ptr);
 
+    // Synchronous Ring 3 exec trampoline.
+    // Precondition: caller runs in Ring 0 with IF=0; `slot` points to a 32-byte
+    // EXEC_SLOTS entry (saved rsp, cr3, TSS_RSP0 at 0x104104).
+    // Saves callee-saved GPRs + parent context, sets TSS.RSP0 to the current
+    // kernel RSP, switches CR3 to `user_cr3`, and enters Ring 3 via iretq
+    // (SS=0x1B, RFLAGS=0x202 with IF=1, CS=0x23). Resumed by exec_return_to_parent.
     [AsmBody(@"
         # exec_trampoline(entry in rdi, user_rsp in rsi, user_cr3 in rdx, slot in rcx) -> exit_code in rax
         push %rbx

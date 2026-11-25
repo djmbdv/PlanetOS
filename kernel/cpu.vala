@@ -86,14 +86,17 @@ namespace Planet.Kernel {
     ")]
     public extern void cpu_sti ();
 
+    // Saves RFLAGS and disables maskable interrupts (cli). Must be paired with
+    // cpu_irq_restore(flags) so nested callers preserve the prior IF state.
     [AsmBody(@"
         pushfq
         pop %rax
         cli
         ret
     ")]
-    public extern int cpu_irq_save ();
+    public extern uint64 cpu_irq_save ();
 
+    // Restores IF (RFLAGS bit 9 = 0x200) from the value returned by cpu_irq_save().
     [AsmBody(@"
         test $0x200, %rdi
         jz _cir_done
@@ -101,7 +104,7 @@ namespace Planet.Kernel {
     _cir_done:
         ret
     ")]
-    public extern void cpu_irq_restore (int flags);
+    public extern void cpu_irq_restore (uint64 flags);
 
     [AsmBody(@"
         hlt
@@ -218,6 +221,10 @@ namespace Planet.Kernel {
     ")]
     public extern int addr_isr_irq0 ();
 
+    // Exception entry stubs (vectors 0, 6, 13, 14). Vectors 13 (#GP) and 14 (#PF)
+    // have a hardware error code at (%rsp) and faulting RIP at 8(%rsp); vectors
+    // 0 (#DE) and 6 (#UD) have RIP directly at (%rsp). All align RSP to 16 bytes
+    // before calling fault_dispatch(vec, err, rip, cr2), and halt if it returns.
     [AsmBody(@"
         # #DE (vector 0, no error code)
         mov $0, %edi
