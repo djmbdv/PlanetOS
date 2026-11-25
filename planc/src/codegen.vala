@@ -113,13 +113,20 @@ namespace Planc {
         public bool debug_memory { get; set; default = false; }
         // [AsmBody] is confined to the trusted runtime sources; the escape hatch
         // exists for bring-up work but stays off by default.
+        // [AsmBody] is confined to the trusted runtime sources (the kernel, the
+        // boot runtime and the stdlib); the escape hatch exists for bring-up
+        // work but stays off by default.
         public bool asm_anywhere { get; set; default = false; }
         public bool strict_ownership { get; set; default = false; }
 
         private static bool asm_file_allowed (string file) {
             var p = file.replace ("\\", "/");
-            return p.has_prefix ("stdlib/") || p.has_prefix ("kernel/")
-                || p.contains ("/stdlib/") || p.contains ("/kernel/");
+            // `.hlib` files are prebuilt library headers: their asm was already
+            // vetted when the library was compiled from trusted sources.
+            if (p.has_suffix (".hlib"))
+                return true;
+            return p.has_prefix ("stdlib/") || p.has_prefix ("kernel/") || p.has_prefix ("planetrt/")
+                || p.contains ("/stdlib/") || p.contains ("/kernel/") || p.contains ("/planetrt/");
         }
 
         private void check_borrow_escape (Expr? value, int line, int column, string where) throws SemanticError {
@@ -6469,7 +6476,7 @@ namespace Planc {
                 }
                 if (!asm_anywhere && !asm_file_allowed (f.file)) {
                     throw new SemanticError.TYPE_MISMATCH (
-                        @"[AsmBody] is only allowed in stdlib/ and kernel/ sources; '$(f.name)' at $(f.asm_line):$(f.asm_column) lives in $(f.file)");
+                        @"[AsmBody] is only allowed in stdlib/, kernel/ and planetrt/ sources; '$(f.name)' at $(f.asm_line):$(f.asm_column) lives in $(f.file)");
                 }
                 var start = emitter.here ();
                 AsmAssembler.assemble (emitter, program, f);
