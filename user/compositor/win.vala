@@ -11,12 +11,6 @@ using Gsk;
 using Wm;
 
 namespace Wm {
-
-    [AsmBody(@"
-        .byte 0x0f, 0xae, 0xf0
-        ret
-    ")]
-    private extern void __comp_mfence ();
     // Ring of pointer/key events for an external (PLANET_WIN_EV) window.
     // Keeps the last CAPACITY events in 32-bit words and reuses the wire
     // buffer, so a push is O(1) and allocates nothing. The sequence number is
@@ -368,7 +362,7 @@ namespace Wm {
                 Unsafe.poke32 (off + 4, p1);
                 Unsafe.poke32 (off + 8, p2);
                 Unsafe.poke32 (off + 12, p3);
-                __comp_mfence ();
+                Unsafe.mfence ();
                 Unsafe.poke32 (ext_shm + SharedSurface.OFF_EV_SEQ, seq);
                 return;
             }

@@ -107,6 +107,7 @@ namespace Planet.Kernel {
     }
 
     [AsmBody(@"
+        cld
         push %rax
         push %rbx
         push %rcx

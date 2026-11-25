@@ -1128,7 +1128,7 @@ namespace Wm {
             int seq = Unsafe.peek32 (shm + SharedSurface.OFF_SEQ);
             if (seq == 0 || seq == w.ext_seq)
                 return;
-            __comp_mfence ();
+            Unsafe.mfence ();
             w.ext_seq = seq;
             int n = Unsafe.peek32 (shm + SharedSurface.OFF_DCOUNT);
             if (n <= 0 || n > SharedSurface.MAX_RECTS)

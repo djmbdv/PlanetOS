@@ -24,11 +24,12 @@ namespace PlanetShell {
         return @"$v";
     }
 
-    [AsmBody(@"
-        mov (%rdi), %eax
-        ret
-    ")]
-    private extern int peek32 (int addr);
+    private int read_le32 (uint8[] buf, int off) {
+        return ((int) buf[off + 0] & 0xFF)
+            | (((int) buf[off + 1] & 0xFF) << 8)
+            | (((int) buf[off + 2] & 0xFF) << 16)
+            | (((int) buf[off + 3] & 0xFF) << 24);
+    }
 
     private string klog_cat_name (int cat) {
         if (cat == 0) return "boot";
@@ -831,26 +832,22 @@ namespace PlanetShell {
         }
         if (cmd == "dmesg") {
             bool clear = (args.length > 1 && args[1] == "-c");
-            int buf = Sys.alloc_pages (1);
-            if (buf == 0) {
-                print ("dmesg: out of memory\n");
-                return 1;
-            }
-            int n = Sys.klog_read_at (buf, 64);
+            var buf = new uint8[64 * 64];
+            int n = Sys.klog_read (buf, 64);
             if (n <= 0) {
                 print ("dmesg: empty\n");
             } else {
                 var txt = new uint8[40];
                 for (int i = 0; i < n; i++) {
-                    int rec = buf + i * 64;
-                    int cat = peek32 (rec + 0);
-                    int lvl = peek32 (rec + 4);
-                    int len = peek32 (rec + 8);
-                    int tick = peek32 (rec + 16);
+                    int rec = i * 64;
+                    int cat = read_le32 (buf, rec + 0);
+                    int lvl = read_le32 (buf, rec + 4);
+                    int len = read_le32 (buf, rec + 8);
+                    int tick = read_le32 (buf, rec + 16);
                     if (len < 0) len = 0;
                     if (len > 40) len = 40;
                     for (int k = 0; k < len; k++)
-                        txt[k] = (uint8) (peek32 (rec + 24 + k) & 0xFF);
+                        txt[k] = buf[rec + 24 + k];
                     string tag = klog_cat_name (cat);
                     string mark = klog_lvl_name (lvl);
                     print (@"[$tick] $mark $tag: ");
@@ -858,7 +855,6 @@ namespace PlanetShell {
                     print ("\n");
                 }
             }
-            Sys.free_page (buf);
             if (clear)
                 Sys.klog_clear ();
             return 0;
@@ -907,20 +903,15 @@ namespace PlanetShell {
             return 0;
         }
         if (cmd == "mouse") {
-            int buf = Sys.alloc_pages (1);
-            if (buf == 0) {
-                print ("mouse: out of memory\n");
-                return 1;
-            }
-            Sys.sys (24, buf, 0, 0);
-            int mx = peek32 (buf + 0);
-            int my = peek32 (buf + 8);
-            int btn = peek32 (buf + 16);
-            int pk = peek32 (buf + 24);
-            int nbytes = peek32 (buf + 32);
-            int rs = peek32 (buf + 40);
+            var buf = new int[14];
+            Sys.sys (24, Sys.int_arr_addr (buf), 0, 0);
+            int mx = buf[0];
+            int my = buf[2];
+            int btn = buf[4];
+            int pk = buf[6];
+            int nbytes = buf[8];
+            int rs = buf[10];
             print (@"mouse: x=$mx y=$my btn=$btn packets=$pk bytes=$nbytes resync=$rs\n");
-            Sys.free_page (buf);
             return 0;
         }
         if (cmd == "gpu") {

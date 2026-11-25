@@ -69,6 +69,20 @@ namespace Planet {
     ")]
     private extern void __sys_poke32 (int addr, int val);
 
+    [AsmBody(@"
+        # __sys_peek64(addr in rdi) -> rax
+        mov (%rdi), %rax
+        ret
+    ")]
+    private extern int __sys_peek64 (int addr);
+
+    [AsmBody(@"
+        # __sys_mfence(): full memory fence
+        .byte 0x0f, 0xae, 0xf0
+        ret
+    ")]
+    private extern void __sys_mfence ();
+
     public sealed class Unsafe : Object {
         public static void poke8 (int addr, int val) {
             if (addr < Sys.USER_MIN_ADDR)
@@ -80,6 +94,16 @@ namespace Planet {
             if (addr < Sys.USER_MIN_ADDR || addr > Sys.USER_MAX_ADDR - 4)
                 return 0;
             return __sys_peek32 (addr);
+        }
+
+        public static int peek64 (int addr) {
+            if (addr < Sys.USER_MIN_ADDR || addr > Sys.USER_MAX_ADDR - 8)
+                return 0;
+            return __sys_peek64 (addr);
+        }
+
+        public static void mfence () {
+            __sys_mfence ();
         }
 
         public static void poke32 (int addr, int val) {

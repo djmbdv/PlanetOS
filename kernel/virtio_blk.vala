@@ -9,6 +9,7 @@ namespace Planet.Kernel {
 
     [AsmBody(@"
         # VirtIO-BLK IRQ: save the caller-saved set, call the handler, EOI, return.
+        cld
         push %rax
         push %rcx
         push %rdx

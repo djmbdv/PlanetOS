@@ -1576,6 +1576,7 @@ namespace Planet.Kernel {
 
     [AsmBody(@"
         # int 0x80 entry: rax=num, rdi=a0, rsi=a1, rdx=a2, r8=a3 -> returns in rax
+        cld
         push %rcx
         push %rdx
         push %rsi

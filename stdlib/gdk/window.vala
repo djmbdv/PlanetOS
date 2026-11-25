@@ -5,19 +5,6 @@ using Planet;
 namespace Gdk {
     using Cairo;
 
-    [AsmBody(@"
-        mov (%rdi), %rax
-        ret
-    ")]
-    private extern int __g_peek64 (int addr);
-
-    [AsmBody(@"
-        # Full memory fence ordering shared-surface ring/damage writes before SEQ/ACK.
-        .byte 0x0f, 0xae, 0xf0
-        ret
-    ")]
-    private extern void __g_mfence ();
-
     /**
      * Layout of the compositor shared window block (PLANET_WIN_SHM).
      *
@@ -272,7 +259,7 @@ namespace Gdk {
             Unsafe.poke32 (comp_shm + SharedSurface.OFF_DW, dw);
             Unsafe.poke32 (comp_shm + SharedSurface.OFF_DH, dh);
             Unsafe.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, 1);
-            __g_mfence ();
+            Unsafe.mfence ();
             comp_shm_seq = comp_shm_seq + 1;
             Unsafe.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
         }
@@ -337,7 +324,7 @@ namespace Gdk {
             if (out_n == 0)
                 return;
             Unsafe.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, out_n);
-            __g_mfence ();
+            Unsafe.mfence ();
             comp_shm_seq = comp_shm_seq + 1;
             Unsafe.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
         }
@@ -411,10 +398,10 @@ namespace Gdk {
                 return;
             if (Sys.sys (24, mouse_buf, 0, 0) < 0)
                 return;
-            cur_x = __g_peek64 (mouse_buf + 0);
-            cur_y = __g_peek64 (mouse_buf + 8);
-            cur_mask = __g_peek64 (mouse_buf + 16);
-            cur_wheel = __g_peek64 (mouse_buf + 48);
+            cur_x = Unsafe.peek64 (mouse_buf + 0);
+            cur_y = Unsafe.peek64 (mouse_buf + 8);
+            cur_mask = Unsafe.peek64 (mouse_buf + 16);
+            cur_wheel = Unsafe.peek64 (mouse_buf + 48);
         }
 
         // Cached pointer position/mask, refreshed by poll_event() or read_pointer().
@@ -530,7 +517,7 @@ namespace Gdk {
             int ack = Unsafe.peek32 (shm + SharedSurface.OFF_EV_ACK);
             if (written <= ack) {
                 if (written < ack)
-                    __g_mfence ();
+                    Unsafe.mfence ();
             Unsafe.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
                 return new Event ();
             }
@@ -552,7 +539,7 @@ namespace Gdk {
                 ev_q[dst + 3] = Unsafe.peek32 (off + 12);
                 ev_q_len++;
             }
-            __g_mfence ();
+            Unsafe.mfence ();
             Unsafe.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
             if (ev_q_pos < ev_q_len)
                 return pop_comp_event ();

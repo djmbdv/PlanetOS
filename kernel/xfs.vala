@@ -5,11 +5,15 @@
 namespace Planet.Kernel {
 
     [AsmBody(@"
-        # xfs_memcpy(dst in rdi, src in rsi, len in rdx)
-        mov %rdx, %rcx
-        test %rcx, %rcx
+        # xfs_memcpy(dst in rdi, src in rsi, len in rdx): cld + 8-byte rep movsq + tail rep movsb
+        test %rdx, %rdx
         jle _xm_done
         .byte 0xfc
+        mov %rdx, %rcx
+        shr $3, %rcx
+        .byte 0xf3, 0x48, 0xa5
+        mov %rdx, %rcx
+        and $7, %rcx
         .byte 0xf3, 0xa4
     _xm_done:
         ret
