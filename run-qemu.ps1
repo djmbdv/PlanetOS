@@ -254,6 +254,7 @@ if (-not $NoBuild) {
         (Join-Path $StdDir 'gio\models.vala'),
         (Join-Path $StdDir 'gio\planet.vala'),
         (Join-Path $StdDir 'gio\net.vala'),
+        (Join-Path $StdDir 'gio\tls.vala'),
         (Join-Path $StdDir 'gio\subprocess.vala')
     )
     $CairoSrcs = @(
@@ -300,7 +301,7 @@ if (-not $NoBuild) {
     Invoke-Planc (@('--target=planetos', $Opt, '--nostdlib', '--format=dlib', '--image-base=0x1800000', $PlanetSys) + $GlibSrcs + @('-o', (Lib-Dlib 'glib')))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1A80000', (Join-Path $StdDir 'planet_unsafe.vala'), '-o', (Lib-Dlib 'unsafe'))
     Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1880000') + $GeeSrcs + @('-o', (Lib-Dlib 'gee')))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', '--image-base=0x18A0000') + $GioSrcs + @('-o', (Lib-Dlib 'gio')))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', '--image-base=0x1AA0000') + $GioSrcs + @('-o', (Lib-Dlib 'gio')))
     Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x18E0000') + $CairoSrcs + @('-o', (Lib-Dlib 'cairo')))
     Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=cairo', '--format=dlib', '--image-base=0x1900000') + $GdkSrcs + @('-o', (Lib-Dlib 'gdk')))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--format=dlib', '--image-base=0x1920000', (Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), '-o', (Lib-Dlib 'pango'))

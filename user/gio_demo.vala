@@ -978,6 +978,84 @@ namespace GioDemo {
         } catch (IOError e) {
             check ("gio-tcp-connection", false);
         }
+
+        // TLS 1.3 (BoringSSL-inspired: X25519 + ChaCha20-Poly1305 + SHA-256 + HKDF + TlsBackend/TlsClientConnection)
+        var tb = TlsBackend.get_default ();
+        bool cert_ok = false;
+        try {
+            var cert = new TlsCertificate.from_pem ("-----BEGIN CERTIFICATE-----\nCN=localhost\n-----END CERTIFICATE-----\n");
+            var id = new NetworkAddress ("localhost", 443);
+            cert_ok = (cert.verify (id, cert) == TlsCertificateFlags.NONE);
+        } catch (Error e) {
+            cert_ok = false;
+        }
+        check ("gio-tls-backend", tb.supports_tls () && cert_ok);
+
+        // RFC 7748 X25519 + RFC 8439 ChaCha20-Poly1305 round-trip
+        uint8[] k_a = new uint8[32];
+        uint8[] k_b = new uint8[32];
+        TlsCrypto.random_bytes (k_a);
+        TlsCrypto.random_bytes (k_b);
+        var pub_a = TlsCrypto.x25519_public (k_a);
+        var pub_b = TlsCrypto.x25519_public (k_b);
+        var ss_a = TlsCrypto.x25519_scalarmult (k_a, pub_b);
+        var ss_b = TlsCrypto.x25519_scalarmult (k_b, pub_a);
+        bool dh_ok = TlsCrypto.ct_memcmp (ss_a, 0, ss_b, 0, 32);
+        uint8[] nonce = new uint8[12];
+        uint8[] aad = { 0x17, 0x03, 0x03, 0x00, 0x15 };
+        uint8[] pt = { (uint8) 'h', (uint8) 'e', (uint8) 'l', (uint8) 'l', (uint8) 'o' };
+        var ct = TlsCrypto.aead_seal (ss_a, nonce, aad, pt);
+        uint8[]? dec = TlsCrypto.aead_open (ss_b, nonce, aad, ct);
+        bool aead_ok = dh_ok && dec != null && ((!) dec).length == 5 && ((!) dec)[0] == (uint8) 'h';
+        check ("gio-tls-x25519-aead", aead_ok);
+
+        // Full TLS 1.3 handshake + encrypted stream over TlsServerConnection <-> TlsClientConnection
+        bool tls_hs_ok = false;
+        try {
+            var tlis = new SocketListener ();
+            uint16 tls_port = tlis.add_any_inet_port ();
+            var srv_thread = new Thread ("tls-srv", () => {
+                try {
+                    for (int w = 0; w < 100; w++) {
+                        try {
+                            Object? o = null;
+                            var sc = tlis.accept (out o);
+                            var tsrv = TlsServerConnection.create (sc);
+                            tsrv.handshake ();
+                            var din = new DataInputStream (tsrv.get_input_stream ());
+                            int l = 0;
+                            string? line = din.read_line (out l);
+                            if (line == "secret-ping") {
+                                var dout = new DataOutputStream (tsrv.get_output_stream ());
+                                dout.put_string ("secret-pong\n");
+                            }
+                            tsrv.close ();
+                            break;
+                        } catch (IOError we) {
+                            Sys.sleep_ms (5);
+                        }
+                    }
+                } catch (Error e) {
+                }
+                return null;
+            });
+            var tcli = new SocketClient ();
+            var base_c = tcli.connect_to_host (@"127.0.0.1:$tls_port", tls_port);
+            var tls_cli = TlsClientConnection.create (base_c, new NetworkAddress ("localhost", tls_port));
+            tls_cli.handshake ();
+            var cdout = new DataOutputStream (tls_cli.get_output_stream ());
+            cdout.put_string ("secret-ping\n");
+            var cdin = new DataInputStream (tls_cli.get_input_stream ());
+            int cl = 0;
+            string? creply = cdin.read_line (out cl);
+            tls_hs_ok = (creply == "secret-pong");
+            tls_cli.close ();
+            srv_thread.join ();
+            tlis.close ();
+        } catch (Error e) {
+            tls_hs_ok = false;
+        }
+        check ("gio-tls-handshake", tls_hs_ok);
     }
 
     private void demo_regex () {

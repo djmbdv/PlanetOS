@@ -719,6 +719,8 @@ namespace Gio {
         public SocketFamily family { get; set; default = SocketFamily.IPV4; }
         public SocketType socket_type { get; set; default = SocketType.STREAM; }
         public SocketProtocol protocol { get; set; default = SocketProtocol.DEFAULT; }
+        public bool tls { get; set; default = false; }
+        public TlsCertificateFlags tls_validation_flags { get; set; default = TlsCertificateFlags.VALIDATE_ALL; }
 
         public SocketConnection connect (SocketAddress address, Cancellable? cancellable = null) throws IOError {
             var sock = new Socket (address.get_family (), socket_type, protocol);
@@ -735,6 +737,20 @@ namespace Gio {
             var na = NetworkAddress.parse (host_and_port, default_port);
             var isa = new InetSocketAddress.from_string (na.get_hostname (), na.get_port ());
             return connect (isa, cancellable);
+        }
+
+        public TlsClientConnection connect_to_host_tls (string host_and_port, uint16 default_port, Cancellable? cancellable = null) throws IOError {
+            var na = NetworkAddress.parse (host_and_port, default_port);
+            var isa = new InetSocketAddress.from_string (na.get_hostname (), na.get_port ());
+            var conn = connect (isa, cancellable);
+            try {
+                var tconn = TlsClientConnection.create (conn, na);
+                tconn.set_validation_flags (tls_validation_flags);
+                tconn.handshake (cancellable);
+                return tconn;
+            } catch (Error e) {
+                throw new IOError.FAILED (@"TLS handshake failed: $(e.message)");
+            }
         }
     }
 

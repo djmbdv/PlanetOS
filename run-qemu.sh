@@ -43,7 +43,7 @@ echo "Building PlanetOS kernel and userland..."
 OPT="${PLANC_OPT:--O2}"
 GLIB_SRCS=("$ROOT/stdlib/glib/core.vala" "$ROOT/stdlib/glib/filestream.vala" "$ROOT/stdlib/glib/utils.vala" "$ROOT/stdlib/glib/test_option.vala" "$ROOT/stdlib/glib/math.vala" "$ROOT/stdlib/glib/process.vala" "$ROOT/stdlib/glib/keyfile.vala" "$ROOT/stdlib/glib/mainloop.vala" "$ROOT/stdlib/glib/regex.vala" "$ROOT/stdlib/glib/variant.vala" "$ROOT/stdlib/glib/time.vala" "$ROOT/stdlib/glib/thread.vala" "$ROOT/stdlib/glib/uuid.vala" "$ROOT/stdlib/glib/bit.vala" "$ROOT/stdlib/glib/memory.vala" "$ROOT/stdlib/glib/slice.vala" "$ROOT/stdlib/glib/atomic.vala" "$ROOT/stdlib/glib/bytes.vala" "$ROOT/stdlib/glib/codec.vala" "$ROOT/stdlib/glib/hashtable.vala" "$ROOT/stdlib/glib/queue.vala" "$ROOT/stdlib/glib/uri.vala" "$ROOT/stdlib/glib/bookmark.vala")
 GEE_SRCS=("$ROOT/stdlib/gee/base.vala" "$ROOT/stdlib/gee/lists.vala" "$ROOT/stdlib/gee/maps.vala" "$ROOT/stdlib/gee/queues.vala" "$ROOT/stdlib/gee/trees.vala")
-GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/converter.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala" "$ROOT/stdlib/gio/planet.vala" "$ROOT/stdlib/gio/net.vala" "$ROOT/stdlib/gio/subprocess.vala")
+GIO_SRCS=("$ROOT/stdlib/gio/types.vala" "$ROOT/stdlib/gio/streams.vala" "$ROOT/stdlib/gio/converter.vala" "$ROOT/stdlib/gio/file.vala" "$ROOT/stdlib/gio/models.vala" "$ROOT/stdlib/gio/planet.vala" "$ROOT/stdlib/gio/net.vala" "$ROOT/stdlib/gio/tls.vala" "$ROOT/stdlib/gio/subprocess.vala")
 CAIRO_SRCS=("$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala")
 GDK_SRCS=("$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala")
 GSK_SRCS=("$ROOT/stdlib/gsk/path.vala" "$ROOT/stdlib/gsk/types.vala" "$ROOT/stdlib/gsk/nodes.vala" "$ROOT/stdlib/gsk/renderer.vala")
@@ -57,7 +57,7 @@ mkdir -p "$LIBDIR"/{glib,gee,gio,cairo,gdk,pango,spirv,venus,gsk,gtk,gobject,gmo
 LIB_FLAGS="--library-dir=$LIBDIR"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --format=dlib --image-base=0x1A80000 "$ROOT/stdlib/planet_unsafe.vala" -o "$LIBDIR/unsafe/unsafe.dlib"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --format=dlib --image-base=0x1880000 "${GEE_SRCS[@]}" -o "$LIBDIR/gee/gee.dlib"
-"$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --format=dlib --image-base=0x18A0000 "${GIO_SRCS[@]}" -o "$LIBDIR/gio/gio.dlib"
+"$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --format=dlib --image-base=0x1AA0000 "${GIO_SRCS[@]}" -o "$LIBDIR/gio/gio.dlib"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --format=dlib --image-base=0x18E0000 "${CAIRO_SRCS[@]}" -o "$LIBDIR/cairo/cairo.dlib"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --import-lib=cairo --format=dlib --image-base=0x1900000 "${GDK_SRCS[@]}" -o "$LIBDIR/gdk/gdk.dlib"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=cairo --format=dlib --image-base=0x1920000 "$ROOT/stdlib/schrift.vala" "$ROOT/stdlib/pango_compat.vala" -o "$LIBDIR/pango/pango.dlib"
