@@ -118,16 +118,18 @@ serial output against `<case>.expect`.
 | `gpu` | the virtio-gpu probe reports the device as absent instead of faulting when QEMU has no such device |
 | `calendar` | the calendar panel is built with the environment time zone and three places, and the compositor summary reports zero failures |
 | `directories` | `mkdir`/`cd`/`pwd`, `ls -l`, path-relative `write`/`cat`/`mv`/`rm`, empty-directory deletion |
-| `gio` | the Gio layer runs twice in one boot at 51/51 |
+| `gio` | the Gio layer runs twice in one boot at 126/126 (streams, converters, sockets, `PlanetIoArena` leases, `PlanetConnection` IPC) |
 | `exec` | bare, case-insensitive and `exec` command resolution |
 | `errors` | the unlink/mkdir/cat error paths run inside `test/errors` (a RAMFS tree that disappears at the next boot), so the shared XFS root is untouched and later cases still see `hello.txt`; the syscall guard rejects bad pointers (`sysguard:ok=1`) |
 | `compiler` | `planc.elf` compiles and runs programs inside the guest |
 | `objects` | `gobject_demo` and `gmodule_demo` report 19/19 and 14/14 |
-| `mainloop` | `mainloop_demo` reports 17/17 (idle before timeouts, source removal, `Application.run`) |
-| `graphics` | `cairo_demo`/`spv_demo` draw an 800×600 framebuffer (the 469-page surface proves the raised allocation limit), the shared SPIR-V module reports `words=169 insns=44 rgb=(56,188,247)`, `vk_demo --once` paints a GSK `ShaderNode` from `frag_pattern.spv`, the compositor self-test passes 108/108 in three modes (static, --vulkan, --animate: damage merge, occlusion, modifiers, per-pixel pattern, push constants, shared surface header, two-rectangle publish and the shared input ring) and the Vulkan refusal is reported |
-| `saturn` | `saturn --self-test` proves the interactive contract: one keystroke damages one editor line, Enter damages down to the viewport bottom, an arrow key damages the two caret rows, arrow keys reach the focused editor instead of scrolling the side panel, focus is exclusive between the list and the editor, and the window publishes exactly the rectangles it repainted into a shared surface |
+| `mainloop` | `mainloop_demo` reports 25/25 (idle before timeouts, source removal, `Application.run`) |
+| `graphics` | `cairo_demo`/`spv_demo` draw an 800×600 framebuffer (the 469-page surface proves the raised allocation limit), the shared SPIR-V module reports `words=169 insns=44 rgb=(56,188,247)`, `vk_demo --once` paints a GSK `ShaderNode` from `frag_pattern.spv`, the compositor self-test passes 147/147 in three modes (static, --vulkan, --animate: damage merge, occlusion, modifiers, per-pixel pattern, push constants, shared surface header, two-rectangle publish and the shared input ring) and the Vulkan refusal is reported. Each of the three runs is a separate process, so the case also proves that a compositor exit returns its frames to the pool (R-40) |
+| `saturn` | `saturn --self-test` reports 18/18 and proves the interactive contract: one keystroke damages one editor line, Enter damages down to the viewport bottom, an arrow key damages the two caret rows, arrow keys reach the focused editor instead of scrolling the side panel, focus is exclusive between the list and the editor, and the window publishes exactly the rectangles it repainted into a shared surface |
 | `compositor-ext` | `compositor --ext saturn.elf --keys abcd --frames 400` boots a real client through the production path: the compositor allocates the block and spawns `saturn.elf`, the client attaches it, receives the typed keys through the input ring, and publishes three rectangles (initial frame, edited line, status label) totalling less than two full frames — with no `_comp_*` file in `/tmp` and the desktop pass skipped for rectangles covered by the window (`bg>0`) |
-| `pango` | `pango_demo` reports 44/44: metrics, wrapping, ellipsize, alignment, colour attribute runs, `clip()` and text drawing |
+| `pango` | `pango_demo` reports 52/52: metrics, wrapping, ellipsize, alignment, colour attribute runs, `clip()`, text drawing, and the TrueType path (load `LiberationSans`, measure and wrap UTF-8 with accents) |
+| `mercury` | the network stack reports the MAC, an ICMP echo (`icmp=ok`), DHCP plus DNS over UDP (`udp=ok yiaddr=10.0.2.x`), the TCP engine (`tcp=ok mss=1460 rack=1 ecn=`), and `PlanetConnection` IPC (`ipc=ok`) |
+| `curl` | `curl.elf` runs its HTTP/1.1 + TLS 1.3 + DoT demo (`checks=4 failures=0`) |
 
 Assertions: `text` (substring, in order), `=text` (whole line), `!text`
 (absent) and `~regex`.
@@ -269,36 +271,41 @@ This use of `valac` is for **verification**, not for building: it does not appea
 
 ## 8. CI matrix
 
-| Job | Command | Requirements it covers |
+Only the launchers and the QEMU suite exist today; the `planc test` subcommand
+and the fuzzers below are **planned**, and the corpora they will consume are
+already in the tree.
+
+| Job | Command | State |
 |---|---|---|
-| `conformidad` | `planc test --suite=conformidad` | TC-08, TC-10, VL-* |
-| `negativos` | `planc test --suite=negativos` | TC-07, VL-11 |
-| `runtime-host` | `planc test --perfil=host` | RT-01 … RT-09, VE-01 |
-| `layout-abi` | `planc test --suite=layout --suite=abi` | VL-02, VL-05, ABI |
-| `enlace` | `planc test --suite=enlace` | TC-03, TC-05 |
-| `dwarf` | `planc test --suite=dwarf` | TC-06 |
-| `symbol-audit` | `tests/auditar-simbolos.sh` | I2, KR-02, RT-01, VE-02 |
-| `bootstrap` | `tests/bootstrap.sh` | I4, TC-09, VE-03 |
-| `boot` | `tests/qemu.sh iso/planetos.iso` | KR-01, VE-04 |
-| `guest` | `tests/qemu.sh iso/planetos-tests.iso` | US-*, VE-05 |
-| `io` | `planc test --suite=io` plus the QEMU cases of [08 §9](08-io-data-path.md#9-verification) | IO-01 to IO-06, KR-07 |
-| `reproducible` | two builds, compare `sha256` | TC-05 |
-| `fuzz` | `planc fuzz --semilla=<n>` | §7 |
+| `boot` | `run-qemu.ps1 -BuildOnly` (or `run-qemu.sh --build-only`) plus `tools/check_layout.py` | **implemented**: the build fails if the low-memory window breaks |
+| `guest` | `python tests/qemu.py` | **implemented**: 22 cases, each booting the kernel headless and checking the serial output against `tests/cases/<case>.expect` |
+| `conformidad` | `planc test --suite=conformidad` | planned: `planc/tests/valid` holds 238 programs |
+| `negativos` | `planc test --suite=negativos` | planned: `planc/tests/invalid` holds 70 programs |
+| `bounds` | `planc test --suite=bounds` | planned: `planc/tests/bounds` holds 7 programs |
+| `runtime-host` | `--target=windows` plus the host runtime | planned |
+| `layout-abi`, `enlace`, `dwarf`, `io` | per-suite runs | planned |
+| `symbol-audit` | symbol dump of every artifact | planned (`tests/auditar-simbolos.sh` does not exist yet) |
+| `bootstrap` | compile `planc` with the previous `planc` and compare | planned (`tests/bootstrap.sh` does not exist yet) |
+| `reproducible` | two builds, compare `sha256` | planned |
+| `fuzz` | mutation over the corpora | planned |
+
+The honest summary: the guest-side matrix is real and green, the compiler-side
+matrix is a corpus without a runner, and no job compares against `valac` yet.
 
 ## 9. Milestones by capability
 
 Milestones are defined by what the system **can do**, not by when. Each one is reachable only if the previous one is verified.
 
-| Milestone | Demonstrable capability | Requirements it closes |
-|---|---|---|
-| **M1** | `planc` compiles programs without classes or signals and runs them on `host` | TC-01, TC-02, TC-08 |
-| **M2** | `planc` compiles classes, properties and signals; the fixed point converges | VL-01 … VL-06, I4, TC-09 |
-| **M3** | `planc` compiles `async`, `throws` and `[AsmBody]`; useful DWARF | VL-07 … VL-09, TC-04, TC-06 |
-| **M4** | The kernel boots, manages memory and runs threads | KR-01 … KR-06, KR-08 |
-| **M5** | A user process in Vala runs without libc | US-01, US-02, US-06, I2 |
-| **M6** | Interactive shell with pipelines and redirection | US-03, US-04, US-07 |
-| **M7** | Persistent file system and SDK usable by third parties | US-05, coherence of `pfs` |
-| **M8** | A process cannot name another's handle; `/dev/serial0` works through a `Gio` filter chain; one block ring completes by IRQ | IO-01 to IO-06, KR-07 |
+| Milestone | Demonstrable capability | Requirements it closes | State |
+|---|---|---|---|
+| **M1** | `planc` compiles programs without classes or signals and runs them on `host` | TC-01, TC-02, TC-08 | corpus in place, no runner (§8) |
+| **M2** | `planc` compiles classes, properties and signals; the fixed point converges | VL-01 … VL-06, I4, TC-09 | classes/properties/signals reached (`objects`, `mainloop`); `planc.elf` compiles programs in the guest (`compiler`, `c2vala`). The stage-0 build still uses `valac` (`tools/build-planc-host.sh`), so the bootstrap comparison is planned |
+| **M3** | `planc` compiles `async`, `throws` and `[AsmBody]`; useful DWARF | VL-07 … VL-09, TC-04, TC-06 | reached: the kernel, the compositor and every demo use `[AsmBody]`, `async` and `throws` |
+| **M4** | The kernel boots, manages memory and runs threads | KR-01 … KR-06, KR-08 | reached: `system` (`thread`, `pool`, `memguard`) |
+| **M5** | A user process in Vala runs without libc | US-01, US-02, US-06, I2 | reached: every guest case |
+| **M6** | Interactive shell with pipelines and redirection | US-03, US-04, US-07 | reached: `directories`, `exec`, `errors` |
+| **M7** | Persistent file system and SDK usable by third parties | US-05, coherence of `pfs` | reached: XFS root survives across the cases, in-guest SDK in `c2vala`. The `pfs` design in [04](04-kernel.md) is not implemented: the persistence is XFS on the virtio-blk image |
+| **M8** | A process cannot name another's handle; `/dev/serial0` works through a `Gio` filter chain; one block ring completes by IRQ | IO-01 to IO-06, KR-07 | reached: `system` (`fdguard`, `dev`, `blk:irq=4/4`), `gio` (`dev-serial0`) |
 
 M5 is the milestone that validates the whole thesis: **a process written in Vala, compiled by a compiler written in Vala, running without libc on a kernel written in Vala**.
 

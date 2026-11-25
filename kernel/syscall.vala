@@ -34,7 +34,10 @@ namespace Planet.Kernel {
     private const int RING_MAX_XFER = 16384;
     // A2 frame ownership: one entry per SYS_ALLOC_PAGE block, and up to four
     // task ids allowed to map a grant handle.
-    private const int ALLOC_SLOTS = 64;
+    private const int ALLOC_SLOTS = 512;
+    // Set when a block could not be tracked (table full); reported once. A
+    // block that is handed out but untracked is never released on exit.
+    private static int alloc_track_full = 0;
     private const int GRANT_TASKS = 4;
 
     private const int R_READ  = 1;
@@ -430,6 +433,12 @@ namespace Planet.Kernel {
                 return;
             }
             i = i + 1;
+        }
+        // No free slot: the block is handed out but untracked, so it is never
+        // released when the task exits. Report it once instead of leaking silently.
+        if (alloc_track_full == 0) {
+            alloc_track_full = 1;
+            print (@"pmm:alloc_track_full phys=$phys pages=$pages\n");
         }
     }
 

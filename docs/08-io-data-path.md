@@ -32,19 +32,19 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | Device namespace (`/dev`) | [kernel/vfs.vala](../kernel/vfs.vala) | implemented (B1): `/dev/console`, `/dev/serial0`, `/dev/null` resolve to `KIND_DEV` handles that carry no seek right |
 | Handles with ownership, generation and rights | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A1.1/A1.2): 64 slots, `index \| generation << 8`, per-operation rights |
 | `Pollable`, `FileDescriptorBased`, `IOStream`, cancellable source | [stdlib/gio/types.vala](../stdlib/gio/types.vala), [stdlib/gio/streams.vala](../stdlib/gio/streams.vala) | implemented: `PollableInputStream`/`PollableOutputStream` on the file and device streams, `SimpleIOStream`, `Cancellable.create_source` |
-| Capability grant | `SYS_MAP_USER_AT`, [kernel/syscall.vala](../kernel/syscall.vala) | **missing**: maps any physical frame above 6 MiB |
+| Capability grant | `SYS_MAP_USER_AT`, [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A2): an own range, an ACL-shared grant, or an untracked image segment |
 | Safe user copies with page-fault recovery (KR-07) | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A3): PML4 walk with read/write rights, guarded copy that recovers from a fault |
-| Frame ownership and grants | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A2): `SYS_ALLOC_PAGE` records the owner, `SYS_GRANT`/`SYS_GRANT_SHARE` hand out a capability, `SYS_FREE_PAGE` and `SYS_MAP_USER_AT` check it |
-| Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
+| Frame ownership and grants | [kernel/syscall.vala](../kernel/syscall.vala) | implemented (A2): `SYS_ALLOC_PAGE` records the owner in a 512-slot table, `SYS_GRANT`/`SYS_GRANT_SHARE` hand out a capability, `SYS_FREE_PAGE` and `SYS_MAP_USER_AT` check it |
+| Interrupt-driven completion | [kernel/virtio_blk.vala](../kernel/virtio_blk.vala), [kernel/virtio_net.vala](../kernel/virtio_net.vala) | implemented (C2/C3) for virtio-blk and virtio-net over MSI-X; `kernel/ata.vala` (PIO) and `kernel/virtio_gpu.vala` (bounded spin) still poll |
 | VirtIO-BLK queue and request path | [kernel/virtio_blk.vala](../kernel/virtio_blk.vala) | implemented (C2): queue 0 over the modern transport, 3-descriptor chain (header/data/status), MSI-X delivery verified, completion word the task parks on |
 | Local APIC | [kernel/cpu.vala](../kernel/cpu.vala) | implemented (C2): enabled through `IA32_APIC_BASE` with x2APIC off, SIVR/TPR set, `lapic_id` and `lapic_eoi` drive MSI-X delivery |
-| VirtIO-NET queue, MSI-X TX wake and `mercury` | [kernel/virtio_net.vala](../kernel/virtio_net.vala), [user/mercury.vala](../user/mercury.vala) | implemented (C3 initial): RX/TX queues, `KIND_RING_NET`, `SYS_NET_MAC`, ARP + ICMP echo in QEMU |
+| VirtIO-NET kernel side | [kernel/virtio_net.vala](../kernel/virtio_net.vala) | implemented (C3): RX/TX queues, MSI-X TX wake, `KIND_RING_NET`, `SYS_NET_MAC` |
+| Network stack and protocol services | [user/mercury.vala](../user/mercury.vala), [stdlib/gio/stack.vala](../stdlib/gio/stack.vala), [stdlib/gio/dns.vala](../stdlib/gio/dns.vala), [stdlib/gio/tls.vala](../stdlib/gio/tls.vala) | implemented (C3): ARP + ICMP echo + UDP/DHCP/DNS + a Plan 9 `tcp.c`-inspired TCP engine (RACK-TLP, BBR-style pacing, ECN), `VirtioNetStack`, `Resolver` with DoT, and TLS 1.3 (`curl` case) |
 | IOMMU | QEMU command line, [run-qemu.ps1](../run-qemu.ps1) | absent |
-| Protocol stacks | [user/mercury.vala](../user/mercury.vala) | implemented (C3): ARP + ICMP echo + UDP/DHCP/DNS + Plan 9 `tcp.c`-inspired TCP engine (RACK-TLP, BBR-style pacing, ECN) + `PlanetConnection` IPC |
 
-Consequence: Contracts A and B are both **blocked on section 4**, not on the
-stream classes or the rings. The stream hierarchy already exists; the handles
-and the grants do not.
+Consequence: contracts A and B are **delivered** for byte devices and for the
+framed block and network devices; what remains is phase E (IOMMU, userland
+drivers, reincarnation) and the gaps listed in [07](07-risks-and-decisions.md).
 
 ## 3. Non-goals
 
@@ -297,12 +297,13 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 
 ## 7. Event integration
 
-- `SYS_POLL` becomes **readiness per handle**. Today it reports "the fd slot is
-  occupied" for `fd >= 3`, treats 0/1/2 as special cases, and caps the call at 15
-  fds ([kernel/syscall.vala](../kernel/syscall.vala)).
-- `MainContext` grows beyond its fixed 8-watch buffer
-  ([stdlib/glib/mainloop.vala](../stdlib/glib/mainloop.vala)) and watches handles,
-  not raw file descriptors.
+- `SYS_POLL` is **readiness per handle**: console input, console output, a byte
+  device that reports its own readiness (`serial_rx_ready`), and the ring kinds
+  through `head`/`tail`/`seq`. It accepts up to 30 handles per call
+  ([kernel/syscall.vala](../kernel/syscall.vala)).
+- `MainContext` watches those handles through a `KIND_CUSTOM` source that checks
+  readiness with no syscall before parking
+  ([stdlib/glib/mainloop.vala](../stdlib/glib/mainloop.vala)).
 - Timeouts and cancellation use `Cancellable` plus the wake word. No blocking
   read inside the loop.
 
@@ -310,7 +311,7 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 
 | Phase | Work | Exit criterion |
 |---|---|---|
-| **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 19/19 QEMU cases green. A dedicated per-process table remains an optional optimisation |
+| **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 22/22 QEMU cases green. A dedicated per-process table remains an optional optimisation |
 | **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | **Done for grants**: `SYS_GRANT` returns a handle over a block the task owns, `SYS_GRANT_SHARE` puts a task id in its ACL, `SYS_FREE_PAGE` refuses a non-owner and any range a live grant covers, and `SYS_MAP_USER_AT` refuses another task's block. `system` proves it (`memguard=ok`). The compositor grants its surface and shares it with the client before `spawn`, so zero-copy keeps working (`graphics`, `compositor-ext`). A dedicated I/O arena remains optional |
 | **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`). **A3.1 also done**: paths, `readdir` and `stat_ex` stage through the scratch, and `copy_guarded` moves 8 bytes per iteration. 20/20 QEMU cases green |
 | **A4** | Raw escapes out of the public API | **Done**: `poke8`/`poke32`/`peek32`/`call_ptr*` removed from `Planet.Sys` ([stdlib/planet_sys.vala](../stdlib/planet_sys.vala)) and isolated in [stdlib/planet_unsafe.vala](../stdlib/planet_unsafe.vala) (`Planet.Unsafe`), excluded from `glib.dlib` |
@@ -331,11 +332,10 @@ separate project.
   lease state machine. Pure logic, no QEMU.
 - **QEMU**: handle denial across processes, unowned grant rejection, invalid
   pointer recovery, poll readiness, malformed descriptor, block throughput,
-  network echo. The `system` case carries the current evidence: `fdguard`,
-  `rights` and `stale` for handles, `guard` for user copies, `memguard` for
-  grants, `ring` for the descriptor validator, and `blk:irq=4/4` with
-  `blk:late=0` for four virtio-blk reads completed by MSI-X. Network echo
-  arrives with C3.
+  network echo. The `system` case carries the handle, grant, ring and block
+  evidence (`fdguard`, `rights`, `stale`, `guard`, `memguard`, `ring`,
+  `blk:irq=4/4` with `blk:late=0`); the network evidence moved to the `mercury`
+  case (`icmp=ok`, `udp=ok`, `tcp=ok`, `ipc=ok`) and the TLS path to `curl`.
 - **Symbol audit** (VE-02): no device code in the standard library; no host
   symbol in the target.
 - `SharedSurface` stays covered by the existing compositor cases.

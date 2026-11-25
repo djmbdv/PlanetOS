@@ -55,7 +55,8 @@ handle by `SYS_POLL` (IO-06); blocking is `SYS_WAIT_ADDR` on a futex-like word o
 `chan_recv` over channels, which is what the runtime event loop consumes.
 
 The device calls of [08](08-io-data-path.md) (`handle_*`, `grant`, `ring_kick`)
-are **planned**. The numeric catalog implemented today is the `switch` in
+are part of the numeric catalog below from 63 up; the `chan_*` and `mem_*`
+names remain the design target. The catalog implemented today is the `switch` in
 [kernel/syscall.vala](../kernel/syscall.vala); it is frozen per version by
 `SYS_ABI_VERSION`.
 
@@ -70,9 +71,20 @@ The running kernel dispatches through `SYS_*` numbers in [kernel/syscall.vala](.
 | 56 | `SYS_KLOG_WRITE(cat, level, ptr, len)` | userland record into the kernel ring (category 7 = user) |
 | 57 | `SYS_WAIT_ADDR(addr, expected, timeout_ms)` | futex-style park: returns when the word changes, `-1`/`ETIMEDOUT` on deadline |
 | 58 | `SYS_WAKE_ADDR(addr, count)` | wakes blocked tasks parked on the same address |
-| 59 | `SYS_POLL(fds, nfds, timeout_ms)` | ready bitmask for up to 15 descriptors (`0` = stdin console, `1/2` = console out) |
+| 59 | `SYS_POLL(fds, nfds, timeout_ms)` | ready bitmask for up to 30 handles (`0` = stdin console, `1/2` = console out) |
 | 60 | `SYS_SLEEP_MS(ms)` | tick-accurate sleep (10 ms granularity) |
 | 61 | `SYS_ABI_VERSION()` | integer the `.dlib` consumers compare at load |
+| 62 | `SYS_TID()` | kernel task id of the caller |
+| 63 | `SYS_GRANT(start, len)` | capability handle over a block the caller owns (A2) |
+| 64 | `SYS_GRANT_SHARE(handle, tid)` | adds a task id to the grant's ACL |
+| 65 | `SYS_RING_ATTACH(grant, entries, dev_kind)` | binds a `KIND_RING` handle to a validated header (`PLNR`) |
+| 66 | `SYS_RING_KICK(ring)` | validates and runs the ready descriptors; `-1` on a malformed one |
+| 67 | `SYS_BLK_READ(buf, sector, count)` | virtio-blk read through the validated ring (C2) |
+| 68 | `SYS_BLK_STATS()` | `late << 24 \| wakes << 16 \| capacity` in MiB |
+| 69 | `SYS_NET_MAC(out6)` | MAC of the virtio-net device (C3) |
+| 70 | `SYS_HANDLE_SEND(tid, handle)` | sends a handle to another task, returns the receiver's value |
+| 71 | `SYS_HANDLE_RECV()` | receives a handle sent to the caller |
+| 72 | `SYS_HANDLE_INFO(handle, out16)` | kind plus rights of a handle the caller owns |
 
 Failures still return `-1` (the existing `== -1` checks keep working); the cause is read with `SYS_ERRNO` and mirrors Linux numbering (`ENOENT = 2`, `EACCES = 13`, `EISDIR = 21`, `ETIMEDOUT = 110`, …). `Planet.Sys` exposes them as `Sys.ENOENT`, `Sys.errno_code ()` and `Sys.strerror ()`.
 

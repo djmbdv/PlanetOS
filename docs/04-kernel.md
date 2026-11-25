@@ -183,7 +183,7 @@ Rules:
 | Wall clock | CMOS at boot + monotonic offset | avoids reading CMOS on every call |
 | Monotonic | invariant TSC | nanosecond resolution |
 
-The **target** is that the kernel's main loop (`Planet.Eventos`) is the same code the userland uses, with the `kernel` profile, and that a driver registers a `Fuente` backed by an IRQ. The **current state** is narrower: no kernel file instantiates `MainContext`; only the timer, keyboard and mouse have IRQ stubs, while ATA completes by PIO polling and virtio-gpu completes by bounded spin. The migration is Phase C of [08](08-io-data-path.md), and it keeps the scheduler from D-10:
+The **target** is that the kernel's main loop (`Planet.Eventos`) is the same code the userland uses, with the `kernel` profile, and that a driver registers a `Fuente` backed by an IRQ. The **current state** is narrower: no kernel file instantiates `MainContext` — the drivers park on the scheduler instead. The timer, keyboard, mouse, virtio-blk and virtio-net have IRQ stubs and complete by interrupt; ATA still completes by PIO polling and virtio-gpu by bounded spin. The rest of the migration is phase E of [08](08-io-data-path.md), and it keeps the scheduler from D-10:
 
 ```vala
 while (true) {
@@ -266,10 +266,10 @@ public abstract class Archivo : Object {
 | Filesystem | Persistence | Use |
 |---|---|---|
 | `ramfs` | no | temporary root, `/tmp` |
-| `pfs` | yes | persistent root: 4 KiB blocks, simple B tree, minimal journal |
+| `pfs` | yes | persistent root: 4 KiB blocks, simple B tree, minimal journal — **not implemented**; the persistent root today is XFS on the virtio-blk image |
 | `devfs` | no | device nodes generated on enumeration |
 
-Requirement of `pfs`: to survive a power cut without losing the consistency of the tree. It is verified with the cut test described in [06](06-verification.md#4-verification-in-qemu).
+Requirement of `pfs`: to survive a power cut without losing the consistency of the tree. It is verified with the cut test described in [06](06-verification.md#4-verification-in-qemu). Until `pfs` exists, the cut test does not apply: the root is read-only XFS.
 
 ## 9. Drivers
 
@@ -277,7 +277,7 @@ The two I/O contracts of [08](08-io-data-path.md) decide the interface. Byte dev
 
 | Driver | Need | Contract | State |
 |---|---|---|---|
-| UART 1650 | kernel log, later `/dev/serial0` | A: byte stream | ring-0 log exists; user handle pending B1 |
+| UART 1650 | kernel log, `/dev/serial0` | A: byte stream | implemented; user handle through devfs (B1), readiness-driven `cat` (B2) |
 | Framebuffer + 8×16 font | text console | kernel-only | implemented |
 | PS/2 keyboard | shell input | A: raw scancodes after B2, ASCII via `SYS_READ_KEY` meanwhile | implemented |
 | PCI enumeration | discover virtio | kernel | implemented |
@@ -285,7 +285,7 @@ The two I/O contracts of [08](08-io-data-path.md) decide the interface. Byte dev
 | virtio-blk | disk | B: validated ring | implemented, completion by MSI-X |
 | RTC | wall time | syscall today, byte device later | implemented |
 | virtio-gpu | display and 3D | B: validated ring plus scanout grant | implemented, controlq polled |
-| virtio-net | network | B: validated ring | planned, no driver |
+| virtio-net | network | B: validated ring | implemented, MSI-X TX wake; stack in `mercury` |
 | audio | sound | B: data ring | planned |
 
 None of them knows the scheduler. None of them exposes a vtable to userland: the boundary is a handle plus a ring, and the protocol stack runs in the LibOS. Line discipline and terminal echo move to userland last, keeping `SYS_READ_KEY` for the boot and panic console.

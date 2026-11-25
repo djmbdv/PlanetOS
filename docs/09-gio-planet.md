@@ -20,7 +20,7 @@ The Vala API lives in namespace `Gio` (package **`gio-planet-1.0`**, [stdlib/gio
 |---|---|---|
 | `UnixInputStream` / `UnixOutputStream` | `PlanetInputStream` / `PlanetOutputStream` | Per-process handle (`KIND_DEV`, `KIND_FILE`, etc.) implementing `PollableInputStream`, `PollableOutputStream`, `FileDescriptorBased` |
 | `UnixFDMessage` / `UnixFDList` | `PlanetCapMessage` *(planned)* | Explicit handle + grant transfer (`SYS_GRANT_SHARE` / `SYS_HANDLE_SEND`) |
-| `UnixSocketAddress` / `UnixConnection` | `PlanetServiceAddress` / `PlanetConnection` *(planned)* | Control-plane connection to `mercury` / `atlas` / `compositor` |
+| *(no Unix equivalent)* | `PlanetServiceAddress` / `PlanetConnection` | Control-plane connection to `mercury` / `atlas` (`SYS_HANDLE_SEND`/`SYS_HANDLE_RECV`/`SYS_HANDLE_INFO`, `planet-conn-ipc`) |
 | *(no Unix equivalent)* | `PlanetGrant` | Page-owned memory capability (`SYS_ALLOC_PAGE` + `SYS_GRANT` + `SYS_GRANT_SHARE` + `SYS_FREE_PAGE`) |
 | *(no Unix equivalent)* | `PlanetRing` | `PLNR` descriptor ring (`SYS_RING_ATTACH` + `SYS_RING_KICK` + `SYS_WAIT_ADDR` on `seq`) |
 | *(no Unix equivalent)* | `PlanetRingSource` *(planned)* | `GLib.Source` that inspects `head`/`tail`/`seq` with 0 syscalls before parking |

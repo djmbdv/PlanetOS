@@ -279,8 +279,12 @@ namespace Wm {
 
         private bool hw_cursor = false;
         private bool net_connected = false;
-        private ImageSurface? wallpaper_surf = null;
-        private bool wallpaper_ok = false;
+        // One decoded wallpaper per process: a full-screen surface is 900
+        // contiguous frames, and the self-test builds several compositors from
+        // the same pool the test surfaces come from.
+        private static ImageSurface? wallpaper_surf;
+        private static bool wallpaper_ok = false;
+        private static bool wallpaper_probed = false;
 
         private static uint8[]? read_bytes (string path) {
             int fd = Sys.open (path);
@@ -310,6 +314,9 @@ namespace Wm {
         }
 
         private void load_wallpaper () {
+            if (wallpaper_probed)
+                return;
+            wallpaper_probed = true;
             uint8[]? jpg = read_bytes ("winxp.jpg");
             if (jpg == null) {
                 print ("compositor: wallpaper read_bytes(winxp.jpg) failed\n");
