@@ -112,6 +112,8 @@ namespace Planc {
         var null_check = true;
         var strict_null = false;
         var strict_unused = false;
+        var strict_visibility = false;
+        var enforce_visibility = false;
         var warn_unused = true;
         var allow_asm = true;
         var opt_level = 0;
@@ -163,6 +165,10 @@ namespace Planc {
                 strict_null = true;
             } else if (a == "--strict-unused") {
                 strict_unused = true;
+            } else if (a == "--strict-visibility") {
+                strict_visibility = true;
+            } else if (a == "--enforce-visibility") {
+                enforce_visibility = true;
             } else if (a == "--no-warn-unused") {
                 warn_unused = false;
             } else if (a == "--check-overflow") {
@@ -555,6 +561,8 @@ namespace Planc {
         codegen.null_check = null_check;
         codegen.strict_null = strict_null;
         codegen.strict_unused = strict_unused;
+        codegen.strict_visibility = strict_visibility;
+        codegen.enforce_visibility = enforce_visibility;
         codegen.warn_unused = warn_unused;
         codegen.check_overflow = check_overflow;
         codegen.allow_asm = allow_asm;

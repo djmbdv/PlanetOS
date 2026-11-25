@@ -562,8 +562,11 @@ namespace Planc {
         public int column { get; set; }
     }
 
+    public enum Visibility { PUBLIC, PRIVATE, PROTECTED, INTERNAL }
+
     public class Function : Object {
         public string name { get; set; }
+        public Visibility visibility { get; set; default = Visibility.PUBLIC; }
         public string file { get; set; default = ""; }
         public bool is_compact_free { get; set; default = false; }
         public bool is_arena { get; set; default = false; }
@@ -640,6 +643,7 @@ namespace Planc {
 
     public class ClassField : Object {
         public ValaType field_type { get; set; }
+        public Visibility visibility { get; set; default = Visibility.PUBLIC; }
         public string type_name { get; set; default = ""; }
         public bool is_weak { get; set; default = false; }
         public bool is_unowned { get; set; default = false; }

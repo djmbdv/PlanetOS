@@ -1007,6 +1007,23 @@ namespace Planc {
                 || text == "internal" || text == "protected";
         }
 
+        private Visibility parse_visibility_prefix () throws ParseError, LexError {
+            var vis = Visibility.PUBLIC;
+            while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
+                   && is_visibility_modifier (current.text)) {
+                if (current.text == "private")
+                    vis = Visibility.PRIVATE;
+                else if (current.text == "protected")
+                    vis = Visibility.PROTECTED;
+                else if (current.text == "internal")
+                    vis = Visibility.INTERNAL;
+                else
+                    vis = Visibility.PUBLIC;
+                advance ();
+            }
+            return vis;
+        }
+
         private void skip_ownership_modifiers () throws ParseError, LexError {
             while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
                    && (current.text == "unowned" || current.text == "owned" || current.text == "weak")) {
@@ -2510,8 +2527,7 @@ namespace Planc {
             while (current.kind != TokenKind.RBRACE) {
                 if (current.kind == TokenKind.EOF)
                     throw new ParseError.UNEXPECTED_TOKEN ("unterminated struct declaration");
-                while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped && is_visibility_modifier (current.text))
-                    advance ();
+                var m_vis = parse_visibility_prefix ();
                 if (is_tok_kw (current, "const")) {
                     parse_const_decl (sd.name);
                     continue;
@@ -2549,6 +2565,7 @@ namespace Planc {
                         return_type_name = ft_name,
                         is_static = is_static,
                         owner_class = sd.name,
+                        visibility = m_vis,
                         line = fl,
                         column = fc
                     };
@@ -2861,8 +2878,7 @@ namespace Planc {
                 bool m_simple_type = false;
                 bool m_arena = false;
                 parse_attributes (out m_asm, out m_asm_l, out m_asm_c, out m_compact, out m_simple_type, out m_arena);
-                while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped && is_visibility_modifier (current.text))
-                    advance ();
+                var m_vis = parse_visibility_prefix ();
 
                 if (is_tok_kw (current, "const")) {
                     parse_const_decl (cd.name);
@@ -2949,6 +2965,7 @@ namespace Planc {
                             return_type = sret,
                             return_type_name = sret_name,
                             owner_class = cd.name,
+                            visibility = m_vis,
                             line = sl,
                             column = sc
                         };
@@ -3011,6 +3028,7 @@ namespace Planc {
                         return_type = ValaType.VOID,
                         is_dtor = true,
                         owner_class = cd.name,
+                        visibility = m_vis,
                         line = dl,
                         column = dc
                     };
@@ -3058,6 +3076,7 @@ namespace Planc {
                             return_type = ValaType.VOID,
                             is_ctor = true,
                             ctor_subname = ctor_sub,
+                            visibility = m_vis,
                             owner_class = cd.name,
                             line = ml,
                             column = mc
@@ -3258,6 +3277,7 @@ namespace Planc {
                         is_static = is_static_m,
                         is_async = is_async_m,
                         owner_class = cd.name,
+                        visibility = m_vis,
                         line = mem_l,
                         column = mem_c
                     };
@@ -3313,6 +3333,7 @@ namespace Planc {
                             field_type = ft,
                             type_name = ft_name,
                             name = mname,
+                            visibility = m_vis,
                             init = def_init,
                             line = mem_l,
                             column = mem_c
@@ -3354,6 +3375,7 @@ namespace Planc {
                         is_unowned = mem_is_unowned,
                         is_static = is_static_m,
                         name = mname,
+                        visibility = m_vis,
                         init = finit,
                         line = mem_l,
                         column = mem_c

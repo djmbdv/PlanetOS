@@ -106,6 +106,8 @@ namespace Planc {
         public bool null_check { get; set; default = true; }
         public bool strict_null { get; set; default = false; }
         public bool strict_unused { get; set; default = false; }
+        public bool strict_visibility { get; set; default = false; }
+        public bool enforce_visibility { get; set; default = false; }
         public bool warn_unused { get; set; default = true; }
         public bool allow_asm { get; set; default = true; }
         public int opt_level { get; set; default = 0; }
@@ -501,6 +503,8 @@ namespace Planc {
             null_check = m.null_check;
             strict_null = m.strict_null;
             strict_unused = m.strict_unused;
+            strict_visibility = m.strict_visibility;
+            enforce_visibility = m.enforce_visibility;
             warn_unused = m.warn_unused;
             allow_asm = m.allow_asm;
             opt_level = m.opt_level;
@@ -7514,6 +7518,27 @@ namespace Planc {
             return array_rank (tname) == 2;
         }
 
+        private void check_member_visibility (Visibility vis, string owner, string member,
+                                             int line, int column) throws SemanticError {
+            if (vis == Visibility.PUBLIC || vis == Visibility.INTERNAL || owner == "")
+                return;
+            bool allowed = false;
+            if (current_class != null) {
+                if (current_class.name == owner)
+                    allowed = true;
+                else if (vis == Visibility.PROTECTED && is_subclass_of (current_class.name, owner))
+                    allowed = true;
+            }
+            if (allowed)
+                return;
+            string what = (vis == Visibility.PRIVATE) ? "private" : "protected";
+            if (enforce_visibility)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'$member' is $what in '$(owner)' and is not accessible here at $line:$column");
+            if (strict_visibility)
+                Host.eprintln (@"planc: warning: '$member' is $what in '$(owner)' and is not accessible here at $line:$column");
+        }
+
         private bool type_compatible (ValaType expected, string exp_name,
                                       ValaType actual, string act_name) {
             if (actual == ValaType.NULL)
@@ -9066,6 +9091,7 @@ namespace Planc {
                             @"class '$(cd.name)' has no constructor '$(cd.name).$(cn.ctor_name)' at $(cn.line):$(cn.column)");
                 }
                 if (ctor_fn != null) {
+                    check_member_visibility (ctor_fn.visibility, cd.name, cd.name, cn.line, cn.column);
                     check_ctor_args (ctor_fn, cn.args, cn.line, cn.column);
                 } else if (cn.args.length != 0) {
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -9267,6 +9293,8 @@ namespace Planc {
                     }
                     return ValaType.VOID;
                 }
+                if (m.owner_class != "")
+                    check_member_visibility (m.visibility, m.owner_class, mc.method_name, mc.line, mc.column);
                 if (m.is_async) {
                     tname = make_async_task_type_name (m.return_type, m.return_type_name);
                     return ValaType.CLASS;
@@ -9365,6 +9393,7 @@ namespace Planc {
                     unowned var cd = program.find_class (cname);
                     unowned ClassField? cf = null;
                     if (cd != null && class_field_offset_slots (cd, m.member, out cf) >= 0 && cf != null) {
+                        check_member_visibility (cf.visibility, cd.name, m.member, m.line, m.column);
                         tname = maybe_narrow_member (m, cf.type_name);
                         return cf.field_type;
                     }
@@ -10143,6 +10172,7 @@ namespace Planc {
                     if (slot_off < 0 || cf == null)
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"class '$(cname)' has no field '$(ma.member)' at $(ma.line):$(ma.column)");
+                    check_member_visibility (cf.visibility, cd.name, ma.member, ma.line, ma.column);
                     gen_expr (ma.target);
                     emit_null_check_if_nullable (peek_t, peek_name);
                     emitter.add_rax_imm (class_field_base (cd) + 8 * slot_off);

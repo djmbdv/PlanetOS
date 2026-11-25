@@ -259,6 +259,63 @@ for src in "$HERE"/invalid/*.vala; do
     ok "$name"
 done
 
+echo "== visibility =="
+for src in "$HERE"/visibility/*.vala; do
+    [ -e "$src" ] || continue
+    name=$(basename "$src" .vala)
+    binary="$WORK/vis_$name$BIN_EXT"
+    case "$name" in
+        ok_*)
+            if ! "$PLANC" $TARGET_FLAGS --enforce-visibility "$src" -o "$binary" 2>"$WORK/$name.err"; then
+                ko "$name" "compile failed: $(cat "$WORK/$name.err")"
+                continue
+            fi
+            if ! check_elf "$name" "$binary"; then
+                continue
+            fi
+            run_bin "$binary" >"$WORK/$name.stdout" 2>&1
+            actual_code=$?
+            expected_code=0
+            [ -f "$HERE/visibility/$name.code" ] && expected_code=$(cat "$HERE/visibility/$name.code")
+            if [ "$actual_code" != "$expected_code" ]; then
+                ko "$name" "exit $actual_code, expected $expected_code"
+                continue
+            fi
+            if [ -f "$HERE/visibility/$name.out" ]; then
+                if ! files_equal "$WORK/$name.stdout" "$HERE/visibility/$name.out"; then
+                    ko "$name" "stdout differs from $name.out"
+                    continue
+                fi
+            elif [ -s "$WORK/$name.stdout" ]; then
+                ko "$name" "expected no output"
+                continue
+            fi
+            ok "$name"
+            ;;
+        bad_*)
+            "$PLANC" $TARGET_FLAGS --enforce-visibility "$src" -o "$WORK/reject_$name$BIN_EXT" 2>"$WORK/$name.err"
+            code=$?
+            if [ "$code" != "1" ]; then
+                ko "$name" "exit $code, expected 1"
+                continue
+            fi
+            if [ -e "$WORK/reject_$name$BIN_EXT" ]; then
+                ko "$name" "wrote an output file for a rejected program"
+                continue
+            fi
+            if ! grep -q '^planc: ' "$WORK/$name.err"; then
+                ko "$name" "diagnostic does not start with 'planc: '"
+                continue
+            fi
+            if ! grep -qE '[0-9]+:[0-9]+' "$WORK/$name.err"; then
+                ko "$name" "diagnostic has no line:column"
+                continue
+            fi
+            ok "$name"
+            ;;
+    esac
+done
+
 echo "== bounds =="
 for src in "$HERE"/bounds/*.vala; do
     name=$(basename "$src" .vala)
