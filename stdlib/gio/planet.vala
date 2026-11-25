@@ -701,65 +701,49 @@ namespace Gio {
             return nh;
         }
 
-        public void write_request (uint8[] data) throws IOError {
+        private void write_slot (int seq_off, int len_off, int data_off, uint8[] data) throws IOError {
             if (grant.base_addr <= 0)
                 throw new IOError.CLOSED ("PlanetConnection is closed");
             if (data.length > max_payload)
-                throw new IOError.INVALID_ARGUMENT ("PlanetConnection.write_request: payload too large");
-            grant.write_bytes (64, data, data.length);
+                throw new IOError.INVALID_ARGUMENT ("PlanetConnection: payload too large");
+            grant.write_bytes (data_off, data, data.length);
+            Unsafe.poke32 (grant.base_addr + len_off, data.length);
+            int next_seq = Unsafe.peek32 (grant.base_addr + seq_off) + 1;
             Unsafe.mfence ();
-            Unsafe.poke32 (grant.base_addr + 0x04, data.length);
-            int next_seq = Unsafe.peek32 (grant.base_addr + 0x00) + 1;
+            Unsafe.poke32 (grant.base_addr + seq_off, next_seq);
+        }
+
+        private uint8[]? read_slot (int seq_off, int len_off, int data_off, ref int seen) throws IOError {
+            if (grant.base_addr <= 0)
+                throw new IOError.CLOSED ("PlanetConnection is closed");
+            int seq = Unsafe.peek32 (grant.base_addr + seq_off);
+            if (seq == seen)
+                return null;
             Unsafe.mfence ();
-            Unsafe.poke32 (grant.base_addr + 0x00, next_seq);
+            seen = seq;
+            int len = Unsafe.peek32 (grant.base_addr + len_off);
+            if (len < 0 || len > max_payload)
+                throw new IOError.FAILED ("PlanetConnection: corrupt length");
+            var buf = new uint8[len];
+            if (len > 0)
+                grant.read_bytes (data_off, buf, len);
+            return buf;
+        }
+
+        public void write_request (uint8[] data) throws IOError {
+            write_slot (0x00, 0x04, 64, data);
         }
 
         public uint8[]? read_request () throws IOError {
-            if (grant.base_addr <= 0)
-                throw new IOError.CLOSED ("PlanetConnection is closed");
-            Unsafe.mfence ();
-            int seq = Unsafe.peek32 (grant.base_addr + 0x00);
-            if (seq == req_seen)
-                return null;
-            req_seen = seq;
-            int len = Unsafe.peek32 (grant.base_addr + 0x04);
-            if (len < 0 || len > max_payload)
-                throw new IOError.FAILED ("PlanetConnection.read_request: corrupt length");
-            var buf = new uint8[len];
-            if (len > 0)
-                grant.read_bytes (64, buf, len);
-            return buf;
+            return read_slot (0x00, 0x04, 64, ref req_seen);
         }
 
         public void write_response (uint8[] data) throws IOError {
-            if (grant.base_addr <= 0)
-                throw new IOError.CLOSED ("PlanetConnection is closed");
-            if (data.length > max_payload)
-                throw new IOError.INVALID_ARGUMENT ("PlanetConnection.write_response: payload too large");
-            int off = 64 + max_payload;
-            grant.write_bytes (off, data, data.length);
-            Unsafe.mfence ();
-            Unsafe.poke32 (grant.base_addr + 0x0C, data.length);
-            int next_seq = Unsafe.peek32 (grant.base_addr + 0x08) + 1;
-            Unsafe.mfence ();
-            Unsafe.poke32 (grant.base_addr + 0x08, next_seq);
+            write_slot (0x08, 0x0C, 64 + max_payload, data);
         }
 
         public uint8[]? read_response () throws IOError {
-            if (grant.base_addr <= 0)
-                throw new IOError.CLOSED ("PlanetConnection is closed");
-            Unsafe.mfence ();
-            int seq = Unsafe.peek32 (grant.base_addr + 0x08);
-            if (seq == resp_seen)
-                return null;
-            resp_seen = seq;
-            int len = Unsafe.peek32 (grant.base_addr + 0x0C);
-            if (len < 0 || len > max_payload)
-                throw new IOError.FAILED ("PlanetConnection.read_response: corrupt length");
-            var buf = new uint8[len];
-            if (len > 0)
-                grant.read_bytes (64 + max_payload, buf, len);
-            return buf;
+            return read_slot (0x08, 0x0C, 64 + max_payload, ref resp_seen);
         }
 
         public void close () {

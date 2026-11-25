@@ -23,6 +23,15 @@ namespace Planet {
     private extern int __sys4 (int num, int a0, int a1, int a2, int a3);
 
     [AsmBody(@"
+        # __sys_rdtsc(): 64-bit CPU cycle counter (sub-ms pacing/RTT)
+        .byte 0x0f, 0x31
+        shl $32, %rdx
+        or %rdx, %rax
+        ret
+    ")]
+    private extern uint64 __sys_rdtsc ();
+
+    [AsmBody(@"
         # data pointer of a string (header is 16 bytes)
         add $16, %rdi
         mov %rdi, %rax
@@ -107,6 +116,10 @@ namespace Planet {
 
         public static int ticks () {
             return __sys4 (2, 0, 0, 0, 0);
+        }
+
+        public static uint64 rdtsc () {
+            return __sys_rdtsc ();
         }
 
         public static int rtc_time () {

@@ -40,7 +40,7 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | Local APIC | [kernel/cpu.vala](../kernel/cpu.vala) | implemented (C2): enabled through `IA32_APIC_BASE` with x2APIC off, SIVR/TPR set, `lapic_id` and `lapic_eoi` drive MSI-X delivery |
 | VirtIO-NET queue, MSI-X TX wake and `mercury` | [kernel/virtio_net.vala](../kernel/virtio_net.vala), [user/mercury.vala](../user/mercury.vala) | implemented (C3 initial): RX/TX queues, `KIND_RING_NET`, `SYS_NET_MAC`, ARP + ICMP echo in QEMU |
 | IOMMU | QEMU command line, [run-qemu.ps1](../run-qemu.ps1) | absent |
-| Protocol stacks | [user/mercury.vala](../user/mercury.vala) | ARP + ICMP echo implemented; UDP/TCP/DNS IPC pending |
+| Protocol stacks | [user/mercury.vala](../user/mercury.vala) | implemented (C3): ARP + ICMP echo + UDP/DHCP/DNS + Plan 9 `tcp.c`-inspired TCP engine (RACK-TLP, BBR-style pacing, ECN) + `PlanetConnection` IPC |
 
 Consequence: Contracts A and B are both **blocked on section 4**, not on the
 stream classes or the rings. The stream hierarchy already exists; the handles

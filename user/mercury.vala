@@ -294,10 +294,11 @@ class TcpConn : Object {
     public uint32 rcv_wnd = 16384;
     public int mss = TCP_MSS;
 
-    // Karn/Jacobson RTT + BBR/Copa-style latency/bw model
+    // Karn/Jacobson RTT + BBR/Copa-style latency/bw model (ticks + sub-ms rdtsc)
     public int srtt_ticks = 2;
     public int rttvar_ticks = 1;
     public int min_rtt_ticks = 999999;
+    public uint64 min_rtt_tsc = 0;
     public int delivered_bytes = 0;
     public int bw_bytes_per_tick = 1460;
     public int cwnd = TCP_MSS * 4;
@@ -313,6 +314,7 @@ class TcpConn : Object {
     private uint32[] seg_seq = new uint32[TCP_MAX_FLIGHT];
     private int[] seg_len = new int[TCP_MAX_FLIGHT];
     private int[] seg_xmit_tick = new int[TCP_MAX_FLIGHT];
+    private uint64[] seg_xmit_tsc = new uint64[TCP_MAX_FLIGHT];
     private bool[] seg_retrans = new bool[TCP_MAX_FLIGHT];
     private bool[] seg_active = new bool[TCP_MAX_FLIGHT];
     private uint8[] rx_buf = new uint8[4096];
@@ -335,6 +337,7 @@ class TcpConn : Object {
                 seg_seq[i] = seq;
                 seg_len[i] = len;
                 seg_xmit_tick[i] = now_tick;
+                seg_xmit_tsc[i] = Sys.rdtsc ();
                 seg_retrans[i] = is_retrans;
                 seg_active[i] = true;
                 return;
@@ -342,11 +345,13 @@ class TcpConn : Object {
         }
     }
 
-    private void update_rtt_and_bw (int sample_ticks, int acked_bytes) {
+    private void update_rtt_and_bw (int sample_ticks, uint64 sample_tsc, int acked_bytes) {
         if (sample_ticks < 0)
             sample_ticks = 0;
         if (sample_ticks < min_rtt_ticks)
             min_rtt_ticks = sample_ticks;
+        if (sample_tsc > 0 && (min_rtt_tsc == 0 || sample_tsc < min_rtt_tsc))
+            min_rtt_tsc = sample_tsc;
         int err = sample_ticks - srtt_ticks;
         if (err < 0) err = -err;
         rttvar_ticks = (3 * rttvar_ticks + err) / 4;
@@ -488,8 +493,11 @@ class TcpConn : Object {
                 snd_una = seg_ack_num;
                 for (int i = 0; i < TCP_MAX_FLIGHT; i++) {
                     if (seg_active[i] && seq_leq (seg_seq[i] + (uint32) seg_len[i], seg_ack_num)) {
-                        if (!seg_retrans[i])
-                            update_rtt_and_bw (now_tick - seg_xmit_tick[i], acked);
+                        if (!seg_retrans[i]) {
+                            uint64 now_tsc = Sys.rdtsc ();
+                            uint64 dtsc = (now_tsc > seg_xmit_tsc[i]) ? (now_tsc - seg_xmit_tsc[i]) : 0;
+                            update_rtt_and_bw (now_tick - seg_xmit_tick[i], dtsc, acked);
+                        }
                         seg_active[i] = false;
                     }
                 }
@@ -585,7 +593,38 @@ static string fmt_mac (uint8[] mac) {
     return s;
 }
 
+static int mercury_serve_loop () {
+    print ("mercury:daemon ready\n");
+    var conns = new GenericArray<PlanetConnection> ();
+    while (true) {
+        try {
+            var c = PlanetConnection.accept_from_inbox ();
+            if (c != null)
+                conns.add ((!) c);
+            for (int i = 0; i < conns.length; i++) {
+                uint8[]? req = conns[i].read_request ();
+                if (req != null) {
+                    var r = (!) req;
+                    if (r.length == 4 && r[0] == (uint8) 'Q' && r[1] == (uint8) 'U' && r[2] == (uint8) 'I' && r[3] == (uint8) 'T') {
+                        uint8[] bye = { (uint8) 'B', (uint8) 'Y', (uint8) 'E' };
+                        conns[i].write_response (bye);
+                        return 0;
+                    }
+                    uint8[] pong = { (uint8) 'P', (uint8) 'O', (uint8) 'N', (uint8) 'G' };
+                    conns[i].write_response (pong);
+                }
+            }
+        } catch (IOError e) {
+        }
+        Sys.sleep_ms (5);
+    }
+}
+
 static int main (string[] args) {
+    for (int i = 1; i < args.length; i++) {
+        if (args[i] == "--serve")
+            return mercury_serve_loop ();
+    }
     var mac = new uint8[6];
     if (Sys.net_mac (mac) < 0) {
         print ("mercury:no-device\n");
@@ -814,9 +853,9 @@ static int main (string[] args) {
         srv.input (tcp_g, buf_a, lf4, buf_b, t0 + 23);
         bool fin_ok = (cli.state == TCP_TIME_WAIT && srv.state == TCP_CLOSED);
 
-        tcp_ok = hs_ok && ecn_ok && rack_ok && fin_ok;
+        tcp_ok = hs_ok && ecn_ok && rack_ok && fin_ok && cli.min_rtt_tsc > 0;
         if (tcp_ok)
-            print (@"mercury:tcp=ok mss=$(cli.mss) rack=$(cli.rack_retrans_count) ecn=$(cli.ecn_reductions)\n");
+            print (@"mercury:tcp=ok mss=$(cli.mss) rack=$(cli.rack_retrans_count) ecn=$(cli.ecn_reductions) rdtsc=$(cli.min_rtt_tsc)\n");
         tcp_g.release ();
     } catch (IOError e) {
         tcp_ok = false;
@@ -824,12 +863,36 @@ static int main (string[] args) {
     if (!tcp_ok)
         print ("mercury:tcp=FAIL\n");
 
+    // 6. C3.2/C3.3 PlanetConnection IPC service check
+    bool ipc_ok = false;
+    try {
+        var iconn = PlanetConnection.create (1);
+        iconn.send_to (Sys.tid ());
+        var srv_c = PlanetConnection.accept_from_inbox ();
+        if (srv_c != null) {
+            uint8[] req = { (uint8) 'P', (uint8) 'I', (uint8) 'N', (uint8) 'G' };
+            iconn.write_request (req);
+            uint8[]? got = ((!) srv_c).read_request ();
+            if (got != null && ((!) got).length == 4 && ((!) got)[0] == (uint8) 'P') {
+                uint8[] resp = { (uint8) 'P', (uint8) 'O', (uint8) 'N', (uint8) 'G' };
+                ((!) srv_c).write_response (resp);
+                uint8[]? r2 = iconn.read_response ();
+                ipc_ok = r2 != null && ((!) r2).length == 4 && ((!) r2)[0] == (uint8) 'P' && ((!) r2)[1] == (uint8) 'O';
+            }
+            ((!) srv_c).close ();
+        }
+        iconn.close ();
+    } catch (IOError e) {
+        ipc_ok = false;
+    }
+    print (ipc_ok ? "mercury:ipc=ok\n" : "mercury:ipc=FAIL\n");
+
     arena.release_lease (tx_lease);
     arena.release_lease (rx_lease);
     arena.close ();
     ring.close ();
 
-    int ok_flag = (arp_ok && icmp_ok && udp_ok && tcp_ok) ? 1 : 0;
+    int ok_flag = (arp_ok && icmp_ok && udp_ok && tcp_ok && ipc_ok) ? 1 : 0;
     print (@"mercury:summary ok=$ok_flag\n");
     return (ok_flag == 1) ? 0 : 1;
 }

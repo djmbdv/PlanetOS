@@ -322,6 +322,7 @@ namespace Planet.Kernel {
 
     private const int INBOX_SLOTS = 8;
     private static int[] handle_inbox;
+    private static int[] kick_seen_leases;
 
     private static bool inbox_push (int tid, int h) {
         if (handle_inbox == null || tid < 0 || tid >= 16)
@@ -569,7 +570,7 @@ namespace Planet.Kernel {
     private static bool ring_header_ok (int rstart, int rlen, int entries) {
         if (rstart <= 0 || rlen < 64)
             return false;
-        if (entries <= 0 || entries > RING_MAX_ENTRIES)
+        if (entries <= 0 || entries > RING_MAX_ENTRIES || (entries & (entries - 1)) != 0)
             return false;
         if (rlen < 64 + entries * RING_ENTRY)
             return false;
@@ -1533,27 +1534,28 @@ namespace Planet.Kernel {
                 int rstart66 = mmio_read64 (rslot66 + 8);
                 int rlen66 = mmio_read64 (rslot66 + 16);
                 int entries66 = mmio_read64 (rslot66 + 24);
+                if (!user_range_ok (rstart66, rlen66, true))
+                    return fail (E_INVAL);
                 if (!ring_header_ok (rstart66, rlen66, entries66))
                     return fail (E_INVAL);
-                int head66 = mmio_read32 (rstart66 + 16);
-                int tail66 = mmio_read32 (rstart66 + 20);
+                int head66 = mmio_read32 (rstart66 + 16) & (entries66 - 1);
+                int tail66 = mmio_read32 (rstart66 + 20) & (entries66 - 1);
                 int done66 = 0;
                 int budget66 = entries66;
-                var seen_leases66 = new int[RING_MAX_ENTRIES];
                 int seen_cnt66 = 0;
                 while (head66 != tail66 && budget66 > 0) {
-                    int desc66 = rstart66 + 64 + (head66 % entries66) * RING_ENTRY;
+                    int desc66 = rstart66 + 64 + head66 * RING_ENTRY;
                     if (mmio_read32 (desc66 + 20) == RING_ST_READY) {
                         int lid66 = mmio_read32 (desc66 + 16);
                         if (lid66 != 0) {
                             for (int li66 = 0; li66 < seen_cnt66; li66++) {
-                                if (seen_leases66[li66] == lid66) {
+                                if (kick_seen_leases[li66] == lid66) {
                                     mmio_write32 (desc66 + 20, RING_ST_ERROR);
                                     return fail (E_ACCES);
                                 }
                             }
                             if (seen_cnt66 < RING_MAX_ENTRIES) {
-                                seen_leases66[seen_cnt66] = lid66;
+                                kick_seen_leases[seen_cnt66] = lid66;
                                 seen_cnt66 = seen_cnt66 + 1;
                             }
                         }
@@ -1780,6 +1782,7 @@ namespace Planet.Kernel {
             for (int i = 0; i < MAX_FDS * GRANT_TASKS; i++)
                 mmio_write32 (KernelLayout.GRANT_ACL + i * 4, 0);
             handle_inbox = new int[16 * INBOX_SLOTS];
+            kick_seen_leases = new int[RING_MAX_ENTRIES];
             Hal.set_idt_gate_dpl (0x80, addr_isr_syscall (), 1);
         }
     }
