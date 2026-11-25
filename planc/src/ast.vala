@@ -54,6 +54,7 @@ namespace Planc {
         public int line { get; set; }
         public int column { get; set; }
         public int ref_temp_slot { get; set; default = -1; }
+        public bool is_out_arg { get; set; default = false; }
     }
 
     public class IntLiteral : Expr {
@@ -329,9 +330,20 @@ namespace Planc {
 
     public class BlockStatement : Statement {
         public GenericArray<Statement> statements { get; private set; }
+        public bool scoped { get; set; default = true; }
 
         public BlockStatement () {
             statements = new GenericArray<Statement> ();
+        }
+    }
+
+    public class CtorChainStatement : Statement {
+        public bool is_this { get; set; default = false; }
+        public string subname { get; set; default = ""; }
+        public GenericArray<Expr> args { get; private set; }
+
+        public CtorChainStatement () {
+            args = new GenericArray<Expr> ();
         }
     }
 
@@ -534,7 +546,7 @@ namespace Planc {
         public GenericArray<Expr> base_args { get; private set; }
         public string owner_class { get; set; default = ""; }
         public int vtable_slot { get; set; default = -1; }
-        public int iface_id { get; set; default = -1; }
+        public int64 iface_id { get; set; default = -1; }
         public int iface_slot { get; set; default = -1; }
         public bool has_body { get; set; default = true; }
         public bool is_async { get; set; default = false; }
@@ -573,7 +585,7 @@ namespace Planc {
         // Set when the signal is declared on an interface: `iface_slot` is the
         // position of its slot accessor in the interface method table.
         public string iface_name { get; set; default = ""; }
-        public int iface_id { get; set; default = -1; }
+        public int64 iface_id { get; set; default = -1; }
         public int iface_slot { get; set; default = -1; }
         public int line { get; set; }
         public int column { get; set; }
@@ -736,8 +748,18 @@ namespace Planc {
 
     public class InterfaceDecl : Object {
         public string name { get; set; }
-        public int iface_id { get; set; }
+        public int64 iface_id { get; set; }
         public bool is_defined { get; set; default = false; }
+
+        public static int64 compute_iface_id (string name) {
+            uint64 h = 14695981039346656037ULL;
+            for (int i = 0; i < name.length; i++) {
+                h ^= (uint64) (uint8) name[i];
+                h *= 1099511628211ULL;
+            }
+            int64 res = (int64) (h & 0x7FFFFFFFFFFFFFFFULL);
+            return (res == 0) ? 1 : res;
+        }
         public bool is_generic_template { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
         public GenericArray<string> prereq_names { get; private set; }
@@ -1171,7 +1193,7 @@ namespace Planc {
                     for (int j = 0; j < it.methods.length; j++) ex.methods.add (it.methods[j]);
                     for (int j = 0; j < it.signals.length; j++) ex.signals.add (it.signals[j]);
                 } else if (ex == null) {
-                    it.iface_id = interfaces.length + 1;
+                    it.iface_id = InterfaceDecl.compute_iface_id (it.name);
                     interfaces.add (it);
                 }
             }
@@ -1547,7 +1569,7 @@ namespace Planc {
             }
             if (e is VarRef) {
                 var o = (VarRef) e;
-                return new VarRef () { name = o.name, line = o.line, column = o.column };
+                return new VarRef () { name = o.name, is_out_arg = o.is_out_arg, line = o.line, column = o.column };
             }
             if (e is UnaryExpr) {
                 var o = (UnaryExpr) e;
@@ -1756,7 +1778,7 @@ namespace Planc {
             }
             if (s is BlockStatement) {
                 var o = (BlockStatement) s;
-                var n = new BlockStatement () { line = o.line, column = o.column };
+                var n = new BlockStatement () { scoped = o.scoped, line = o.line, column = o.column };
                 foreach (var st in o.statements)
                     n.statements.add (clone_stmt (st, tparams, targs, targ_names));
                 return n;
@@ -2695,7 +2717,7 @@ namespace Planc {
                         continue;
                     var nit = new InterfaceDecl () {
                         name = inst.mangled_name,
-                        iface_id = interfaces.length + 1,
+                        iface_id = InterfaceDecl.compute_iface_id (inst.mangled_name),
                         is_defined = true,
                         line = tmpl_it.line,
                         column = tmpl_it.column

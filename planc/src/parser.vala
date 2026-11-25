@@ -754,7 +754,7 @@ namespace Planc {
                             } else if (kind_kw == "interface") {
                                 var itf = new InterfaceDecl () {
                                     name = tname,
-                                    iface_id = prog.interfaces.length + 1,
+                                    iface_id = InterfaceDecl.compute_iface_id (tname),
                                     line = nt.line,
                                     column = nt.column
                                 };
@@ -1643,7 +1643,7 @@ namespace Planc {
             if (existing == null) {
                 existing = new InterfaceDecl () {
                     name = name,
-                    iface_id = program.interfaces.length + 1
+                    iface_id = InterfaceDecl.compute_iface_id (name)
                 };
                 program.interfaces.add (existing);
             }
@@ -2048,6 +2048,93 @@ namespace Planc {
             expect (TokenKind.RBRACE, "'}'");
         }
 
+        private int64 eval_enum_const_expr (Expr e, EnumDecl cur_enum) throws ParseError {
+            if (e is IntLiteral)
+                return ((IntLiteral) e).value;
+            if (e is BoolLiteral)
+                return ((BoolLiteral) e).value ? 1 : 0;
+            if (e is VarRef) {
+                var vname = ((VarRef) e).name;
+                unowned var em = cur_enum.find_member (vname);
+                if (em != null)
+                    return em.value;
+                foreach (var c in program.consts) {
+                    if (c.name == vname && (c.const_type == ValaType.INT || c.const_type == ValaType.BOOL))
+                        return c.int_value;
+                }
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"unknown constant '$vname' in enum initializer at $(e.line):$(e.column)");
+            }
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                if (ma.target is VarRef) {
+                    var ename = ((VarRef) ma.target).name;
+                    if (ename == cur_enum.name) {
+                        unowned var em = cur_enum.find_member (ma.member);
+                        if (em != null)
+                            return em.value;
+                    }
+                    foreach (var en in program.enums) {
+                        if (en.name == ename) {
+                            unowned var em = en.find_member (ma.member);
+                            if (em != null)
+                                return em.value;
+                        }
+                    }
+                }
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"unknown enum member '$(ma.member)' in enum initializer at $(e.line):$(e.column)");
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                int64 v = eval_enum_const_expr (u.operand, cur_enum);
+                if (u.op == "-") return -v;
+                if (u.op == "+") return v;
+                if (u.op == "~") return ~v;
+                if (u.op == "!") return (v == 0) ? 1 : 0;
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"unsupported unary operator '$(u.op)' in enum initializer at $(e.line):$(e.column)");
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                int64 l = eval_enum_const_expr (b.left, cur_enum);
+                int64 r = eval_enum_const_expr (b.right, cur_enum);
+                switch (b.op) {
+                    case "<<":
+                        if (r < 0 || r >= 64)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"shift count out of range in enum initializer at $(e.line):$(e.column)");
+                        return l << r;
+                    case ">>":
+                        if (r < 0 || r >= 64)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"shift count out of range in enum initializer at $(e.line):$(e.column)");
+                        return l >> r;
+                    case "|":  return l | r;
+                    case "&":  return l & r;
+                    case "^":  return l ^ r;
+                    case "+":  return l + r;
+                    case "-":  return l - r;
+                    case "*":  return l * r;
+                    case "/":
+                        if (r == 0 || (l == int64.MIN && r == -1))
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"invalid division in enum initializer at $(e.line):$(e.column)");
+                        return l / r;
+                    case "%":
+                        if (r == 0 || (l == int64.MIN && r == -1))
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"invalid modulo in enum initializer at $(e.line):$(e.column)");
+                        return l % r;
+                    default:
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"unsupported operator '$(b.op)' in enum initializer at $(e.line):$(e.column)");
+                }
+            }
+            throw new ParseError.UNEXPECTED_TOKEN (
+                @"enum member value must be a constant integer expression at $(e.line):$(e.column)");
+        }
+
         private void parse_enum () throws ParseError, LexError {
             var l = current.line;
             var c = current.column;
@@ -2100,7 +2187,7 @@ namespace Planc {
                         @"duplicate enum member '$mname' at $ml:$mc");
                 if (current.kind == TokenKind.ASSIGN) {
                     advance ();
-                    next_val = parse_signed_int_literal ("enum member value must be an integer literal");
+                    next_val = eval_enum_const_expr (parse_expr (), (!) ed);
                 }
                 ed.members.add (new EnumMember () { name = mname, value = next_val });
                 next_val++;
@@ -2463,11 +2550,16 @@ namespace Planc {
         private void parse_arg_list (GenericArray<Expr> dst) throws ParseError, LexError {
             if (current.kind != TokenKind.RPAREN) {
                 while (true) {
+                    bool is_out = false;
                     if (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
                         && (current.text == "ref" || current.text == "out")) {
+                        is_out = (current.text == "out");
                         advance ();
                     }
-                    dst.add (parse_expr ());
+                    var arg_e = parse_expr ();
+                    if (is_out)
+                        arg_e.is_out_arg = true;
+                    dst.add (arg_e);
                     if (current.kind == TokenKind.COMMA) {
                         advance ();
                         continue;
@@ -2560,7 +2652,13 @@ namespace Planc {
             while (current.kind != TokenKind.RBRACE) {
                 if (current.kind == TokenKind.EOF)
                     throw new ParseError.UNEXPECTED_TOKEN ("unterminated block body");
-                body.add (parse_statement ());
+                var st = parse_statement ();
+                if (st is BlockStatement && !((BlockStatement) st).scoped) {
+                    foreach (var inner in ((BlockStatement) st).statements)
+                        body.add (inner);
+                } else {
+                    body.add (st);
+                }
             }
             expect (TokenKind.RBRACE, "'}'");
         }
@@ -2929,6 +3027,21 @@ namespace Planc {
                             }
                         }
                         parse_block_into (ctor.body);
+                        if (ctor.body.length > 0 && ctor.body[0] is CtorChainStatement) {
+                            var ch = (CtorChainStatement) ctor.body[0];
+                            if (ctor.has_base_call || ctor.has_this_call)
+                                throw new ParseError.UNEXPECTED_TOKEN (
+                                    @"duplicate constructor chaining at $(ch.line):$(ch.column)");
+                            if (ch.is_this) {
+                                ctor.has_this_call = true;
+                                ctor.this_ctor_subname = ch.subname;
+                            } else {
+                                ctor.has_base_call = true;
+                            }
+                            foreach (var ca in ch.args)
+                                ctor.base_args.add (ca);
+                            ctor.body.remove_index (0);
+                        }
                         if (ctor_sub == "")
                             cd.ctor = ctor;
                         else
@@ -3263,7 +3376,13 @@ namespace Planc {
             while (current.kind != TokenKind.RBRACE) {
                 if (current.kind == TokenKind.EOF)
                     throw new ParseError.UNEXPECTED_TOKEN ("unterminated block");
-                stmts.add (parse_statement ());
+                var st = parse_statement ();
+                if (st is BlockStatement && !((BlockStatement) st).scoped) {
+                    foreach (var inner in ((BlockStatement) st).statements)
+                        stmts.add (inner);
+                } else {
+                    stmts.add (st);
+                }
             }
             expect (TokenKind.RBRACE, "'}'");
             return stmts;
@@ -3830,6 +3949,41 @@ namespace Planc {
                 };
                 decl.line = l;
                 decl.column = c;
+                if (current.kind == TokenKind.COMMA && (escaped || name != "var")) {
+                    var grp = new BlockStatement () { scoped = false, line = l, column = c };
+                    grp.statements.add (decl);
+                    while (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        var vl2 = current.line;
+                        var vc2 = current.column;
+                        if (current.kind != TokenKind.IDENTIFIER)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"expected a variable name at $(vl2):$(vc2)");
+                        if (is_tok_reserved (current))
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"'$(current.text)' is a keyword and cannot name a variable at $(vl2):$(vc2)");
+                        var vname2 = current.text;
+                        advance ();
+                        Expr? init2 = null;
+                        if (current.kind == TokenKind.ASSIGN) {
+                            advance ();
+                            init2 = parse_expr ();
+                        }
+                        var decl2 = new VarDeclStatement () {
+                            decl_type = dt,
+                            decl_type_name = dt_name,
+                            infer_type = false,
+                            is_weak = var_is_weak,
+                            is_unowned = var_is_unowned,
+                            name = vname2,
+                            init = init2
+                        };
+                        decl2.line = vl2;
+                        decl2.column = vc2;
+                        grp.statements.add (decl2);
+                    }
+                    return grp;
+                }
                 return decl;
             }
 
@@ -3839,11 +3993,25 @@ namespace Planc {
 
             Expr atom;
             if (!escaped && name == "this") {
+                if (current.kind == TokenKind.LPAREN) {
+                    advance ();
+                    var ch = new CtorChainStatement () { is_this = true, line = l, column = c };
+                    parse_arg_list (ch.args);
+                    expect (TokenKind.RPAREN, "')'");
+                    return ch;
+                }
                 var v = new VarRef () { name = "this" };
                 v.line = l;
                 v.column = c;
                 atom = v;
             } else if (!escaped && name == "base") {
+                if (current.kind == TokenKind.LPAREN) {
+                    advance ();
+                    var ch = new CtorChainStatement () { is_this = false, line = l, column = c };
+                    parse_arg_list (ch.args);
+                    expect (TokenKind.RPAREN, "')'");
+                    return ch;
+                }
                 expect (TokenKind.DOT, "'.'");
                 if (current.kind != TokenKind.IDENTIFIER)
                     throw new ParseError.UNEXPECTED_TOKEN (

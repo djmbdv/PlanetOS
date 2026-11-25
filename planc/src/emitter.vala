@@ -2474,6 +2474,68 @@ namespace Planc {
             ret ();
         }
 
+        // string* __planc_str_strip(string* rdi)
+        public void emit_rt_str_strip () {
+            var l_lead = new_label ();
+            var l_lead_next = new_label ();
+            var l_lead_done = new_label ();
+            var l_trail = new_label ();
+            var l_trail_next = new_label ();
+            var l_trail_done = new_label ();
+
+            // mov rcx, [rdi + 8]           48 8B 4F 08
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4F); code.u8 (0x08);
+            // xor esi, esi                 31 F6
+            code.u8 (0x31); code.u8 (0xF6);
+
+            bind (l_lead);
+            // cmp rsi, rcx                 48 39 CE
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xCE);
+            branch (BranchKind.JAE, l_lead_done);
+            // movzx eax, byte ptr [rdi + rsi + 16]   0F B6 44 37 10
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x44); code.u8 (0x37); code.u8 (0x10);
+            // cmp al, 0x20; je l_lead_next
+            code.u8 (0x3C); code.u8 (0x20);
+            branch (BranchKind.JE, l_lead_next);
+            // cmp al, 0x09; jb l_lead_done
+            code.u8 (0x3C); code.u8 (0x09);
+            branch (BranchKind.JB, l_lead_done);
+            // cmp al, 0x0D; ja l_lead_done
+            code.u8 (0x3C); code.u8 (0x0D);
+            branch (BranchKind.JA, l_lead_done);
+            bind (l_lead_next);
+            // inc rsi                      48 FF C6
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC6);
+            branch (BranchKind.JMP, l_lead);
+
+            bind (l_lead_done);
+            // mov rdx, rcx                 48 89 CA
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xCA);
+
+            bind (l_trail);
+            // cmp rdx, rsi                 48 39 F2
+            code.u8 (0x48); code.u8 (0x39); code.u8 (0xF2);
+            branch (BranchKind.JBE, l_trail_done);
+            // movzx eax, byte ptr [rdi + rdx + 15]   0F B6 44 17 0F
+            code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x44); code.u8 (0x17); code.u8 (0x0F);
+            // cmp al, 0x20; je l_trail_next
+            code.u8 (0x3C); code.u8 (0x20);
+            branch (BranchKind.JE, l_trail_next);
+            // cmp al, 0x09; jb l_trail_done
+            code.u8 (0x3C); code.u8 (0x09);
+            branch (BranchKind.JB, l_trail_done);
+            // cmp al, 0x0D; ja l_trail_done
+            code.u8 (0x3C); code.u8 (0x0D);
+            branch (BranchKind.JA, l_trail_done);
+            bind (l_trail_next);
+            // dec rdx                      48 FF CA
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xCA);
+            branch (BranchKind.JMP, l_trail);
+
+            bind (l_trail_done);
+            jmp_rel32 ("__planc_str_slice");
+        }
+
         // void* __planc_iface_lookup(void* rdi, int64 rax_iface_id)
         // Preserves rdi, rsi, rdx, rcx, r8, r9; clobbers only r10, r11, rax.
         public void emit_rt_iface_lookup () {
