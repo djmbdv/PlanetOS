@@ -883,8 +883,12 @@ namespace Planc {
         }
 
         private bool scan_expr_heap (Expr e) {
-            if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is LambdaExpr || e is YieldExpr || e is AddrOfExpr)
+            if (e is ArrayNewExpr || e is ArrayNew2Expr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is LambdaExpr || e is YieldExpr || e is AddrOfExpr)
                 return true;
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                return scan_expr_heap (ld.target) || scan_expr_heap (ld.dim);
+            }
             if (e is DerefExpr)
                 return scan_expr_heap (((DerefExpr) e).target);
             if (e is NullLiteral)
@@ -2810,6 +2814,14 @@ namespace Planc {
 
         private static bool cg_expr_modifies (Expr? e, string vname) {
             if (e == null) return false;
+            if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                return cg_expr_modifies (an2.dim0, vname) || cg_expr_modifies (an2.dim1, vname);
+            }
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                return cg_expr_modifies (ld.target, vname) || cg_expr_modifies (ld.dim, vname);
+            }
             if (e is IncDecExpr) {
                 var inc = (IncDecExpr) e;
                 return (inc.target is VarRef && ((VarRef) inc.target).name == vname) || cg_expr_modifies (inc.target, vname);
@@ -3355,6 +3367,12 @@ namespace Planc {
                 da_expr (ix.index);
             } else if (e is ArrayNewExpr) {
                 da_expr (((ArrayNewExpr) e).length_expr);
+            } else if (e is ArrayNew2Expr) {
+                da_expr (((ArrayNew2Expr) e).dim0);
+                da_expr (((ArrayNew2Expr) e).dim1);
+            } else if (e is LengthDimExpr) {
+                da_expr (((LengthDimExpr) e).target);
+                da_expr (((LengthDimExpr) e).dim);
             } else if (e is ArrayLiteralExpr) {
                 foreach (var el in ((ArrayLiteralExpr) e).elements)
                     da_expr (el);
@@ -4327,6 +4345,16 @@ namespace Planc {
                 return false;
             }
             if (e is ArrayNewExpr) return expr_escapes_var (((ArrayNewExpr) e).length_expr, vname, cd, is_this_check);
+            if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                return expr_escapes_var (an2.dim0, vname, cd, is_this_check)
+                    || expr_escapes_var (an2.dim1, vname, cd, is_this_check);
+            }
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                return expr_escapes_var (ld.target, vname, cd, is_this_check)
+                    || expr_escapes_var (ld.dim, vname, cd, is_this_check);
+            }
             if (e is ArrayLiteralExpr) {
                 var al = (ArrayLiteralExpr) e;
                 for (int i = 0; i < al.elements.length; i++) {
@@ -5215,6 +5243,19 @@ namespace Planc {
                 prepare_expr (ix.index, ref struct_temps, ref ref_temps);
             } else if (e is ArrayNewExpr) {
                 prepare_expr (((ArrayNewExpr) e).length_expr, ref struct_temps, ref ref_temps);
+            } else if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                prepare_expr (an2.dim0, ref struct_temps, ref ref_temps);
+                prepare_expr (an2.dim1, ref struct_temps, ref ref_temps);
+                an2.slot_dim0 = next_var_slot++;
+                an2.slot_dim1 = next_var_slot++;
+                an2.slot_outer = next_var_slot++;
+                an2.slot_idx = next_var_slot++;
+                an2.slot_inner = next_var_slot++;
+            } else if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                prepare_expr (ld.target, ref struct_temps, ref ref_temps);
+                prepare_expr (ld.dim, ref struct_temps, ref ref_temps);
             } else if (e is ArrayLiteralExpr) {
                 foreach (var el in ((ArrayLiteralExpr) e).elements)
                     prepare_expr (el, ref struct_temps, ref ref_temps);
@@ -5702,6 +5743,14 @@ namespace Planc {
                 fn (((DerefExpr) e).target);
             } else if (e is ArrayNewExpr) {
                 fn (((ArrayNewExpr) e).length_expr);
+            } else if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                fn (an2.dim0);
+                fn (an2.dim1);
+            } else if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                fn (ld.target);
+                fn (ld.dim);
             } else if (e is ArrayLiteralExpr) {
                 foreach (var el in ((ArrayLiteralExpr) e).elements)
                     fn (el);
@@ -5939,6 +5988,18 @@ namespace Planc {
 
         private void score_expr_weights (Expr? e, int w, GenericArray<string> names, GenericArray<int> weights) {
             if (e == null) return;
+            if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                score_expr_weights (an2.dim0, w, names, weights);
+                score_expr_weights (an2.dim1, w, names, weights);
+                return;
+            }
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                score_expr_weights (ld.target, w, names, weights);
+                score_expr_weights (ld.dim, w, names, weights);
+                return;
+            }
             if (e is VarRef) {
                 add_var_weight (names, weights, ((VarRef) e).name, w);
                 return;
@@ -6139,6 +6200,14 @@ namespace Planc {
 
         private bool expr_uses_addr_or_lambda (Expr? e) {
             if (e == null) return false;
+            if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                return expr_uses_addr_or_lambda (an2.dim0) || expr_uses_addr_or_lambda (an2.dim1);
+            }
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                return expr_uses_addr_or_lambda (ld.target) || expr_uses_addr_or_lambda (ld.dim);
+            }
             if (e is LambdaExpr || e is AddrOfExpr || e is IncDecExpr || e is VaArgExpr) return true;
             if (e is UnaryExpr) {
                 var u = (UnaryExpr) e;
@@ -7431,6 +7500,20 @@ namespace Planc {
                 et_name = "?";
         }
 
+        private static int array_rank (string tname) {
+            string raw = strip_null (tname);
+            int r = 1;
+            while (raw.has_suffix ("[]")) {
+                r++;
+                raw = raw.substring (0, raw.length - 2);
+            }
+            return r;
+        }
+
+        private static bool is_2d_array_type (string tname) {
+            return array_rank (tname) == 2;
+        }
+
         private bool type_compatible (ValaType expected, string exp_name,
                                       ValaType actual, string act_name) {
             if (actual == ValaType.NULL)
@@ -7733,7 +7816,7 @@ namespace Planc {
         }
 
         private bool is_owned_expr (Expr e) throws SemanticError {
-            if (e is ArrayNewExpr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is AddrOfExpr)
+            if (e is ArrayNewExpr || e is ArrayNew2Expr || e is ArrayLiteralExpr || e is ClassNewExpr || e is SliceExpr || e is AddrOfExpr)
                 return true;
             if (e is UnaryExpr && ((UnaryExpr) e).op == "owned")
                 return is_ref_type (expr_type (((UnaryExpr) e).operand));
@@ -8352,6 +8435,9 @@ namespace Planc {
                 ValaType ret = ValaType.INT;
                 string retn = "";
                 parse_array_elem (ttn, out ret, out retn);
+                if (is_2d_array_type (ttn))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"resize is not supported on multidimensional arrays at $(mc.line):$(mc.column)");
                 if (ret == ValaType.STRUCT)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"resize is not supported on arrays of struct elements ($(type_label (ValaType.ARRAY, ttn))) at $(mc.line):$(mc.column)");
@@ -8377,6 +8463,9 @@ namespace Planc {
                 ValaType ret = ValaType.INT;
                 string retn = "";
                 parse_array_elem (ttn, out ret, out retn);
+                if (is_2d_array_type (ttn))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"move is not supported on multidimensional arrays at $(mc.line):$(mc.column)");
                 if (ret == ValaType.STRUCT)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"move is not supported on arrays of struct elements ($(type_label (ValaType.ARRAY, ttn))) at $(mc.line):$(mc.column)");
@@ -8850,6 +8939,52 @@ namespace Planc {
                     tname = an.elem_type.label ();
                 return ValaType.ARRAY;
             }
+            if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                string d0n = "";
+                var d0 = expr_type_full (an2.dim0, out d0n);
+                if (!is_int_like (d0))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"array size must be int, got $(type_label (d0, d0n)) at $(an2.dim0.line):$(an2.dim0.column)");
+                string d1n = "";
+                var d1 = expr_type_full (an2.dim1, out d1n);
+                if (!is_int_like (d1))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"array size must be int, got $(type_label (d1, d1n)) at $(an2.dim1.line):$(an2.dim1.column)");
+                if (an2.elem_type == ValaType.STRING && an2.elem_type_name == "?")
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"multidimensional arrays of nullable string elements are not supported at $(an2.line):$(an2.column)");
+                if (an2.elem_type == ValaType.STRUCT || an2.elem_type == ValaType.ARRAY)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"multidimensional arrays of struct, delegate, or array elements are not supported at $(an2.line):$(an2.column)");
+                if (an2.elem_type == ValaType.CLASS && is_compact_type (an2.elem_type, an2.elem_type_name))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"multidimensional arrays of [Compact] class elements are not supported at $(an2.line):$(an2.column)");
+                if (an2.elem_type == ValaType.INT && an2.elem_type_name != "" && an2.elem_type_name != "int")
+                    tname = an2.elem_type_name;
+                else if (an2.elem_type == ValaType.ENUM || an2.elem_type == ValaType.CLASS
+                         || an2.elem_type == ValaType.INTERFACE
+                         || (an2.elem_type == ValaType.ERROR && an2.elem_type_name != ""))
+                    tname = an2.elem_type_name;
+                else
+                    tname = an2.elem_type.label ();
+                tname = tname + "[]";
+                return ValaType.ARRAY;
+            }
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                string tn = "";
+                var tt = expr_type_full (ld.target, out tn);
+                if (tt != ValaType.ARRAY || !is_2d_array_type (tn))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'length[d]' requires a 2-dimensional array, got $(type_label (tt, tn)) at $(ld.line):$(ld.column)");
+                string dn = "";
+                var dt = expr_type_full (ld.dim, out dn);
+                if (!is_int_like (dt))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"array dimension must be int, got $(type_label (dt, dn)) at $(ld.dim.line):$(ld.dim.column)");
+                return ValaType.INT;
+            }
             if (e is ArrayLiteralExpr) {
                 var arr = (ArrayLiteralExpr) e;
                 if (arr.is_varargs_pack) {
@@ -9220,6 +9355,9 @@ namespace Planc {
                     if (m.member != "length")
                         throw new SemanticError.UNKNOWN_MEMBER (
                             @"$(type_label (tt, tt_name)) has no member '$(m.member)' at $(m.line):$(m.column)");
+                    if (is_2d_array_type (tt_name))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'length' on a 2-dimensional array requires a dimension: use length[d] at $(m.line):$(m.column)");
                     return ValaType.INT;
                 }
                 if (tt == ValaType.CLASS) {
@@ -9622,6 +9760,9 @@ namespace Planc {
                     if (rt != ValaType.ARRAY)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"'in' requires an array or string on the right, got $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+                    if (is_2d_array_type (rt_name))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'in' is not supported on multidimensional arrays at $(b.line):$(b.column)");
                     ValaType et = ValaType.INT;
                     string etn = "";
                     parse_array_elem (rt_name, out et, out etn);
@@ -12059,6 +12200,14 @@ namespace Planc {
 
         private static bool expr_may_mutate (Expr? e) {
             if (e == null) return false;
+            if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                return expr_may_mutate (an2.dim0) || expr_may_mutate (an2.dim1);
+            }
+            if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                return expr_may_mutate (ld.target) || expr_may_mutate (ld.dim);
+            }
             if (e is CallExpr || e is MethodCallExpr || e is IncDecExpr
                 || e is ClassNewExpr || e is LambdaExpr || e is YieldExpr)
                 return true;
@@ -12624,6 +12773,112 @@ namespace Planc {
                     emitter.emit_fill_empty_strings (emitter.add_string (""));
                 if (e.ref_temp_slot >= 0)
                     emitter.store_local (e.ref_temp_slot);
+            } else if (e is ArrayNew2Expr) {
+                var an2 = (ArrayNew2Expr) e;
+                bool byte_arr = (an2.elem_type == ValaType.INT)
+                    && (an2.elem_type_name == "uint8" || an2.elem_type_name == "int8");
+                bool elem_ref = is_ref_type (an2.elem_type);
+                string d0n = "";
+                expr_type_full (an2.dim0, out d0n);
+                gen_expr (an2.dim0);
+                if (expr_type (an2.dim0) == ValaType.INT)
+                    emit_int_narrow (d0n);
+                need_bounds_panic = true;
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JL, bounds_panic_label);
+                emitter.store_local (an2.slot_dim0);
+                emit_array_len_max_check (an2.slot_dim0, (int64.MAX - 16) / 8);
+                string d1n = "";
+                expr_type_full (an2.dim1, out d1n);
+                gen_expr (an2.dim1);
+                if (expr_type (an2.dim1) == ValaType.INT)
+                    emit_int_narrow (d1n);
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JL, bounds_panic_label);
+                emitter.store_local (an2.slot_dim1);
+                emit_array_len_max_check (an2.slot_dim1, byte_arr ? (int64.MAX - 16) : ((int64.MAX - 16) / 8));
+                // outer array of row references
+                emitter.load_local (an2.slot_dim0);
+                emitter.mov_rdi_rax ();
+                emitter.shl_rdi_3 ();
+                emitter.mov_esi_imm (1);
+                call_aligned ("__planc_alloc");
+                emitter.store_local (an2.slot_outer);
+                emitter.load_local (an2.slot_outer);
+                emitter.load_local_to_rcx (an2.slot_dim0);
+                emitter.store_rax_8_rcx ();
+                emitter.zero_local (an2.slot_idx);
+                var l_rows = emitter.new_label ();
+                var l_rows_done = emitter.new_label ();
+                emitter.bind (l_rows);
+                emitter.load_local (an2.slot_dim0);
+                emitter.mov_rcx_rax ();
+                emitter.load_local (an2.slot_idx);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JAE, l_rows_done);
+                emitter.load_local (an2.slot_dim1);
+                emitter.mov_rdi_rax ();
+                if (!byte_arr)
+                    emitter.shl_rdi_3 ();
+                emitter.mov_esi_imm (elem_ref ? 1 : 0);
+                call_aligned ("__planc_alloc");
+                emitter.store_local (an2.slot_inner);
+                emitter.load_local (an2.slot_inner);
+                emitter.load_local_to_rcx (an2.slot_dim1);
+                emitter.store_rax_8_rcx ();
+                if (an2.elem_type == ValaType.STRING && an2.elem_type_name != "?") {
+                    emitter.load_local (an2.slot_inner);
+                    emitter.load_local_to_rcx (an2.slot_dim1);
+                    emitter.emit_fill_empty_strings (emitter.add_string (""));
+                }
+                emit_arr_elem_store (an2.slot_outer, an2.slot_idx, false, an2.slot_inner);
+                emitter.load_local (an2.slot_idx);
+                emitter.add_rax_imm (1);
+                emitter.store_local (an2.slot_idx);
+                emitter.branch (BranchKind.JMP, l_rows);
+                emitter.bind (l_rows_done);
+                emitter.load_local (an2.slot_outer);
+                if (e.ref_temp_slot >= 0)
+                    emitter.store_local (e.ref_temp_slot);
+            } else if (e is LengthDimExpr) {
+                var ld = (LengthDimExpr) e;
+                string tn = "";
+                var tt = expr_type_full (ld.target, out tn);
+                gen_expr (ld.target);
+                emit_null_check_if_nullable (tt, tn);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (ld.dim);
+                emitter.mov_rcx_rax (); // rcx = dim
+                emitter.mov_rax_rcx ();
+                emitter.test_rax_rax ();
+                need_bounds_panic = true;
+                emitter.branch (BranchKind.JS, bounds_panic_label);
+                emitter.mov_rax_imm (1);
+                emitter.cmp_rax_rcx ();
+                var l_dim1 = emitter.new_label ();
+                var l_dim_done = emitter.new_label ();
+                emitter.branch (BranchKind.JL, bounds_panic_label); // dim > 1
+                emitter.branch (BranchKind.JE, l_dim1);
+                emitter.pop_reg (Reg.RAX);
+                push_depth--;
+                emitter.load_rax_disp (8);
+                emitter.branch (BranchKind.JMP, l_dim_done);
+                emitter.bind (l_dim1);
+                emitter.pop_reg (Reg.RAX);
+                push_depth--;
+                emitter.push_rax ();
+                push_depth++;
+                emitter.load_rax_disp (8); // rows
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JE, bounds_panic_label);
+                emitter.pop_reg (Reg.RAX);
+                push_depth--;
+                emitter.load_rax_disp (16); // first row
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JE, bounds_panic_label);
+                emitter.load_rax_disp (8); // columns
+                emitter.bind (l_dim_done);
             } else if (e is ArrayLiteralExpr) {
                 var arr = (ArrayLiteralExpr) e;
                 var n = arr.elements.length;
@@ -14310,6 +14565,13 @@ namespace Planc {
                 emitter.store_byte_rax_rcx_16_dl ();
             else
                 emitter.store_qword_rax_rcx_16_rdx ();
+        }
+
+        private void emit_array_len_max_check (int slot, int64 max_n) {
+            emitter.load_local_to_rcx (slot);
+            emitter.mov_rax_imm (max_n);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JB, bounds_panic_label);
         }
 
         private void gen_arr_resize (MethodCallExpr mc) throws SemanticError {

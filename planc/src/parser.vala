@@ -248,6 +248,36 @@ namespace Planc {
                                                    t == ValaType.INTERFACE, is_del_tmpl);
         }
 
+        private string array_elem_type_name (ValaType t, string tname) {
+            if (t == ValaType.INT) {
+                if (last_parsed_type_token == "uint8" || last_parsed_type_token == "uchar"
+                    || last_parsed_type_token == "char")
+                    return "uint8";
+                if (last_parsed_type_token == "int8")
+                    return "int8";
+                if (is_int_type_name (last_parsed_type_token))
+                    return last_parsed_type_token;
+                return t.label ();
+            }
+            return (t == ValaType.ENUM || t == ValaType.CLASS || t == ValaType.INTERFACE
+                    || t == ValaType.ERROR || t == ValaType.TYPE_PARAM
+                    || t == ValaType.STRUCT) ? tname : t.label ();
+        }
+
+        private bool looks_like_array_suffix () {
+            if (current.kind != TokenKind.LBRACKET)
+                return false;
+            var lx = lexer.clone_state ();
+            var t = lx.next ();
+            if (t.kind == TokenKind.RBRACKET)
+                return true;
+            if (t.kind != TokenKind.COMMA)
+                return false;
+            while (t.kind == TokenKind.COMMA)
+                t = lx.next ();
+            return t.kind == TokenKind.RBRACKET;
+        }
+
         private void parse_type_suffix (ref ValaType t, ref string tname)
                 throws ParseError, LexError {
             if (pending_gt == 0 && (t == ValaType.CLASS || t == ValaType.STRUCT || t == ValaType.INTERFACE)
@@ -270,26 +300,41 @@ namespace Planc {
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"unsupported array element type at $(current.line):$(current.column)");
                 advance ();
+                if (current.kind == TokenKind.COMMA) {
+                    int extra = 0;
+                    while (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        extra++;
+                    }
+                    expect (TokenKind.RBRACKET, "']'");
+                    if (extra > 1)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"only 2-dimensional arrays are supported at $(current.line):$(current.column)");
+                    if (t == ValaType.ARRAY)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"multidimensional arrays of arrays are not supported at $(current.line):$(current.column)");
+                    if (t == ValaType.STRUCT)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"multidimensional arrays of struct/delegate elements are not supported at $(current.line):$(current.column)");
+                    if (t == ValaType.STRING && tname == "?")
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"multidimensional arrays of nullable string elements are not supported at $(current.line):$(current.column)");
+                    if (t == ValaType.CLASS) {
+                        unowned var mcd = types_prog.find_class (tname);
+                        if (mcd != null && mcd.is_compact)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"multidimensional arrays of [Compact] class elements are not supported at $(current.line):$(current.column)");
+                    }
+                    tname = array_elem_type_name (t, tname) + "[]";
+                    t = ValaType.ARRAY;
+                    continue;
+                }
                 expect (TokenKind.RBRACKET, "']'");
                 if (t == ValaType.ARRAY) {
                     tname = tname + "[]";
                     continue;
                 }
-                if (t == ValaType.INT) {
-                    if (last_parsed_type_token == "uint8" || last_parsed_type_token == "uchar"
-                        || last_parsed_type_token == "char")
-                        tname = "uint8";
-                    else if (last_parsed_type_token == "int8")
-                        tname = "int8";
-                    else if (is_int_type_name (last_parsed_type_token))
-                        tname = last_parsed_type_token;
-                    else
-                        tname = t.label ();
-                } else {
-                    tname = (t == ValaType.ENUM || t == ValaType.CLASS || t == ValaType.INTERFACE
-                             || t == ValaType.ERROR || t == ValaType.TYPE_PARAM
-                             || t == ValaType.STRUCT) ? tname : t.label ();
-                }
+                tname = array_elem_type_name (t, tname);
                 t = ValaType.ARRAY;
             }
             while (current.kind == TokenKind.STAR) {
@@ -3924,7 +3969,7 @@ namespace Planc {
                                          && current.kind == TokenKind.QUESTION)
                                      || ((dt == ValaType.CLASS || dt == ValaType.STRUCT || dt == ValaType.INTERFACE)
                                          && current.kind == TokenKind.LT)
-                                     || (current.kind == TokenKind.LBRACKET && lexer.clone_state ().next ().kind == TokenKind.RBRACKET)
+                                     || looks_like_array_suffix ()
                                      || current.kind == TokenKind.STAR);
 
             if (is_builtin_var || is_named_type) {
@@ -4537,8 +4582,38 @@ namespace Planc {
                     mc.column = c;
                     e = mc;
                 } else {
+                    if (e is MemberAccessExpr && ((MemberAccessExpr) e).member == "length"
+                        && !((MemberAccessExpr) e).is_null_cond) {
+                        advance (); // '['
+                        var dim_e = parse_expr ();
+                        expect (TokenKind.RBRACKET, "']'");
+                        var ld = new LengthDimExpr () {
+                            target = ((MemberAccessExpr) e).target,
+                            dim = dim_e
+                        };
+                        ld.line = l;
+                        ld.column = c;
+                        e = ld;
+                        continue;
+                    }
                     advance (); // '['
                     var idx = parse_expr ();
+                    if (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        var idx2 = parse_expr ();
+                        if (current.kind == TokenKind.COMMA)
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"only 2-dimensional indexing is supported at $(current.line):$(current.column)");
+                        expect (TokenKind.RBRACKET, "']'");
+                        var ix1 = new IndexExpr () { target = e, index = idx };
+                        ix1.line = l;
+                        ix1.column = c;
+                        var ix2 = new IndexExpr () { target = ix1, index = idx2 };
+                        ix2.line = l;
+                        ix2.column = c;
+                        e = ix2;
+                        continue;
+                    }
                     if (current.kind == TokenKind.COLON) {
                         advance ();
                         var end_idx = parse_expr ();
@@ -4958,6 +5033,32 @@ namespace Planc {
                             return arr;
                         }
                         var len_expr = parse_expr ();
+                        if (current.kind == TokenKind.COMMA) {
+                            advance ();
+                            var len2 = parse_expr ();
+                            if (current.kind == TokenKind.COMMA)
+                                throw new ParseError.UNEXPECTED_TOKEN (
+                                    @"only 2-dimensional arrays are supported at $l:$c");
+                            expect (TokenKind.RBRACKET, "']'");
+                            if (et == ValaType.STRUCT || et == ValaType.ARRAY)
+                                throw new ParseError.UNEXPECTED_TOKEN (
+                                    @"multidimensional arrays of struct, delegate, or array elements are not supported at $l:$c");
+                            if (et == ValaType.CLASS) {
+                                unowned var mcd = types_prog.find_class (et_name);
+                                if (mcd != null && mcd.is_compact)
+                                    throw new ParseError.UNEXPECTED_TOKEN (
+                                        @"multidimensional arrays of [Compact] class elements are not supported at $l:$c");
+                            }
+                            var an2 = new ArrayNew2Expr () {
+                                elem_type = et,
+                                elem_type_name = et_name,
+                                dim0 = len_expr,
+                                dim1 = len2
+                            };
+                            an2.line = l;
+                            an2.column = c;
+                            return an2;
+                        }
                         expect (TokenKind.RBRACKET, "']'");
                         var an = new ArrayNewExpr () {
                             elem_type = et,
@@ -5177,6 +5278,12 @@ namespace Planc {
                 rebase_expr (ix.index, line, col);
             } else if (e is ArrayNewExpr) {
                 rebase_expr (((ArrayNewExpr) e).length_expr, line, col);
+            } else if (e is ArrayNew2Expr) {
+                rebase_expr (((ArrayNew2Expr) e).dim0, line, col);
+                rebase_expr (((ArrayNew2Expr) e).dim1, line, col);
+            } else if (e is LengthDimExpr) {
+                rebase_expr (((LengthDimExpr) e).target, line, col);
+                rebase_expr (((LengthDimExpr) e).dim, line, col);
             } else if (e is ArrayLiteralExpr) {
                 foreach (var el in ((ArrayLiteralExpr) e).elements)
                     rebase_expr (el, line, col);

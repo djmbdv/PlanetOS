@@ -116,6 +116,27 @@ namespace Planc {
         public Expr length_expr { get; set; }
     }
 
+    // `new T[rows, cols]`, lowered to a jagged array of rows. Each row is an
+    // independent `T[]`, so every dimension keeps its own bounds check and no
+    // index multiplication can overflow.
+    public class ArrayNew2Expr : Expr {
+        public ValaType elem_type { get; set; }
+        public string elem_type_name { get; set; default = ""; }
+        public Expr dim0 { get; set; }
+        public Expr dim1 { get; set; }
+        public int slot_dim0 { get; set; default = -1; }
+        public int slot_dim1 { get; set; default = -1; }
+        public int slot_outer { get; set; default = -1; }
+        public int slot_idx { get; set; default = -1; }
+        public int slot_inner { get; set; default = -1; }
+    }
+
+    // `a.length[d]` on a 2-dimensional array.
+    public class LengthDimExpr : Expr {
+        public Expr target { get; set; }
+        public Expr dim { get; set; }
+    }
+
     public class ArrayLiteralExpr : Expr {
         public GenericArray<Expr> elements { get; private set; }
         public ValaType elem_type { get; set; default = ValaType.INT; }
