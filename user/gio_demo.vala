@@ -953,6 +953,31 @@ namespace GioDemo {
         } catch (IOError e) {
             check ("gio-udp-dgram", false);
         }
+
+        // C3.3: TcpConnection + graceful_disconnect + Socket.shutdown
+        try {
+            var listener = new SocketListener ();
+            uint16 tport = listener.add_any_inet_port ();
+
+            var tcli = new SocketClient ();
+            tcli.protocol = SocketProtocol.TCP;
+            var tc = tcli.connect_to_host (@"127.0.0.1:$tport", tport);
+            Object? sobj = null;
+            var ts = listener.accept (out sobj);
+            var ts_sock = ts.get_socket ();
+            ts_sock.shutdown (false, true);
+            bool close_ok = tc.close () && ts.close ();
+
+            var direct_sock = new Socket (SocketFamily.IPV4, SocketType.STREAM, SocketProtocol.TCP);
+            var direct_tcp = new TcpConnection (direct_sock);
+            direct_tcp.set_graceful_disconnect (true);
+            bool gd_ok = direct_tcp.get_graceful_disconnect () && direct_tcp.graceful_disconnect;
+            direct_tcp.close ();
+            listener.close ();
+            check ("gio-tcp-connection", gd_ok && close_ok && tc.is_closed ());
+        } catch (IOError e) {
+            check ("gio-tcp-connection", false);
+        }
     }
 
     private void demo_regex () {

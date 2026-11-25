@@ -40,14 +40,14 @@ static int udp_checksum (PlanetGrant g, uint8[] src_ip, uint8[] dst_ip, int udp_
 }
 
 static void write_eth_ipv4 (PlanetGrant g, int off, uint8[] dst_mac, uint8[] src_mac,
-                            uint8[] src_ip, uint8[] dst_ip, int proto, int l4_len, int ip_id) throws IOError {
+                            uint8[] src_ip, uint8[] dst_ip, int proto, int l4_len, int ip_id, int tos = 0) throws IOError {
     for (int i = 0; i < 6; i++) g.put_u8 (off + i, dst_mac[i]);
     for (int i = 0; i < 6; i++) g.put_u8 (off + 6 + i, src_mac[i]);
     g.put_be16 (off + 12, 0x0800);
 
     int ip_off = off + 14;
     g.put_u8 (ip_off + 0, 0x45);
-    g.put_u8 (ip_off + 1, 0);
+    g.put_u8 (ip_off + 1, tos & 0xFF);
     g.put_be16 (ip_off + 2, 20 + l4_len);
     g.put_be16 (ip_off + 4, ip_id);
     g.put_be16 (ip_off + 6, 0x4000);
@@ -219,6 +219,359 @@ static bool dns_parse_reply (PlanetGrant g, int off, int len, int expect_txid,
         pos += rdlen;
     }
     return true;
+}
+
+// --- Plan 9 tcp.c-inspired TCP engine (RACK-TLP + BBR/Copa pacing + ECN) ---
+const int TCP_CLOSED      = 0;
+const int TCP_LISTEN      = 1;
+const int TCP_SYN_SENT    = 2;
+const int TCP_SYN_RCVD    = 3;
+const int TCP_ESTABLISHED = 4;
+const int TCP_FIN_WAIT_1  = 5;
+const int TCP_FIN_WAIT_2  = 6;
+const int TCP_CLOSING     = 7;
+const int TCP_TIME_WAIT   = 8;
+const int TCP_CLOSE_WAIT  = 9;
+const int TCP_LAST_ACK    = 10;
+
+const int TCP_F_FIN = 0x01;
+const int TCP_F_SYN = 0x02;
+const int TCP_F_RST = 0x04;
+const int TCP_F_PSH = 0x08;
+const int TCP_F_ACK = 0x10;
+const int TCP_F_ECE = 0x40;
+const int TCP_F_CWR = 0x80;
+
+const int TCP_MSS = 1460;
+const int TCP_MAX_FLIGHT = 16;
+
+static uint32 seq_u32 (int v) {
+    return (uint32) v;
+}
+
+static bool seq_lt (uint32 a, uint32 b) {
+    return ((a - b) & 0x80000000U) != 0;
+}
+
+static bool seq_leq (uint32 a, uint32 b) {
+    return a == b || seq_lt (a, b);
+}
+
+static int tcp_checksum (PlanetGrant g, uint8[] src_ip, uint8[] dst_ip, int tcp_off, int tcp_len) throws IOError {
+    int sum = 0;
+    sum += ((int) src_ip[0] << 8) | (int) src_ip[1];
+    sum += ((int) src_ip[2] << 8) | (int) src_ip[3];
+    sum += ((int) dst_ip[0] << 8) | (int) dst_ip[1];
+    sum += ((int) dst_ip[2] << 8) | (int) dst_ip[3];
+    sum += 6; // IPPROTO_TCP
+    sum += tcp_len;
+    int i = 0;
+    while (i + 1 < tcp_len) {
+        sum += g.get_be16 (tcp_off + i);
+        i += 2;
+    }
+    if (i < tcp_len)
+        sum += g.get_u8 (tcp_off + i) << 8;
+    while ((sum >> 16) != 0)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    return (~sum) & 0xFFFF;
+}
+
+class TcpConn : Object {
+    public int state = TCP_CLOSED;
+    public int local_port = 0;
+    public int remote_port = 0;
+    public uint8[] local_ip;
+    public uint8[] remote_ip;
+    public uint8[] local_mac;
+    public uint8[] remote_mac;
+
+    // Sequence space (RFC 793 / Plan 9 tcp.c)
+    public uint32 snd_una = 0;
+    public uint32 snd_nxt = 0;
+    public uint32 snd_wnd = 65535;
+    public uint32 rcv_nxt = 0;
+    public uint32 rcv_wnd = 16384;
+    public int mss = TCP_MSS;
+
+    // Karn/Jacobson RTT + BBR/Copa-style latency/bw model
+    public int srtt_ticks = 2;
+    public int rttvar_ticks = 1;
+    public int min_rtt_ticks = 999999;
+    public int delivered_bytes = 0;
+    public int bw_bytes_per_tick = 1460;
+    public int cwnd = TCP_MSS * 4;
+    public int last_xmit_tick = 0;
+
+    // ECN (L4S-ready)
+    public bool ecn_enabled = true;
+    public bool ece_echo = false;
+    public bool cwr_pending = false;
+    public int ecn_reductions = 0;
+
+    // RACK-TLP in-flight segment table (fixed size, 0 heap alloc per packet)
+    private uint32[] seg_seq = new uint32[TCP_MAX_FLIGHT];
+    private int[] seg_len = new int[TCP_MAX_FLIGHT];
+    private int[] seg_xmit_tick = new int[TCP_MAX_FLIGHT];
+    private bool[] seg_retrans = new bool[TCP_MAX_FLIGHT];
+    private bool[] seg_active = new bool[TCP_MAX_FLIGHT];
+    private uint8[] rx_buf = new uint8[4096];
+    public int rx_len = 0;
+    public int rack_retrans_count = 0;
+    public int tlp_probes = 0;
+    private int ip_id = 0x2000;
+
+    public TcpConn (uint8[] lip, uint8[] lmac, int lport) {
+        this.local_ip = lip;
+        this.local_mac = lmac;
+        this.local_port = lport;
+        this.remote_ip = new uint8[4];
+        this.remote_mac = new uint8[6];
+    }
+
+    private void record_flight (uint32 seq, int len, int now_tick, bool is_retrans) {
+        for (int i = 0; i < TCP_MAX_FLIGHT; i++) {
+            if (!seg_active[i]) {
+                seg_seq[i] = seq;
+                seg_len[i] = len;
+                seg_xmit_tick[i] = now_tick;
+                seg_retrans[i] = is_retrans;
+                seg_active[i] = true;
+                return;
+            }
+        }
+    }
+
+    private void update_rtt_and_bw (int sample_ticks, int acked_bytes) {
+        if (sample_ticks < 0)
+            sample_ticks = 0;
+        if (sample_ticks < min_rtt_ticks)
+            min_rtt_ticks = sample_ticks;
+        int err = sample_ticks - srtt_ticks;
+        if (err < 0) err = -err;
+        rttvar_ticks = (3 * rttvar_ticks + err) / 4;
+        srtt_ticks = (7 * srtt_ticks + sample_ticks) / 8;
+        if (srtt_ticks < 1)
+            srtt_ticks = 1;
+        delivered_bytes += acked_bytes;
+        int denom = (sample_ticks > 0) ? sample_ticks : 1;
+        int inst_bw = acked_bytes / denom;
+        if (inst_bw > bw_bytes_per_tick)
+            bw_bytes_per_tick = inst_bw;
+        // BBR-inspired target cwnd = max(2*MSS, BDP * 5/4)
+        int bdp = bw_bytes_per_tick * ((min_rtt_ticks < 999999 && min_rtt_ticks > 0) ? min_rtt_ticks : 1);
+        int target = (bdp * 5) / 4;
+        if (target < mss * 2)
+            target = mss * 2;
+        if (!ece_echo && cwnd < target)
+            cwnd = target;
+    }
+
+    public int emit_segment (PlanetGrant g, int tx_off, int flags, uint8[]? payload, int now_tick, bool is_retrans = false) throws IOError {
+        int opt_len = ((flags & TCP_F_SYN) != 0) ? 4 : 0;
+        int hdr_len = 20 + opt_len;
+        int plen = (payload != null) ? ((!) payload).length : 0;
+        int tcp_len = hdr_len + plen;
+
+        int f = flags;
+        if (ece_echo && (f & TCP_F_ACK) != 0)
+            f |= TCP_F_ECE;
+        if (cwr_pending && plen > 0) {
+            f |= TCP_F_CWR;
+            cwr_pending = false;
+        }
+        int tos = (ecn_enabled && plen > 0) ? 0x02 : 0x00; // ECT(0)
+        write_eth_ipv4 (g, tx_off, remote_mac, local_mac, local_ip, remote_ip, 6, tcp_len, ip_id++, tos);
+
+        int toff = tx_off + 34;
+        g.put_be16 (toff + 0, local_port);
+        g.put_be16 (toff + 2, remote_port);
+        g.put_be16 (toff + 4, (int) ((snd_nxt >> 16) & 0xFFFF));
+        g.put_be16 (toff + 6, (int) (snd_nxt & 0xFFFF));
+        g.put_be16 (toff + 8, (int) ((rcv_nxt >> 16) & 0xFFFF));
+        g.put_be16 (toff + 10, (int) (rcv_nxt & 0xFFFF));
+        g.put_u8 (toff + 12, (hdr_len / 4) << 4);
+        g.put_u8 (toff + 13, f & 0xFF);
+        g.put_be16 (toff + 14, (int) (rcv_wnd & 0xFFFF));
+        g.put_be16 (toff + 16, 0);
+        g.put_be16 (toff + 18, 0);
+        if (opt_len == 4) {
+            // MSS option (Kind=2, Len=4, MSS=1460)
+            g.put_u8 (toff + 20, 2);
+            g.put_u8 (toff + 21, 4);
+            g.put_be16 (toff + 22, mss);
+        }
+        if (payload != null) {
+            var p = (!) payload;
+            for (int i = 0; i < plen; i++)
+                g.put_u8 (toff + hdr_len + i, p[i]);
+        }
+        g.put_be16 (toff + 16, tcp_checksum (g, local_ip, remote_ip, toff, tcp_len));
+
+        int seq_advance = plen;
+        if ((flags & TCP_F_SYN) != 0) seq_advance++;
+        if ((flags & TCP_F_FIN) != 0) seq_advance++;
+        if (!is_retrans && seq_advance > 0) {
+            record_flight (snd_nxt, plen, now_tick, false);
+            snd_nxt = snd_nxt + (uint32) seq_advance;
+        }
+        last_xmit_tick = now_tick;
+        return 14 + 20 + tcp_len;
+    }
+
+    public int connect_syn (PlanetGrant g, int tx_off, uint8[] rip, uint8[] rmac, int rport, int now_tick) throws IOError {
+        for (int i = 0; i < 4; i++) remote_ip[i] = rip[i];
+        for (int i = 0; i < 6; i++) remote_mac[i] = rmac[i];
+        remote_port = rport;
+        snd_una = 0x10001000U;
+        snd_nxt = snd_una;
+        state = TCP_SYN_SENT;
+        return emit_segment (g, tx_off, TCP_F_SYN, null, now_tick);
+    }
+
+    public void listen () {
+        state = TCP_LISTEN;
+    }
+
+    public int input (PlanetGrant g, int rx_off, int rx_len_frame, int tx_off, int now_tick) throws IOError {
+        if (rx_len_frame < 54 || g.get_be16 (rx_off + 12) != 0x0800 || g.get_u8 (rx_off + 23) != 6)
+            return 0;
+        int ip_tos = g.get_u8 (rx_off + 15);
+        int ip_tot = g.get_be16 (rx_off + 16);
+        int ihl = (g.get_u8 (rx_off + 14) & 0x0F) * 4;
+        int toff = rx_off + 14 + ihl;
+        int tcp_len = ip_tot - ihl;
+        if (tcp_len < 20 || 14 + ihl + tcp_len > rx_len_frame)
+            return 0;
+
+        int sp = g.get_be16 (toff + 0);
+        int dp = g.get_be16 (toff + 2);
+        if (dp != local_port)
+            return 0;
+
+        // ECN Congestion Experienced (CE = 0b11) on incoming IPv4 packet
+        if ((ip_tos & 0x03) == 0x03)
+            ece_echo = true;
+
+        uint32 seg_seq_num = ((uint32) g.get_be16 (toff + 4) << 16) | (uint32) g.get_be16 (toff + 6);
+        uint32 seg_ack_num = ((uint32) g.get_be16 (toff + 8) << 16) | (uint32) g.get_be16 (toff + 10);
+        int data_off = ((g.get_u8 (toff + 12) >> 4) & 0x0F) * 4;
+        int flags = g.get_u8 (toff + 13);
+        int plen = tcp_len - data_off;
+        if (data_off < 20 || plen < 0)
+            return 0;
+
+        if (state == TCP_LISTEN && (flags & TCP_F_SYN) != 0) {
+            for (int i = 0; i < 4; i++) remote_ip[i] = (uint8) g.get_u8 (rx_off + 26 + i);
+            for (int i = 0; i < 6; i++) remote_mac[i] = (uint8) g.get_u8 (rx_off + 6 + i);
+            remote_port = sp;
+            rcv_nxt = seg_seq_num + 1U;
+            snd_una = 0x20002000U;
+            snd_nxt = snd_una;
+            state = TCP_SYN_RCVD;
+            return emit_segment (g, tx_off, TCP_F_SYN | TCP_F_ACK, null, now_tick);
+        }
+
+        if (state == TCP_SYN_SENT && (flags & (TCP_F_SYN | TCP_F_ACK)) == (TCP_F_SYN | TCP_F_ACK)) {
+            if (seg_ack_num == snd_nxt) {
+                snd_una = seg_ack_num;
+                rcv_nxt = seg_seq_num + 1U;
+                state = TCP_ESTABLISHED;
+                return emit_segment (g, tx_off, TCP_F_ACK, null, now_tick);
+            }
+            return 0;
+        }
+
+        if ((flags & TCP_F_ACK) != 0) {
+            if (seq_lt (snd_una, seg_ack_num) && seq_leq (seg_ack_num, snd_nxt)) {
+                int acked = (int) (seg_ack_num - snd_una);
+                snd_una = seg_ack_num;
+                for (int i = 0; i < TCP_MAX_FLIGHT; i++) {
+                    if (seg_active[i] && seq_leq (seg_seq[i] + (uint32) seg_len[i], seg_ack_num)) {
+                        if (!seg_retrans[i])
+                            update_rtt_and_bw (now_tick - seg_xmit_tick[i], acked);
+                        seg_active[i] = false;
+                    }
+                }
+            }
+            if ((flags & TCP_F_ECE) != 0) {
+                // ECN-Echo received: smooth multiplicative decrease + arm CWR
+                int reduced = (cwnd * 3) / 4;
+                cwnd = (reduced > mss * 2) ? reduced : (mss * 2);
+                cwr_pending = true;
+                ecn_reductions++;
+            }
+            if ((flags & TCP_F_CWR) != 0)
+                ece_echo = false;
+        }
+
+        if (state == TCP_SYN_RCVD && (flags & TCP_F_ACK) != 0 && snd_una == snd_nxt) {
+            state = TCP_ESTABLISHED;
+        }
+
+        bool need_ack = false;
+        if (plen > 0 && seg_seq_num == rcv_nxt) {
+            for (int i = 0; i < plen && rx_len < rx_buf.length; i++)
+                rx_buf[rx_len++] = (uint8) g.get_u8 (toff + data_off + i);
+            rcv_nxt = rcv_nxt + (uint32) plen;
+            need_ack = true;
+        }
+
+        if ((flags & TCP_F_FIN) != 0) {
+            rcv_nxt = rcv_nxt + 1U;
+            if (state == TCP_ESTABLISHED) {
+                state = TCP_CLOSE_WAIT;
+                return emit_segment (g, tx_off, TCP_F_ACK, null, now_tick);
+            } else if (state == TCP_FIN_WAIT_1) {
+                state = (snd_una == snd_nxt) ? TCP_TIME_WAIT : TCP_CLOSING;
+                return emit_segment (g, tx_off, TCP_F_ACK, null, now_tick);
+            } else if (state == TCP_FIN_WAIT_2) {
+                state = TCP_TIME_WAIT;
+                return emit_segment (g, tx_off, TCP_F_ACK, null, now_tick);
+            }
+        }
+
+        if (state == TCP_FIN_WAIT_1 && snd_una == snd_nxt)
+            state = TCP_FIN_WAIT_2;
+        if (state == TCP_LAST_ACK && snd_una == snd_nxt)
+            state = TCP_CLOSED;
+
+        if (need_ack)
+            return emit_segment (g, tx_off, TCP_F_ACK, null, now_tick);
+        return 0;
+    }
+
+    // RACK-TLP (RFC 8985): time-based loss detection + Tail Loss Probe
+    public int check_rack_tlp (PlanetGrant g, int tx_off, uint8[]? retrans_payload, int now_tick) throws IOError {
+        int reorder_win = (srtt_ticks > 1) ? srtt_ticks : 1;
+        for (int i = 0; i < TCP_MAX_FLIGHT; i++) {
+            if (seg_active[i] && !seg_retrans[i] && (now_tick - seg_xmit_tick[i]) >= (srtt_ticks + reorder_win)) {
+                seg_retrans[i] = true;
+                seg_xmit_tick[i] = now_tick;
+                rack_retrans_count++;
+                uint32 saved_nxt = snd_nxt;
+                snd_nxt = seg_seq[i];
+                int fl = emit_segment (g, tx_off, TCP_F_ACK | TCP_F_PSH, retrans_payload, now_tick, true);
+                snd_nxt = saved_nxt;
+                return fl;
+            }
+        }
+        int pto = (srtt_ticks * 2 > 2) ? (srtt_ticks * 2) : 2;
+        if (seq_lt (snd_una, snd_nxt) && (now_tick - last_xmit_tick) >= pto) {
+            tlp_probes++;
+            last_xmit_tick = now_tick;
+            return emit_segment (g, tx_off, TCP_F_ACK, null, now_tick, true);
+        }
+        return 0;
+    }
+
+    public int close_fin (PlanetGrant g, int tx_off, int now_tick) throws IOError {
+        if (state == TCP_ESTABLISHED)
+            state = TCP_FIN_WAIT_1;
+        else if (state == TCP_CLOSE_WAIT)
+            state = TCP_LAST_ACK;
+        return emit_segment (g, tx_off, TCP_F_FIN | TCP_F_ACK, null, now_tick);
+    }
 }
 
 static string fmt_mac (uint8[] mac) {
@@ -415,12 +768,68 @@ static int main (string[] args) {
         }
     }
 
+    // 5. C3.3 TCP engine verification (Plan 9 state machine + RACK-TLP + BBR pacing + ECN)
+    bool tcp_ok = false;
+    try {
+        var tcp_g = PlanetGrant.allocate (1);
+        int buf_a = 0;
+        int buf_b = 2048;
+        var cli = new TcpConn (lip, mac, 41000);
+        var srv = new TcpConn (lip, mac, 8080);
+        srv.listen ();
+        int t0 = Sys.ticks ();
+
+        // 3-way handshake: SYN -> SYN|ACK -> ACK
+        int l1 = cli.connect_syn (tcp_g, buf_a, lip, mac, 8080, t0);
+        int l2 = srv.input (tcp_g, buf_a, l1, buf_b, t0);
+        int l3 = cli.input (tcp_g, buf_b, l2, buf_a, t0 + 1);
+        srv.input (tcp_g, buf_a, l3, buf_b, t0 + 1);
+        bool hs_ok = (cli.state == TCP_ESTABLISHED && srv.state == TCP_ESTABLISHED);
+
+        // Data transfer with ECN CE simulation -> ECE -> CWR
+        uint8[] payload = { (uint8) 't', (uint8) 'c', (uint8) 'p', (uint8) '!' };
+        int ld = cli.emit_segment (tcp_g, buf_a, TCP_F_ACK | TCP_F_PSH, payload, t0 + 1);
+        // Simulate router marking CE (0b11) in IPv4 ToS byte
+        tcp_g.put_u8 (buf_a + 15, tcp_g.get_u8 (buf_a + 15) | 0x03);
+        int lack = srv.input (tcp_g, buf_a, ld, buf_b, t0 + 2);
+        cli.input (tcp_g, buf_b, lack, buf_a, t0 + 2);
+        bool ecn_ok = (cli.ecn_reductions == 1 && cli.cwr_pending);
+
+        // Simulated packet drop -> RACK-TLP time-based retransmission
+        uint8[] lost_seg = { (uint8) 'r', (uint8) 'a', (uint8) 'c', (uint8) 'k' };
+        cli.emit_segment (tcp_g, buf_a, TCP_F_ACK | TCP_F_PSH, lost_seg, t0 + 2);
+        int lrack = cli.check_rack_tlp (tcp_g, buf_a, lost_seg, t0 + 20);
+        if (lrack > 0) {
+            int lack2 = srv.input (tcp_g, buf_a, lrack, buf_b, t0 + 20);
+            cli.input (tcp_g, buf_b, lack2, buf_a, t0 + 21);
+        }
+        bool rack_ok = (cli.rack_retrans_count == 1 && srv.rx_len == 8);
+
+        // Graceful FIN teardown
+        int lf1 = cli.close_fin (tcp_g, buf_a, t0 + 22);
+        int lf2 = srv.input (tcp_g, buf_a, lf1, buf_b, t0 + 22);
+        cli.input (tcp_g, buf_b, lf2, buf_a, t0 + 22);
+        int lf3 = srv.close_fin (tcp_g, buf_b, t0 + 23);
+        int lf4 = cli.input (tcp_g, buf_b, lf3, buf_a, t0 + 23);
+        srv.input (tcp_g, buf_a, lf4, buf_b, t0 + 23);
+        bool fin_ok = (cli.state == TCP_TIME_WAIT && srv.state == TCP_CLOSED);
+
+        tcp_ok = hs_ok && ecn_ok && rack_ok && fin_ok;
+        if (tcp_ok)
+            print (@"mercury:tcp=ok mss=$(cli.mss) rack=$(cli.rack_retrans_count) ecn=$(cli.ecn_reductions)\n");
+        tcp_g.release ();
+    } catch (IOError e) {
+        tcp_ok = false;
+    }
+    if (!tcp_ok)
+        print ("mercury:tcp=FAIL\n");
+
     arena.release_lease (tx_lease);
     arena.release_lease (rx_lease);
     arena.close ();
     ring.close ();
 
-    int ok_flag = (arp_ok && icmp_ok && udp_ok) ? 1 : 0;
+    int ok_flag = (arp_ok && icmp_ok && udp_ok && tcp_ok) ? 1 : 0;
     print (@"mercury:summary ok=$ok_flag\n");
     return (ok_flag == 1) ? 0 : 1;
 }

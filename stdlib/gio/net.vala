@@ -294,6 +294,20 @@ namespace Gio {
         private int head = 0;
         private int tail = 0;
         private int[] _lock = new int[1];
+        public bool write_closed = false;
+
+        public void close_write () {
+            __planc_host_spin_lock (_lock);
+            write_closed = true;
+            __planc_host_spin_unlock (_lock);
+        }
+
+        public bool is_eof () {
+            __planc_host_spin_lock (_lock);
+            bool eof = write_closed && (head == tail);
+            __planc_host_spin_unlock (_lock);
+            return eof;
+        }
 
         public int available () {
             __planc_host_spin_lock (_lock);
@@ -616,6 +630,22 @@ namespace Gio {
             return new MemoryOutputStream ();
         }
 
+        public bool shutdown (bool shutdown_read, bool shutdown_write) throws IOError {
+            if (closed)
+                throw new IOError.CLOSED ("Socket is closed");
+            if (shutdown_write && tx_pipe != null)
+                ((!) tx_pipe).close_write ();
+            if (shutdown_read && rx_pipe != null)
+                ((!) rx_pipe).close_write ();
+            return true;
+        }
+
+        public bool is_rx_eof () {
+            if (closed)
+                return true;
+            return (rx_pipe != null) ? ((!) rx_pipe).is_eof () : true;
+        }
+
         public bool close () throws IOError {
             if (closed)
                 return true;
@@ -646,6 +676,45 @@ namespace Gio {
         }
     }
 
+    /**
+     * TCP socket connection (GLib.TcpConnection) with graceful-disconnect (FIN/half-close).
+     */
+    public class TcpConnection : SocketConnection {
+        public bool graceful_disconnect { get; set; default = false; }
+
+        public TcpConnection (Socket socket, InputStream? ins = null, OutputStream? outs = null)
+            : base (socket, ins, outs) {
+        }
+
+        public bool get_graceful_disconnect () {
+            return graceful_disconnect;
+        }
+
+        public void set_graceful_disconnect (bool graceful_disconnect) {
+            this.graceful_disconnect = graceful_disconnect;
+        }
+
+        public override bool close (Cancellable? cancellable = null) throws IOError {
+            var sock = get_socket ();
+            if (graceful_disconnect && !sock.is_closed ()) {
+                sock.shutdown (false, true);
+                var drain = new uint8[256];
+                for (int w = 0; w < 100; w++) {
+                    if (cancellable != null && cancellable.is_cancelled ())
+                        throw new IOError.CANCELLED ("TcpConnection.close cancelled");
+                    if (sock.is_rx_eof ())
+                        break;
+                    int avail = sock.condition_check (1);
+                    if ((avail & 1) != 0)
+                        sock.receive (drain, cancellable);
+                    else
+                        Sys.sleep_ms (5);
+                }
+            }
+            return base.close (cancellable);
+        }
+    }
+
     public class SocketClient : Object {
         public SocketFamily family { get; set; default = SocketFamily.IPV4; }
         public SocketType socket_type { get; set; default = SocketType.STREAM; }
@@ -654,6 +723,11 @@ namespace Gio {
         public SocketConnection connect (SocketAddress address, Cancellable? cancellable = null) throws IOError {
             var sock = new Socket (address.get_family (), socket_type, protocol);
             sock.connect (address, cancellable);
+            if (protocol == SocketProtocol.TCP
+                || (socket_type == SocketType.STREAM && protocol == SocketProtocol.DEFAULT
+                    && (address.get_family () == SocketFamily.IPV4 || address.get_family () == SocketFamily.IPV6))) {
+                return new TcpConnection (sock);
+            }
             return new SocketConnection (sock);
         }
 
@@ -717,6 +791,11 @@ namespace Gio {
 
         public SocketConnection accept (out Object? source_object, Cancellable? cancellable = null) throws IOError {
             var sock = accept_socket (out source_object, cancellable);
+            if (sock.get_protocol () == SocketProtocol.TCP
+                || (sock.get_socket_type () == SocketType.STREAM && sock.get_protocol () == SocketProtocol.DEFAULT
+                    && (sock.get_family () == SocketFamily.IPV4 || sock.get_family () == SocketFamily.IPV6))) {
+                return new TcpConnection (sock);
+            }
             return new SocketConnection (sock);
         }
 
