@@ -93,7 +93,8 @@ namespace Planet.Kernel {
             if (kind == 2)
                 return mmio_read64 (slot + 24) < mmio_read64 (slot + 16);
         }
-        return mmio_read32 (KernelLayout.KB_HEAD) != mmio_read32 (KernelLayout.KB_TAIL);
+        return (mmio_read32 (KernelLayout.KB_HEAD) != mmio_read32 (KernelLayout.KB_TAIL))
+            || (serial_rx_ready () != 0);
     }
 
     // Walks the caller's page table. Every level must be present and
@@ -509,7 +510,8 @@ namespace Planet.Kernel {
         int index = 3;
         while (index < MAX_FDS) {
             int slot = KernelLayout.FD_TABLE + index * 32;
-            if (fd_kind_of (slot) == KIND_GRANT) {
+            int k = fd_kind_of (slot);
+            if (k == KIND_GRANT || k == KIND_RING || k == KIND_RING_BLK || k == KIND_RING_NET) {
                 int gstart = mmio_read64 (slot + 8);
                 int glen = mmio_read64 (slot + 16);
                 if (glen > 0) {
@@ -548,10 +550,10 @@ namespace Planet.Kernel {
     }
 
     // Runs one descriptor. Returns 1 when it completed, 0 when it was rejected
-    // (the entry is marked and nothing else was touched). C1 has no device yet,
-    // so the only operation is a loopback fill: flags WRITE means the kernel
-    // fills the buffer, READ means it reads it.
-    private static int ring_run_one (int rstart, int rlen, int desc, int rkind) {
+    // (the entry is marked and nothing else was touched). Phase D enforces:
+    // - data region separation: buffer must sit past header + descriptor table
+    // - mapped/writable user-range check matching direction
+    private static int ring_run_one (int rstart, int rlen, int entries, int desc, int rkind) {
         int addr = mmio_read64 (desc);
         int len = mmio_read32 (desc + 8);
         int flags = mmio_read32 (desc + 12);
@@ -566,13 +568,15 @@ namespace Planet.Kernel {
             if (flags == (RING_F_READ | RING_F_WRITE))
                 ok = true;
         }
-        if (len <= 0)
+        int data_min = rstart + 64 + entries * RING_ENTRY;
+        if (len <= 0 || len > RING_MAX_XFER)
             ok = false;
-        if (len > RING_MAX_XFER)
+        if (addr < data_min || addr + len > rstart + rlen)
             ok = false;
-        if (addr < rstart)
-            ok = false;
-        if (addr + len > rstart + rlen)
+        bool needs_write = (rkind == KIND_RING_BLK)
+            || (rkind == KIND_RING_NET && flags == RING_F_READ)
+            || (rkind == KIND_RING && (flags & RING_F_WRITE) != 0);
+        if (ok && !user_range_ok (addr, len, needs_write))
             ok = false;
         if (!ok) {
             mmio_write32 (desc + 20, RING_ST_ERROR);
@@ -818,6 +822,34 @@ namespace Planet.Kernel {
                     if (id7 == Vfs.DEV_NULL) {
                         ok ();
                         return 0;
+                    }
+                    if (id7 == Vfs.DEV_SERIAL) {
+                        int max7 = (a2 > KernelIo.CHUNK) ? KernelIo.CHUNK : a2;
+                        int sc7s = KernelIo.scratch_addr ();
+                        if (sc7s == 0)
+                            return fail (E_IO);
+                        int got7 = 0;
+                        while (got7 == 0) {
+                            int sr7 = serial_try_read ();
+                            if (sr7 >= 0) {
+                                mmio_write8 (sc7s, sr7);
+                                got7 = 1;
+                                break;
+                            }
+                            cpu_sti ();
+                            cpu_hlt ();
+                        }
+                        while (got7 < max7) {
+                            int sr7 = serial_try_read ();
+                            if (sr7 < 0)
+                                break;
+                            mmio_write8 (sc7s + got7, sr7);
+                            got7 = got7 + 1;
+                        }
+                        if (copy_guarded (a1, sc7s, got7) != 0)
+                            return fail (E_INVAL);
+                        ok ();
+                        return got7;
                     }
                     int ch7 = read_console_byte ();
                     if (ch7 < 0)
@@ -1340,7 +1372,10 @@ namespace Planet.Kernel {
                             int kind59 = fd_kind_of (slot59);
                             if (kind59 == 3) {
                                 int dev59 = mmio_read64 (slot59 + 8);
-                                rd59 = (dev59 != Vfs.DEV_NULL) && console_input_ready ();
+                                if (dev59 == Vfs.DEV_SERIAL)
+                                    rd59 = (serial_rx_ready () != 0);
+                                else if (dev59 != Vfs.DEV_NULL)
+                                    rd59 = console_input_ready ();
                             } else if (kind59 == KIND_RING || kind59 == KIND_RING_BLK || kind59 == KIND_RING_NET) {
                                 int rbase59 = mmio_read64 (slot59 + 8);
                                 if (user_ok (rbase59, 64)) {
@@ -1469,10 +1504,25 @@ namespace Planet.Kernel {
                 int tail66 = mmio_read32 (rstart66 + 20);
                 int done66 = 0;
                 int budget66 = entries66;
+                var seen_leases66 = new int[RING_MAX_ENTRIES];
+                int seen_cnt66 = 0;
                 while (head66 != tail66 && budget66 > 0) {
                     int desc66 = rstart66 + 64 + (head66 % entries66) * RING_ENTRY;
                     if (mmio_read32 (desc66 + 20) == RING_ST_READY) {
-                        if (ring_run_one (rstart66, rlen66, desc66, rkind66) == 0)
+                        int lid66 = mmio_read32 (desc66 + 16);
+                        if (lid66 != 0) {
+                            for (int li66 = 0; li66 < seen_cnt66; li66++) {
+                                if (seen_leases66[li66] == lid66) {
+                                    mmio_write32 (desc66 + 20, RING_ST_ERROR);
+                                    return fail (E_ACCES);
+                                }
+                            }
+                            if (seen_cnt66 < RING_MAX_ENTRIES) {
+                                seen_leases66[seen_cnt66] = lid66;
+                                seen_cnt66 = seen_cnt66 + 1;
+                            }
+                        }
+                        if (ring_run_one (rstart66, rlen66, entries66, desc66, rkind66) == 0)
                             return fail (E_INVAL);
                         done66 = done66 + 1;
                     }

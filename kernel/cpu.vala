@@ -86,6 +86,15 @@ namespace Planet.Kernel {
     ")]
     public extern void cpu_sti ();
 
+    // Non-consuming check of COM1 Line Status Register (0x3FD) bit 0 (DR).
+    [AsmBody(@"
+        mov $0x3fd, %dx
+        in %dx, %al
+        and $1, %eax
+        ret
+    ")]
+    public extern int serial_rx_ready ();
+
     // Saves RFLAGS and disables maskable interrupts (cli). Must be paired with
     // cpu_irq_restore(flags) so nested callers preserve the prior IF state.
     [AsmBody(@"

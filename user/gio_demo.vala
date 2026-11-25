@@ -606,6 +606,27 @@ namespace GioDemo {
         }
         check ("io-close", closed_ok && io.is_closed ());
 
+        // B1/B2: /dev/serial0 readiness-capable Pollable + LineDisciplineConverter
+        var ser = File.new_for_path ("/dev/serial0");
+        bool ser_ok = ser.query_exists ();
+        if (ser_ok) {
+            try {
+                var sins = ser.read ();
+                var souts = ser.append_to ();
+                var scvt = new ConverterInputStream (sins, new LineDisciplineConverter (false));
+                bool p_ok = (sins is PollableInputStream) && (sins is FileDescriptorBased)
+                            && (souts is PollableOutputStream)
+                            && ((PollableOutputStream) souts).is_writable ();
+                ((PollableInputStream) sins).is_readable ();
+                scvt.close ();
+                souts.close ();
+                ser_ok = p_ok && scvt.is_closed ();
+            } catch (IOError e) {
+                ser_ok = false;
+            }
+        }
+        check ("dev-serial0", ser_ok);
+
         var c = new Cancellable ();
         SourceFunc on_cancel = () => {
             cancel_fired = cancel_fired + 1;
@@ -727,6 +748,37 @@ namespace GioDemo {
             check ("planet-arena-device-lock", false);
             check ("planet-arena-quarantine", false);
             check ("planet-arena-release", false);
+        }
+
+        // Phase D: kernel-side ring header-overlap & duplicate-lease enforcement
+        try {
+            var dring = PlanetRing.create (1, 4, PlanetRing.DEV_ECHO);
+            int hdr_slot = dring.submit (dring.grant.base_addr, 8, PlanetRing.OP_WRITE, 1);
+            bool hdr_rejected = false;
+            try {
+                dring.kick ();
+            } catch (IOError e) {
+                hdr_rejected = (dring.slot_status (hdr_slot) == PlanetRing.ST_ERROR);
+            }
+            check ("planet-ring-d-hdr-guard", hdr_rejected);
+            dring.close ();
+
+            var dring2 = PlanetRing.create (1, 4, PlanetRing.DEV_ECHO);
+            int dbuf = dring2.grant.base_addr + dring2.data_offset;
+            dring2.submit (dbuf, 8, PlanetRing.OP_WRITE, 7);
+            int dup_slot = dring2.submit (dbuf + 64, 8, PlanetRing.OP_WRITE, 7);
+            bool dup_rejected = false;
+            try {
+                dring2.kick ();
+            } catch (IOError e) {
+                dup_rejected = (dring2.slot_status (dup_slot) == PlanetRing.ST_ERROR);
+            }
+            bool free_blocked = (Sys.free_page (dring2.grant.base_addr) < 0);
+            check ("planet-ring-d-lease-guard", dup_rejected && free_blocked);
+            dring2.close ();
+        } catch (IOError e) {
+            check ("planet-ring-d-hdr-guard", false);
+            check ("planet-ring-d-lease-guard", false);
         }
 
         try {

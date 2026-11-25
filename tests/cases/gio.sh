@@ -5,3 +5,5 @@ mkdir test/gio
 write test/gio/hello.txt hola
 gio_demo test/gio/hello.txt
 gio_demo test/gio/hello.txt
+cat /dev/null
+cat /dev/serial0

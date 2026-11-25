@@ -655,6 +655,40 @@ namespace PlanetShell {
                 }
                 return 0;
             }
+            if (args[1].has_prefix ("/dev/")) {
+                int dfd = Sys.open (args[1]);
+                if (dfd < 0) {
+                    print ("cat: not found\n");
+                    return 1;
+                }
+                if (args[1] == "/dev/null") {
+                    Sys.close (dfd);
+                    return 0;
+                }
+                var pfds = new int[1];
+                pfds[0] = dfd;
+                var raw = new uint8[256];
+                var conv_buf = new uint8[256];
+                while (Sys.poll_n (pfds, 1, 50) > 0) {
+                    int nr = Sys.read (dfd, raw, 256);
+                    if (nr <= 0)
+                        break;
+                    int bw = 0;
+                    for (int i = 0; i < nr; i++) {
+                        uint8 c = raw[i];
+                        if (c == '\r') {
+                            if (i + 1 < nr && raw[i + 1] == '\n')
+                                continue;
+                            c = '\n';
+                        }
+                        conv_buf[bw++] = c;
+                    }
+                    if (bw > 0)
+                        Sys.write (1, conv_buf, bw);
+                }
+                Sys.close (dfd);
+                return 0;
+            }
             string contents = "";
             if (!FileUtils.get_contents (canonical_path (abs_path (args[1])), out contents)) {
                 print ("cat: not found\n");
