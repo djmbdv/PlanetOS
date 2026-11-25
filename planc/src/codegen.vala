@@ -8355,6 +8355,9 @@ namespace Planc {
                 if (ret == ValaType.STRUCT)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"resize is not supported on arrays of struct elements ($(type_label (ValaType.ARRAY, ttn))) at $(mc.line):$(mc.column)");
+                if (is_compact_type (ret, retn))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"resize is not supported on arrays of [Compact] class elements ($(type_label (ValaType.ARRAY, ttn))) at $(mc.line):$(mc.column)");
                 string an = "";
                 var at = expr_type_full (mc.args[0], out an);
                 if (!is_int_like (at))
