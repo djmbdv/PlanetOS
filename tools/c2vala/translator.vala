@@ -185,6 +185,21 @@ namespace C2Vala {
             return Host.hex_u32 (h);
         }
 
+        private static int str_cmp (string a, string b) {
+            int na = a.length;
+            int nb = b.length;
+            int m = na < nb ? na : nb;
+            for (int i = 0; i < m; i++) {
+                int ca = (int) a[i] & 0xff;
+                int cb = (int) b[i] & 0xff;
+                if (ca != cb)
+                    return ca < cb ? -1 : 1;
+            }
+            if (na == nb)
+                return 0;
+            return na < nb ? -1 : 1;
+        }
+
         private static int[] sorted_order (GenericArray<string> names) {
             int n = names.length;
             int[] ord = new int[n];
@@ -194,7 +209,7 @@ namespace C2Vala {
                 int key_idx = ord[i];
                 string key_name = names[key_idx];
                 int j = i - 1;
-                while (j >= 0 && strcmp (names[ord[j]], key_name) > 0) {
+                while (j >= 0 && str_cmp (names[ord[j]], key_name) > 0) {
                     ord[j + 1] = ord[j];
                     j--;
                 }

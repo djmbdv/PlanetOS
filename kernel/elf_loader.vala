@@ -579,17 +579,44 @@ namespace Planet.Kernel {
             int kind = Vfs.resolve (name_ptr, name_len, out id);
             if (kind != Vfs.KIND_FILE && kind != Vfs.KIND_XFS)
                 return 0;
+            // Stage cmdline in IO_SCRATCH and run under kernel CR3 so ebuf and
+            // child_stack are always identity-mapped regardless of caller CR3.
+            int cmd_scratch = 0;
+            if (cmdline_ptr != 0) {
+                cmd_scratch = KernelLayout.IO_SCRATCH + 1024;
+                int ci = 0;
+                while (ci < 1000) {
+                    int cb = read_u8 (cmdline_ptr + ci);
+                    mmio_write8 (cmd_scratch + ci, cb);
+                    if (cb == 0)
+                        break;
+                    ci = ci + 1;
+                }
+                mmio_write8 (cmd_scratch + 1000, 0);
+            }
+            int saved_cr3 = vmm_read_cr3 ();
+            if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (KernelLayout.PAGE_TABLES);
+
             int esz = (kind == Vfs.KIND_FILE) ? Ramfs.file_size (id) : Xfs.file_size (id);
-            if (esz < 64)
+            if (esz < 64) {
+                if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                    vmm_write_cr3 (saved_cr3);
                 return 0;
+            }
             int pages = (esz + 4095) / 4096;
             int ebuf = Pmm.alloc_contiguous (pages);
-            if (ebuf == 0)
+            if (ebuf == 0) {
+                if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                    vmm_write_cr3 (saved_cr3);
                 return 0;
+            }
             int user_cr3 = Vmm.create_user_space ();
             if (user_cr3 == 0) {
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (ebuf + p * 4096);
+                if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                    vmm_write_cr3 (saved_cr3);
                 return 0;
             }
             int got = (kind == Vfs.KIND_FILE) ? Ramfs.read (id, 0, ebuf, esz) : Xfs.read_file (id, 0, ebuf, esz);
@@ -599,6 +626,8 @@ namespace Planet.Kernel {
             }
             if (entry == 0) {
                 Vmm.destroy_user_space (user_cr3);
+                if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                    vmm_write_cr3 (saved_cr3);
                 return 0;
             }
             map_shared_dlibs_into (user_cr3, last_loaded_dlib_mask);
@@ -607,6 +636,8 @@ namespace Planet.Kernel {
             int child_stack = Pmm.alloc_contiguous (stack_pages);
             if (child_stack == 0) {
                 Vmm.destroy_user_space (user_cr3);
+                if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                    vmm_write_cr3 (saved_cr3);
                 return 0;
             }
             Vmm.map_user_range (user_cr3, child_stack + 4096, (stack_pages - 1) * 4096);
@@ -618,15 +649,15 @@ namespace Planet.Kernel {
             int argc = 0;
             int ptr_base = str_base - 256;
             int s_pos = 0;
-            if (cmdline_ptr != 0) {
+            if (cmd_scratch != 0) {
                 int i = 0;
                 while (i < 1000) {
-                    int b = read_u8 (cmdline_ptr + i);
+                    int b = read_u8 (cmd_scratch + i);
                     if (b == 0)
                         break;
                     while (b == ' ') {
                         i = i + 1;
-                        b = read_u8 (cmdline_ptr + i);
+                        b = read_u8 (cmd_scratch + i);
                     }
                     if (b == 0)
                         break;
@@ -638,7 +669,7 @@ namespace Planet.Kernel {
                         mmio_write8 (str_base + s_pos, b);
                         s_pos = s_pos + 1;
                         i = i + 1;
-                        b = read_u8 (cmdline_ptr + i);
+                        b = read_u8 (cmd_scratch + i);
                     }
                     mmio_write8 (str_base + s_pos, 0);
                     s_pos = s_pos + 1;
@@ -654,6 +685,8 @@ namespace Planet.Kernel {
             }
             mmio_write64 (ptr_base + 0, argc);
             mmio_write64 (ptr_base + 8 + argc * 8, 0);
+            if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (saved_cr3);
             out_stack_base = child_stack;
             out_arg_sp = ptr_base;
             out_user_cr3 = user_cr3;

@@ -190,7 +190,7 @@ namespace GLib {
         // Parks on the sequence word instead of polling: signal/broadcast bump
         // it and wake the waiters through SYS_WAKE_ADDR.
         public void wait (RecMutex mutex) {
-            int seen = Sys.peek32 (Sys.int_arr_addr (_seq));
+            int seen = _seq[0];
             mutex.unlock ();
             Sys.wait_addr (_seq, seen, 0);
             mutex.@lock ();
@@ -200,7 +200,7 @@ namespace GLib {
             int64 now_us = (int64) Sys.ticks () * 10000;
             if (now_us >= end_time)
                 return false;
-            int seen = Sys.peek32 (Sys.int_arr_addr (_seq));
+            int seen = _seq[0];
             int timeout_ms = (int) ((end_time - now_us) / 1000);
             if (timeout_ms <= 0)
                 timeout_ms = 1;

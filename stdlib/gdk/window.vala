@@ -177,10 +177,10 @@ namespace Gdk {
             int px = 0;
             int bytes = SharedSurface.bytes_for (width, height);
             if (shm_base > 0 && bytes > 0 && Sys.map_user_at (shm_base, bytes) == 0) {
-                if (Sys.peek32 (shm_base + SharedSurface.OFF_MAGIC) == SharedSurface.MAGIC) {
+                if (Unsafe.peek32 (shm_base + SharedSurface.OFF_MAGIC) == SharedSurface.MAGIC) {
                     px = shm_base + SharedSurface.pixel_offset ();
                     comp_shm = shm_base;
-                    comp_shm_seq = Sys.peek32 (shm_base + SharedSurface.OFF_SEQ);
+                    comp_shm_seq = Unsafe.peek32 (shm_base + SharedSurface.OFF_SEQ);
                 }
             }
             surface = new ImageSurface.wrap (px, width, height);
@@ -267,14 +267,14 @@ namespace Gdk {
                 dh = height - dy;
             if (dw <= 0 || dh <= 0)
                 return;
-            Sys.poke32 (comp_shm + SharedSurface.OFF_DX, dx);
-            Sys.poke32 (comp_shm + SharedSurface.OFF_DY, dy);
-            Sys.poke32 (comp_shm + SharedSurface.OFF_DW, dw);
-            Sys.poke32 (comp_shm + SharedSurface.OFF_DH, dh);
-            Sys.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, 1);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_DX, dx);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_DY, dy);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_DW, dw);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_DH, dh);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, 1);
             __g_mfence ();
             comp_shm_seq = comp_shm_seq + 1;
-            Sys.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
         }
 
         // Publishes several rectangles at once: distant changes stay separate, so
@@ -309,10 +309,10 @@ namespace Gdk {
                     continue;
                 if (out_n < SharedSurface.MAX_RECTS) {
                     int off = comp_shm + SharedSurface.rect_off (out_n);
-                    Sys.poke32 (off + 0, x);
-                    Sys.poke32 (off + 4, y);
-                    Sys.poke32 (off + 8, w);
-                    Sys.poke32 (off + 12, h);
+                    Unsafe.poke32 (off + 0, x);
+                    Unsafe.poke32 (off + 4, y);
+                    Unsafe.poke32 (off + 8, w);
+                    Unsafe.poke32 (off + 12, h);
                     last_x = x;
                     last_y = y;
                     last_w = w;
@@ -328,18 +328,18 @@ namespace Gdk {
                     last_w = x1 - x0;
                     last_h = y1 - y0;
                     int off = comp_shm + SharedSurface.rect_off (SharedSurface.MAX_RECTS - 1);
-                    Sys.poke32 (off + 0, last_x);
-                    Sys.poke32 (off + 4, last_y);
-                    Sys.poke32 (off + 8, last_w);
-                    Sys.poke32 (off + 12, last_h);
+                    Unsafe.poke32 (off + 0, last_x);
+                    Unsafe.poke32 (off + 4, last_y);
+                    Unsafe.poke32 (off + 8, last_w);
+                    Unsafe.poke32 (off + 12, last_h);
                 }
             }
             if (out_n == 0)
                 return;
-            Sys.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, out_n);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_DCOUNT, out_n);
             __g_mfence ();
             comp_shm_seq = comp_shm_seq + 1;
-            Sys.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
+            Unsafe.poke32 (comp_shm + SharedSurface.OFF_SEQ, comp_shm_seq);
         }
 
         public void present_rects (int[] xs, int[] ys, int[] ws, int[] hs, int n) {
@@ -526,12 +526,12 @@ namespace Gdk {
         // acknowledgement, then ack it so those slots can be reused.
         private Event poll_shared_event () {
             int shm = comp_shm;
-            int written = Sys.peek32 (shm + SharedSurface.OFF_EV_SEQ);
-            int ack = Sys.peek32 (shm + SharedSurface.OFF_EV_ACK);
+            int written = Unsafe.peek32 (shm + SharedSurface.OFF_EV_SEQ);
+            int ack = Unsafe.peek32 (shm + SharedSurface.OFF_EV_ACK);
             if (written <= ack) {
                 if (written < ack)
                     __g_mfence ();
-            Sys.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
+            Unsafe.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
                 return new Event ();
             }
             // Overrun: the compositor reused slots, so jump to the oldest event
@@ -546,14 +546,14 @@ namespace Gdk {
             for (int s = ack + 1; s <= written && ev_q_len < SharedSurface.EV_SLOTS; s++) {
                 int off = shm + SharedSurface.ev_slot (s & mask);
                 int dst = (int) ev_q_len * 4;
-                ev_q[dst + 0] = Sys.peek32 (off + 0);
-                ev_q[dst + 1] = Sys.peek32 (off + 4);
-                ev_q[dst + 2] = Sys.peek32 (off + 8);
-                ev_q[dst + 3] = Sys.peek32 (off + 12);
+                ev_q[dst + 0] = Unsafe.peek32 (off + 0);
+                ev_q[dst + 1] = Unsafe.peek32 (off + 4);
+                ev_q[dst + 2] = Unsafe.peek32 (off + 8);
+                ev_q[dst + 3] = Unsafe.peek32 (off + 12);
                 ev_q_len++;
             }
             __g_mfence ();
-            Sys.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
+            Unsafe.poke32 (shm + SharedSurface.OFF_EV_ACK, written);
             if (ev_q_pos < ev_q_len)
                 return pop_comp_event ();
             return new Event ();

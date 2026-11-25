@@ -1,6 +1,6 @@
 # 08 - I/O data path
 
-Status: **design, not implemented.** The prerequisites in section 4 are open.
+Status: **in progress (Phases A1–A4, B1, C1–C2, and initial C3/D implemented; 21/21 QEMU cases green).**
 This document is normative for the driver and hardware layer roadmap; it does
 not change any invariant of the project.
 
@@ -24,8 +24,9 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 
 | Capability | Where | State |
 |---|---|---|
-| Pure-Vala `Gio` streams (`Filter`, `Buffered`, `Data`, `File`, `Memory`) | [stdlib/gio/streams.vala](../stdlib/gio/streams.vala) | implemented |
-| `MainContext` with idle, timeout and fd watch | [stdlib/glib/mainloop.vala](../stdlib/glib/mainloop.vala) | implemented, 8 watches, 15 fds per poll |
+| `Gio` streams, converters, subprocess, networking | [stdlib/gio/streams.vala](../stdlib/gio/streams.vala), [converter.vala](../stdlib/gio/converter.vala), [subprocess.vala](../stdlib/gio/subprocess.vala), [net.vala](../stdlib/gio/net.vala) | implemented: `Filter`/`Buffered`/`Data`/`Converter`/`LineDiscipline`, `Subprocess`, `Socket`/`SocketService`/`ThreadedSocketService`, `Resolver`/`NetworkService` |
+| `Gio.Planet` (`gio-planet-1.0`) | [stdlib/gio/planet.vala](../stdlib/gio/planet.vala), [09-gio-planet.md](09-gio-planet.md) | implemented: `PlanetInputStream`/`OutputStream`, `PlanetGrant`, `PlanetRing` (`DEV_ECHO`/`DEV_BLK`/`DEV_NET`), `PlanetIoArena`, `PlanetBlockDevice` |
+| `MainContext` with idle, timeout, fd and custom watch | [stdlib/glib/mainloop.vala](../stdlib/glib/mainloop.vala) | implemented, `KIND_CUSTOM` 0-syscall checks, `SYS_POLL` up to 30 handles (`KIND_DEV`/`KIND_RING*`) |
 | Futex-like wait/wake on a user word | `SYS_WAIT_ADDR` / `SYS_WAKE_ADDR`, [kernel/syscall.vala](../kernel/syscall.vala) | implemented |
 | Zero-copy shared surface, app <-> compositor | [stdlib/gdk/window.vala](../stdlib/gdk/window.vala) | implemented, built on an unsafe map |
 | Device namespace (`/dev`) | [kernel/vfs.vala](../kernel/vfs.vala) | implemented (B1): `/dev/console`, `/dev/serial0`, `/dev/null` resolve to `KIND_DEV` handles that carry no seek right |
@@ -37,8 +38,9 @@ ring 0. **Objects do not cross the kernel/user boundary; handles do.**
 | Interrupt-driven completion | `kernel/ata.vala`, `kernel/virtio_gpu.vala` | **missing**: PIO and bounded spin loops |
 | VirtIO-BLK queue and request path | [kernel/virtio_blk.vala](../kernel/virtio_blk.vala) | implemented (C2): queue 0 over the modern transport, 3-descriptor chain (header/data/status), MSI-X delivery verified, completion word the task parks on |
 | Local APIC | [kernel/cpu.vala](../kernel/cpu.vala) | implemented (C2): enabled through `IA32_APIC_BASE` with x2APIC off, SIVR/TPR set, `lapic_id` and `lapic_eoi` drive MSI-X delivery |
+| VirtIO-NET queue, MSI-X TX wake and `mercury` | [kernel/virtio_net.vala](../kernel/virtio_net.vala), [user/mercury.vala](../user/mercury.vala) | implemented (C3 initial): RX/TX queues, `KIND_RING_NET`, `SYS_NET_MAC`, ARP + ICMP echo in QEMU |
 | IOMMU | QEMU command line, [run-qemu.ps1](../run-qemu.ps1) | absent |
-| Protocol stacks | - | absent |
+| Protocol stacks | [user/mercury.vala](../user/mercury.vala) | ARP + ICMP echo implemented; UDP/TCP/DNS IPC pending |
 
 Consequence: Contracts A and B are both **blocked on section 4**, not on the
 stream classes or the rings. The stream hierarchy already exists; the handles
@@ -135,9 +137,8 @@ being shared by task id.
 - `SYS_READDIR` and `SYS_STAT_EX` also stage their output through the scratch
   and return it with `copy_guarded`, so their user buffers are written through
   the same recoverable path.
-- Still validated but not staged: `SYS_PS`, `SYS_GETENV`, `SYS_KLOG_READ`,
-  `SYS_MOUSE_READ` and `SYS_FB_INFO` write short results directly to user
-  memory (A3.2).
+- `SYS_PS`, `SYS_GETENV`, `SYS_KLOG_READ`, `SYS_MOUSE_READ` and `SYS_FB_INFO`
+  also stage through `IO_SCRATCH` and return via `copy_guarded` (A3.2, done).
 - Ring descriptors will be read through a kernel copy, never dereferenced in
   place (Phase C).
 
@@ -312,13 +313,13 @@ monolithic kernel and the discarded-microkernel decision are preserved.
 | **A1** | Handle ownership, generation, rights, aliases 0/1/2 | **Done for ownership, generation and rights**: the `system` case proves cross-task denial (`EBADF`), missing-right refusal (`EACCES`) and stale-value refusal (`EBADF`); 19/19 QEMU cases green. A dedicated per-process table remains an optional optimisation |
 | **A2** | `SYS_GRANT`, I/O arena, migrate `SharedSurface` | **Done for grants**: `SYS_GRANT` returns a handle over a block the task owns, `SYS_GRANT_SHARE` puts a task id in its ACL, `SYS_FREE_PAGE` refuses a non-owner and any range a live grant covers, and `SYS_MAP_USER_AT` refuses another task's block. `system` proves it (`memguard=ok`). The compositor grants its surface and shares it with the client before `spawn`, so zero-copy keeps working (`graphics`, `compositor-ext`). A dedicated I/O arena remains optional |
 | **A3** | PML4 validation and recoverable user copies (KR-07) | **Done**: an unmapped pointer to `SYS_READ` and to `SYS_WRITE` returns `EINVAL` and the task keeps running (`guard=ok`). **A3.1 also done**: paths, `readdir` and `stat_ex` stage through the scratch, and `copy_guarded` moves 8 bytes per iteration. 20/20 QEMU cases green |
-| **A4** | Raw escapes out of the public API | `poke`/`peek`/`call_ptr` are absent from the public stdlib surface |
+| **A4** | Raw escapes out of the public API | **Done**: `poke8`/`poke32`/`peek32`/`call_ptr*` removed from `Planet.Sys` ([stdlib/planet_sys.vala](../stdlib/planet_sys.vala)) and isolated in [stdlib/planet_unsafe.vala](../stdlib/planet_unsafe.vala) (`Planet.Unsafe`), excluded from `glib.dlib` |
 | **B1** | `devfs` and `Gio.File` for `/dev` | **Done for the namespace**: `gio_demo` opens `/dev/console`, checks `PollableInputStream`/`FileDescriptorBased`/`PollableOutputStream`/`is_writable` and closes the pair as one `IOStream` (`dev=ok` in `system`). Remaining: `cat` through `/dev/serial0` and a readiness-driven read |
-| **B2** | Filter chains and line discipline in userland | A line-discipline case passes; `SYS_READ_KEY` still works |
-| **C1** | Ring ABI, validation, `SYS_RING_KICK` | **Done for the ABI and the validator**: `SYS_RING_ATTACH` binds a `KIND_RING` handle to a granted block whose header matches the documented layout, and `SYS_RING_KICK` validates every ready descriptor against that block (op, length, range) before running it, marking `RING_ST_ERROR` and returning `EINVAL` when one is malformed. `system` proves it (`ring=ok`): a valid echo completes, an out-of-block descriptor is rejected untouched. Remaining: a real device op (virtio-blk in C2) and the completion path through `wait_addr` on the ring sequence |
+| **B2** | Filter chains and line discipline in userland | **Partial**: `Gio.Converter`, `ConverterInputStream`/`OutputStream`, and `LineDisciplineConverter` implemented and tested (`gio-converter` in `gio_demo`). Remaining: `/dev/serial0` readiness-driven `cat` |
+| **C1** | Ring ABI, validation, `SYS_RING_KICK` | **Done**: `SYS_RING_ATTACH` (`DEV_ECHO`/`DEV_BLK`/`DEV_NET`), `SYS_RING_KICK` (bounded to `entries`), `SYS_POLL` for `KIND_RING*`, `PlanetBlockDevice` reading sector 0 via `virtio-blk` (`planet-blk-ring` in `gio_demo`) |
 | **C2** | IRQ-driven block I/O (virtio-blk) | **Done**: `kernel/virtio_blk.vala` finds the device, negotiates `VIRTIO_F_VERSION_1`, sets up queue 0, reads four sectors through it (`blk=ok`, magic verified on sector 0) and takes every completion from an MSI-X interrupt (`blk:irq=4/4`, `blk:late=0`, 40/40 reads over 10 boots, ~50 in a row with no fallback). The capability is parsed with the table offset/BIR dword, table entry 0 carries this LAPIC and vector 64, the enable bit is read back before `msix_config`/`queue_msix_vector` are set to 0, and INTx is disabled as the spec requires. `Hal.lapic_init` disables x2APIC (QEMU `-cpu max` starts with it on, which makes the LAPIC registers MSR-only), sets SIVR and TPR, and the handler acks with `lapic_eoi`. Two earlier failures were the waiter's own doing: a two-tick park that outran the interrupt, and a used-ring read on every wake that could beat the message by a few milliseconds. The used ring is now read only when the one-second watchdog expires, so a slow message can only lose to a timeout |
-| **C3** | `virtio-net` and a minimal LibOS stack | ARP/ICMP echo over the ring |
-| **D** | Buffer leases and revocation | Cancelling a request quarantines the ring and frees no DEVICE buffer |
+| **C3** | `virtio-net` and `mercury` LibOS stack | **Initial done**: `kernel/virtio_net.vala` + `KIND_RING_NET` + `SYS_NET_MAC` + `user/mercury.vala` complete ARP resolution and ICMP echo against QEMU SLIRP (`mercury` case green). Remaining: cross-process `mercury` IPC (`PlanetConnection` + `SYS_GRANT_SHARE`), UDP/TCP/DNS |
+| **D** | Buffer leases and revocation | **Userland done**: `PlanetIoArena` enforces `FREE`/`APP`/`DEVICE` states and quarantine on close (`planet-arena-*` in `gio_demo`). Remaining: kernel-side lease enforcement in `SYS_RING_KICK` |
 | **E** | IOMMU + userland drivers + reincarnation | Deferred; see D-15 |
 
 A1-A4 are serial. B and C run in parallel after A1-A3. D depends on C1. E is a

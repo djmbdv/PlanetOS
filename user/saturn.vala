@@ -575,12 +575,12 @@ namespace SaturnIDE {
         cr.blit_alpha_mask (mask, 6, 1, 2, 1);
         checks++;
         int row1 = surf.buf_addr + 1 * surf.width * 4;
-        int p0 = Sys.peek32 (row1 + 2 * 4) & 0xFFFFFF;
-        int p1 = Sys.peek32 (row1 + 3 * 4) & 0xFFFFFF;
-        int p2 = Sys.peek32 (row1 + 4 * 4) & 0xFFFFFF;
-        int p3 = Sys.peek32 (row1 + 5 * 4) & 0xFFFFFF;
-        int p4 = Sys.peek32 (row1 + 6 * 4) & 0xFFFFFF;
-        int p5 = Sys.peek32 (row1 + 7 * 4) & 0xFFFFFF;
+        int p0 = Unsafe.peek32 (row1 + 2 * 4) & 0xFFFFFF;
+        int p1 = Unsafe.peek32 (row1 + 3 * 4) & 0xFFFFFF;
+        int p2 = Unsafe.peek32 (row1 + 4 * 4) & 0xFFFFFF;
+        int p3 = Unsafe.peek32 (row1 + 5 * 4) & 0xFFFFFF;
+        int p4 = Unsafe.peek32 (row1 + 6 * 4) & 0xFFFFFF;
+        int p5 = Unsafe.peek32 (row1 + 7 * 4) & 0xFFFFFF;
         if (p0 != 0x000000 || p2 != 0xFF7F3F || p5 != 0x000000
                 || p1 == 0 || p1 == 0xFF7F3F || p3 == 0 || p4 == 0)
             fails++;
@@ -684,10 +684,10 @@ namespace SaturnIDE {
         int pages = SharedSurface.pages_for (w, h);
         int shm = Sys.alloc_pages (pages);
         if (shm > 0) {
-            Sys.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
-            Sys.poke32 (shm + SharedSurface.OFF_WIDTH, w);
-            Sys.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
-            Sys.poke32 (shm + SharedSurface.OFF_SEQ, 0);
+            Unsafe.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
+            Unsafe.poke32 (shm + SharedSurface.OFF_WIDTH, w);
+            Unsafe.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
+            Unsafe.poke32 (shm + SharedSurface.OFF_SEQ, 0);
             Sys.setenv ("PLANET_WIN_SHM", @"$shm");
             Sys.setenv ("PLANET_WIN_W", @"$w");
             Sys.setenv ("PLANET_WIN_H", @"$h");
@@ -696,22 +696,22 @@ namespace SaturnIDE {
             win.set_child (ed);
             win.show_all ();
             checks++;
-            if (Sys.peek32 (shm + SharedSurface.OFF_SEQ) != 1
-                    || Sys.peek32 (shm + SharedSurface.OFF_DW) != w
-                    || Sys.peek32 (shm + SharedSurface.OFF_DH) != h)
+            if (Unsafe.peek32 (shm + SharedSurface.OFF_SEQ) != 1
+                    || Unsafe.peek32 (shm + SharedSurface.OFF_DW) != w
+                    || Unsafe.peek32 (shm + SharedSurface.OFF_DH) != h)
                 fails++;
 
             win.redraw_area (5, 7, 11, 13);
             checks++;
-            if (Sys.peek32 (shm + SharedSurface.OFF_SEQ) != 2
-                    || Sys.peek32 (shm + SharedSurface.OFF_DX) != 5
-                    || Sys.peek32 (shm + SharedSurface.OFF_DY) != 7
-                    || Sys.peek32 (shm + SharedSurface.OFF_DW) != 11
-                    || Sys.peek32 (shm + SharedSurface.OFF_DH) != 13)
+            if (Unsafe.peek32 (shm + SharedSurface.OFF_SEQ) != 2
+                    || Unsafe.peek32 (shm + SharedSurface.OFF_DX) != 5
+                    || Unsafe.peek32 (shm + SharedSurface.OFF_DY) != 7
+                    || Unsafe.peek32 (shm + SharedSurface.OFF_DW) != 11
+                    || Unsafe.peek32 (shm + SharedSurface.OFF_DH) != 13)
                 fails++;
 
             checks++;
-            int px = Sys.peek32 (shm + SharedSurface.pixel_offset () + (2 * w + 2) * 4);
+            int px = Unsafe.peek32 (shm + SharedSurface.pixel_offset () + (2 * w + 2) * 4);
             if (((px >> 24) & 0xFF) != 255)
                 fails++;
 

@@ -471,6 +471,9 @@ namespace Planet.Kernel {
         }
 
         private static int reap_zombie (int tid) {
+            int saved_cr3 = vmm_read_cr3 ();
+            if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (KernelLayout.PAGE_TABLES);
             int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
             release_fds (tid);
             release_allocs (tid);
@@ -487,9 +490,10 @@ namespace Planet.Kernel {
                     Vmm.unmap_user_range (ucr3, sbase, spages * 4096);
                 // Pmm writes into the frame it releases, so it must be reachable
                 // from the active CR3 once the user mapping is gone.
-                if (own_cr3)
+                if (own_cr3) {
                     Vmm.map_supervisor_range (ucr3, sbase, spages * 4096);
-                Vmm.map_4k (sbase);
+                    Vmm.map_4k (sbase);
+                }
                 for (int p = 0; p < spages; p++) {
                     Pmm.free_frame (sbase + p * 4096);
                 }
@@ -529,6 +533,8 @@ namespace Planet.Kernel {
                 wait_deadline[tid] = 0;
                 task_errno[tid] = 0;
             }
+            if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                vmm_write_cr3 (saved_cr3);
             return code;
         }
 

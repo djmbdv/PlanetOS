@@ -269,14 +269,14 @@ private int self_test_run (Compositor comp) {
         shsb = shw.ext_shm;
     check (shsb != 0, "shm-block-allocated");
     if (shsb != 0) {
-        check (Sys.peek32 (shsb + SharedSurface.OFF_MAGIC) == SharedSurface.MAGIC,
+        check (Unsafe.peek32 (shsb + SharedSurface.OFF_MAGIC) == SharedSurface.MAGIC,
                "shm-header-magic");
         shc.flush (cr, 100, 100);
-        Sys.poke32 (shsb + SharedSurface.OFF_DX, 7);
-        Sys.poke32 (shsb + SharedSurface.OFF_DY, 5);
-        Sys.poke32 (shsb + SharedSurface.OFF_DW, 12);
-        Sys.poke32 (shsb + SharedSurface.OFF_DH, 6);
-        Sys.poke32 (shsb + SharedSurface.OFF_SEQ, 1);
+        Unsafe.poke32 (shsb + SharedSurface.OFF_DX, 7);
+        Unsafe.poke32 (shsb + SharedSurface.OFF_DY, 5);
+        Unsafe.poke32 (shsb + SharedSurface.OFF_DW, 12);
+        Unsafe.poke32 (shsb + SharedSurface.OFF_DH, 6);
+        Unsafe.poke32 (shsb + SharedSurface.OFF_SEQ, 1);
         shc.poll_ext ();
         check (shc.damage_count () == 1, "shm-damage-one-rect");
         check (shc.damage_pixels () == 72, "shm-damage-area");
@@ -292,8 +292,8 @@ private int self_test_run (Compositor comp) {
             shcr.rectangle (0.0, 0.0, 3.0, 2.0);
             shcr.fill ();
             shcw.present_rect (0, 0, 3, 2);
-            check (Sys.peek32 (shsb + SharedSurface.OFF_SEQ) == 2, "shm-client-seq");
-            check (Sys.peek32 (shsb + SharedSurface.OFF_DW) == 3, "shm-client-damage-w");
+            check (Unsafe.peek32 (shsb + SharedSurface.OFF_SEQ) == 2, "shm-client-seq");
+            check (Unsafe.peek32 (shsb + SharedSurface.OFF_DW) == 3, "shm-client-damage-w");
             check (shcr.pixel_at (1, 1) == ((255 << 24) | (255 << 8)), "shm-client-pixels");
 
             // Two distant rectangles stay separate: both are damaged and the gap
@@ -312,7 +312,7 @@ private int self_test_run (Compositor comp) {
             rws[1] = 30;
             rhs[1] = 20;
             shcw.present_rects (rxs, rys, rws, rhs, 2);
-            check (Sys.peek32 (shsb + SharedSurface.OFF_DCOUNT) == 2, "shm-rect-count");
+            check (Unsafe.peek32 (shsb + SharedSurface.OFF_DCOUNT) == 2, "shm-rect-count");
             shc.poll_ext ();
             check (shc.damage_count () == 2, "shm-damage-two-rects");
             check (shc.damage_pixels () == 680, "shm-damage-two-areas");
@@ -322,14 +322,14 @@ private int self_test_run (Compositor comp) {
             shc.pointer_press (150, 150);
             shc.pointer_release ();
             shc.key_press ('k');
-            check (Sys.peek32 (shsb + SharedSurface.OFF_EV_SEQ) == 3, "shm-input-seq");
+            check (Unsafe.peek32 (shsb + SharedSurface.OFF_EV_SEQ) == 3, "shm-input-seq");
             var e1 = shcw.poll_event ();
             check (e1.type == EventType.BUTTON_PRESS, "shm-input-press");
             var e2 = shcw.poll_event ();
             check (e2.type == EventType.BUTTON_RELEASE, "shm-input-release");
             var e3 = shcw.poll_event ();
             check (e3.type == EventType.KEY_PRESS && e3.keyval == 'k', "shm-input-key");
-            check (Sys.peek32 (shsb + SharedSurface.OFF_EV_ACK) == 3, "shm-input-acked");
+            check (Unsafe.peek32 (shsb + SharedSurface.OFF_EV_ACK) == 3, "shm-input-acked");
             shcw.close ();
         }
     }

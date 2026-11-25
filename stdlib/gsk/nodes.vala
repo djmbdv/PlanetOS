@@ -490,7 +490,7 @@ namespace Gsk {
             for (int py = 0; py < h; py++) {
                 int row_addr = tmp.buf_addr + ((y0 + py) * x1 + x0) * 4;
                 for (int px = 0; px < w; px++) {
-                    int argb = Sys.peek32 (row_addr + px * 4);
+                    int argb = Unsafe.peek32 (row_addr + px * 4);
                     int a = (argb >> 24) & 0xFF;
                     if (a == 0)
                         continue;

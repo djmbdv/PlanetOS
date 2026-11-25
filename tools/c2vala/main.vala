@@ -10,9 +10,11 @@ namespace C2Vala {
         if (s.length == 0)
             return 0;
         int n = 1;
-        for (int i = 0; i < s.length; i++) {
-            if (s[i] == '\n')
+        int j = s.length - 1;
+        for (int i = 0; i < j; i++) {
+            if (s[i] == '\n' || s[j] == '\n')
                 n++;
+            j--;
         }
         return n;
     }

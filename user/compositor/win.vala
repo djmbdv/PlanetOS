@@ -362,14 +362,14 @@ namespace Wm {
         public void push_ext_event (int type, int p1, int p2, int p3) {
             if (ext_shm != 0) {
                 // Shared ring: one slot plus a sequence bump, no syscalls.
-                int seq = Sys.peek32 (ext_shm + SharedSurface.OFF_EV_SEQ) + 1;
+                int seq = Unsafe.peek32 (ext_shm + SharedSurface.OFF_EV_SEQ) + 1;
                 int off = ext_shm + SharedSurface.ev_slot (seq % SharedSurface.EV_SLOTS);
-                Sys.poke32 (off + 0, type);
-                Sys.poke32 (off + 4, p1);
-                Sys.poke32 (off + 8, p2);
-                Sys.poke32 (off + 12, p3);
+                Unsafe.poke32 (off + 0, type);
+                Unsafe.poke32 (off + 4, p1);
+                Unsafe.poke32 (off + 8, p2);
+                Unsafe.poke32 (off + 12, p3);
                 __comp_mfence ();
-                Sys.poke32 (ext_shm + SharedSurface.OFF_EV_SEQ, seq);
+                Unsafe.poke32 (ext_shm + SharedSurface.OFF_EV_SEQ, seq);
                 return;
             }
             if (ext_ev_file.length == 0)

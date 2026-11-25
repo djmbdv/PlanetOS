@@ -17,6 +17,8 @@ namespace Planet.Kernel {
     // Handle kinds: 1 XFS, 2 RAMFS, 3 byte device, 4 grant, 5 descriptor ring (A2/B).
     private const int KIND_GRANT = 4;
     private const int KIND_RING = 5;
+    private const int KIND_RING_BLK = 6;
+    private const int KIND_RING_NET = 7;
     // Ring header (docs/08 6.1): magic, version, entries, entry size, head,
     // tail, seq, wake, doorbell epoch, status. Little-endian.
     private const int RING_MAGIC = 0x524E4C50; // bytes "PLNR"
@@ -552,17 +554,21 @@ namespace Planet.Kernel {
     // (the entry is marked and nothing else was touched). C1 has no device yet,
     // so the only operation is a loopback fill: flags WRITE means the kernel
     // fills the buffer, READ means it reads it.
-    private static int ring_run_one (int rstart, int rlen, int desc) {
+    private static int ring_run_one (int rstart, int rlen, int desc, int rkind) {
         int addr = mmio_read64 (desc);
         int len = mmio_read32 (desc + 8);
         int flags = mmio_read32 (desc + 12);
         bool ok = false;
-        if (flags == RING_F_WRITE)
-            ok = true;
-        if (flags == RING_F_READ)
-            ok = true;
-        if (flags == (RING_F_READ | RING_F_WRITE))
-            ok = true;
+        if (rkind == KIND_RING_BLK) {
+            ok = (flags == RING_F_READ) && (len >= 512) && ((len & 511) == 0);
+        } else {
+            if (flags == RING_F_WRITE)
+                ok = true;
+            if (flags == RING_F_READ)
+                ok = true;
+            if (flags == (RING_F_READ | RING_F_WRITE))
+                ok = true;
+        }
         if (len <= 0)
             ok = false;
         if (len > RING_MAX_XFER)
@@ -575,7 +581,23 @@ namespace Planet.Kernel {
             mmio_write32 (desc + 20, RING_ST_ERROR);
             return 0;
         }
-        if (flags != RING_F_READ) {
+        if (rkind == KIND_RING_BLK) {
+            int lba = mmio_read64 (desc + 24);
+            if (lba < 0 || !VirtioBlk.read (lba, addr, len / 512)) {
+                mmio_write32 (desc + 20, RING_ST_ERROR);
+                return 0;
+            }
+        } else if (rkind == KIND_RING_NET) {
+            if (flags == RING_F_WRITE) {
+                if (!VirtioNet.tx (addr, len)) {
+                    mmio_write32 (desc + 20, RING_ST_ERROR);
+                    return 0;
+                }
+            } else if (flags == RING_F_READ) {
+                int rx_got = VirtioNet.rx (addr, len);
+                mmio_write64 (desc + 24, rx_got);
+            }
+        } else if (flags != RING_F_READ) {
             int i = 0;
             while (i < len) {
                 mmio_write8 (addr + i, 0xA5);
@@ -932,9 +954,13 @@ namespace Planet.Kernel {
             case 17: // SYS_WAIT(tid) -> exit_code
                 return Sched.wait_tid (a0);
             case 18: // SYS_PS(buf, max_bytes) -> bytes
-                if (!user_ok_w (a0, a1))
+                if (a1 <= 0 || !user_ok_w (a0, a1))
                     return fail (E_INVAL);
-                return Sched.list_tasks (a0, a1);
+                int max18 = (a1 > 16384) ? 16384 : a1;
+                int n18 = Sched.list_tasks (KernelLayout.IO_SCRATCH, max18);
+                if (n18 > 0 && copy_guarded (a0, KernelLayout.IO_SCRATCH, n18) != 0)
+                    return fail (E_INVAL);
+                return n18;
             case 19: // SYS_SET_STDIO(in_fd, out_fd)
                 if (a0 != -1) {
                     int hci = fd_check (a0, R_READ);
@@ -974,12 +1000,17 @@ namespace Planet.Kernel {
             case 24: // SYS_MOUSE_READ(out_buf)
                 if (!user_ok_w (a0, 56))
                     return -1;
-                Mouse.poll_state (a0);
+                Mouse.poll_state (KernelLayout.IO_SCRATCH);
+                if (copy_guarded (a0, KernelLayout.IO_SCRATCH, 56) != 0)
+                    return fail (E_INVAL);
                 return 0;
             case 25: // SYS_FB_INFO(out_buf) -> (w<<16)|h
                 if (!user_ok_w (a0, 8))
                     return -1;
-                return Fb.info (a0);
+                int fi25 = Fb.info (KernelLayout.IO_SCRATCH);
+                if (copy_guarded (a0, KernelLayout.IO_SCRATCH, 8) != 0)
+                    return fail (E_INVAL);
+                return fi25;
             case 26: // SYS_FB_BLIT_RECT(src_buf, (x<<16)|y, (w<<16)|h)
                 Fb.blit_rect (a0, a1, a2);
                 return 0;
@@ -1116,9 +1147,13 @@ namespace Planet.Kernel {
             case 34: // SYS_RTC_TIME() -> packed UTC date/time
                 return Rtc.read_packed ();
             case 35: // SYS_GETENV(k_ptr, k_len, out_buf, max_len) -> len or -1
-                if (!path_ok (a0, a1) || !user_ok_w (a2, a3))
+                if (!path_ok (a0, a1) || a3 <= 0 || !user_ok_w (a2, a3))
                     return -1;
-                return Env.sys_get (a0, a1, a2, a3);
+                int max35 = (a3 > 16384) ? 16384 : a3;
+                int n35 = Env.sys_get (a0, a1, KernelLayout.IO_SCRATCH, max35);
+                if (n35 > 0 && copy_guarded (a2, KernelLayout.IO_SCRATCH, n35) != 0)
+                    return fail (E_INVAL);
+                return n35;
             case 36: // SYS_SETENV(k_ptr, k_len, v_ptr, v_len) -> 0 or -1
                 if (!path_ok (a0, a1))
                     return -1;
@@ -1146,7 +1181,10 @@ namespace Planet.Kernel {
             case 44: // SYS_KLOG_READ(buf, max_records) -> records copied
                 if (a0 == 0 || a1 <= 0 || a1 > 128 || !user_ok_w (a0, a1 * 64))
                     return -1;
-                return Klog.read_records (a0, a1);
+                int n44 = Klog.read_records (KernelLayout.IO_SCRATCH, a1);
+                if (n44 > 0 && copy_guarded (a0, KernelLayout.IO_SCRATCH, n44 * 64) != 0)
+                    return fail (E_INVAL);
+                return n44;
             case 45: // SYS_KLOG_CTL(op, a, b)
                 switch (a0) {
                     case 0: // set level
@@ -1284,7 +1322,7 @@ namespace Planet.Kernel {
             case 58: // SYS_WAKE_ADDR(addr, count) -> tasks woken
                 return Sched.wake_word (a0, (a1 > 0) ? a1 : 1);
             case 59: // SYS_POLL(fds_ptr, nfds, timeout_ms) -> ready bitmask
-                if (a1 <= 0 || a1 > 15 || !user_ok (a0, a1 * 4))
+                if (a1 <= 0 || a1 > 30 || !user_ok (a0, a1 * 4))
                     return fail (E_INVAL);
                 int deadline59 = (a2 > 0)
                     ? (int) (mmio_read64 (KernelLayout.TICK) + (a2 + 9) / 10) : 0;
@@ -1303,6 +1341,15 @@ namespace Planet.Kernel {
                             if (kind59 == 3) {
                                 int dev59 = mmio_read64 (slot59 + 8);
                                 rd59 = (dev59 != Vfs.DEV_NULL) && console_input_ready ();
+                            } else if (kind59 == KIND_RING || kind59 == KIND_RING_BLK || kind59 == KIND_RING_NET) {
+                                int rbase59 = mmio_read64 (slot59 + 8);
+                                if (user_ok (rbase59, 64)) {
+                                    int rhead59 = mmio_read32 (rbase59 + 0x10);
+                                    int rtail59 = mmio_read32 (rbase59 + 0x14);
+                                    int rseq59 = mmio_read32 (rbase59 + 0x18);
+                                    rd59 = (rseq59 != 0) || (rhead59 != rtail59)
+                                        || (kind59 == KIND_RING_NET && VirtioNet.has_rx ());
+                                }
                             } else {
                                 rd59 = (kind59 == 1 || kind59 == 2)
                                     && mmio_read64 (slot59 + 24) < mmio_read64 (slot59 + 16);
@@ -1380,9 +1427,15 @@ namespace Planet.Kernel {
                     t64 = t64 + 1;
                 }
                 return fail (E_NOSPC);
-            case 65: // SYS_RING_ATTACH(grant_handle, entries) -> ring handle | -1
+            case 65: // SYS_RING_ATTACH(grant_handle, entries, dev_kind) -> ring handle | -1
                 if (fd_check (a0, R_READ) != 0)
                     return fail (E_BAD_HANDLE);
+                if (a2 != 0 && a2 != 1 && a2 != 2)
+                    return fail (E_INVAL);
+                if (a2 == 1 && !VirtioBlk.is_present ())
+                    return fail (E_IO);
+                if (a2 == 2 && !VirtioNet.is_present ())
+                    return fail (E_IO);
                 int gslot65 = handle_slot (a0);
                 if (fd_kind_of (gslot65) != KIND_GRANT)
                     return fail (E_INVAL);
@@ -1390,7 +1443,10 @@ namespace Planet.Kernel {
                 int rlen65 = mmio_read64 (gslot65 + 16);
                 if (!ring_header_ok (rstart65, rlen65, a1))
                     return fail (E_INVAL);
-                int h65 = fd_alloc (KIND_RING, R_READ | R_WRITE | R_POLL | R_CLOSE,
+                int rkind65 = KIND_RING;
+                if (a2 == 1) rkind65 = KIND_RING_BLK;
+                if (a2 == 2) rkind65 = KIND_RING_NET;
+                int h65 = fd_alloc (rkind65, R_READ | R_WRITE | R_POLL | R_CLOSE,
                                     rstart65, rlen65);
                 if (h65 < 0)
                     return fail (E_NOSPC);
@@ -1401,7 +1457,8 @@ namespace Planet.Kernel {
                 if (fd_check (a0, R_WRITE) != 0)
                     return fail (E_BAD_HANDLE);
                 int rslot66 = handle_slot (a0);
-                if (fd_kind_of (rslot66) != KIND_RING)
+                int rkind66 = fd_kind_of (rslot66);
+                if (rkind66 != KIND_RING && rkind66 != KIND_RING_BLK && rkind66 != KIND_RING_NET)
                     return fail (E_INVAL);
                 int rstart66 = mmio_read64 (rslot66 + 8);
                 int rlen66 = mmio_read64 (rslot66 + 16);
@@ -1411,15 +1468,17 @@ namespace Planet.Kernel {
                 int head66 = mmio_read32 (rstart66 + 16);
                 int tail66 = mmio_read32 (rstart66 + 20);
                 int done66 = 0;
-                while (head66 != tail66) {
+                int budget66 = entries66;
+                while (head66 != tail66 && budget66 > 0) {
                     int desc66 = rstart66 + 64 + (head66 % entries66) * RING_ENTRY;
                     if (mmio_read32 (desc66 + 20) == RING_ST_READY) {
-                        if (ring_run_one (rstart66, rlen66, desc66) == 0)
+                        if (ring_run_one (rstart66, rlen66, desc66, rkind66) == 0)
                             return fail (E_INVAL);
                         done66 = done66 + 1;
                     }
-                    head66 = head66 + 1;
+                    head66 = (head66 + 1) & (entries66 - 1);
                     mmio_write32 (rstart66 + 16, head66);
+                    budget66 = budget66 - 1;
                 }
                 mmio_write32 (rstart66 + 24, mmio_read32 (rstart66 + 24) + 1);
                 Sched.wake_word (rstart66 + 24, 1);
@@ -1438,6 +1497,15 @@ namespace Planet.Kernel {
                 return (VirtioBlk.irq_late () << 24)
                     | ((VirtioBlk.irq_wakes () << 16) & 0xFF0000)
                     | ((VirtioBlk.capacity_sectors () / 2048) & 0xFFFF);
+            case 69: // SYS_NET_MAC(out_buf) -> 0 | -1
+                if (!VirtioNet.is_present ())
+                    return fail (E_IO);
+                if (!user_ok_w (a0, 6))
+                    return fail (E_INVAL);
+                for (int i69 = 0; i69 < 6; i69++)
+                    mmio_write8 (a0 + i69, VirtioNet.mac_byte (i69));
+                ok ();
+                return 0;
             default:
                 return -1;
         }

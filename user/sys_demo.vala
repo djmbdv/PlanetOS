@@ -308,10 +308,10 @@ int main (string[] args) {
 
     // 16. B: a descriptor ring the kernel validates before it touches anything.
     int ring_block = Sys.alloc_pages (1);
-    Sys.poke32 (ring_block + 0, 0x524E4C50); // magic "PLNR"
-    Sys.poke32 (ring_block + 4, 1);          // version
-    Sys.poke32 (ring_block + 8, 2);          // entries
-    Sys.poke32 (ring_block + 12, 32);        // entry size
+    Unsafe.poke32 (ring_block + 0, 0x524E4C50); // magic "PLNR"
+    Unsafe.poke32 (ring_block + 4, 1);          // version
+    Unsafe.poke32 (ring_block + 8, 2);          // entries
+    Unsafe.poke32 (ring_block + 12, 32);        // entry size
     int ring_grant = (ring_block > 0) ? Sys.grant (ring_block, 4096) : -1;
     int ring_h = (ring_grant > 0) ? Sys.ring_attach (ring_grant, 2) : -1;
     int ring_err = Sys.errno_code ();
@@ -319,24 +319,24 @@ int main (string[] args) {
     int ring_d0 = ring_block + 64;
     int ring_d1 = ring_block + 96;
     // Descriptor 0: the device writes 8 bytes inside the ring block.
-    Sys.poke32 (ring_d0 + 0, ring_buf);
-    Sys.poke32 (ring_d0 + 4, 0);
-    Sys.poke32 (ring_d0 + 8, 8);
-    Sys.poke32 (ring_d0 + 12, 2); // WRITE
-    Sys.poke32 (ring_d0 + 20, 1); // READY
+    Unsafe.poke32 (ring_d0 + 0, ring_buf);
+    Unsafe.poke32 (ring_d0 + 4, 0);
+    Unsafe.poke32 (ring_d0 + 8, 8);
+    Unsafe.poke32 (ring_d0 + 12, 2); // WRITE
+    Unsafe.poke32 (ring_d0 + 20, 1); // READY
     // Descriptor 1: points outside the ring, so it must be rejected.
-    Sys.poke32 (ring_d1 + 0, 0x20000000);
-    Sys.poke32 (ring_d1 + 4, 0);
-    Sys.poke32 (ring_d1 + 8, 8);
-    Sys.poke32 (ring_d1 + 12, 2);
-    Sys.poke32 (ring_d1 + 20, 1);
-    Sys.poke32 (ring_block + 20, 1); // tail: one descriptor published
+    Unsafe.poke32 (ring_d1 + 0, 0x20000000);
+    Unsafe.poke32 (ring_d1 + 4, 0);
+    Unsafe.poke32 (ring_d1 + 8, 8);
+    Unsafe.poke32 (ring_d1 + 12, 2);
+    Unsafe.poke32 (ring_d1 + 20, 1);
+    Unsafe.poke32 (ring_block + 20, 1); // tail: one descriptor published
     int ring_k1 = (ring_h > 0) ? Sys.ring_kick (ring_h) : -1;
-    int ring_st0 = Sys.peek32 (ring_d0 + 20);
-    int ring_fill = Sys.peek32 (ring_buf);
-    Sys.poke32 (ring_block + 20, 2);
+    int ring_st0 = Unsafe.peek32 (ring_d0 + 20);
+    int ring_fill = Unsafe.peek32 (ring_buf);
+    Unsafe.poke32 (ring_block + 20, 2);
     int ring_k2 = (ring_h > 0) ? Sys.ring_kick (ring_h) : 0;
-    int ring_st1 = Sys.peek32 (ring_d1 + 20);
+    int ring_st1 = Unsafe.peek32 (ring_d1 + 20);
     if (ring_h > 0)
         Sys.close (ring_h);
     if (ring_grant > 0)
@@ -370,7 +370,7 @@ int main (string[] args) {
         if (blk_i == 0) {
             blk_bytes = blk_got;
             if (blk_buf > 0)
-                blk_magic = Sys.peek32 (blk_buf);
+                blk_magic = Unsafe.peek32 (blk_buf);
         }
         blk_wakes = blk_wakes + (wakes - blk_prev);
         blk_prev = wakes;

@@ -1060,17 +1060,17 @@ namespace Wm {
             } else if (Sys.map_user_at (shm, bytes) != 0) {
                 return false;
             }
-            Sys.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
-            Sys.poke32 (shm + SharedSurface.OFF_WIDTH, w);
-            Sys.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
-            Sys.poke32 (shm + SharedSurface.OFF_SEQ, 0);
-            Sys.poke32 (shm + SharedSurface.OFF_DX, 0);
-            Sys.poke32 (shm + SharedSurface.OFF_DY, 0);
-            Sys.poke32 (shm + SharedSurface.OFF_DW, w);
-            Sys.poke32 (shm + SharedSurface.OFF_DH, h);
-            Sys.poke32 (shm + SharedSurface.OFF_DCOUNT, 1);
-            Sys.poke32 (shm + SharedSurface.OFF_EV_SEQ, 0);
-            Sys.poke32 (shm + SharedSurface.OFF_EV_ACK, 0);
+            Unsafe.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
+            Unsafe.poke32 (shm + SharedSurface.OFF_WIDTH, w);
+            Unsafe.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
+            Unsafe.poke32 (shm + SharedSurface.OFF_SEQ, 0);
+            Unsafe.poke32 (shm + SharedSurface.OFF_DX, 0);
+            Unsafe.poke32 (shm + SharedSurface.OFF_DY, 0);
+            Unsafe.poke32 (shm + SharedSurface.OFF_DW, w);
+            Unsafe.poke32 (shm + SharedSurface.OFF_DH, h);
+            Unsafe.poke32 (shm + SharedSurface.OFF_DCOUNT, 1);
+            Unsafe.poke32 (shm + SharedSurface.OFF_EV_SEQ, 0);
+            Unsafe.poke32 (shm + SharedSurface.OFF_EV_ACK, 0);
             win.ext_shm = shm;
             win.ext_shm_px = shm + SharedSurface.pixel_offset ();
             win.ext_shm_pages = pages;
@@ -1123,22 +1123,22 @@ namespace Wm {
 
         private void poll_shared_surface (Win w) {
             int shm = w.ext_shm;
-            if (Sys.peek32 (shm + SharedSurface.OFF_MAGIC) != SharedSurface.MAGIC)
+            if (Unsafe.peek32 (shm + SharedSurface.OFF_MAGIC) != SharedSurface.MAGIC)
                 return;
-            int seq = Sys.peek32 (shm + SharedSurface.OFF_SEQ);
+            int seq = Unsafe.peek32 (shm + SharedSurface.OFF_SEQ);
             if (seq == 0 || seq == w.ext_seq)
                 return;
             __comp_mfence ();
             w.ext_seq = seq;
-            int n = Sys.peek32 (shm + SharedSurface.OFF_DCOUNT);
+            int n = Unsafe.peek32 (shm + SharedSurface.OFF_DCOUNT);
             if (n <= 0 || n > SharedSurface.MAX_RECTS)
                 n = 1;
             for (int i = 0; i < n; i++) {
                 int off = shm + SharedSurface.rect_off (i);
-                int dx = Sys.peek32 (off + 0);
-                int dy = Sys.peek32 (off + 4);
-                int dw = Sys.peek32 (off + 8);
-                int dh = Sys.peek32 (off + 12);
+                int dx = Unsafe.peek32 (off + 0);
+                int dy = Unsafe.peek32 (off + 4);
+                int dw = Unsafe.peek32 (off + 8);
+                int dh = Unsafe.peek32 (off + 12);
                 if (dx < 0) {
                     dw = dw + dx;
                     dx = 0;

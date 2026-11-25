@@ -112,6 +112,7 @@ problems** and **creates six**:
 | [docs/06-verification.md](docs/06-verification.md) | Conformance suites, bootstrap fixed point, differential oracle, QEMU harness, validation experiments |
 | [docs/07-risks-and-decisions.md](docs/07-risks-and-decisions.md) | Technical risks with signal and mitigation, open decisions with closing criterion |
 | [docs/08-io-data-path.md](docs/08-io-data-path.md) | **I/O data path**: per-process handles, grants, `Gio` byte streams and validated descriptor rings; the driver-layer roadmap and its exit criteria |
+| [docs/09-gio-planet.md](docs/09-gio-planet.md) | **`Gio.Planet` (`gio-planet-1.0`)**: PlanetOS-native handles, grants, rings, `PlanetIoArena`, `mercury`/`atlas` services, and `Gio` networking/subprocess/converter layers |
 | [docs/experiments/](docs/experiments/README.md) | **Measurements made**, with the reproducible harness that produces them |
 | [docs/planc/slice-0.md](docs/planc/slice-0.md) | **Implemented slice 0**: what `planc` compiles today, which bytes it emits, what it deliberately does not do |
 | [docs/planc/slice-1.md](docs/planc/slice-1.md) | **Implemented slice 1**: variables, stack frame, the calling convention, `if`/`while`, semantic analysis |

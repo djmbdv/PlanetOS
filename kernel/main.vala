@@ -108,6 +108,10 @@ int main () {
     if (VirtioBlk.is_present ())
         print (@"blk:sectors=$(VirtioBlk.capacity_sectors ()) irq=$(blk_ok ? 1 : 0)\n");
 
+    bool net_ok = VirtioNet.init ();
+    if (VirtioNet.is_present ())
+        print (@"net:mac=$(VirtioNet.mac_byte (0)):$(VirtioNet.mac_byte (1)):$(VirtioNet.mac_byte (2)):$(VirtioNet.mac_byte (3)):$(VirtioNet.mac_byte (4)):$(VirtioNet.mac_byte (5)) up=$(net_ok ? 1 : 0)\n");
+
     VirtioGpu.init ();
     if (VirtioGpu.is_present ()) {
         print (@"virtio_gpu:found=1 w=$(VirtioGpu.display_width ()) h=$(VirtioGpu.display_height ()) virgl=$(VirtioGpu.has_virgl () ? 1 : 0) blob=$(VirtioGpu.has_blob () ? 1 : 0) ctx=$(VirtioGpu.has_ctx_init () ? 1 : 0) venus=$(VirtioGpu.has_venus () ? 1 : 0)\n");

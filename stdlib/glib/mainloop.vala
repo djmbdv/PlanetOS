@@ -17,6 +17,7 @@ namespace GLib {
         public const uint8 KIND_IDLE = 0;
         public const uint8 KIND_TIMEOUT = 1;
         public const uint8 KIND_WATCH = 2;
+        public const uint8 KIND_CUSTOM = 3;
 
         public uint32 id;
         public uint8 kind;
@@ -26,6 +27,7 @@ namespace GLib {
         public bool removed;
         public bool destroyed;
         public SourceFunc? func;
+        public SourceFunc? check_func;
         public int fd = -1;
         public uint32 condition = 0; // 1 = readable, 2 = writable
         public MainContext? context;
@@ -168,7 +170,8 @@ namespace GLib {
                 if (s.removed || s.destroyed)
                     continue;
                 if (s.kind == Source.KIND_IDLE
-                    || (s.kind == Source.KIND_TIMEOUT && now >= s.due))
+                    || (s.kind == Source.KIND_TIMEOUT && now >= s.due)
+                    || (s.kind == Source.KIND_CUSTOM && s.check_func != null && s.check_func ()))
                     return true;
             }
             return false;
@@ -181,6 +184,8 @@ namespace GLib {
                 return true;
             if (s.kind == Source.KIND_TIMEOUT)
                 return now >= s.due;
+            if (s.kind == Source.KIND_CUSTOM)
+                return s.check_func != null && s.check_func ();
             return false;
         }
 

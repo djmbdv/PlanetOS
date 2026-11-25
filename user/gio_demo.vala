@@ -570,6 +570,7 @@ namespace GioDemo {
         demo_application (args);
         demo_phase1_models ();
         demo_io_api ();
+        demo_planet_io ();
         demo_regex ();
 
         print (@"gio:summary checks=$checks failures=$failures\n");
@@ -620,6 +621,259 @@ namespace GioDemo {
             guard++;
         }
         check ("cancellable-source", cancel_fired == 1);
+    }
+
+    private int ring_fired = 0;
+
+    private int svc_hits = 0;
+    private string svc_msg = "";
+    private int tsvc_tid = 0;
+    private string tsvc_msg = "";
+
+    private void on_demo_incoming (SocketConnection conn) {
+        svc_hits = svc_hits + 1;
+        var din = new DataInputStream (conn.get_input_stream ());
+        try {
+            int l1 = 0;
+            string? line = din.read_line (out l1);
+            svc_msg = line ?? "";
+            var dout = new DataOutputStream (conn.get_output_stream ());
+            dout.put_string ("pong\n");
+            conn.close ();
+        } catch (IOError e) {
+        }
+    }
+
+    private void on_threaded_run (SocketConnection conn) {
+        tsvc_tid = Sys.tid ();
+        var din = new DataInputStream (conn.get_input_stream ());
+        try {
+            int l1 = 0;
+            string? line = din.read_line (out l1);
+            tsvc_msg = line ?? "";
+            var dout = new DataOutputStream (conn.get_output_stream ());
+            dout.put_string ("ack-thread\n");
+            conn.close ();
+        } catch (IOError e) {
+        }
+    }
+
+    private void demo_planet_io () {
+        int null_fd = Sys.open ("/dev/null");
+        if (null_fd >= 3) {
+            var p_out = new PlanetOutputStream (null_fd, true);
+            var p_in = new PlanetInputStream (null_fd, false);
+            bool w_ok = false;
+            try {
+                var payload = new uint8[4];
+                payload[0] = (uint8) 'p';
+                w_ok = p_out.write (payload) == 4;
+                p_out.close ();
+            } catch (IOError e) {
+                w_ok = false;
+            }
+            check ("planet-stream-write", w_ok && p_in.get_fd () == null_fd);
+            check ("planet-stream-pollable", (p_out is PollableOutputStream) && (p_in is PollableInputStream));
+        } else {
+            check ("planet-stream-write", false);
+            check ("planet-stream-pollable", false);
+        }
+
+        try {
+            var ring = PlanetRing.create (1, 2);
+            int[] pfd = new int[1];
+            pfd[0] = ring.get_fd ();
+            bool poll_before = Sys.poll_n (pfd, 1, 0) == 0;
+            ring_fired = 0;
+            var rsrc = ring.create_source (() => {
+                ring_fired = ring_fired + 1;
+                return false;
+            });
+            rsrc.attach (MainContext.default_ ());
+            int buf = ring.grant.base_addr + ring.data_offset;
+            ring.grant.put_u8 (ring.data_offset, 0);
+            int slot = ring.submit (buf, 8, PlanetRing.OP_WRITE, 1);
+            ring.kick ();
+            bool poll_after = Sys.poll_n (pfd, 1, 0) == 1;
+            check ("planet-ring-poll", poll_before && poll_after);
+            int st = ring.slot_status (slot);
+            int val = ring.grant.get_u8 (ring.data_offset);
+            bool ring_ok = st == PlanetRing.ST_DONE && ring.seq () > 0 && !ring.has_pending () && val == 0xA5;
+            check ("planet-ring-kick", ring_ok);
+            MainContext.default_ ().iteration (false);
+            check ("planet-ring-source", ring_fired == 1);
+            ring.close ();
+            check ("planet-ring-close", ring.ring_handle == -1 && ring.grant.handle == -1);
+        } catch (IOError e) {
+            check ("planet-ring-poll", false);
+            check ("planet-ring-kick", false);
+            check ("planet-ring-source", false);
+            check ("planet-ring-close", false);
+        }
+
+        try {
+            var arena = PlanetIoArena.create (1, 512);
+            int lid = arena.acquire_lease ();
+            bool l_ok = lid >= 0 && arena.lease_state (lid) == PlanetIoArena.LEASE_APP
+                        && arena.mark_device (lid)
+                        && arena.lease_state (lid) == PlanetIoArena.LEASE_DEVICE
+                        && !arena.release_lease (lid);
+            check ("planet-arena-device-lock", l_ok);
+            bool q_ok = !arena.close () && arena.quarantined && arena.acquire_lease () == -1;
+            check ("planet-arena-quarantine", q_ok);
+            bool rel_ok = arena.mark_app (lid) && arena.release_lease (lid) && arena.close ();
+            check ("planet-arena-release", rel_ok);
+        } catch (IOError e) {
+            check ("planet-arena-device-lock", false);
+            check ("planet-arena-quarantine", false);
+            check ("planet-arena-release", false);
+        }
+
+        try {
+            var blk = PlanetBlockDevice.open (2, 4);
+            var sec0 = new uint8[512];
+            int nb = blk.read_sectors (0, 1, sec0);
+            bool xfs_ok = nb == 512 && sec0[0] == 0x58 && sec0[1] == 0x46
+                          && sec0[2] == 0x53 && sec0[3] == 0x42; // "XFSB"
+            check ("planet-blk-ring", xfs_ok);
+            blk.close ();
+        } catch (IOError e) {
+            check ("planet-blk-ring", false);
+        }
+
+        try {
+            var ip = InetAddress.new_from_string ("10.0.2.15");
+            var isa = new InetSocketAddress.from_string ("10.0.2.2", 8080);
+            check ("gio-net-addr", ip != null && ((!) ip).to_string () == "10.0.2.15"
+                                   && isa.to_string () == "10.0.2.2:8080");
+            var cli = new SocketClient ();
+            var conn = cli.connect_to_host ("10.0.2.2:80", 80);
+            check ("gio-net-socket", conn.get_socket ().is_connected ());
+            conn.close ();
+
+            var svc = new SocketService ();
+            uint16 port = svc.add_any_inet_port ();
+            svc_hits = 0;
+            svc_msg = "";
+            svc.incoming.connect ((sender, c, obj) => {
+                on_demo_incoming (c);
+                return false;
+            });
+            svc.start ();
+            var c2 = cli.connect_to_host (@"127.0.0.1:$port", port);
+            var dout = new DataOutputStream (c2.get_output_stream ());
+            dout.put_string ("ping\n");
+            MainContext.default_ ().iteration (false);
+            var din = new DataInputStream (c2.get_input_stream ());
+            int l2 = 0;
+            string? reply = din.read_line (out l2);
+            check ("gio-socket-service", svc_hits == 1 && svc_msg == "ping" && reply == "pong");
+            c2.close ();
+            svc.stop ();
+            svc.close ();
+
+            var tsvc = new ThreadedSocketService (2);
+            uint16 tport = tsvc.add_any_inet_port ();
+            tsvc_tid = 0;
+            tsvc_msg = "";
+            tsvc.run.connect ((sender, c, obj) => {
+                on_threaded_run (c);
+                return false;
+            });
+            tsvc.start ();
+            var c3 = cli.connect_to_host (@"127.0.0.1:$tport", tport);
+            var dout3 = new DataOutputStream (c3.get_output_stream ());
+            dout3.put_string ("hello-thread\n");
+            MainContext.default_ ().iteration (false);
+            var din3 = new DataInputStream (c3.get_input_stream ());
+            string? reply3 = null;
+            for (int w = 0; w < 100; w++) {
+                int l3 = 0;
+                reply3 = din3.read_line (out l3);
+                if (reply3 != null && ((!) reply3).length > 0)
+                    break;
+                Sys.sleep_ms (5);
+            }
+            check ("gio-threaded-socket-service",
+                   tsvc_tid > 0 && tsvc_tid != Sys.tid ()
+                   && tsvc_msg == "hello-thread" && reply3 == "ack-thread");
+            c3.close ();
+            tsvc.stop ();
+            tsvc.close ();
+        } catch (IOError e) {
+            check ("gio-net-addr", false);
+            check ("gio-net-socket", false);
+            check ("gio-socket-service", false);
+            check ("gio-threaded-socket-service", false);
+        }
+
+        // ConverterInputStream + LineDisciplineConverter (CRLF -> LF)
+        try {
+            var ms = new MemoryInputStream ();
+            ms.add_data ("a\r\nb\rc\n".data);
+            var cin = new ConverterInputStream (ms, new LineDisciplineConverter (false));
+            var cbuf = cin.read_bytes (16);
+            string norm = "";
+            for (int i = 0; i < cbuf.length; i++) {
+                var ch = new uint8[1];
+                ch[0] = cbuf[i];
+                norm = norm + ((cbuf[i] == '\n') ? "\\n" : "x");
+            }
+            check ("gio-converter", norm == "x\\nx\\nx\\n");
+        } catch (IOError e) {
+            check ("gio-converter", false);
+        }
+
+        // Subprocess (spawn worker.elf + communicate_utf8)
+        try {
+            string[] argv = new string[1];
+            argv[0] = "worker.elf";
+            var sub = new Subprocess.newv (argv, SubprocessFlags.NONE);
+            string? sout = null;
+            string? serr = null;
+            sub.communicate_utf8 (null, null, out sout, out serr);
+            check ("gio-subprocess", sub.get_if_exited () && sub.get_exit_status () == 7);
+        } catch (IOError e) {
+            check ("gio-subprocess", false);
+        }
+
+        // Resolver + NetworkService
+        try {
+            var res = Resolver.get_default ().lookup_by_name ("localhost");
+            var ns = new NetworkService ("mercury", "tcp", "gateway");
+            var resolved = ns.resolve_first ();
+            bool r_ok = false;
+            if (res.length == 1 && res[0].to_string () == "127.0.0.1" && resolved != null) {
+                SocketAddress r_addr = (!) resolved;
+                var r_ia = r_addr.get_inet_address ();
+                r_ok = r_addr.get_port () == 5000 && r_ia != null
+                       && ((!) r_ia).to_string () == "10.0.2.2";
+            }
+            check ("gio-resolver-service", r_ok);
+        } catch (IOError e) {
+            check ("gio-resolver-service", false);
+        }
+
+        // UDP Datagram Socket (send_to / receive_from)
+        try {
+            var srv = new Socket (SocketFamily.IPV4, SocketType.DATAGRAM, SocketProtocol.UDP);
+            srv.bind (new InetSocketAddress (new InetAddress.loopback (SocketFamily.IPV4), 0), true);
+            var srv_addr = srv.get_local_address ();
+            var cli_d = new Socket (SocketFamily.IPV4, SocketType.DATAGRAM, SocketProtocol.UDP);
+            var msg = new uint8[3];
+            msg[0] = (uint8) 'u';
+            msg[1] = (uint8) 'd';
+            msg[2] = (uint8) 'p';
+            int sent = cli_d.send_to (srv_addr, msg);
+            var rbuf = new uint8[8];
+            SocketAddress? from_addr = null;
+            int got = srv.receive_from (out from_addr, rbuf);
+            check ("gio-udp-dgram", sent == 3 && got == 3 && rbuf[0] == (uint8) 'u' && rbuf[2] == (uint8) 'p');
+            cli_d.close ();
+            srv.close ();
+        } catch (IOError e) {
+            check ("gio-udp-dgram", false);
+        }
     }
 
     private void demo_regex () {
