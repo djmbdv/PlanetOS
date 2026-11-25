@@ -318,6 +318,38 @@ for src in "$HERE"/visibility/*.vala; do
     esac
 done
 
+ROOT=$(cd "$HERE/../.." && pwd)
+
+echo "== safe extensions =="
+for src in "$HERE"/safe_ext/*.vala; do
+    [ -e "$src" ] || continue
+    name=$(basename "$src" .vala)
+    binary="$WORK/sx_$name$BIN_EXT"
+    mods=""
+    case "$name" in
+        arena*) mods="$ROOT/stdlib/glib/arena.vala" ;;
+        simd*)  mods="$ROOT/stdlib/glib/simd.vala" ;;
+    esac
+    if ! "$PLANC" $TARGET_FLAGS --allow-asm-anywhere $mods "$src" -o "$binary" 2>"$WORK/$name.err"; then
+        ko "$name" "compile failed: $(cat "$WORK/$name.err")"
+        continue
+    fi
+    if ! check_elf "$name" "$binary"; then
+        continue
+    fi
+    run_bin "$binary" >"$WORK/$name.stdout" 2>&1
+    code=$?
+    if [ "$code" != "0" ]; then
+        ko "$name" "exit $code, expected 0"
+        continue
+    fi
+    if [ -f "$HERE/safe_ext/$name.out" ] && ! files_equal "$WORK/$name.stdout" "$HERE/safe_ext/$name.out"; then
+        ko "$name" "stdout differs from $name.out"
+        continue
+    fi
+    ok "$name"
+done
+
 echo "== ownership =="
 for src in "$HERE"/ownership/*.vala; do
     [ -e "$src" ] || continue

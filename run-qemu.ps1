@@ -283,7 +283,9 @@ if (-not $NoBuild) {
         (Join-Path $StdDir 'glib\hashtable.vala'),
         (Join-Path $StdDir 'glib\queue.vala'),
         (Join-Path $StdDir 'glib\uri.vala'),
-        (Join-Path $StdDir 'glib\bookmark.vala')
+        (Join-Path $StdDir 'glib\bookmark.vala'),
+        (Join-Path $StdDir 'glib\arena.vala'),
+        (Join-Path $StdDir 'glib\simd.vala')
     )
     $GeeSrcs = @(
         (Join-Path $StdDir 'gee\base.vala'),
