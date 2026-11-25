@@ -847,6 +847,16 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x44); code.u8 (0xC8); code.u8 (0x10);
         }
 
+        // mov [rax + rcx*8 + 16], rdx        48 89 54 C8 10
+        public void store_qword_rax_rcx_16_rdx () {
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x54); code.u8 (0xC8); code.u8 (0x10);
+        }
+
+        // mov [rax + rcx + 16], dl           88 54 08 10
+        public void store_byte_rax_rcx_16_dl () {
+            code.u8 (0x88); code.u8 (0x54); code.u8 (0x08); code.u8 (0x10);
+        }
+
         // lea rax, [rax + rcx*8 + 16]        48 8D 44 C8 10
         public void lea_rax_rax_rcx_8_16 () {
             code.u8 (0x48); code.u8 (0x8D); code.u8 (0x44); code.u8 (0xC8); code.u8 (0x10);

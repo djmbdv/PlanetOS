@@ -5282,6 +5282,27 @@ namespace Planc {
                         prepare_expr (mc.target, ref struct_temps, ref ref_temps);
                     foreach (var a in mc.args)
                         prepare_expr (a, ref struct_temps, ref ref_temps);
+                    if (bi_kind == "arr_resize") {
+                        mc.bi_slot1 = next_var_slot++; // receiver address
+                        mc.bi_slot2 = next_var_slot++; // old array
+                        mc.bi_slot3 = next_var_slot++; // new length
+                        mc.bi_slot4 = next_var_slot++; // new array
+                        mc.bi_slot5 = next_var_slot++; // copy count
+                        mc.bi_slot6 = next_var_slot++; // index
+                        mc.bi_slot7 = next_var_slot++; // element
+                    } else if (bi_kind == "arr_move") {
+                        mc.bi_slot1 = next_var_slot++; // array header
+                        mc.bi_slot2 = next_var_slot++; // src
+                        mc.bi_slot3 = next_var_slot++; // dst
+                        mc.bi_slot4 = next_var_slot++; // len
+                        mc.bi_slot5 = next_var_slot++; // index
+                        mc.bi_slot6 = next_var_slot++; // element
+                        mc.bi_slot7 = next_var_slot++; // zero value
+                        mc.bi_slot8 = next_var_slot++; // end / source absolute index
+                        mc.bi_slot9 = next_var_slot++; // destination absolute index
+                        mc.bi_slot10 = next_var_slot++; // zero-range start
+                        mc.bi_slot11 = next_var_slot++; // zero-range count
+                    }
                     if (bi_kind == "int_to_string") {
                         string rtn = "";
                         if (mc.target != null)
@@ -7172,6 +7193,18 @@ namespace Planc {
             }
             string tt_name = "";
             var tt = expr_type_full (mc.target, out tt_name);
+            if (tt == ValaType.ARRAY) {
+                if (mc.method_name == "resize") {
+                    kind = "arr_resize";
+                    ret_t = ValaType.VOID;
+                    return true;
+                }
+                if (mc.method_name == "move") {
+                    kind = "arr_move";
+                    ret_t = ValaType.VOID;
+                    return true;
+                }
+            }
             if (tt == ValaType.CLASS && tt_name == "Mutex") {
                 if (mc.method_name == "lock") {
                     kind = "mutex_lock";
@@ -8297,6 +8330,55 @@ namespace Planc {
         }
 
         private void check_builtin_method_args (MethodCallExpr mc, string kind) throws SemanticError {
+            if (kind == "arr_resize") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'resize()' requires an array receiver at $(mc.line):$(mc.column)");
+                if (mc.args.length != 1)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"resize expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                if (!(mc.target is VarRef || mc.target is MemberAccessExpr || mc.target is IndexExpr))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"resize requires a variable, field, or array element as receiver at $(mc.line):$(mc.column)");
+                string ttn = "";
+                expr_type_full (mc.target, out ttn);
+                ValaType ret = ValaType.INT;
+                string retn = "";
+                parse_array_elem (ttn, out ret, out retn);
+                if (ret == ValaType.STRUCT)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"resize is not supported on arrays of struct elements ($(type_label (ValaType.ARRAY, ttn))) at $(mc.line):$(mc.column)");
+                string an = "";
+                var at = expr_type_full (mc.args[0], out an);
+                if (!is_int_like (at))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"argument 1 of 'resize' expects integer, got $(type_label (at, an)) at $(mc.args[0].line):$(mc.args[0].column)");
+                return;
+            }
+            if (kind == "arr_move") {
+                if (mc.target == null)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'move()' requires an array receiver at $(mc.line):$(mc.column)");
+                if (mc.args.length != 3)
+                    throw new SemanticError.WRONG_ARG_COUNT (
+                        @"move expects 3 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
+                string ttn = "";
+                expr_type_full (mc.target, out ttn);
+                ValaType ret = ValaType.INT;
+                string retn = "";
+                parse_array_elem (ttn, out ret, out retn);
+                if (ret == ValaType.STRUCT)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"move is not supported on arrays of struct elements ($(type_label (ValaType.ARRAY, ttn))) at $(mc.line):$(mc.column)");
+                for (int i = 0; i < 3; i++) {
+                    string an = "";
+                    var at = expr_type_full (mc.args[i], out an);
+                    if (!is_int_like (at))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"argument $(i + 1) of 'move' expects integer, got $(type_label (at, an)) at $(mc.args[i].line):$(mc.args[i].column)");
+                }
+                return;
+            }
             if (kind == "int_parse" || kind == "float_parse" || kind == "double_parse") {
                 if (mc.args.length != 1)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -14145,7 +14227,315 @@ namespace Planc {
             emitter.bind (l_done);
         }
 
+        private void emit_arr_elem_load (int base_slot, int idx_slot, bool byte_arr, int value_slot) {
+            emitter.load_local_to_rcx (idx_slot);
+            emitter.load_local (base_slot);
+            if (byte_arr)
+                emitter.load_byte_rax_rcx_16 ();
+            else
+                emitter.load_qword_rax_rcx_16 ();
+            emitter.store_local (value_slot);
+        }
+
+        private void emit_arr_elem_store (int base_slot, int idx_slot, bool byte_arr, int value_slot) {
+            emitter.load_local (base_slot);
+            emitter.push_reg (Reg.RAX);
+            push_depth++;
+            emitter.load_local_to_rcx (idx_slot);
+            emitter.load_local (value_slot);
+            emitter.mov_rdx_rax ();
+            emitter.pop_reg (Reg.RAX);
+            push_depth--;
+            if (byte_arr)
+                emitter.store_byte_rax_rcx_16_dl ();
+            else
+                emitter.store_qword_rax_rcx_16_rdx ();
+        }
+
+        private void gen_arr_resize (MethodCallExpr mc) throws SemanticError {
+            ValaType lt = ValaType.ARRAY;
+            string lt_name = "";
+            gen_lvalue_addr (mc.target, out lt, out lt_name);
+            if (lt != ValaType.ARRAY)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"resize requires an array receiver, got $(type_label (lt, lt_name)) at $(mc.line):$(mc.column)");
+            emitter.store_local (mc.bi_slot1); // &array
+            string an = "";
+            var at = expr_type_full (mc.args[0], out an);
+            gen_expr (mc.args[0]);
+            if (at == ValaType.INT)
+                emit_int_narrow (an);
+            emitter.test_rax_rax ();
+            need_bounds_panic = true;
+            emitter.branch (BranchKind.JL, bounds_panic_label);
+            emitter.store_local (mc.bi_slot3); // n
+            emitter.load_local (mc.bi_slot1);
+            emitter.load_rax_disp (0);
+            emitter.store_local (mc.bi_slot2); // old
+            bool signed_b = false;
+            bool byte_arr = is_byte_array_type (lt_name, out signed_b);
+            ValaType et = ValaType.INT;
+            string etn = "";
+            parse_array_elem (lt_name, out et, out etn);
+            bool elem_ref = is_ref_type (et);
+            emitter.load_local (mc.bi_slot3);
+            emitter.mov_rdi_rax ();
+            if (!byte_arr)
+                emitter.shl_rdi_3 ();
+            emitter.mov_esi_imm (elem_ref ? 1 : 0);
+            call_aligned ("__planc_alloc");
+            emitter.store_local (mc.bi_slot4); // new
+            emitter.load_local (mc.bi_slot4);
+            emitter.load_local_to_rcx (mc.bi_slot3);
+            emitter.store_rax_8_rcx (); // new.length = n
+            if (et == ValaType.STRING && !is_nullable_type (et, etn)) {
+                emitter.load_local (mc.bi_slot4);
+                emitter.load_local_to_rcx (mc.bi_slot3);
+                emitter.emit_fill_empty_strings (emitter.add_string (""));
+            }
+            var l_no_old = emitter.new_label ();
+            var l_use_old = emitter.new_label ();
+            var l_count_done = emitter.new_label ();
+            emitter.zero_local (mc.bi_slot5);
+            emitter.load_local (mc.bi_slot2);
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, l_no_old);
+            emitter.load_local (mc.bi_slot2);
+            emitter.load_rax_disp (8);
+            emitter.mov_rcx_rax ();
+            emitter.load_local (mc.bi_slot3);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JAE, l_use_old);
+            emitter.store_local (mc.bi_slot5); // count = n
+            emitter.branch (BranchKind.JMP, l_count_done);
+            emitter.bind (l_use_old);
+            emitter.mov_rax_rcx ();
+            emitter.store_local (mc.bi_slot5); // count = old.length
+            emitter.bind (l_no_old);
+            emitter.bind (l_count_done);
+            emitter.zero_local (mc.bi_slot6);
+            var l_copy = emitter.new_label ();
+            var l_copy_done = emitter.new_label ();
+            emitter.bind (l_copy);
+            emitter.load_local (mc.bi_slot5);
+            emitter.mov_rcx_rax ();
+            emitter.load_local (mc.bi_slot6);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JAE, l_copy_done);
+            emit_arr_elem_load (mc.bi_slot2, mc.bi_slot6, byte_arr, mc.bi_slot7);
+            emit_arr_elem_store (mc.bi_slot4, mc.bi_slot6, byte_arr, mc.bi_slot7);
+            if (elem_ref) {
+                var l_null = emitter.new_label ();
+                emitter.load_local (mc.bi_slot7);
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JE, l_null);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_ref");
+                emitter.bind (l_null);
+            }
+            emitter.load_local (mc.bi_slot6);
+            emitter.add_rax_imm (1);
+            emitter.store_local (mc.bi_slot6);
+            emitter.branch (BranchKind.JMP, l_copy);
+            emitter.bind (l_copy_done);
+            emitter.load_local (mc.bi_slot1);
+            emitter.load_local_to_rcx (mc.bi_slot4);
+            emitter.store_rax_disp_rcx (0);
+            var l_no_unref = emitter.new_label ();
+            emitter.load_local (mc.bi_slot2);
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, l_no_unref);
+            emitter.mov_rdi_rax ();
+            call_aligned ("__planc_unref");
+            emitter.bind (l_no_unref);
+            emitter.xor_eax ();
+        }
+
+        private void gen_arr_move (MethodCallExpr mc) throws SemanticError {
+            string ttn = "";
+            var tt = expr_type_full (mc.target, out ttn);
+            gen_expr (mc.target);
+            emit_null_check_if_nullable (tt, ttn);
+            emitter.store_local (mc.bi_slot1);
+            bool signed_b = false;
+            bool byte_arr = is_byte_array_type (ttn, out signed_b);
+            ValaType et = ValaType.INT;
+            string etn = "";
+            parse_array_elem (ttn, out et, out etn);
+            for (int i = 0; i < 3; i++) {
+                string an = "";
+                var at = expr_type_full (mc.args[i], out an);
+                gen_expr (mc.args[i]);
+                if (at == ValaType.INT)
+                    emit_int_narrow (an);
+                need_bounds_panic = true;
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JL, bounds_panic_label);
+                if (i == 0)
+                    emitter.store_local (mc.bi_slot2);
+                else if (i == 1)
+                    emitter.store_local (mc.bi_slot3);
+                else
+                    emitter.store_local (mc.bi_slot4);
+            }
+            // src + len <= length
+            emitter.load_local (mc.bi_slot2);
+            emitter.load_local_to_rcx (mc.bi_slot4);
+            emitter.add_rax_rcx ();
+            emitter.store_local (mc.bi_slot8);
+            emitter.load_local (mc.bi_slot1);
+            emitter.load_rax_disp (8);
+            emitter.load_local_to_rcx (mc.bi_slot8);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JB, bounds_panic_label);
+            // dst + len <= length
+            emitter.load_local (mc.bi_slot3);
+            emitter.load_local_to_rcx (mc.bi_slot4);
+            emitter.add_rax_rcx ();
+            emitter.store_local (mc.bi_slot8);
+            emitter.load_local (mc.bi_slot1);
+            emitter.load_rax_disp (8);
+            emitter.load_local_to_rcx (mc.bi_slot8);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JB, bounds_panic_label);
+            emitter.load_local (mc.bi_slot3);
+            emitter.load_local_to_rcx (mc.bi_slot2);
+            emitter.cmp_rax_rcx ();
+            var l_backward = emitter.new_label ();
+            var l_done = emitter.new_label ();
+            emitter.branch (BranchKind.JA, l_backward);
+            // forward: idx = 0 .. len
+            emitter.zero_local (mc.bi_slot5);
+            var l_fwd = emitter.new_label ();
+            var l_fwd_done = emitter.new_label ();
+            emitter.bind (l_fwd);
+            emitter.load_local (mc.bi_slot4);
+            emitter.mov_rcx_rax ();
+            emitter.load_local (mc.bi_slot5);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JAE, l_fwd_done);
+            emitter.load_local (mc.bi_slot2);
+            emitter.load_local_to_rcx (mc.bi_slot5);
+            emitter.add_rax_rcx ();
+            emitter.store_local (mc.bi_slot8);
+            emitter.load_local (mc.bi_slot3);
+            emitter.load_local_to_rcx (mc.bi_slot5);
+            emitter.add_rax_rcx ();
+            emitter.store_local (mc.bi_slot9);
+            emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, byte_arr, mc.bi_slot6);
+            emit_arr_elem_store (mc.bi_slot1, mc.bi_slot9, byte_arr, mc.bi_slot6);
+            emitter.load_local (mc.bi_slot5);
+            emitter.add_rax_imm (1);
+            emitter.store_local (mc.bi_slot5);
+            emitter.branch (BranchKind.JMP, l_fwd);
+            emitter.bind (l_fwd_done);
+            emitter.branch (BranchKind.JMP, l_done);
+            // backward: idx = len down to 1
+            emitter.bind (l_backward);
+            emitter.load_local (mc.bi_slot4);
+            emitter.store_local (mc.bi_slot5);
+            var l_bwd = emitter.new_label ();
+            var l_bwd_done = emitter.new_label ();
+            emitter.bind (l_bwd);
+            emitter.load_local (mc.bi_slot5);
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, l_bwd_done);
+            emitter.sub_rax_imm (1);
+            emitter.store_local (mc.bi_slot5);
+            emitter.load_local (mc.bi_slot2);
+            emitter.load_local_to_rcx (mc.bi_slot5);
+            emitter.add_rax_rcx ();
+            emitter.store_local (mc.bi_slot8);
+            emitter.load_local (mc.bi_slot3);
+            emitter.load_local_to_rcx (mc.bi_slot5);
+            emitter.add_rax_rcx ();
+            emitter.store_local (mc.bi_slot9);
+            emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, byte_arr, mc.bi_slot6);
+            emit_arr_elem_store (mc.bi_slot1, mc.bi_slot9, byte_arr, mc.bi_slot6);
+            emitter.branch (BranchKind.JMP, l_bwd);
+            emitter.bind (l_bwd_done);
+            emitter.bind (l_done);
+            // Reference elements: clear the source slots the move vacated,
+            // otherwise the same object would be owned twice.
+            if (is_ref_type (et)) {
+                emitter.zero_local (mc.bi_slot7);
+                var l_z_done = emitter.new_label ();
+                var l_z_forward = emitter.new_label ();
+                var l_z_go = emitter.new_label ();
+                emitter.load_local (mc.bi_slot3);
+                emitter.load_local_to_rcx (mc.bi_slot2);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JE, l_z_done);
+                emitter.branch (BranchKind.JA, l_z_forward);
+                // dst < src: start = max(src, dst + len); count = src + len - start
+                emitter.load_local (mc.bi_slot3);
+                emitter.load_local_to_rcx (mc.bi_slot4);
+                emitter.add_rax_rcx ();
+                emitter.store_local (mc.bi_slot10);
+                emitter.load_local (mc.bi_slot10);
+                emitter.load_local_to_rcx (mc.bi_slot2);
+                emitter.cmp_rax_rcx ();
+                var l_start_ok = emitter.new_label ();
+                emitter.branch (BranchKind.JAE, l_start_ok);
+                emitter.load_local (mc.bi_slot2);
+                emitter.store_local (mc.bi_slot10);
+                emitter.bind (l_start_ok);
+                emitter.load_local (mc.bi_slot2);
+                emitter.load_local_to_rcx (mc.bi_slot4);
+                emitter.add_rax_rcx ();
+                emitter.load_local_to_rcx (mc.bi_slot10);
+                emitter.sub_rax_rcx ();
+                emitter.store_local (mc.bi_slot11);
+                emitter.branch (BranchKind.JMP, l_z_go);
+                // dst > src: start = src; count = min(len, dst - src)
+                emitter.bind (l_z_forward);
+                emitter.load_local (mc.bi_slot2);
+                emitter.store_local (mc.bi_slot10);
+                emitter.load_local (mc.bi_slot3);
+                emitter.load_local_to_rcx (mc.bi_slot2);
+                emitter.sub_rax_rcx (); // dst - src
+                emitter.mov_rcx_rax ();
+                emitter.load_local (mc.bi_slot4);
+                emitter.cmp_rax_rcx ();
+                var l_cnt_ok = emitter.new_label ();
+                emitter.branch (BranchKind.JBE, l_cnt_ok);
+                emitter.mov_rax_rcx ();
+                emitter.bind (l_cnt_ok);
+                emitter.store_local (mc.bi_slot11);
+                emitter.bind (l_z_go);
+                emitter.zero_local (mc.bi_slot5);
+                var l_zloop = emitter.new_label ();
+                var l_zloop_done = emitter.new_label ();
+                emitter.bind (l_zloop);
+                emitter.load_local (mc.bi_slot11);
+                emitter.mov_rcx_rax ();
+                emitter.load_local (mc.bi_slot5);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JAE, l_zloop_done);
+                emitter.load_local (mc.bi_slot10);
+                emitter.load_local_to_rcx (mc.bi_slot5);
+                emitter.add_rax_rcx ();
+                emitter.store_local (mc.bi_slot8);
+                emit_arr_elem_store (mc.bi_slot1, mc.bi_slot8, byte_arr, mc.bi_slot7);
+                emitter.load_local (mc.bi_slot5);
+                emitter.add_rax_imm (1);
+                emitter.store_local (mc.bi_slot5);
+                emitter.branch (BranchKind.JMP, l_zloop);
+                emitter.bind (l_zloop_done);
+                emitter.bind (l_z_done);
+            }
+            emitter.xor_eax ();
+        }
+
         private void gen_builtin_method_call (MethodCallExpr mc, string kind) throws SemanticError {
+            if (kind == "arr_resize") {
+                gen_arr_resize (mc);
+                return;
+            }
+            if (kind == "arr_move") {
+                gen_arr_move (mc);
+                return;
+            }
             if (kind == "int_parse") {
                 string an = "";
                 expr_type_full (mc.args[0], out an);

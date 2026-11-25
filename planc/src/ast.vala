@@ -208,6 +208,19 @@ namespace Planc {
         public string method_name { get; set; }
         public GenericArray<Expr> args { get; private set; }
         public int temp_slot { get; set; default = -1; }
+        // Array builtin temporaries (`resize`/`move`).
+        public int bi_slot1 { get; set; default = -1; }
+        public int bi_slot2 { get; set; default = -1; }
+        public int bi_slot3 { get; set; default = -1; }
+        public int bi_slot4 { get; set; default = -1; }
+        public int bi_slot5 { get; set; default = -1; }
+        public int bi_slot6 { get; set; default = -1; }
+        public int bi_slot7 { get; set; default = -1; }
+        public int bi_slot8 { get; set; default = -1; }
+        public int bi_slot9 { get; set; default = -1; }
+        public int bi_slot10 { get; set; default = -1; }
+        public int bi_slot11 { get; set; default = -1; }
+        public int bi_slot12 { get; set; default = -1; }
 
         public MethodCallExpr () {
             args = new GenericArray<Expr> ();
