@@ -578,7 +578,9 @@ $qemuArgs = @(
     '-kernel', (To-QemuPath $kernelPath),
     '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide'),
     '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=none,id=vd0,readonly=on'),
-    '-device', 'virtio-blk-pci,drive=vd0'
+    '-device', 'virtio-blk-pci,drive=vd0',
+    '-netdev', 'user,id=net0',
+    '-device', 'virtio-net-pci,netdev=net0'
 ) + $vgaArgs + @(
     '-no-reboot',
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04'

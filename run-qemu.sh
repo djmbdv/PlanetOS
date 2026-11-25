@@ -248,6 +248,8 @@ exec qemu-system-x86_64 \
     -cpu max \
     -kernel "$OUT/planet-kernel" \
     -drive file="$OUT/disk.img",format=raw,if=ide \
+    -netdev user,id=net0 \
+    -device virtio-net-pci,netdev=net0 \
     "${GPU_ARGS[@]}" \
     "${DISP_ARGS[@]}" \
     "${SER_ARGS[@]}" \
