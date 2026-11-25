@@ -47,9 +47,10 @@ liberación (kind `1`).
 
 Antes de ejecutar el destructor de una clase se escribe `0xFFFFFFFE` en el
 `refcount`. Cualquier `__planc_ref` sobre un objeto en ese estado significaría
-resucitar un objeto a medio destruir y dispara un panic. El estado se diagnostica
-solo bajo `--debug-memory`: en release se mantiene el comportamiento histórico,
-porque hay código legítimo que guarda `this` durante la destrucción.
+resucitar un objeto que se libera en cuanto el destructor retorna, así que se
+rechaza en **todas** las builds (el panic reutiliza el diagnóstico genérico de
+memoria). `__planc_unref` sobre un objeto *dying* sí se acepta y se ignora: es el
+caso normal de una referencia soltada durante la destrucción.
 
 ## 3. Ownership estricto: `--strict-ownership`
 
@@ -66,9 +67,16 @@ Opt-in. Endurece las comprobaciones que en modo normal son solo avisos.
   declaración se promociona a local con ownership propio (comportamiento previo,
   seguro).
 * Reasignar un `unowned` a un temporal se rechaza por el mismo motivo.
+* Un `unowned T x = <expresión cuyo origen es un temporal>` (`make ().field`,
+  `a[i].field` sobre un temporal) también se trata como temporal: el receptor se
+  libera al final de la sentencia.
+* Reasignar un borrow (`u = otro`) **no libera** el objetivo anterior ni toma
+  ownership del nuevo: un borrow no posee nada. Si el nuevo valor es un temporal,
+  conserva su referencia para no dejar un puntero colgado (se filtra en lugar de
+  corromper) y `--strict-ownership` lo rechaza de todos modos.
 * Un `unowned` no toma referencia al declararse ni la libera al salir de ámbito:
   nunca puede provocar un *double free*, solo (si se abusa) un valor colgante, que
-  es exactamente lo que detectan las dos reglas anteriores.
+  es exactamente lo que detectan las reglas anteriores.
 
 ### 3.2 Escapes
 
@@ -124,20 +132,26 @@ negativa y arrays vacíos antes de ejecutar el kernel.
 `stdlib/planet_math_kernels.vala` sigue el mismo patrón para SSE4.1/AVX2/FMA3: los
 kernels son funciones libres en el namespace `Planet` y `mathlib` solo reenvía.
 
-## 6. Límite conocido
+## 6. Autohospedaje verificado
 
-`planc.elf` auto-hospedado aborta con `planc: panic: memory error (double free or
-corrupted block)` al compilar cualquier `.vala` dentro de PlanetOS (también con
-`--dump-text`, es decir, antes del codegen). El chequeo de `0xDEADDEAD`/`magic` es
-nuevo, así que el panic **destapa** un doble `unref` latente en la ruta de
-parseo/AST del propio compilador; el bug no está corregido todavía y es el
-siguiente trabajo de esta línea.
+`planc.elf` compila y ejecuta dentro de PlanetOS con el runtime endurecido:
+`planc.elf --target=planetos utf8.vala -o t1.elf` + `t1.elf` produce
+`chars=5 valid=1` / `cp0=0xF1 cp1=0x20AC cp2=0x1F680`, y lo mismo con
+`class_basic.vala` (`ops=24`).
+
+Ese caso destapó el bug que el chequeo de `0xDEADDEAD`/`magic` había convertido en
+panic: reasignar un `unowned` liberaba el objetivo prestado (el slot se comportaba
+como poseído en la ruta de asignación) y dejaba caer el `refcount` del dueño a
+cero. Ahora un slot prestado no libera ni toma ownership en la asignación, así que
+el compilador auto-hospedado vuelve a funcionar y el patrón ya no puede corromper
+memoria.
 
 ## 7. Tests
 
 | Sección de `planc/tests/run.sh` | Qué cubre |
 |---|---|
 | `ownership/` | asm fuera de stdlib, escape de `&local`, de `ref`/`out`, de `unowned`, borrow de temporal, rebind a temporal, borrow obsoleto, caso correcto |
+| `valid/unowned_*` | rebind de `unowned` sin liberar el objetivo (release) y borrow de un campo de un temporal (promovido a owned) |
 | `debugmem/` | `--debug-memory`: programa correcto, lectura UAF, escritura UAF, doble `free`, `ref` a objeto *dying* |
 | `safe_ext/` | `ArenaHandle` (alloc/uso/liberación) y kernels SIMD |
 | `visibility/` | `--strict-visibility` / `--enforce-visibility` |

@@ -2487,7 +2487,7 @@ namespace Planc {
                 symbols.add (new Symbol ("__planc_alloc", start_alloc, emitter.here () - start_alloc));
 
                 var start_ref = emitter.here ();
-                emitter.emit_rt_ref (mem_panic_label, debug_memory);
+                emitter.emit_rt_ref (mem_panic_label);
                 symbols.add (new Symbol ("__planc_ref", start_ref, emitter.here () - start_ref));
 
                 var start_unref = emitter.here ();
@@ -2882,16 +2882,26 @@ namespace Planc {
                 local_borrow_dead[dst_idx] = false;
                 return false;
             }
-            if (src_expr != null && !is_storage_location (src_expr)) {
+            if (src_expr != null) {
+                int root = borrow_root_local (src_expr);
+                if (root >= 0 && is_storage_location (src_expr)) {
+                    // `a`, `a.b`, `a[i].b`, `*p`: the borrow follows the root local.
+                    local_borrow_src[dst_idx] = root;
+                    local_borrow_dead[dst_idx] = false;
+                    return false;
+                }
+            }
+            if (src_expr != null && is_storage_location (src_expr)) {
+                // A field/index/deref whose base is itself a temporary
+                // (`make ().field`) dies with that temporary.
                 local_borrow_src[dst_idx] = BORROW_TEMP;
                 local_borrow_dead[dst_idx] = true;
                 return true;
             }
-            int root = (src_expr != null) ? borrow_root_local (src_expr) : -1;
-            if (root >= 0) {
-                local_borrow_src[dst_idx] = root;
-                local_borrow_dead[dst_idx] = false;
-                return false;
+            if (src_expr != null) {
+                local_borrow_src[dst_idx] = BORROW_TEMP;
+                local_borrow_dead[dst_idx] = true;
+                return true;
             }
             local_borrow_src[dst_idx] = -1;
             local_borrow_dead[dst_idx] = false;
@@ -11125,6 +11135,18 @@ namespace Planc {
                             } else {
                                 copy_struct_rax_to_rcx (n);
                             }
+                        } else if (program_uses_heap && is_ref_type (local_types[idx]) && !local_is_compact[idx]
+                                   && local_unmanaged[idx] && !local_by_ref[idx]) {
+                            // A borrowed slot (`unowned` local or `unowned` parameter)
+                            // owns nothing: rebinding it must not release the old
+                            // target (that block belongs to its owner) and must not
+                            // take ownership of the new value either.
+                            // A temporary keeps its single reference so a borrow that
+                            // outlives it leaks instead of dangling; --strict-ownership
+                            // rejects that assignment outright.
+                            if (!(a.value is VarRef || a.value is MemberAccessExpr || a.value is IndexExpr))
+                                consume_ref_expr (a.value);
+                            emitter.store_local (local_slots[idx]);
                         } else if (program_uses_heap && is_ref_type (local_types[idx]) && !local_is_compact[idx]) {
                             consume_ref_expr (a.value);
                             if (local_is_weak[idx])
