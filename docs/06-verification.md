@@ -139,10 +139,19 @@ timestamp with the source before believing a measurement (R-39 in
 [07](07-risks-and-decisions.md)).
 
 ```sh
-python tests/qemu.py                # build + every case
+python tests/qemu.py                # build + every case in parallel
 python tests/qemu.py --no-build     # reuse the last build
 python tests/qemu.py --case gio     # one case
+python tests/qemu.py -j 4           # cap parallel QEMU workers
+python tests/qemu.py --accel tcg    # force TCG instead of auto KVM
 ```
+
+To keep runs fast, `tests/qemu.py` passes `-snapshot` (with `file.locking=off`
+on the IDE image) so cases run in parallel across `--jobs`/`-j` workers,
+auto-enables `-accel kvm` on Linux when `/dev/kvm` is accessible (`--accel auto`,
+falling back to `tcg` for frame-budget-sensitive cases such as `compositor-ext`),
+uses a `0.005` s character typing `--delay`, and reads COM1 output in 4 KiB
+chunks with a `threading.Condition` instead of 100 ms polling.
 
 Host-side differential tests for the C -> Vala translator live in [tools/c2vala_tests/run.py](tools/c2vala_tests/run.py) (gcc vs valac on the same source; needs MSYS2, not QEMU). The native translator has to be built first: `tools/c2vala/build_host.sh` for this host (`.exe` on Windows) or `tools/c2vala/build.sh` for the guest (ELF, planc). A case directory with `refuse.txt` must be refused with that message, one with `report.txt` must print those lines under `--report`, and one with `planc_only.txt` is skipped unless planc compiles the generated code:
 

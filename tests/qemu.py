@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import concurrent.futures
 import os
 import re
 import subprocess
@@ -33,6 +34,9 @@ ROOT = os.path.dirname(HERE)
 CASES_DIR = os.path.join(HERE, "cases")
 
 PROMPT = "🪐 : "
+
+# Cases whose guest-side frame/timing budget assumes TCG speed when --accel=auto.
+TCG_AUTO_CASES = {"compositor-ext"}
 
 
 def die(message):
@@ -138,17 +142,27 @@ def qemu_path(path):
     return path.replace("\\", "/")
 
 
-def run_guest(qemu, out_dir, commands, delay, boot_timeout, command_timeout):
+def default_accel():
+    if os.name != "nt" and os.access("/dev/kvm", os.R_OK | os.W_OK):
+        return "kvm"
+    return "tcg"
+
+
+def run_guest(qemu, out_dir, commands, delay, boot_timeout, command_timeout,
+              accel="auto"):
     kernel = os.path.join(out_dir, "planet-kernel")
     disk = os.path.join(out_dir, "disk.img")
     if not os.path.isfile(kernel) or not os.path.isfile(disk):
         die("missing kernel or disk image in %s (run without --no-build)" % out_dir)
 
+    resolved_accel = default_accel() if accel == "auto" else accel
     argv = [
         qemu,
+        "-accel", resolved_accel,
         "-cpu", "max",
         "-kernel", qemu_path(kernel),
-        "-drive", "file=%s,format=raw,if=ide" % qemu_path(disk),
+        "-drive", "file=%s,format=raw,if=ide,file.locking=off" % qemu_path(disk),
+        "-snapshot",
         # C2: the same image is exposed again as a read-only virtio-blk device,
         # so the IRQ-driven block path is exercised alongside ATA.
         "-drive", "file=%s,format=raw,if=none,id=vd0,readonly=on,file.locking=off" % qemu_path(disk),
@@ -170,33 +184,48 @@ def run_guest(qemu, out_dir, commands, delay, boot_timeout, command_timeout):
                             stderr=subprocess.STDOUT, bufsize=0, env=env)
 
     output = bytearray()
-    lock = threading.Lock()
-    finished = threading.Event()
+    cond = threading.Condition()
+    finished = False
 
     def reader():
+        nonlocal finished
+        fd = proc.stdout.fileno()
         while True:
-            chunk = proc.stdout.read(1)
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
             if not chunk:
                 break
-            with lock:
+            with cond:
                 output.extend(chunk)
-        finished.set()
+                cond.notify_all()
+        with cond:
+            finished = True
+            cond.notify_all()
 
-    threading.Thread(target=reader, daemon=True).start()
+    reader_thread = threading.Thread(target=reader, daemon=True)
+    reader_thread.start()
+
+    def text_unlocked():
+        return output.decode("utf-8", "replace")
 
     def text():
-        with lock:
-            return output.decode("utf-8", "replace")
+        with cond:
+            return text_unlocked()
 
     def wait_prompts(count, timeout):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if text().count(PROMPT) >= count:
-                return True
-            if finished.is_set():
-                return False
-            time.sleep(0.1)
-        return False
+        deadline = time.monotonic() + timeout
+        with cond:
+            while True:
+                if text_unlocked().count(PROMPT) >= count:
+                    return True
+                if finished:
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                cond.wait(timeout=remaining)
 
     def send_line(line):
         for char in line:
@@ -240,7 +269,7 @@ def run_guest(qemu, out_dir, commands, delay, boot_timeout, command_timeout):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-        finished.wait(timeout=5)
+        reader_thread.join(timeout=5)
 
     return text(), error
 
@@ -289,6 +318,16 @@ def load_case(name):
     return commands, checks
 
 
+def run_case(name, qemu, out_dir, args):
+    commands, checks = load_case(name)
+    case_accel = "tcg" if (args.accel == "auto" and name in TCG_AUTO_CASES) else args.accel
+    output, error = run_guest(qemu, out_dir, commands, args.delay,
+                              args.boot_timeout, args.command_timeout,
+                              accel=case_accel)
+    problems = [error] if error else check_output(output, checks)
+    return name, len(commands), len(checks), output, problems
+
+
 def main():
     parser = argparse.ArgumentParser(description="PlanetOS QEMU regression tests")
     parser.add_argument("--case", action="append", help="run only this case (repeatable)")
@@ -296,8 +335,12 @@ def main():
     parser.add_argument("--no-build", action="store_true", help="reuse the last build")
     parser.add_argument("--keep-going", action="store_true", help="run every case after a failure")
     parser.add_argument("--verbose", action="store_true", help="print the serial output")
-    parser.add_argument("--delay", type=float, default=0.08,
-                        help="seconds between typed characters")
+    parser.add_argument("--delay", type=float, default=0.005,
+                        help="seconds between typed characters (default: 0.005)")
+    parser.add_argument("--jobs", "-j", type=int, default=0,
+                        help="parallel QEMU workers (default: 0 = auto, up to CPU count)")
+    parser.add_argument("--accel", choices=("auto", "kvm", "tcg"), default="auto",
+                        help="QEMU accelerator (default: auto, uses kvm when /dev/kvm is accessible)")
     parser.add_argument("--boot-timeout", type=float, default=180.0)
     parser.add_argument("--command-timeout", type=float, default=120.0)
     args = parser.parse_args()
@@ -324,27 +367,64 @@ def main():
     else:
         out_dir, qemu = build_system()
 
+    jobs = args.jobs if args.jobs > 0 else min(len(selected), os.cpu_count() or 4)
+    resolved_accel = default_accel() if args.accel == "auto" else args.accel
+    print("   accel:     %s" % resolved_accel)
+    print("   jobs:      %d" % jobs)
+
     failures = 0
-    for name in selected:
-        commands, checks = load_case(name)
-        print("== case %s (%d commands, %d checks) ==" % (name, len(commands), len(checks)))
-        output, error = run_guest(qemu, out_dir, commands, args.delay,
-                                  args.boot_timeout, args.command_timeout)
-        problems = [error] if error else check_output(output, checks)
-        if problems:
-            failures = failures + 1
-            print("FAIL %s" % name)
-            for problem in problems:
-                print("   - %s" % problem)
-            print("--- serial ---")
-            sys.stdout.write(output)
-            print("--------------")
-            if not args.keep_going:
-                break
-        else:
-            print("PASS %s" % name)
-            if args.verbose:
+    if jobs == 1:
+        for name in selected:
+            name, n_cmds, n_checks, output, problems = run_case(name, qemu, out_dir, args)
+            print("== case %s (%d commands, %d checks) ==" % (name, n_cmds, n_checks))
+            if problems:
+                failures += 1
+                print("FAIL %s" % name)
+                for problem in problems:
+                    print("   - %s" % problem)
+                print("--- serial ---")
                 sys.stdout.write(output)
+                print("--------------")
+                if not args.keep_going:
+                    break
+            else:
+                print("PASS %s" % name)
+                if args.verbose:
+                    sys.stdout.write(output)
+    else:
+        abort = threading.Event()
+
+        def worker(case_name):
+            if abort.is_set():
+                return None
+            return run_case(case_name, qemu, out_dir, args)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = [executor.submit(worker, name) for name in selected]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                if result is None:
+                    continue
+                name, n_cmds, n_checks, output, problems = result
+                print("== case %s (%d commands, %d checks) ==" % (name, n_cmds, n_checks),
+                      flush=True)
+                if problems:
+                    failures += 1
+                    print("FAIL %s" % name, flush=True)
+                    for problem in problems:
+                        print("   - %s" % problem, flush=True)
+                    print("--- serial ---", flush=True)
+                    sys.stdout.write(output)
+                    print("--------------", flush=True)
+                    if not args.keep_going:
+                        abort.set()
+                        for pending in futures:
+                            pending.cancel()
+                        break
+                else:
+                    print("PASS %s" % name, flush=True)
+                    if args.verbose:
+                        sys.stdout.write(output)
 
     total = len(selected)
     print("\n%d/%d cases passed" % (total - failures, total))
