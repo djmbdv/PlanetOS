@@ -199,6 +199,19 @@ namespace Gio {
             return new PlanetGrant (addr, len, gh, true);
         }
 
+        public static PlanetGrant from_received (int handle) throws IOError {
+            if (handle < 0)
+                throw new IOError.INVALID_ARGUMENT ("PlanetGrant.from_received: invalid handle");
+            int addr = 0;
+            int len = 0;
+            int kind = Sys.handle_info (handle, out addr, out len);
+            if (kind <= 0 || addr <= 0 || len <= 0)
+                throw_io_error ("PlanetGrant.from_received(handle_info)");
+            if (Sys.map_user_at (addr, len) < 0)
+                throw_io_error ("PlanetGrant.from_received(map_user_at)");
+            return new PlanetGrant (addr, len, handle, false);
+        }
+
         public void share_with (int tid) throws IOError {
             if (handle < 0)
                 throw new IOError.CLOSED ("PlanetGrant is closed");
@@ -637,6 +650,120 @@ namespace Gio {
 
         public void close () {
             ring.close ();
+        }
+    }
+
+    /**
+     * Zero-copy IPC channel backed by a shared PlanetGrant transferred via SYS_HANDLE_SEND.
+     * Header (64 bytes):
+     *   +0x00: req_seq (int32), +0x04: req_len (int32)
+     *   +0x08: resp_seq (int32), +0x0C: resp_len (int32)
+     * Payload slots: [64 .. 64 + max_payload) for request, [64 + max_payload ..) for response.
+     */
+    public class PlanetConnection : Object {
+        public PlanetGrant grant { get; private set; }
+        public int max_payload { get; private set; }
+        private int req_seen = 0;
+        private int resp_seen = 0;
+
+        private PlanetConnection (PlanetGrant grant) {
+            this.grant = grant;
+            int half = (grant.byte_len - 64) / 2;
+            this.max_payload = (half > 0) ? half : 0;
+        }
+
+        ~PlanetConnection () {
+            close ();
+        }
+
+        public static PlanetConnection create (int pages = 1) throws IOError {
+            var g = PlanetGrant.allocate (pages);
+            for (int i = 0; i < 64; i += 4)
+                Unsafe.poke32 (g.base_addr + i, 0);
+            Unsafe.mfence ();
+            return new PlanetConnection (g);
+        }
+
+        public static PlanetConnection? accept_from_inbox () throws IOError {
+            int h = Sys.handle_recv ();
+            if (h < 0)
+                return null;
+            var g = PlanetGrant.from_received (h);
+            return new PlanetConnection (g);
+        }
+
+        public int send_to (int target_tid) throws IOError {
+            if (grant.handle < 0)
+                throw new IOError.CLOSED ("PlanetConnection is closed");
+            int nh = Sys.handle_send (target_tid, grant.handle);
+            if (nh < 0)
+                throw_io_error ("PlanetConnection.send_to");
+            return nh;
+        }
+
+        public void write_request (uint8[] data) throws IOError {
+            if (grant.base_addr <= 0)
+                throw new IOError.CLOSED ("PlanetConnection is closed");
+            if (data.length > max_payload)
+                throw new IOError.INVALID_ARGUMENT ("PlanetConnection.write_request: payload too large");
+            grant.write_bytes (64, data, data.length);
+            Unsafe.mfence ();
+            Unsafe.poke32 (grant.base_addr + 0x04, data.length);
+            int next_seq = Unsafe.peek32 (grant.base_addr + 0x00) + 1;
+            Unsafe.mfence ();
+            Unsafe.poke32 (grant.base_addr + 0x00, next_seq);
+        }
+
+        public uint8[]? read_request () throws IOError {
+            if (grant.base_addr <= 0)
+                throw new IOError.CLOSED ("PlanetConnection is closed");
+            Unsafe.mfence ();
+            int seq = Unsafe.peek32 (grant.base_addr + 0x00);
+            if (seq == req_seen)
+                return null;
+            req_seen = seq;
+            int len = Unsafe.peek32 (grant.base_addr + 0x04);
+            if (len < 0 || len > max_payload)
+                throw new IOError.FAILED ("PlanetConnection.read_request: corrupt length");
+            var buf = new uint8[len];
+            if (len > 0)
+                grant.read_bytes (64, buf, len);
+            return buf;
+        }
+
+        public void write_response (uint8[] data) throws IOError {
+            if (grant.base_addr <= 0)
+                throw new IOError.CLOSED ("PlanetConnection is closed");
+            if (data.length > max_payload)
+                throw new IOError.INVALID_ARGUMENT ("PlanetConnection.write_response: payload too large");
+            int off = 64 + max_payload;
+            grant.write_bytes (off, data, data.length);
+            Unsafe.mfence ();
+            Unsafe.poke32 (grant.base_addr + 0x0C, data.length);
+            int next_seq = Unsafe.peek32 (grant.base_addr + 0x08) + 1;
+            Unsafe.mfence ();
+            Unsafe.poke32 (grant.base_addr + 0x08, next_seq);
+        }
+
+        public uint8[]? read_response () throws IOError {
+            if (grant.base_addr <= 0)
+                throw new IOError.CLOSED ("PlanetConnection is closed");
+            Unsafe.mfence ();
+            int seq = Unsafe.peek32 (grant.base_addr + 0x08);
+            if (seq == resp_seen)
+                return null;
+            resp_seen = seq;
+            int len = Unsafe.peek32 (grant.base_addr + 0x0C);
+            if (len < 0 || len > max_payload)
+                throw new IOError.FAILED ("PlanetConnection.read_response: corrupt length");
+            var buf = new uint8[len];
+            if (len > 0)
+                grant.read_bytes (64 + max_payload, buf, len);
+            return buf;
+        }
+
+        public void close () {
+            grant.release ();
         }
     }
 }

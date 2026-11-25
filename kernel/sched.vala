@@ -424,6 +424,13 @@ namespace Planet.Kernel {
             return mmio_read64 (KernelLayout.TCB_TABLE + cur * TCB_SIZE + 88);
         }
 
+        public static bool is_task_live (int tid) {
+            if (tid < 0 || tid >= MAX_TASKS)
+                return false;
+            int st = mmio_read64 (KernelLayout.TCB_TABLE + tid * TCB_SIZE);
+            return st != TASK_FREE && st != TASK_ZOMBIE;
+        }
+
         public static int spawn_user_ready (int entry, int user_sp, int user_stack_base, int user_stack_pages, int user_cr3, int name_ptr, int name_len) {
             int kstack = Pmm.alloc_contiguous (4);
             if (kstack == 0)

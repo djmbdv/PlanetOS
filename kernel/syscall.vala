@@ -52,6 +52,7 @@ namespace Planet.Kernel {
     private const int E_NOENT = 2;
     private const int E_IO = 5;
     private const int E_BAD_HANDLE = 9;
+    private const int E_AGAIN = 11;
     private const int E_ACCES = 13;
     private const int E_EXIST = 17;
     private const int E_NOTDIR = 20;
@@ -319,8 +320,36 @@ namespace Planet.Kernel {
         return fd_owner_of (slot) == Sched.current_tid ();
     }
 
-    private static int fd_alloc (int kind, int rights, int id, int size) {
-        int owner = Sched.current_tid ();
+    private const int INBOX_SLOTS = 8;
+    private static int[] handle_inbox;
+
+    private static bool inbox_push (int tid, int h) {
+        if (handle_inbox == null || tid < 0 || tid >= 16)
+            return false;
+        int base_i = tid * INBOX_SLOTS;
+        for (int i = 0; i < INBOX_SLOTS; i++) {
+            if (handle_inbox[base_i + i] == 0) {
+                handle_inbox[base_i + i] = h;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static int inbox_pop (int tid) {
+        if (handle_inbox == null || tid < 0 || tid >= 16)
+            return -1;
+        int base_i = tid * INBOX_SLOTS;
+        int h = handle_inbox[base_i];
+        if (h <= 0)
+            return -1;
+        for (int i = 0; i < INBOX_SLOTS - 1; i++)
+            handle_inbox[base_i + i] = handle_inbox[base_i + i + 1];
+        handle_inbox[base_i + INBOX_SLOTS - 1] = 0;
+        return h;
+    }
+
+    private static int fd_alloc_for (int owner, int kind, int rights, int id, int size, int extra24) {
         for (int index = 3; index < MAX_FDS; index++) {
             int slot = KernelLayout.FD_TABLE + index * 32;
             if (fd_kind_of (slot) != 0)
@@ -331,10 +360,14 @@ namespace Planet.Kernel {
             mmio_write64 (slot + 0, kind | (rights << 8) | (gen << 16) | (owner << 32));
             mmio_write64 (slot + 8, id);
             mmio_write64 (slot + 16, size);
-            mmio_write64 (slot + 24, 0);
+            mmio_write64 (slot + 24, extra24);
             return index | (gen << 8);
         }
         return -1;
+    }
+
+    private static int fd_alloc (int kind, int rights, int id, int size) {
+        return fd_alloc_for (Sched.current_tid (), kind, rights, id, size, 0);
     }
 
     // Releases the slot but keeps its generation, so a stale value cannot be
@@ -489,6 +522,8 @@ namespace Planet.Kernel {
                 if (glen > 0) {
                     if (start >= gstart) {
                         if (start + len <= gstart + glen) {
+                            if (fd_owner_of (slot) == me)
+                                return true;
                             int acl = acl_addr (index);
                             int t = 0;
                             while (t < GRANT_TASKS) {
@@ -1556,6 +1591,62 @@ namespace Planet.Kernel {
                     mmio_write8 (a0 + i69, VirtioNet.mac_byte (i69));
                 ok ();
                 return 0;
+            case 70: // SYS_HANDLE_SEND(target_tid, handle) -> new_handle | -1
+                if (!Sched.is_task_live (a0))
+                    return fail (E_INVAL);
+                if (fd_check (a1, 0) != 0)
+                    return fail (E_BAD_HANDLE);
+                if (!fd_owned (a1))
+                    return fail (E_ACCES);
+                int sslot70 = handle_slot (a1);
+                int skind70 = fd_kind_of (sslot70);
+                int srights70 = fd_rights_of (sslot70);
+                int sid70 = mmio_read64 (sslot70 + 8);
+                int ssz70 = mmio_read64 (sslot70 + 16);
+                int sext70 = mmio_read64 (sslot70 + 24);
+                int nh70 = fd_alloc_for (a0, skind70, srights70, sid70, ssz70, sext70);
+                if (nh70 < 0)
+                    return fail (E_NOSPC);
+                if (!inbox_push (a0, nh70)) {
+                    fd_release (handle_slot (nh70));
+                    return fail (E_NOSPC);
+                }
+                if (skind70 == KIND_GRANT && a0 > 0) {
+                    int acl70 = acl_addr (a1 & 0xFF);
+                    for (int t70 = 0; t70 < GRANT_TASKS; t70++) {
+                        int cur70 = mmio_read32 (acl70 + t70 * 4);
+                        if (cur70 == a0)
+                            break;
+                        if (cur70 == 0) {
+                            mmio_write32 (acl70 + t70 * 4, a0);
+                            break;
+                        }
+                    }
+                }
+                ok ();
+                return nh70;
+            case 71: // SYS_HANDLE_RECV() -> handle | -1
+                int rh71 = inbox_pop (Sched.current_tid ());
+                if (rh71 < 0)
+                    return fail (E_AGAIN);
+                ok ();
+                return rh71;
+            case 72: // SYS_HANDLE_INFO(handle, out_buf16) -> kind | -1
+                if (fd_check (a0, 0) != 0)
+                    return fail (E_BAD_HANDLE);
+                if (!fd_owned (a0))
+                    return fail (E_ACCES);
+                if (!user_ok_w (a1, 16))
+                    return fail (E_INVAL);
+                int slot72 = handle_slot (a0);
+                int k72 = fd_kind_of (slot72);
+                int sc72 = KernelLayout.SYSCALL_SCRATCH;
+                mmio_write64 (sc72 + 0, mmio_read64 (slot72 + 8));
+                mmio_write64 (sc72 + 8, mmio_read64 (slot72 + 16));
+                if (copy_guarded (a1, sc72, 16) != 0)
+                    return fail (E_INVAL);
+                ok ();
+                return k72;
             default:
                 return -1;
         }
@@ -1688,6 +1779,7 @@ namespace Planet.Kernel {
             }
             for (int i = 0; i < MAX_FDS * GRANT_TASKS; i++)
                 mmio_write32 (KernelLayout.GRANT_ACL + i * 4, 0);
+            handle_inbox = new int[16 * INBOX_SLOTS];
             Hal.set_idt_gate_dpl (0x80, addr_isr_syscall (), 1);
         }
     }

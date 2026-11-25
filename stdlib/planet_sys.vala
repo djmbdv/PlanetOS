@@ -506,6 +506,27 @@ namespace Planet {
             return __sys4 (69, __arr_data (out_mac), 0, 0, 0);
         }
 
+        // C3.2: capability handle transfer and inspection across tasks.
+        public static int handle_send (int target_tid, int handle) {
+            return __sys4 (70, target_tid, handle, 0, 0);
+        }
+
+        public static int handle_recv () {
+            return __sys4 (71, 0, 0, 0, 0);
+        }
+
+        public static int handle_info (int handle, out int out_id, out int out_size) {
+            out_id = 0;
+            out_size = 0;
+            var buf = new int[2];
+            int kind = __sys4 (72, handle, int_arr_addr (buf), 0, 0);
+            if (kind > 0) {
+                out_id = buf[0];
+                out_size = buf[1];
+            }
+            return kind;
+        }
+
         public static int protect_user_ro (int vaddr, int size) {
             if (vaddr < USER_MIN_ADDR || size <= 0 || size > 0x800000 || vaddr + size > USER_MAX_ADDR)
                 return -1;

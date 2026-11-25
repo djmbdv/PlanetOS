@@ -793,6 +793,33 @@ namespace GioDemo {
             check ("planet-blk-ring", false);
         }
 
+        // C3.2: SYS_HANDLE_SEND / SYS_HANDLE_RECV / PlanetConnection zero-copy IPC
+        try {
+            var conn = PlanetConnection.create (1);
+            int nh = conn.send_to (Sys.tid ());
+            var peer = PlanetConnection.accept_from_inbox ();
+            bool ipc_ok = false;
+            if (nh > 0 && peer != null) {
+                var p = (!) peer;
+                uint8[] req = { (uint8) 'p', (uint8) 'i', (uint8) 'n', (uint8) 'g' };
+                conn.write_request (req);
+                uint8[]? got_req = p.read_request ();
+                if (got_req != null && ((!) got_req).length == 4 && ((!) got_req)[0] == (uint8) 'p') {
+                    uint8[] resp = { (uint8) 'p', (uint8) 'o', (uint8) 'n', (uint8) 'g' };
+                    p.write_response (resp);
+                    uint8[]? got_resp = conn.read_response ();
+                    ipc_ok = got_resp != null && ((!) got_resp).length == 4
+                             && ((!) got_resp)[0] == (uint8) 'p' && ((!) got_resp)[1] == (uint8) 'o';
+                }
+                p.close ();
+            }
+            bool bad_send = (Sys.handle_send (-1, conn.grant.handle) < 0);
+            conn.close ();
+            check ("planet-conn-ipc", ipc_ok && bad_send);
+        } catch (IOError e) {
+            check ("planet-conn-ipc", false);
+        }
+
         try {
             var ip = InetAddress.new_from_string ("10.0.2.15");
             var isa = new InetSocketAddress.from_string ("10.0.2.2", 8080);
