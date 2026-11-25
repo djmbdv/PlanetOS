@@ -2105,7 +2105,7 @@ namespace Planc {
             ret ();
         }
 
-        public void emit_rt_ref (Label mem_panic_lbl) {
+        public void emit_rt_ref (Label mem_panic_lbl, bool dying_check = false) {
             var l_done = new_label ();
             // mov rax, rdi                    48 89 F8
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xF8);
@@ -2127,9 +2127,13 @@ namespace Planc {
             branch (BranchKind.JE, mem_panic_lbl);
             // cmp edx, 0xFFFFFFFE             81 FA FE FF FF FF
             // 0xFFFFFFFE marks an object whose destructor is running: taking a
-            // new reference there would resurrect a dying object.
-            code.u8 (0x81); code.u8 (0xFA); code.u32le (0xFFFFFFFEu);
-            branch (BranchKind.JE, mem_panic_lbl);
+            // new reference there would resurrect a dying object. The check is
+            // a debug-memory diagnostic, so release builds keep the old
+            // behaviour for code that stores `this` during destruction.
+            if (dying_check) {
+                code.u8 (0x81); code.u8 (0xFA); code.u32le (0xFFFFFFFEu);
+                branch (BranchKind.JE, mem_panic_lbl);
+            }
             // cmp word ptr [rdi + 6], 0x504C  66 81 7F 06 4C 50
             code.u8 (0x66); code.u8 (0x81); code.u8 (0x7F); code.u8 (0x06);
             code.u8 (0x4C); code.u8 (0x50);

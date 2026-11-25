@@ -217,6 +217,7 @@ namespace Planc {
         private GenericArray<bool> local_is_unowned;
         private GenericArray<int> local_borrow_src;
         private GenericArray<bool> local_borrow_dead;
+        private const int BORROW_TEMP = -2;
         private GenericArray<string> cg_bce_arrs = new GenericArray<string> ();
         private GenericArray<string> cg_bce_idxs = new GenericArray<string> ();
         private GenericArray<string> cg_len_alias_vars = new GenericArray<string> ();
@@ -2486,7 +2487,7 @@ namespace Planc {
                 symbols.add (new Symbol ("__planc_alloc", start_alloc, emitter.here () - start_alloc));
 
                 var start_ref = emitter.here ();
-                emitter.emit_rt_ref (mem_panic_label);
+                emitter.emit_rt_ref (mem_panic_label, debug_memory);
                 symbols.add (new Symbol ("__planc_ref", start_ref, emitter.here () - start_ref));
 
                 var start_unref = emitter.here ();
@@ -2856,26 +2857,69 @@ namespace Planc {
             }
         }
 
-        private void set_borrow_from_expr (int dst_idx, Expr? src_expr) {
+        // Returns true when the borrowed expression is a temporary. The runtime
+        // releases such a value at the end of the statement, so an `unowned`
+        // local initialised from it would dangle immediately.
+        private bool set_borrow_from_expr (int dst_idx, Expr? src_expr) {
             if (dst_idx < 0 || !local_is_unowned[dst_idx])
-                return;
+                return false;
             if (src_expr is VarRef) {
                 int sidx = lookup (((VarRef) src_expr).name);
                 if (sidx >= 0) {
                     if (!local_unmanaged[sidx] && !local_is_unowned[sidx] && !local_is_compact[sidx] && is_ref_type (local_types[sidx])) {
                         local_borrow_src[dst_idx] = sidx;
                         local_borrow_dead[dst_idx] = false;
-                        return;
+                        return false;
                     }
                     if (local_is_unowned[sidx] && local_borrow_src[sidx] >= 0) {
                         local_borrow_src[dst_idx] = local_borrow_src[sidx];
-                        local_borrow_dead[dst_idx] = local_borrow_dead[sidx];
-                        return;
+                        local_borrow_dead[dst_idx] = local_borrow_src[sidx] == BORROW_TEMP
+                            ? true : local_borrow_dead[sidx];
+                        return local_borrow_src[dst_idx] == BORROW_TEMP;
                     }
                 }
+                local_borrow_src[dst_idx] = -1;
+                local_borrow_dead[dst_idx] = false;
+                return false;
+            }
+            if (src_expr != null && !is_storage_location (src_expr)) {
+                local_borrow_src[dst_idx] = BORROW_TEMP;
+                local_borrow_dead[dst_idx] = true;
+                return true;
+            }
+            int root = (src_expr != null) ? borrow_root_local (src_expr) : -1;
+            if (root >= 0) {
+                local_borrow_src[dst_idx] = root;
+                local_borrow_dead[dst_idx] = false;
+                return false;
             }
             local_borrow_src[dst_idx] = -1;
             local_borrow_dead[dst_idx] = false;
+            return false;
+        }
+
+        private static bool is_storage_location (Expr e) {
+            if (e is MemberAccessExpr || e is DerefExpr || e is IndexExpr)
+                return true;
+            return false;
+        }
+
+        // Root local of `a`, `a.b`, `a[i].b`, ... so that assigning to `a`
+        // invalidates the borrows taken from it.
+        private int borrow_root_local (Expr e) {
+            Expr cur = e;
+            while (true) {
+                if (cur is VarRef)
+                    return lookup (((VarRef) cur).name);
+                if (cur is MemberAccessExpr)
+                    cur = ((MemberAccessExpr) cur).target;
+                else if (cur is IndexExpr)
+                    cur = ((IndexExpr) cur).target;
+                else if (cur is DerefExpr)
+                    cur = ((DerefExpr) cur).target;
+                else
+                    return -1;
+            }
         }
 
         private void cg_invalidate_len_alias (string name) {
@@ -4784,8 +4828,24 @@ namespace Planc {
                 local_decl_line[uidx] = d.line;
                 local_decl_col[uidx] = d.column;
                 local_is_unowned[uidx] = d.is_unowned;
-                if (d.is_unowned && d.init != null)
-                    set_borrow_from_expr (uidx, d.init);
+                if (d.is_unowned && d.init != null) {
+                    bool temp_borrow = set_borrow_from_expr (uidx, d.init);
+                    if (temp_borrow && is_ref_type (vt)) {
+                        string loc = (current_file != "")
+                            ? @"$current_file:$(d.line):$(d.column)"
+                            : @"$(d.line):$(d.column)";
+                        if (strict_ownership)
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"'unowned' cannot borrow the temporary produced by this initializer; the value is released at the end of the statement, so store it in an owned local first at $loc");
+                        // Outside strict mode keep the value alive: promoting the
+                        // declaration to an owned local is a safe fallback and
+                        // preserves the pre-existing behaviour.
+                        d.is_unowned = false;
+                        local_is_unowned[uidx] = false;
+                        local_borrow_src[uidx] = -1;
+                        local_borrow_dead[uidx] = false;
+                    }
+                }
                 if (has_init)
                     update_non_null_on_assign (d.name, init_t, init_tname);
                 else
@@ -4797,8 +4857,16 @@ namespace Planc {
                 if (lslot >= 0) {
                     bind_delegate_target (a.value, local_types[lslot], local_type_names[lslot]);
                     invalidate_borrows_of_idx (lslot);
-                    if (local_is_unowned[lslot])
-                        set_borrow_from_expr (lslot, a.value);
+                    if (local_is_unowned[lslot]) {
+                        bool temp_rebind = set_borrow_from_expr (lslot, a.value);
+                        if (temp_rebind && strict_ownership && is_ref_type (local_types[lslot])) {
+                            string loc = (current_file != "")
+                                ? @"$current_file:$(a.line):$(a.column)"
+                                : @"$(a.line):$(a.column)";
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"'unowned' local '$(a.name)' cannot be rebound to a temporary; the value is released at the end of the statement at $loc");
+                        }
+                    }
                 } else {
                     var gi = lookup_global (a.name);
                     if (gi >= 0) {
@@ -8342,6 +8410,18 @@ namespace Planc {
                     if (p.is_ref && is_nullable_type (pt, pt_name) != is_nullable_type (at, at_name))
                         throw new SemanticError.TYPE_MISMATCH (
                             @"ref argument $(i + 1) of '$(desc)' nullability mismatch: expected $(type_label (pt, pt_name)), got $(type_label (at, at_name)) at $(args[i].line):$(args[i].column)");
+                    if (strict_ownership && is_ref_type (pt)) {
+                        int slot = -1;
+                        if (args[i] is VarRef)
+                            slot = lookup (((VarRef) args[i]).name);
+                        else
+                            slot = borrow_root_local (args[i]);
+                        if (slot >= 0 && (local_is_unowned[slot] || local_unmanaged[slot]
+                                          || local_by_ref[slot] || local_is_weak[slot])) {
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"argument $(i + 1) of '$(desc)' passes the borrowed value '$(locals[slot])' to '$(p.is_out ? "out" : "ref")': the callee would write an owned reference into a slot this scope does not own at $(args[i].line):$(args[i].column)");
+                        }
+                    }
                     if (p.is_out && !is_nullable_type (pt, pt_name) && is_nullable_type (at, at_name)) {
                         // OK under Option B if caller holds nullable and callee writes non-null.
                     } else if (!type_compatible (pt, pt_name, at, at_name)) {
@@ -9750,6 +9830,13 @@ namespace Planc {
                     local_used[slot] = true;
                     if (in_check_pass && local_is_unowned[slot] && local_borrow_dead[slot]) {
                         string loc = (current_file != "") ? @"$current_file:$(v.line):$(v.column)" : @"$(v.line):$(v.column)";
+                        if (strict_ownership) {
+                            if (local_borrow_src[slot] == BORROW_TEMP)
+                                throw new SemanticError.TYPE_MISMATCH (
+                                    @"'unowned' local '$(v.name)' borrows a temporary that no longer exists at $loc");
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"'unowned' local '$(v.name)' is used after its owner changed or went out of scope at $loc");
+                        }
                         Host.eprintln (@"planc: warning: use of dangling unowned '$(v.name)' at $loc");
                         local_borrow_dead[slot] = false;
                     }
