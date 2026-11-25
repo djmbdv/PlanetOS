@@ -191,8 +191,10 @@ for src in "$HERE"/valid/*.vala; do
         esac
     fi
     binary="$WORK/${name}${BIN_EXT}"
+    asm_opt=""
+    [ -f "$HERE/valid/$name.allow_asm" ] && asm_opt="--allow-asm-anywhere"
 
-    if ! "$PLANC" $TARGET_FLAGS "$src" -o "$binary" 2>"$WORK/$name.err"; then
+    if ! "$PLANC" $TARGET_FLAGS $asm_opt "$src" -o "$binary" 2>"$WORK/$name.err"; then
         ko "$name" "compile failed: $(cat "$WORK/$name.err")"
         continue
     fi
@@ -316,6 +318,49 @@ for src in "$HERE"/visibility/*.vala; do
     esac
 done
 
+echo "== ownership =="
+for src in "$HERE"/ownership/*.vala; do
+    [ -e "$src" ] || continue
+    name=$(basename "$src" .vala)
+    binary="$WORK/own_$name$BIN_EXT"
+    case "$name" in
+        ok_*)
+            if ! "$PLANC" $TARGET_FLAGS --strict-ownership "$src" -o "$binary" 2>"$WORK/$name.err"; then
+                ko "$name" "compile failed: $(cat "$WORK/$name.err")"
+                continue
+            fi
+            run_bin "$binary" >"$WORK/$name.stdout" 2>&1
+            code=$?
+            if [ "$code" != "0" ]; then
+                ko "$name" "exit $code, expected 0"
+                continue
+            fi
+            if [ -f "$HERE/ownership/$name.out" ] && ! files_equal "$WORK/$name.stdout" "$HERE/ownership/$name.out"; then
+                ko "$name" "stdout differs from $name.out"
+                continue
+            fi
+            ok "$name"
+            ;;
+        *)
+            "$PLANC" $TARGET_FLAGS --strict-ownership "$src" -o "$WORK/reject_$name$BIN_EXT" 2>"$WORK/$name.err"
+            code=$?
+            if [ "$code" != "1" ]; then
+                ko "$name" "exit $code, expected 1"
+                continue
+            fi
+            if [ -e "$WORK/reject_$name$BIN_EXT" ]; then
+                ko "$name" "wrote an output file for a rejected program"
+                continue
+            fi
+            if ! grep -qE '^planc: .*[0-9]+:[0-9]+' "$WORK/$name.err"; then
+                ko "$name" "diagnostic has no position"
+                continue
+            fi
+            ok "$name"
+            ;;
+    esac
+done
+
 echo "== debug memory =="
 for src in "$HERE"/debugmem/*.vala; do
     [ -e "$src" ] || continue
@@ -417,8 +462,10 @@ for base_name in array_int array_string string_concat template_value refcount_lo
     src="$HERE/valid/$base_name.vala"
     bin="$WORK/leaks_${base_name}${BIN_EXT}"
     case_name="check_leaks_$base_name"
+    asm_opt=""
+    [ -f "$HERE/valid/$base_name.allow_asm" ] && asm_opt="--allow-asm-anywhere"
 
-    if ! "$PLANC" $TARGET_FLAGS --check-leaks "$src" -o "$bin" 2>"$WORK/$case_name.err"; then
+    if ! "$PLANC" $TARGET_FLAGS $asm_opt --check-leaks "$src" -o "$bin" 2>"$WORK/$case_name.err"; then
         ko "$case_name" "compile failed: $(cat "$WORK/$case_name.err")"
         continue
     fi

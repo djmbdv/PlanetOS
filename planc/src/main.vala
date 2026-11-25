@@ -115,6 +115,8 @@ namespace Planc {
         var strict_visibility = false;
         var enforce_visibility = false;
         var debug_memory = false;
+        var asm_anywhere = false;
+        var strict_ownership = false;
         var warn_unused = true;
         var allow_asm = true;
         var opt_level = 0;
@@ -172,6 +174,10 @@ namespace Planc {
                 enforce_visibility = true;
             } else if (a == "--debug-memory") {
                 debug_memory = true;
+            } else if (a == "--allow-asm-anywhere") {
+                asm_anywhere = true;
+            } else if (a == "--strict-ownership") {
+                strict_ownership = true;
             } else if (a == "--no-warn-unused") {
                 warn_unused = false;
             } else if (a == "--check-overflow") {
@@ -567,6 +573,8 @@ namespace Planc {
         codegen.strict_visibility = strict_visibility;
         codegen.enforce_visibility = enforce_visibility;
         codegen.debug_memory = debug_memory;
+        codegen.asm_anywhere = asm_anywhere;
+        codegen.strict_ownership = strict_ownership;
         codegen.warn_unused = warn_unused;
         codegen.check_overflow = check_overflow;
         codegen.allow_asm = allow_asm;

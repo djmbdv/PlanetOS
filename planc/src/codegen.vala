@@ -111,6 +111,41 @@ namespace Planc {
         // Debug allocator: freed blocks are never recycled, so a stale
         // reference is detected instead of aliasing a new allocation.
         public bool debug_memory { get; set; default = false; }
+        // [AsmBody] is confined to the trusted runtime sources; the escape hatch
+        // exists for bring-up work but stays off by default.
+        public bool asm_anywhere { get; set; default = false; }
+        public bool strict_ownership { get; set; default = false; }
+
+        private static bool asm_file_allowed (string file) {
+            var p = file.replace ("\\", "/");
+            return p.has_prefix ("stdlib/") || p.has_prefix ("kernel/")
+                || p.contains ("/stdlib/") || p.contains ("/kernel/");
+        }
+
+        private void check_borrow_escape (Expr? value, int line, int column, string where) throws SemanticError {
+            if (!strict_ownership || value == null)
+                return;
+            if (value is AddrOfExpr) {
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"the address of a stack value cannot escape through $where at $line:$column");
+            }
+            if (value is VarRef) {
+                var vn = ((VarRef) value).name;
+                int vi = lookup (vn);
+                if (vi >= 0 && local_by_ref[vi]) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'ref'/'out' parameter '$vn' cannot escape through $where at $line:$column");
+                }
+                if (vi >= 0 && local_unmanaged[vi] && is_ref_type (local_types[vi])) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"borrowed value '$vn' cannot escape through $where; take an owned copy first at $line:$column");
+                }
+                if (vi >= 0 && local_is_weak[vi]) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"weak reference '$vn' cannot escape through $where at $line:$column");
+                }
+            }
+        }
         public bool warn_unused { get; set; default = true; }
         public bool allow_asm { get; set; default = true; }
         public int opt_level { get; set; default = 0; }
@@ -512,6 +547,8 @@ namespace Planc {
             strict_visibility = m.strict_visibility;
             enforce_visibility = m.enforce_visibility;
             debug_memory = m.debug_memory;
+            asm_anywhere = m.asm_anywhere;
+            strict_ownership = m.strict_ownership;
             warn_unused = m.warn_unused;
             allow_asm = m.allow_asm;
             opt_level = m.opt_level;
@@ -6430,6 +6467,10 @@ namespace Planc {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"[AsmBody] is forbidden under --no-asm in '$(f.name)' at $(f.asm_line):$(f.asm_column)");
                 }
+                if (!asm_anywhere && !asm_file_allowed (f.file)) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"[AsmBody] is only allowed in stdlib/ and kernel/ sources; '$(f.name)' at $(f.asm_line):$(f.asm_column) lives in $(f.file)");
+                }
                 var start = emitter.here ();
                 AsmAssembler.assemble (emitter, program, f);
                 symbols.add (new Symbol (f.name, start, emitter.here () - start));
@@ -10655,6 +10696,7 @@ namespace Planc {
                         if (current.is_void)
                             throw new SemanticError.RETURN_MISMATCH (
                                 @"void function '$(current.name)' cannot return a value at $(r.line):$(r.column)");
+                        check_borrow_escape (r.value, r.line, r.column, "the return value");
                         coerce_byte_array_literal (r.value, current.return_type, current.return_type_name);
                         string rt_name = "";
                         var rt = expr_type_full (r.value, out rt_name);
@@ -10717,6 +10759,7 @@ namespace Planc {
                         if (current.is_void)
                             throw new SemanticError.RETURN_MISMATCH (
                                 @"void function '$(current.name)' cannot return a value at $(r.line):$(r.column)");
+                        check_borrow_escape (r.value, r.line, r.column, "the return value");
                         coerce_byte_array_literal (r.value, current.return_type, current.return_type_name);
                         string rt_name = "";
                         var rt = expr_type_full (r.value, out rt_name);
@@ -10893,7 +10936,8 @@ namespace Planc {
                 } else if (is_ref_type (vtype)) {
                     if (d.init != null) {
                         gen_expr (d.init);
-                        consume_ref_expr (d.init);
+                        if (!d.is_unowned)
+                            consume_ref_expr (d.init);
                         if (d.is_weak)
                             emit_convert_to_weak ();
                         emitter.store_local (slot);
@@ -10920,7 +10964,7 @@ namespace Planc {
                     }
                 }
                 if (!d.stack_alloc)
-                    push_local (d.name, vtype, vtname, slot, false, false, d.is_weak);
+                    push_local (d.name, vtype, vtname, slot, d.is_unowned, false, d.is_weak);
                 if (d.init is MemberAccessExpr) {
                     var ma_l = (MemberAccessExpr) d.init;
                     if (ma_l.member == "length" && ma_l.target is VarRef) {
@@ -10938,6 +10982,8 @@ namespace Planc {
             } else if (s is AssignStatement) {
                 var a = (AssignStatement) s;
                 var idx = lookup (a.name);
+                if (idx < 0)
+                    check_borrow_escape (a.value, a.line, a.column, @"global '$(a.name)'");
                 if (idx >= 0) {
                     coerce_byte_array_literal (a.value, local_types[idx], local_type_names[idx]);
                     string vt_name = "";
@@ -11125,6 +11171,7 @@ namespace Planc {
                 }
             } else if (s is FieldAssignStatement) {
                 var fa = (FieldAssignStatement) s;
+                check_borrow_escape (fa.value, fa.line, fa.column, @"field '$(fa.field_name)'");
                 if (fa.target is VarRef) {
                     var tvn = ((VarRef) fa.target).name;
                     int sg = static_field_global_of_type (tvn, fa.field_name);
