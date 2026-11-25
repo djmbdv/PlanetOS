@@ -4417,11 +4417,39 @@ namespace Planc {
 
         private Expr parse_postfix (Expr expr) throws ParseError, LexError {
             var e = expr;
-            while (current.kind == TokenKind.DOT || current.kind == TokenKind.LBRACKET
+            while (current.kind == TokenKind.DOT || current.kind == TokenKind.QUESTION_DOT
+                   || current.kind == TokenKind.LBRACKET
                    || current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS
                    || current.kind == TokenKind.LPAREN) {
                 var l = current.line;
                 var c = current.column;
+                if (current.kind == TokenKind.QUESTION_DOT) {
+                    advance ();
+                    if (current.kind != TokenKind.IDENTIFIER)
+                        throw new ParseError.UNEXPECTED_TOKEN (
+                            @"expected member name after '?.' at $(current.line):$(current.column)");
+                    var nc_member = current.text;
+                    advance ();
+                    if (current.kind == TokenKind.LPAREN) {
+                        advance ();
+                        var nc_mc = new MethodCallExpr () {
+                            target = e, method_name = nc_member, is_null_cond = true
+                        };
+                        parse_arg_list (nc_mc.args);
+                        expect (TokenKind.RPAREN, "')'");
+                        nc_mc.line = l;
+                        nc_mc.column = c;
+                        e = nc_mc;
+                    } else {
+                        var nc_acc = new MemberAccessExpr () {
+                            target = e, member = nc_member, is_null_cond = true
+                        };
+                        nc_acc.line = l;
+                        nc_acc.column = c;
+                        e = nc_acc;
+                    }
+                    continue;
+                }
             if (current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS) {
                     var op = (current.kind == TokenKind.PLUSPLUS) ? "++" : "--";
                     advance ();

@@ -5119,6 +5119,8 @@ namespace Planc {
                 }
             } else if (e is MemberAccessExpr) {
                 var ma = (MemberAccessExpr) e;
+                if (ma.is_null_cond)
+                    ma.nc_slot = next_var_slot++;
                 prepare_expr (ma.target, ref struct_temps, ref ref_temps);
                 bool is_type_t = (ma.target is VarRef && is_type_name (((VarRef) ma.target).name));
                 if (!is_type_t) {
@@ -5274,6 +5276,8 @@ namespace Planc {
                 struct_temps += type_slots (ValaType.STRUCT, lit.struct_name);
             } else if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
+                if (mc.is_null_cond)
+                    mc.nc_slot = next_var_slot++;
                 string bi_kind = "";
                 ValaType bi_ret = ValaType.VOID;
                 if (is_builtin_method_call (mc, out bi_kind, out bi_ret)) {
@@ -8334,6 +8338,9 @@ namespace Planc {
                 if (mc.target == null)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"'resize()' requires an array receiver at $(mc.line):$(mc.column)");
+                if (mc.is_null_cond)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'?.' cannot be used with resize() because it rebinds the receiver at $(mc.line):$(mc.column)");
                 if (mc.args.length != 1)
                     throw new SemanticError.WRONG_ARG_COUNT (
                         @"resize expects 1 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
@@ -8739,6 +8746,44 @@ namespace Planc {
 
         private ValaType expr_type_full (Expr e, out string tname) throws SemanticError {
             tname = "";
+            if (e is MemberAccessExpr && ((MemberAccessExpr) e).is_null_cond) {
+                var nc_ma = (MemberAccessExpr) e;
+                string nc_rtn = "";
+                var nc_rt = expr_type_full (nc_ma.target, out nc_rtn);
+                if (!is_ref_type (nc_rt))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'?.' requires a reference-typed receiver, got $(type_label (nc_rt, nc_rtn)) at $(nc_ma.line):$(nc_ma.column)");
+                nc_ma.is_null_cond = false;
+                ValaType nc_bt = expr_type_full (e, out tname);
+                nc_ma.is_null_cond = true;
+                if (nc_bt == ValaType.VOID)
+                    return nc_bt;
+                if (!is_ref_type (nc_bt))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'?.' requires a reference-typed member, got $(type_label (nc_bt, tname)) at $(nc_ma.line):$(nc_ma.column)");
+                if (!tname.has_suffix ("?"))
+                    tname = (tname == "") ? "?" : (tname + "?");
+                return nc_bt;
+            }
+            if (e is MethodCallExpr && ((MethodCallExpr) e).is_null_cond) {
+                var nc_mc = (MethodCallExpr) e;
+                string nc_rtn = "";
+                var nc_rt = expr_type_full ((!) nc_mc.target, out nc_rtn);
+                if (!is_ref_type (nc_rt))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'?.' requires a reference-typed receiver, got $(type_label (nc_rt, nc_rtn)) at $(nc_mc.line):$(nc_mc.column)");
+                nc_mc.is_null_cond = false;
+                ValaType nc_bt = expr_type_full (e, out tname);
+                nc_mc.is_null_cond = true;
+                if (nc_bt == ValaType.VOID)
+                    return nc_bt;
+                if (!is_ref_type (nc_bt))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'?.' requires a reference-typed result, got $(type_label (nc_bt, tname)) at $(nc_mc.line):$(nc_mc.column)");
+                if (!tname.has_suffix ("?"))
+                    tname = (tname == "") ? "?" : (tname + "?");
+                return nc_bt;
+            }
             if (e is IntLiteral) {
                 var il = (IntLiteral) e;
                 if (il.is_unsigned)
@@ -12554,6 +12599,14 @@ namespace Planc {
                 emitter.test_rax_rax ();
                 need_bounds_panic = true;
                 emitter.branch (BranchKind.JL, bounds_panic_label);
+                int64 max_n = int64.MAX - 16;
+                if (!byte_arr)
+                    max_n /= 8;
+                emitter.mov_rcx_rax ();
+                emitter.mov_rax_imm (max_n);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JB, bounds_panic_label);
+                emitter.mov_rax_rcx ();
                 emitter.push_rax ();
                 push_depth++;
                 emitter.mov_rdi_rax ();
@@ -12609,6 +12662,10 @@ namespace Planc {
                 emitter.load_local (arr.ref_temp_slot);
             } else if (e is MemberAccessExpr) {
                 var m = (MemberAccessExpr) e;
+                if (m.is_null_cond) {
+                    gen_null_cond_access (e, m.target, m.nc_slot);
+                    return;
+                }
                 if (m.target is VarRef) {
                     var vr = (VarRef) m.target;
                     if (is_type_name (vr.name)) {
@@ -14278,6 +14335,13 @@ namespace Planc {
             string etn = "";
             parse_array_elem (lt_name, out et, out etn);
             bool elem_ref = is_ref_type (et);
+            int64 max_n = int64.MAX - 16;
+            if (!byte_arr)
+                max_n /= 8;
+            emitter.load_local_to_rcx (mc.bi_slot3);
+            emitter.mov_rax_imm (max_n);
+            emitter.cmp_rax_rcx ();
+            emitter.branch (BranchKind.JB, bounds_panic_label);
             emitter.load_local (mc.bi_slot3);
             emitter.mov_rdi_rax ();
             if (!byte_arr)
@@ -15414,7 +15478,59 @@ namespace Planc {
             emitter.add_rsp (area_top);
         }
 
+        private void gen_null_cond_access (Expr e, Expr target, int nc_slot) throws SemanticError {
+            if (nc_slot < 0)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"internal: '?.' temporary was not prepared at $(e.line):$(e.column)");
+            string tn = "";
+            var tt = expr_type_full (target, out tn);
+            if (!is_ref_type (tt))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'?.' requires a reference-typed receiver, got $(type_label (tt, tn)) at $(e.line):$(e.column)");
+            gen_expr (target);
+            if (is_fp_type (tt))
+                emitter.movq_rax_xmm (0);
+            emitter.store_local (nc_slot);
+            var l_null = emitter.new_label ();
+            var l_done = emitter.new_label ();
+            emitter.test_rax_rax ();
+            emitter.branch (BranchKind.JE, l_null);
+            // Rebuild the access against a temporary local that holds the
+            // receiver evaluated exactly once. The type name is the narrowed
+            // one because the null case has already branched away.
+            string tmp_name = @"#nc_$(e.line)_$(e.column)_$(nc_slot)";
+            var vref = new VarRef () { name = tmp_name };
+            vref.line = e.line;
+            vref.column = e.column;
+            push_local (tmp_name, tt, strip_null (tn), nc_slot, true);
+            if (e is MemberAccessExpr) {
+                var ma = (MemberAccessExpr) e;
+                var saved = ma.target;
+                ma.target = vref;
+                ma.is_null_cond = false;
+                gen_expr (e);
+                ma.target = saved;
+                ma.is_null_cond = true;
+            } else {
+                var mc = (MethodCallExpr) e;
+                var saved = mc.target;
+                mc.target = vref;
+                mc.is_null_cond = false;
+                gen_expr (e);
+                mc.target = saved;
+                mc.is_null_cond = true;
+            }
+            emitter.branch (BranchKind.JMP, l_done);
+            emitter.bind (l_null);
+            emitter.xor_eax ();
+            emitter.bind (l_done);
+        }
+
         private void gen_method_call (MethodCallExpr mc) throws SemanticError {
+            if (mc.is_null_cond) {
+                gen_null_cond_access (mc, (!) mc.target, mc.nc_slot);
+                return;
+            }
             string bi_kind = "";
             ValaType bi_ret = ValaType.VOID;
             if (is_builtin_method_call (mc, out bi_kind, out bi_ret)) {

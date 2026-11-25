@@ -90,6 +90,8 @@ namespace Planc {
         public string member { get; set; }
         public int temp_slot { get; set; default = -1; }
         public string target_del_type { get; set; default = ""; }
+        public bool is_null_cond { get; set; default = false; }
+        public int nc_slot { get; set; default = -1; }
     }
 
     public class IndexExpr : Expr {
@@ -221,6 +223,8 @@ namespace Planc {
         public int bi_slot10 { get; set; default = -1; }
         public int bi_slot11 { get; set; default = -1; }
         public int bi_slot12 { get; set; default = -1; }
+        public bool is_null_cond { get; set; default = false; }
+        public int nc_slot { get; set; default = -1; }
 
         public MethodCallExpr () {
             args = new GenericArray<Expr> ();

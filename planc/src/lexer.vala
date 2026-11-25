@@ -27,6 +27,7 @@ namespace Planc {
         ELLIPSIS,    // ...
         COLON,       // :
         QUESTION,    // ?
+        QUESTION_DOT, // ?.
         QUESTION_QUESTION, // ??
         ARROW,       // =>
         ASSIGN,      // =
@@ -451,6 +452,12 @@ namespace Planc {
                 advance ();
                 advance ();
                 return two_char (TokenKind.QUESTION_QUESTION, l, c);
+            }
+
+            if (ch == '?' && peek (1) == '.' && !is_digit (peek (2))) {
+                advance ();
+                advance ();
+                return two_char (TokenKind.QUESTION_DOT, l, c);
             }
 
             if (ch == '"' && peek (1) == '"' && peek (2) == '"') {
