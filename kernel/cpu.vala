@@ -87,6 +87,23 @@ namespace Planet.Kernel {
     public extern void cpu_sti ();
 
     [AsmBody(@"
+        pushfq
+        pop %rax
+        cli
+        ret
+    ")]
+    public extern int cpu_irq_save ();
+
+    [AsmBody(@"
+        test $0x200, %rdi
+        jz _cir_done
+        sti
+    _cir_done:
+        ret
+    ")]
+    public extern void cpu_irq_restore (int flags);
+
+    [AsmBody(@"
         hlt
         ret
     ")]

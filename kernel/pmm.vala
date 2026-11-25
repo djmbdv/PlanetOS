@@ -264,10 +264,12 @@ namespace Planet.Kernel {
             int frame = phys / PAGE_SIZE;
             if (frame >= pmm_total_frames)
                 return;
+            int irq = cpu_irq_save ();
             int m = read_meta (frame);
             if (meta_is_free (m)) {
                 pmm_double_free_count = pmm_double_free_count + 1;
                 print ("pmm:double_free\n");
+                cpu_irq_restore (irq);
                 return;
             }
             poison_frame (phys);
@@ -312,6 +314,7 @@ namespace Planet.Kernel {
                 }
             }
             list_insert (frame, order, is_root, lbc);
+            cpu_irq_restore (irq);
         }
 
         public static int alloc_contiguous (int num_pages) {
@@ -324,11 +327,14 @@ namespace Planet.Kernel {
             if (req_order >= MAX_ORDER)
                 return 0;
 
+            int irq = cpu_irq_save ();
             int j = req_order;
             while (j < MAX_ORDER && avail_head (j) == NIL)
                 j = j + 1;
-            if (j >= MAX_ORDER)
+            if (j >= MAX_ORDER) {
+                cpu_irq_restore (irq);
                 return 0;
+            }
 
             int frame = avail_head (j);
             int m = read_meta (frame);
@@ -341,6 +347,7 @@ namespace Planet.Kernel {
             for (int k = 0; k < num_pages; k++)
                 zero_page_4k ((frame + k) * PAGE_SIZE);
             kernel_cr3_leave (saved);
+            cpu_irq_restore (irq);
             return frame * PAGE_SIZE;
         }
 

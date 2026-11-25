@@ -717,6 +717,7 @@ namespace Planet.Kernel {
             Sched.set_current_exec_ctx (user_cr3, 0);
             int code = exec_trampoline (entry, ptr_base, user_cr3, slot);
             Sched.set_current_exec_ctx (prev_cr3, prev_rsp0);
+            release_allocs (user_cr3);
             Vmm.destroy_user_space (user_cr3);
             for (int p = 0; p < USER_STACK_PAGES; p++) {
                 Pmm.free_frame (child_stack + p * 4096);

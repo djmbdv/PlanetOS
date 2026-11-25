@@ -374,8 +374,8 @@ namespace Planet.Kernel {
     }
 
     private static void alloc_track (int phys, int pages) {
-        int owner = Sched.current_tid ();
-        if (Sched.current_cr3 () == 0)
+        int owner = Sched.current_cr3 ();
+        if (owner == 0)
             return;
         if (phys <= 0 || pages <= 0)
             return;
@@ -411,15 +411,15 @@ namespace Planet.Kernel {
         }
     }
 
-    // 1 when `addr` falls inside a block owned by `tid`, 0 otherwise.
-    private static int page_owned_by (int addr, int tid) {
+    // 1 when `addr` falls inside a block owned by `cr3`, 0 otherwise.
+    private static int page_owned_by (int addr, int cr3) {
         int found = 0;
         int i = 0;
         while (i < ALLOC_SLOTS) {
             int a = alloc_slot (i);
             int phys = mmio_read64 (a);
             if (phys != 0) {
-                if (mmio_read32 (a + 12) == tid) {
+                if (mmio_read32 (a + 12) == cr3) {
                     int npages = mmio_read32 (a + 8);
                     if (addr >= phys) {
                         if (addr < phys + npages * 0x1000)
@@ -434,7 +434,7 @@ namespace Planet.Kernel {
 
     // 1 when `addr` falls inside a block owned by somebody else.
     private static int page_owned_by_other (int addr) {
-        int me = Sched.current_tid ();
+        int me = Sched.current_cr3 ();
         int found = 0;
         int i = 0;
         while (i < ALLOC_SLOTS) {
@@ -459,17 +459,14 @@ namespace Planet.Kernel {
     private static bool range_owned (int start, int len) {
         if (len <= 0)
             return false;
-        if (Sched.current_cr3 () == 0)
+        int me = Sched.current_cr3 ();
+        if (me == 0)
             return true;
         if ((start & 0xFFF) != 0)
             return false;
-        int me = Sched.current_tid ();
         int pages = (len + 0xFFF) / 0x1000;
         int p = 0;
         while (p < pages) {
-            if (page_owned_by (start + p * 0x1000, me) == 0) {
-                int s0 = alloc_slot (0);
-            }
             if (page_owned_by (start + p * 0x1000, me) == 0)
                 return false;
             p = p + 1;
@@ -608,13 +605,16 @@ namespace Planet.Kernel {
         return 1;
     }
 
-    // Called when a task dies: its blocks go back to the Pmm.
-    public static void release_allocs (int tid) {        int i = 0;
+    // Called when an address space dies: its blocks go back to the Pmm.
+    public static void release_allocs (int ucr3) {
+        if (ucr3 == 0)
+            return;
+        int i = 0;
         while (i < ALLOC_SLOTS) {
             int a = alloc_slot (i);
             int phys = mmio_read64 (a);
             if (phys != 0) {
-                if (mmio_read32 (a + 12) == tid) {
+                if (mmio_read32 (a + 12) == ucr3) {
                     int npages = mmio_read32 (a + 8);
                     int p = 0;
                     while (p < npages) {

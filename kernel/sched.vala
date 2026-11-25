@@ -472,12 +472,12 @@ namespace Planet.Kernel {
         }
 
         private static int reap_zombie (int tid) {
+            int irq = cpu_irq_save ();
             int saved_cr3 = vmm_read_cr3 ();
             if (saved_cr3 != KernelLayout.PAGE_TABLES)
                 vmm_write_cr3 (KernelLayout.PAGE_TABLES);
             int tcb = KernelLayout.TCB_TABLE + tid * TCB_SIZE;
             release_fds (tid);
-            release_allocs (tid);
             int code = mmio_read64 (tcb + 24);
             int sbase = mmio_read64 (tcb + 16);
             int spages = mmio_read64 (tcb + 80);
@@ -520,6 +520,7 @@ namespace Planet.Kernel {
                 if (!shared) {
                     Fb.release_for_cr3 (ucr3);
                     VirtioGpu.release_task (tid);
+                    release_allocs (ucr3);
                     Vmm.destroy_user_space (ucr3);
                 }
             }
@@ -536,6 +537,7 @@ namespace Planet.Kernel {
             }
             if (saved_cr3 != KernelLayout.PAGE_TABLES)
                 vmm_write_cr3 (saved_cr3);
+            cpu_irq_restore (irq);
             return code;
         }
 
