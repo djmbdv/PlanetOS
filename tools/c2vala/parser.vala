@@ -218,8 +218,6 @@ namespace C2Vala {
                         fp.fp_params = params;
                         decl_t = fp;
                     }
-                    if (decl_t.kind == CTypeKind.ARRAY)
-                        refuse (start_tok, "array typedefs are not supported");
                     if (decl_t.kind == CTypeKind.FUNC_PTR && name != "")
                         decl_t.name = name;
                     if (name != "") {
@@ -808,18 +806,20 @@ namespace C2Vala {
                 bool is_va = false;
                 var dummy_p = new GenericArray<ParamDef> ();
                 parse_declarator (ref dt, out name, out is_fn, dummy_p, out is_va);
-                CExpr? init_e = null;
-                if (at (TokKind.ASSIGN)) {
-                    advance ();
-                    init_e = parse_expr_or_init ();
+                if (!is_fn) {
+                    CExpr? init_e = null;
+                    if (at (TokKind.ASSIGN)) {
+                        advance ();
+                        init_e = parse_expr_or_init ();
+                    }
+                    var d = new StmtDecl ();
+                    d.file = start_tok.file;
+                    d.line = start_tok.line;
+                    d.name = name;
+                    d.ctype = dt;
+                    d.init = init_e;
+                    out_stmts.add (d);
                 }
-                var d = new StmtDecl ();
-                d.file = start_tok.file;
-                d.line = start_tok.line;
-                d.name = name;
-                d.ctype = dt;
-                d.init = init_e;
-                out_stmts.add (d);
 
                 if (at (TokKind.COMMA)) {
                     advance ();

@@ -55,8 +55,6 @@ namespace C2Vala {
             define_object ("__STDC__", "1");
             define_object ("__STDC_VERSION__", "199901L");
             define_object ("NULL", "0");
-            define_object ("true", "1");
-            define_object ("false", "0");
             // Standard C99 <inttypes.h> format macros
             define_object ("PRId64", "\"lld\"");
             define_object ("PRIi64", "\"lli\"");
@@ -575,12 +573,19 @@ namespace C2Vala {
             return true;
         }
 
-        private void handle_sys_include (string hdr, GenericArray<PreLine> out_lines) throws RefuseError {
+        private bool handle_sys_include (string hdr, GenericArray<PreLine> out_lines) throws RefuseError {
             string key = "<" + hdr + ">";
             if (!mark_included_once (key))
-                return;
+                return true;
             string src = "";
-            if (hdr == "stdint.h" || hdr == "inttypes.h" || hdr == "limits.h") {
+            if (hdr == "stdbool.h") {
+                src = "#ifndef __bool_true_false_are_defined\n"
+                    + "#define bool _Bool\n"
+                    + "#define true 1\n"
+                    + "#define false 0\n"
+                    + "#define __bool_true_false_are_defined 1\n"
+                    + "#endif\n";
+            } else if (hdr == "stdint.h" || hdr == "inttypes.h" || hdr == "limits.h") {
                 src = "#ifndef _C2V_INT_LIMITS\n#define _C2V_INT_LIMITS 1\n"
                     + "#define CHAR_BIT 8\n"
                     + "#define SCHAR_MIN (-128)\n#define SCHAR_MAX 127\n#define UCHAR_MAX 255\n"
@@ -755,7 +760,12 @@ namespace C2Vala {
                 var inc_lines = process_source (src, key);
                 for (int i = 0; i < inc_lines.length; i++)
                     out_lines.add (inc_lines[i]);
+                return true;
             }
+            return (hdr == "stdio.h" || hdr == "stdlib.h" || hdr == "string.h"
+                || hdr == "stddef.h" || hdr == "stdarg.h" || hdr == "ctype.h"
+                || hdr == "math.h" || hdr == "time.h" || hdr == "assert.h"
+                || hdr == "float.h" || hdr == "signal.h");
         }
 
         private void handle_include (string arg, string cur_file, int line, GenericArray<PreLine> out_lines) throws RefuseError {
@@ -778,8 +788,11 @@ namespace C2Vala {
             string rel = arg.substring (1, end - 1);
 
             string? resolved = resolve_include (rel, cur_file);
-            if (resolved == null)
+            if (resolved == null) {
+                if (handle_sys_include (rel, out_lines))
+                    return;
                 throw new RefuseError.FAILED (@"$cur_file:$line: cannot find include '$rel'");
+            }
 
             var inc_lines = process_file (resolved);
             for (int i = 0; i < inc_lines.length; i++)

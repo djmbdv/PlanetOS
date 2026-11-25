@@ -317,6 +317,11 @@ public string? c_strrchr (string s, int c) {
     return (i >= 0) ? s.substring (i) : null;
 }
 
+public string? c_strstr (string hay, string needle) {
+    int i = hay.index_of (needle);
+    return (i >= 0) ? hay.substring (i) : null;
+}
+
 // Assignment expressions: Vala has none, so `(n = x) == y` becomes
 // `c_assign_i (x, ref n) == y`. Each helper stores the value and returns it.
 public bool c_assign_b (bool v, ref bool t) { t = v; return v; }
@@ -355,10 +360,14 @@ public uint8[] c_bytes_add (uint8[] b, int off) {
     return out_b;
 }
 
-public uint8[] c_str_to_bytes (string s) {
-    var b = new uint8[s.length];
-    for (int i = 0; i < s.length; i++)
-        b[i] = s[i];
+public uint8[] c_str_to_bytes (string? s) {
+    if (s == null)
+        return new uint8[0];
+    string sv = (!) s;
+    var b = new uint8[sv.length + 1];
+    for (int i = 0; i < sv.length; i++)
+        b[i] = sv[i];
+    b[sv.length] = 0;
     return b;
 }
 
