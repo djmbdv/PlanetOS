@@ -37,6 +37,10 @@ PROMPT = "🪐 : "
 
 # Cases whose guest-side frame/timing budget assumes TCG speed when --accel=auto.
 TCG_AUTO_CASES = {"compositor-ext"}
+# Cases whose guest needs the whole machine: they run a server thread and talk
+# to it over the SLIRP network, and with several QEMU instances competing for
+# host cores their deadlines expire. They run alone, after the parallel batch.
+SERIAL_CASES = {"curl", "mercury"}
 
 
 def die(message):
@@ -372,59 +376,57 @@ def main():
     print("   accel:     %s" % resolved_accel)
     print("   jobs:      %d" % jobs)
 
-    failures = 0
-    if jobs == 1:
-        for name in selected:
-            name, n_cmds, n_checks, output, problems = run_case(name, qemu, out_dir, args)
-            print("== case %s (%d commands, %d checks) ==" % (name, n_cmds, n_checks))
-            if problems:
-                failures += 1
-                print("FAIL %s" % name)
-                for problem in problems:
-                    print("   - %s" % problem)
-                print("--- serial ---")
-                sys.stdout.write(output)
-                print("--------------")
-                if not args.keep_going:
-                    break
-            else:
-                print("PASS %s" % name)
-                if args.verbose:
-                    sys.stdout.write(output)
-    else:
-        abort = threading.Event()
+    serial = [name for name in selected if name in SERIAL_CASES]
+    parallel = [name for name in selected if name not in SERIAL_CASES]
+    if not parallel:
+        jobs = 1
 
+    failures = 0
+    abort = threading.Event()
+
+    def report(name, n_cmds, n_checks, output, problems):
+        nonlocal failures
+        print("== case %s (%d commands, %d checks) ==" % (name, n_cmds, n_checks),
+              flush=True)
+        if problems:
+            failures += 1
+            print("FAIL %s" % name, flush=True)
+            for problem in problems:
+                print("   - %s" % problem, flush=True)
+            print("--- serial ---", flush=True)
+            sys.stdout.write(output)
+            print("--------------", flush=True)
+            if not args.keep_going:
+                abort.set()
+        else:
+            print("PASS %s" % name, flush=True)
+            if args.verbose:
+                sys.stdout.write(output)
+
+    if jobs == 1:
+        for name in parallel + serial:
+            if abort.is_set() and not args.keep_going:
+                break
+            report(*run_case(name, qemu, out_dir, args))
+    else:
         def worker(case_name):
             if abort.is_set():
                 return None
             return run_case(case_name, qemu, out_dir, args)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = [executor.submit(worker, name) for name in selected]
+            futures = [executor.submit(worker, name) for name in parallel]
             for future in concurrent.futures.as_completed(futures):
                 result = future.result()
-                if result is None:
-                    continue
-                name, n_cmds, n_checks, output, problems = result
-                print("== case %s (%d commands, %d checks) ==" % (name, n_cmds, n_checks),
-                      flush=True)
-                if problems:
-                    failures += 1
-                    print("FAIL %s" % name, flush=True)
-                    for problem in problems:
-                        print("   - %s" % problem, flush=True)
-                    print("--- serial ---", flush=True)
-                    sys.stdout.write(output)
-                    print("--------------", flush=True)
-                    if not args.keep_going:
-                        abort.set()
-                        for pending in futures:
-                            pending.cancel()
-                        break
-                else:
-                    print("PASS %s" % name, flush=True)
-                    if args.verbose:
-                        sys.stdout.write(output)
+                if result is not None:
+                    report(*result)
+                if abort.is_set():
+                    for pending in futures:
+                        pending.cancel()
+                    break
+        if args.keep_going or not abort.is_set():
+            for name in serial:
+                report(*run_case(name, qemu, out_dir, args))
 
     total = len(selected)
     print("\n%d/%d cases passed" % (total - failures, total))

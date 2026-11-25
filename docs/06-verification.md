@@ -155,6 +155,13 @@ falling back to `tcg` for frame-budget-sensitive cases such as `compositor-ext`)
 uses a `0.005` s character typing `--delay`, and reads COM1 output in 4 KiB
 chunks with a `threading.Condition` instead of 100 ms polling.
 
+Two cases are listed in `SERIAL_CASES` and run alone, after the parallel batch:
+`curl` and `mercury` start a server thread inside the guest and talk to it over
+the SLIRP network, and with a dozen QEMU instances competing for host cores
+their deadlines expire — a failure that says nothing about the code under test.
+Frame-budget and threading-sensitive cases belong in one of those two sets rather
+than in a longer timeout.
+
 Host-side differential tests for the C -> Vala translator live in [tools/c2vala_tests/run.py](tools/c2vala_tests/run.py) (gcc vs valac on the same source; needs MSYS2, not QEMU). The native translator has to be built first: `tools/c2vala/build_host.sh` for this host (`.exe` on Windows) or `tools/c2vala/build.sh` for the guest (ELF, planc). A case directory with `refuse.txt` must be refused with that message, one with `report.txt` must print those lines under `--report`, and one with `planc_only.txt` is skipped unless planc compiles the generated code:
 
 ```sh
