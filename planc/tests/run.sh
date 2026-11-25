@@ -316,6 +316,47 @@ for src in "$HERE"/visibility/*.vala; do
     esac
 done
 
+echo "== debug memory =="
+for src in "$HERE"/debugmem/*.vala; do
+    [ -e "$src" ] || continue
+    name=$(basename "$src" .vala)
+    binary="$WORK/dmem_$name$BIN_EXT"
+    if ! "$PLANC" $TARGET_FLAGS --debug-memory "$src" -o "$binary" 2>"$WORK/$name.err"; then
+        ko "$name" "compile failed: $(cat "$WORK/$name.err")"
+        continue
+    fi
+    if ! check_elf "$name" "$binary"; then
+        continue
+    fi
+    run_bin "$binary" >"$WORK/$name.stdout" 2>"$WORK/$name.runerr"
+    code=$?
+    case "$name" in
+        ok_*)
+            if [ "$code" != "0" ]; then
+                ko "$name" "exit $code, expected 0"
+                continue
+            fi
+            if [ -f "$HERE/debugmem/$name.out" ] && ! files_equal "$WORK/$name.stdout" "$HERE/debugmem/$name.out"; then
+                ko "$name" "stdout differs from $name.out"
+                continue
+            fi
+            ;;
+        *)
+            expected="planc: panic: "
+            [ -f "$HERE/debugmem/$name.panic" ] && expected=$(cat "$HERE/debugmem/$name.panic")
+            if [ "$code" != "134" ]; then
+                ko "$name" "exit $code, expected 134"
+                continue
+            fi
+            if ! grep -qF "$expected" "$WORK/$name.runerr"; then
+                ko "$name" "missing panic diagnostic '$expected'"
+                continue
+            fi
+            ;;
+    esac
+    ok "$name"
+done
+
 echo "== bounds =="
 for src in "$HERE"/bounds/*.vala; do
     name=$(basename "$src" .vala)

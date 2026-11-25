@@ -2125,6 +2125,11 @@ namespace Planc {
             // cmp edx, 0xDEADDEAD             81 FA AD DE AD DE
             code.u8 (0x81); code.u8 (0xFA); code.u32le (0xDEADDEADu);
             branch (BranchKind.JE, mem_panic_lbl);
+            // cmp edx, 0xFFFFFFFE             81 FA FE FF FF FF
+            // 0xFFFFFFFE marks an object whose destructor is running: taking a
+            // new reference there would resurrect a dying object.
+            code.u8 (0x81); code.u8 (0xFA); code.u32le (0xFFFFFFFEu);
+            branch (BranchKind.JE, mem_panic_lbl);
             // cmp word ptr [rdi + 6], 0x504C  66 81 7F 06 4C 50
             code.u8 (0x66); code.u8 (0x81); code.u8 (0x7F); code.u8 (0x06);
             code.u8 (0x4C); code.u8 (0x50);
@@ -2162,8 +2167,40 @@ namespace Planc {
             calls.add (p);
         }
 
+        // void __planc_check_ref(void* rdi)
+        //
+        // Debug-only guard emitted before a dereference of a managed
+        // reference. A freed block keeps its poison word in debug builds, so
+        // a use-after-free is reported as a panic instead of reading whatever
+        // the allocator handed out next. Clobbers only r11 and flags.
+        public void emit_rt_check_ref (Label uaf_panic_lbl) {
+            var l_ok = new_label ();
+            // test rdi, rdi                   48 85 FF
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xFF);
+            branch (BranchKind.JE, l_ok);
+            // mov r11d, [rdi]                 44 8B 1F   (refcount)
+            code.u8 (0x44); code.u8 (0x8B); code.u8 (0x1F);
+            // cmp r11d, 0xDEADDEAD            41 81 FB AD DE AD DE
+            code.u8 (0x41); code.u8 (0x81); code.u8 (0xFB); code.u32le (0xDEADDEADu);
+            branch (BranchKind.JE, uaf_panic_lbl);
+            // cmp word ptr [rdi + 6], 0x504C  66 81 7F 06 4C 50
+            code.u8 (0x66); code.u8 (0x81); code.u8 (0x7F); code.u8 (0x06);
+            code.u8 (0x4C); code.u8 (0x50);
+            branch (BranchKind.JE, l_ok);
+            // mov r10d, [rdi + 4]             44 8B 57 04   (kind | magic)
+            code.u8 (0x44); code.u8 (0x8B); code.u8 (0x57); code.u8 (0x04);
+            // test r10d, r10d                 45 85 D2
+            // Static strings in .rodata carry a zero header (no kind, no
+            // magic): those are immutable and must not be rejected.
+            code.u8 (0x45); code.u8 (0x85); code.u8 (0xD2);
+            branch (BranchKind.JE, l_ok);
+            branch (BranchKind.JMP, uaf_panic_lbl);
+            bind (l_ok);
+            ret ();
+        }
+
         // void __planc_unref(void* rdi)
-        public void emit_rt_unref (int bss_base, Label mem_panic_lbl) {
+        public void emit_rt_unref (int bss_base, Label mem_panic_lbl, bool debug_memory = false) {
             var l_ret = new_label ();
             var l_free_self = new_label ();
             var l_class_dtor = new_label ();
@@ -2237,6 +2274,10 @@ namespace Planc {
             // Class finalizer: vtable is at [rdi + 8], finalizer slot at vtable[0].
             // Keeps refcount == 0 during dtor so `this.helper()` is safe.
             bind (l_class_dtor);
+            // Mark the object as dying: taking a new reference inside the
+            // destructor panics instead of resurrecting a half-freed object.
+            // mov dword ptr [rdi], 0xFFFFFFFE  C7 07 FE FF FF FF
+            code.u8 (0xC7); code.u8 (0x07); code.u32le (0xFFFFFFFEu);
             // mov rax, [rdi + 8]              48 8B 47 08
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x47); code.u8 (0x08);
             // mov rax, [rax]                  48 8B 00
@@ -2266,6 +2307,35 @@ namespace Planc {
             record_rip (bss_base, PatchSpace.BSS);
             // lock inc qword ptr [rdx + 8]    F0 48 FF 42 08 (free_count++)
             code.u8 (0xF0); code.u8 (0x48); code.u8 (0xFF); code.u8 (0x42); code.u8 (0x08);
+            if (debug_memory) {
+                // Debug builds never recycle a block. The poison word stays
+                // readable, so a stale ref/unref on it is always detected
+                // instead of silently aliasing a fresh allocation.
+                var l_skip_fill = new_label ();
+                // movzx eax, byte ptr [rdi + 4]   0F B6 47 04  (kind)
+                code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x47); code.u8 (0x04);
+                // cmp eax, 1                      83 F8 01
+                code.u8 (0x83); code.u8 (0xF8); code.u8 (0x01);
+                branch (BranchKind.JA, l_skip_fill); // classes: unknown size
+                // mov rcx, [rdi + 8]              48 8B 4F 08  (element count)
+                code.u8 (0x48); code.u8 (0x8B); code.u8 (0x4F); code.u8 (0x08);
+                // movzx eax, byte ptr [rdi + 4]   0F B6 47 04
+                code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x47); code.u8 (0x04);
+                // test eax, eax                   85 C0
+                code.u8 (0x85); code.u8 (0xC0);
+                // je l_bytes                      74 04  (kind 0 = byte array)
+                code.u8 (0x74); code.u8 (0x04);
+                // shl rcx, 3                      48 C1 E1 03
+                code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE1); code.u8 (0x03);
+                // add rdi, 16                     48 83 C7 10
+                code.u8 (0x48); code.u8 (0x83); code.u8 (0xC7); code.u8 (0x10);
+                // mov al, 0xDD                    B0 DD
+                code.u8 (0xB0); code.u8 (0xDD);
+                // rep stosb                       F3 AA
+                code.u8 (0xF3); code.u8 (0xAA);
+                bind (l_skip_fill);
+                branch (BranchKind.JMP, l_ret);
+            }
             // movzx ecx, byte ptr [rdi + 5]   0F B6 4F 05
             code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x4F); code.u8 (0x05);
             // cmp ecx, 8                      83 F9 08

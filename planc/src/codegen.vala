@@ -108,6 +108,9 @@ namespace Planc {
         public bool strict_unused { get; set; default = false; }
         public bool strict_visibility { get; set; default = false; }
         public bool enforce_visibility { get; set; default = false; }
+        // Debug allocator: freed blocks are never recycled, so a stale
+        // reference is detected instead of aliasing a new allocation.
+        public bool debug_memory { get; set; default = false; }
         public bool warn_unused { get; set; default = true; }
         public bool allow_asm { get; set; default = true; }
         public int opt_level { get; set; default = 0; }
@@ -222,6 +225,9 @@ namespace Planc {
         private bool need_uint_to_str = false;
         private bool need_is_instance = false;
         private bool need_mem_panic = false;
+        private bool need_uaf_panic = false;
+        private Label uaf_panic_label = new Label ();
+        private bool need_check_ref = false;
         private bool need_null_panic = false;
         private bool need_cast_panic = false;
         private bool need_leak_panic = false;
@@ -357,7 +363,7 @@ namespace Planc {
                     @"main cannot declare 'throws' at $(main.line):$(main.column)");
             }
 
-            program_uses_heap = check_leaks || main_takes_args || scan_program_heap ();
+            program_uses_heap = check_leaks || debug_memory || main_takes_args || scan_program_heap ();
             if (main_takes_args)
                 need_build_args = true;
             if (program_uses_heap) {
@@ -505,6 +511,7 @@ namespace Planc {
             strict_unused = m.strict_unused;
             strict_visibility = m.strict_visibility;
             enforce_visibility = m.enforce_visibility;
+            debug_memory = m.debug_memory;
             warn_unused = m.warn_unused;
             allow_asm = m.allow_asm;
             opt_level = m.opt_level;
@@ -2377,6 +2384,11 @@ namespace Planc {
         }
 
         private void emit_runtime () {
+            if (debug_memory) {
+                need_alloc = true;
+                need_mem_panic = true;
+                need_uaf_panic = true;
+            }
             if (need_str_concat || need_int_to_str || need_uint_to_str || need_double_to_str || need_str_slice
                 || need_bytes_to_str || need_read_file || need_write_file) {
                 need_alloc = true;
@@ -2428,8 +2440,15 @@ namespace Planc {
                 symbols.add (new Symbol ("__planc_ref", start_ref, emitter.here () - start_ref));
 
                 var start_unref = emitter.here ();
-                emitter.emit_rt_unref (alloc_bss_offset, mem_panic_label);
+                emitter.emit_rt_unref (alloc_bss_offset, mem_panic_label, debug_memory);
                 symbols.add (new Symbol ("__planc_unref", start_unref, emitter.here () - start_unref));
+
+                if (debug_memory) {
+                    need_check_ref = true;
+                    var start_chk = emitter.here ();
+                    emitter.emit_rt_check_ref (uaf_panic_label);
+                    symbols.add (new Symbol ("__planc_check_ref", start_chk, emitter.here () - start_chk));
+                }
 
                 emitter.emit_rt_weak (symbols);
             }
@@ -2623,6 +2642,8 @@ namespace Planc {
                             "planc: panic: index out of bounds\n");
             emit_panic_sym (need_mem_panic, mem_panic_label, "__planc_mem_panic",
                             "planc: panic: memory error (double free or corrupted block)\n");
+            emit_panic_sym (need_uaf_panic, uaf_panic_label, "__planc_uaf_panic",
+                            "planc: panic: use after free or corrupted reference (debug memory)\n");
             emit_panic_sym (need_null_panic, null_panic_label, "__planc_null_panic",
                             "planc: panic: null pointer dereference\n");
             emit_panic_sym (need_cast_panic, cast_panic_label, "__planc_cast_panic",
@@ -10020,6 +10041,17 @@ namespace Planc {
 
         // Option B software null guard: emits zero instructions when `tt` is statically non-null.
         private void emit_null_check_if_nullable (ValaType tt, string tt_name) throws SemanticError {
+            if (debug_memory && (tt == ValaType.CLASS || tt == ValaType.INTERFACE
+                                 || tt == ValaType.STRING || tt == ValaType.ARRAY
+                                 || tt == ValaType.ERROR)) {
+                emitter.push_rax ();
+                push_depth++;
+                emitter.mov_rdi_rax ();
+                need_uaf_panic = true;
+                call_aligned ("__planc_check_ref");
+                emitter.pop_rax ();
+                push_depth--;
+            }
             if (is_nullable_type (tt, tt_name)) {
                 if (strict_null)
                     throw new SemanticError.TYPE_MISMATCH (@"cannot dereference nullable '$(type_label (tt, tt_name))' without a null check");
