@@ -19,6 +19,9 @@ WINDOW_BACKEND="gtk"
 # and --venus (or the old --virtio-gl) asks for the venus/hostmem setup that
 # needs a render-server virglrenderer.
 GPU_MODE="gl"
+ADD_FILES=()
+RUN_CMD=""
+RUN_SECONDS=60
 for arg in "$@"; do
     case "$arg" in
         --build-only) BUILD_ONLY=1 ;;
@@ -29,6 +32,11 @@ for arg in "$@"; do
         --venus)      GPU_MODE="venus" ;;
         --virtio-gl)  GPU_MODE="venus" ;;
         --sdl)        WINDOW_BACKEND="sdl" ;;
+        # --add=FILE puts an extra file in the image (a port's binary and its
+        # data files) and --run=CMD types that command at the shell prompt.
+        --add=*)      ADD_FILES+=("${arg#--add=}") ;;
+        --run=*)      RUN_CMD="${arg#--run=}" ;;
+        --run-seconds=*) RUN_SECONDS="${arg#--run-seconds=}" ;;
     esac
 done
 
@@ -152,6 +160,11 @@ python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
 # broken (overlapping regions, image reaching into it, asm literals drifted).
 python3 "$ROOT/tools/check_layout.py" "$OUT/planet-kernel"
 
+MK_ADD=()
+for add_file in ${ADD_FILES+"${ADD_FILES[@]}"}; do
+    if [ ! -f "$add_file" ]; then echo "run-qemu: --add: missing $add_file" >&2; exit 1; fi
+    MK_ADD+=(--add "$(basename "$add_file")=$add_file")
+done
 python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/init.elf" "$OUT/shell.elf" "$OUT/planc.elf" "$OUT/banner.elf" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
@@ -170,7 +183,8 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     --lib "$LIBDIR/gtk/gtk.dlib" --lib "$LIBDIR/gtk/gtk.hlib" \
     --lib "$LIBDIR/gobject/gobject.dlib" --lib "$LIBDIR/gobject/gobject.hlib" \
     --lib "$LIBDIR/gmodule/gmodule.dlib" --lib "$LIBDIR/gmodule/gmodule.hlib" \
-    --lib "$LIBDIR/unsafe/unsafe.dlib" --lib "$LIBDIR/unsafe/unsafe.hlib"
+    --lib "$LIBDIR/unsafe/unsafe.dlib" --lib "$LIBDIR/unsafe/unsafe.hlib" \
+    ${MK_ADD+"${MK_ADD[@]}"}
 
 # --headless forces the serial-only mode; --display forces a window. Without a
 # flag: window when a display server exists, headless otherwise. Windows/MSYS2
@@ -245,6 +259,22 @@ esac
 echo "GPU: $GPU_MODE [$GPU_LINE]"
 
 echo "Booting PlanetOS in QEMU (type 'exit' in the guest shell to quit)..."
+if [ -n "$RUN_CMD" ]; then
+    echo "Typing into the guest shell: $RUN_CMD"
+    { sleep 10; printf '%s\n' "$RUN_CMD"; sleep "$RUN_SECONDS"; } | qemu-system-x86_64 \
+    -cpu max \
+    -m 1024M \
+    -kernel "$OUT/planet-kernel" \
+    -drive file="$OUT/disk.img",format=raw,if=ide \
+    -netdev user,id=net0 \
+    -device virtio-net-pci,netdev=net0 \
+    "${GPU_ARGS[@]}" \
+    "${DISP_ARGS[@]}" \
+    "${SER_ARGS[@]}" \
+    -no-reboot \
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04
+    exit 0
+fi
 exec qemu-system-x86_64 \
     -cpu max \
     -m 1024M \

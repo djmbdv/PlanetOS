@@ -46,6 +46,18 @@
     on Windows, which decides whether a relative PS/2 mouse gets motion events
     at all.
 
+.PARAMETER Add
+    Extra files to place in the image, e.g. a port's binary and its data files.
+    Each one lands in the image root under its own name.
+
+.PARAMETER Run
+    Command typed at the guest shell once the machine is up, so a headless run
+    can exercise a program end to end. Needs -Headless (the serial console is
+    the only channel QEMU can type into) and stops after -RunSeconds.
+
+.PARAMETER RunSeconds
+    How long -Run is left running before QEMU is stopped. Defaults to 60.
+
 .EXAMPLE
     .\run-qemu.ps1
 
@@ -57,6 +69,12 @@
 
 .EXAMPLE
     .\run-qemu.ps1 -Virtio -NoBuild
+
+.EXAMPLE
+    # Run a port on the real image: add its binary and data, then type the
+    # command at the shell.
+    .\run-qemu.ps1 -Headless -Add .\build\doom.elf,.\build\freedoom1.wad `
+        -Run 'doom.elf -iwad /freedoom1.wad' -RunSeconds 60
 
 .NOTES
     If PowerShell refuses to run the script, start it with:
@@ -73,7 +91,13 @@ param(
     [switch]$Venus,
     [switch]$VirtioGl,
     [switch]$Sdl,
-    [switch]$DebugMemory
+    [switch]$DebugMemory,
+    # Extra files to place in the image (a port's binary and its data files).
+    [string[]]$Add = @(),
+    # Command to type at the shell prompt once the guest is up (needs -Headless).
+    [string]$Run = '',
+    # How long to let -Run go before stopping QEMU, in seconds.
+    [int]$RunSeconds = 60
 )
 
 $ErrorActionPreference = 'Stop'
@@ -488,6 +512,13 @@ if (-not $NoBuild) {
     }
 
     Write-Step 'Building the boot disk image...'
+    $addArgs = @()
+    foreach ($addFile in $Add) {
+        $resolved = $addFile
+        if (-not (Test-Path $resolved)) { $resolved = Join-Path $Root $addFile }
+        if (-not (Test-Path $resolved)) { Fail ('-Add: file not found: ' + $addFile) }
+        $addArgs += @('--add', ((Split-Path -Leaf $resolved) + '=' + $resolved))
+    }
     & $Python (Join-Path $Root 'tools\mkdisk.py') `
         (Out-Path 'disk.img') `
         (Out-Path 'init.elf') `
@@ -538,7 +569,8 @@ if (-not $NoBuild) {
         '--lib' (Lib-Dlib 'gtk') '--lib' (Lib-Hlib 'gtk') `
         '--lib' (Lib-Dlib 'gobject') '--lib' (Lib-Hlib 'gobject') `
         '--lib' (Lib-Dlib 'gmodule') '--lib' (Lib-Hlib 'gmodule') `
-        '--lib' (Lib-Dlib 'unsafe') '--lib' (Lib-Hlib 'unsafe')
+        '--lib' (Lib-Dlib 'unsafe') '--lib' (Lib-Hlib 'unsafe') `
+        @addArgs
     if ($LASTEXITCODE -ne 0) {
         Fail 'mkdisk.py failed'
     }
@@ -654,13 +686,51 @@ $qemuArgs = @(
 ) + $displayArgs
 
 if ($Headless) {
-    $qemuArgs += @('-serial', 'mon:stdio')
+    if ($Run -ne '') {
+        # mon:stdio hands the keyboard to the monitor, so keep plain stdio to
+        # type the command into the guest shell.
+        $qemuArgs += @('-serial', 'stdio')
+    } else {
+        $qemuArgs += @('-serial', 'mon:stdio')
+    }
 } else {
+    if ($Run -ne '') {
+        Fail '-Run types into the serial console; use it with -Headless'
+    }
     $serialLog = Out-Path 'serial.log'
     $qemuArgs += @('-serial', ('file:' + (To-QemuPath $serialLog)))
     Write-Host ('Serial log: ' + $serialLog)
 }
 
 Write-Step "Booting PlanetOS in QEMU (type 'exit' in the guest shell to quit)..."
+
+if ($Run -ne '') {
+    # Headless smoke run: wait for the guest shell, type the command, and let it
+    # run until QEMU exits (the guest's `exit`, or a timeout the caller sets).
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Qemu
+    $psi.Arguments = (($qemuArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $qemuProc = [System.Diagnostics.Process]::Start($psi)
+    Start-Sleep -Seconds 12
+    # The guest line discipline drops characters typed in one burst, so pace
+    # them like a terminal would.
+    foreach ($ch in $Run.ToCharArray()) {
+        $qemuProc.StandardInput.Write([string]$ch)
+        $qemuProc.StandardInput.Flush()
+        Start-Sleep -Milliseconds 25
+    }
+    $qemuProc.StandardInput.Write("`n")
+    $qemuProc.StandardInput.Flush()
+    Write-Host ('Typed into the guest shell: ' + $Run)
+    if (-not $qemuProc.WaitForExit($RunSeconds * 1000)) {
+        Write-Host ('Stopping QEMU after ' + $RunSeconds + 's (-RunSeconds)')
+        $qemuProc.Kill()
+        $qemuProc.WaitForExit(5000)
+    }
+    exit 0
+}
+
 & $Qemu @qemuArgs
 exit $LASTEXITCODE

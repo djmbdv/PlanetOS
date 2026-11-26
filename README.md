@@ -274,7 +274,16 @@ terminal stays free.
 .\run-qemu.ps1             # QEMU window
 .\run-qemu.ps1 -Headless   # serial-only
 .\run-qemu.ps1 -NoBuild    # reuse the artifacts from the last build
+
+# Put a program (and its data) in the image and run it headless:
+.\run-qemu.ps1 -Headless -Add .\build\doom.elf,.\build\freedoom1.wad `
+        -Run 'doom.elf -iwad /freedoom1.wad' -RunSeconds 60
 ```
+
+`-Add` (bash: `--add=FILE`) drops extra files in the image root and `-Run`
+(bash: `--run=CMD`, `--run-seconds=N`) types a command at the guest shell, so a
+port can be exercised end to end without rebuilding the launcher. The same
+switches are what the DOOM port uses to run on the stock image.
 
 If the execution policy blocks the script:
 

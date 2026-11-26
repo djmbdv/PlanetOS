@@ -2,7 +2,8 @@
 """Builds the PlanetOS boot disk (raw XFS image) from the compiled artifacts.
 
 Usage:
-    mkdisk.py <disk.img> <init.elf> <shell.elf> <planc.elf> <banner.elf>
+    mkdisk.py <disk.img> [--add name=path]...
+            <init.elf> <shell.elf> <planc.elf> <banner.elf>
               <worker.elf> <wc.elf> <cairo_demo.elf> <frag.spv> <spv_demo.elf>
               <gio_demo.elf> <utf8.vala> <class_basic.vala>
               <gobject_demo.elf> <gmodule_demo.elf> <mainloop_demo.elf> <compositor.elf> <pango_demo.elf> <jsmn_demo.elf> <c2vala.elf> <arith.c> <frag_pattern.spv>
@@ -58,9 +59,17 @@ def main():
     pos_args = []
     stdlib_paths = []
     lib_groups = {}
+    extra_files = []
     i = 1
     while i < len(sys.argv):
-        if sys.argv[i] == "--stdlib":
+        if sys.argv[i] == "--add":
+            if i + 1 >= len(sys.argv) or "=" not in sys.argv[i + 1]:
+                sys.stderr.write("mkdisk.py: --add requires name=path\n")
+                return 2
+            nm, ap = sys.argv[i + 1].split("=", 1)
+            extra_files.append((nm.encode("utf-8"), ap))
+            i += 2
+        elif sys.argv[i] == "--stdlib":
             if i + 1 >= len(sys.argv):
                 sys.stderr.write("mkdisk.py: --stdlib requires a path\n")
                 return 2
@@ -122,6 +131,13 @@ def main():
         (b"curl.elf", open(pos_args[35], "rb").read(), 0x81ED),
         (b"winxp.jpg", open(pos_args[36], "rb").read(), 0x81A4),
     ]
+
+    # `--add name=path`: extra root files (a port's binary and its data
+    # files), so the launchers can put them in the image without editing
+    # this list.
+    for nm, ap in extra_files:
+        mode = 0x81ED if nm.endswith(b".elf") else 0x81A4
+        root_specs.append((nm, open(ap, "rb").read(), mode))
 
     stdlib_specs = []
     for p in stdlib_paths:
