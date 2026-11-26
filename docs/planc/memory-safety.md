@@ -5,7 +5,8 @@ memoria del dialecto `planc` y las restricciones que impone frente a Vala están
 
 El objetivo es que `planc` sea un *dialecto más seguro* de Vala: cuando una
 construcción no se puede verificar, se rechaza (o se degrada a una forma segura)
-aunque eso implique omitirla.
+aunque eso implique omitirla. El catálogo completo de lo que el dialecto acepta y
+rechaza está en [dialect.md](dialect.md).
 
 ---
 
