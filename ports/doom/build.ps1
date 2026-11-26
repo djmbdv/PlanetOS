@@ -85,7 +85,9 @@ if ($Regenerate) {
 
 Write-Host 'planc: compiling doom.elf...'
 $elf = Join-Path $Out 'doom.elf'
-& $Planc --target=planetos ('--library-dir=' + (Join-Path $Out 'library')) `
+# -O2 enables the register allocator and the bounds-check elimination; the port
+# needs planc >= the fix that stops the -O2 backend from releasing returned arrays.
+& $Planc -O2 --target=planetos ('--library-dir=' + (Join-Path $Out 'library')) `
     --import-lib=cairo --import-lib=gdk $Runtime $Combined $Glue -o $elf
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $elf)) { Fail 'planc failed' }
 

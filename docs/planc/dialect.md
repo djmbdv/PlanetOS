@@ -147,6 +147,29 @@ direccionarse ni escapar de su ámbito.
 * Un struct **POD** puede copiarse en crudo; uno con campos `string`/array
   necesita las rutinas de ref/unref (las tiene en asignación, no en `memcpy`).
 
+### Arrays de bytes empaquetados
+
+`uint8[]` e `int8[]` guardan **1 byte por elemento** (el resto de los arrays usa
+un slot de 8 B, y un array de structs `8 * slots`). Medido con `--trace-alloc`:
+`new uint8[1000000]` reserva 1 000 000 B, `new int[1000000]` reserva 8 000 000 B,
+y lo mismo vale para los literales (`new uint8[] { … }`) y para `string.data`.
+
+Las reglas que hacen segura esa representación:
+
+* `.length` y el *bounds check* cuentan **elementos**, no bytes; la dirección del
+  elemento es `data + i` (escala 1) y la lectura es `movzx` (o `movsx` para
+  `int8`);
+* no se puede tomar dirección de un elemento (`&a[i]` es error duro, y `ref`/`out`
+  de un elemento de byte array también): un puntero a un byte no puede
+  representarse como un array de 8 B por elemento;
+* `resize`/`move`/`in` funcionan sobre arrays de bytes porque son escalares;
+* un array de structs **no** puede contener campos byte-array inline (no hay
+  campos array de tamaño fijo), así que no hay mezcla de strides.
+
+El backend de `-O2` (asignador de registros) sólo acepta arrays de elementos
+`int`/`int64`/`long`; cualquier función que toque un `uint8[]` se compila con el
+backend de AST, que es el que implementa el empaquetado.
+
 ---
 
 ## 6. Diferencias deliberadas con Vala estándar
@@ -211,6 +234,15 @@ planc <fuentes.vala>… -o <salida> [flags]
 | `--dump-text` | volcado del texto generado |
 | `--error-limit=N`, `--no-error-recovery` | control de la recuperación de errores |
 
+Los niveles `-O0`, `-O1` y `-O2` comparten semántica. `-O1` optimiza el AST y
+`-O2` añade el asignador de registros (`puzzle_ra.vala`) y la eliminación de
+*bounds checks*; cuando el asignador no soporta una función (arrays de bytes,
+métodos, `ref`/`out`, `throws`, `async`, funciones que **devuelven un array**,
+locales de array que aliasan otro array, asignación entre arrays) esa función se
+compila con el backend de AST, que es el que implementa el empaquetado de bytes
+y la transferencia de propiedad al `return`. Las dos suites comprueban el mismo
+`.out` en los tres niveles (`array_return_o1/o2`, `array_alias_local_o1/o2`).
+
 ### Diagnósticos de runtime
 
 | Mensaje | Cuándo |
@@ -232,13 +264,13 @@ planc <fuentes.vala>… -o <salida> [flags]
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **294 casos, 293 pasan**. El único fallo es
+Estado actual: **314 casos, 313 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
 | Sección | Qué prueba | Casos |
 |---|---|---|
-| `valid/` | compila, ejecuta y compara stdout/exit | 120 |
+| `valid/` | compila, ejecuta y compara stdout/exit | 122 |
 | `invalid/` | rechazo con diagnóstico posicionado | 80 |
 | `bounds/` | panics de rango, tamaños negativos y overflow de `n*stride` | 15 |
 | `visibility/` | `--strict-visibility` / `--enforce-visibility` | 5 |
@@ -256,7 +288,7 @@ El traductor C→Vala tiene su propia suite diferencial (compila con gcc y compa
 la salida con la del Vala generado):
 
 ```
-python tools/c2vala_tests/run.py    # 22 casos (ptr_into_row necesita planc)
+python tools/c2vala_tests/run.py    # 23 casos (algunos necesitan planc)
 ```
 
 Reglas del traductor que importan al portar C:

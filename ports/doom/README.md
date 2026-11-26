@@ -98,8 +98,13 @@ that matter for correctness:
 
 ## Performance notes
 
-Rendering is CPU-only inside QEMU TCG and runs at a few frames per second.
-Beyond that, the largest remaining cost is planc's array representation: every
-element takes an 8-byte slot, so a 64 KB screen buffer occupies 512 KB. Sound,
-music and wipes are not implemented, and the attract-mode demo takes a long
-time to appear at these frame rates.
+The port is built with `-O2` (register allocator plus bounds-check elimination),
+which roughly doubles the frame rate over `-O1`: about 150 frames per 35 s of a
+headless QEMU run instead of 75, at ~2.5 ms per DOOM tic.
+
+`uint8[]` is already packed at one byte per element, so a 320x200 screen is
+64 KB plus a 16-byte header. The renderer is bound by the software rasteriser,
+by planc's per-access bounds checks in the byte loops (eliminated where the loop
+shape proves the index in range) and by QEMU's TCG, which emulates every
+instruction. Sound, music and wipes are not implemented, and the attract-mode
+demo takes a long time to appear at these frame rates.

@@ -313,6 +313,15 @@ namespace Planc {
                     else if (d.init is BoolLiteral) { vt = ValaType.BOOL; tn = "bool"; }
                     else { vt = ValaType.INT; tn = "int64"; }
                 }
+                // An array local owns exactly one reference and the epilogue
+                // releases it, so aliasing an existing array would be released
+                // twice (and the new name would outlive the release). Only a
+                // fresh array may initialise an array local.
+                if (vt == ValaType.ARRAY && d.init is VarRef) {
+                    int si = lookup_var (((VarRef) d.init).name);
+                    if (si >= 0 && var_types[si] == ValaType.ARRAY)
+                        return false;
+                }
                 var_names.add (d.name);
                 var_vregs.add (0);
                 var_types.add (vt);
@@ -321,7 +330,13 @@ namespace Planc {
             }
             if (s is AssignStatement) {
                 var a = (AssignStatement) s;
-                return lookup_var (a.name) >= 0 && check_expr_supported (a.value);
+                int vi = lookup_var (a.name);
+                if (vi < 0) return false;
+                // Assigning an array would have to release the old reference and
+                // take one on the new value; the AST backend does that, so keep
+                // arrays out of this one.
+                if (var_types[vi] == ValaType.ARRAY) return false;
+                return check_expr_supported (a.value);
             }
             if (s is IndexAssignStatement) {
                 var ia = (IndexAssignStatement) s;
@@ -3091,6 +3106,11 @@ namespace Planc {
                 || f.from_lambda != null || f.can_throw || f.is_varargs || f.owner_class != "")
                 return false;
             if (f.params.length > 6 || f.body == null)
+                return false;
+            // Returning an array hands its reference to the caller, and the
+            // epilogue of this backend releases every array local, so a
+            // `return a;` would release the value it just returned.
+            if (f.return_type == ValaType.ARRAY)
                 return false;
             if (f.return_type != ValaType.VOID && !is_supported_type (f.return_type, f.return_type_name))
                 return false;

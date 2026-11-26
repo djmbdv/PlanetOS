@@ -67,7 +67,8 @@ PY
 fi
 
 echo "planc: compiling doom.elf..."
-"$PLANC" --target=planetos "--library-dir=$OUT/library" \
+# -O2 enables the register allocator and the bounds-check elimination.
+"$PLANC" -O2 --target=planetos "--library-dir=$OUT/library" \
     --import-lib=cairo --import-lib=gdk "$RUNTIME" "$COMBINED" "$GLUE" -o "$OUT/doom.elf"
 
 echo
