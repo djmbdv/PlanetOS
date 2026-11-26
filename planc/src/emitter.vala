@@ -1326,6 +1326,24 @@ namespace Planc {
             else { code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE8); code.u8 (c & 63); }
         }
 
+        // sar rcx, imm8                      48 D1 F9 | 48 C1 F9 imm8
+        public void sar_rcx_imm (uint8 c) {
+            if (c == 0) return;
+            if (c == 1) { code.u8 (0x48); code.u8 (0xD1); code.u8 (0xF9); }
+            else { code.u8 (0x48); code.u8 (0xC1); code.u8 (0xF9); code.u8 (c & 63); }
+        }
+
+        // and rcx, imm32                     48 81 E1 imm32
+        public void and_rcx_imm (int32 v) {
+            code.u8 (0x48); code.u8 (0x81); code.u8 (0xE1);
+            code.u32le ((uint32) v);
+        }
+
+        // sub rdx, rax                       48 29 C2
+        public void sub_rdx_rax () {
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xC2);
+        }
+
         // xor edx, edx                       31 D2
         public void xor_edx () {
             code.u8 (0x31); code.u8 (0xD2);

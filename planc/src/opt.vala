@@ -1831,6 +1831,7 @@ namespace Planc {
             if (f.body != null) {
                 if (level >= 2 && cur_prog != null)
                     sra_stmt_list (f.body);
+                expr_depth = 0;
                 opt_stmt_list (f.body);
             }
             cur_func = null;
@@ -2879,7 +2880,23 @@ namespace Planc {
             return (e is IntLiteral || e is BoolLiteral || e is StringLiteral || e is VarRef);
         }
 
+        // AST recursion budget shared by the optimizer passes: subtrees beyond
+        // the limit are left untouched instead of blowing the stack.
+        private const int MAX_EXPR_DEPTH = 600;
+        private int expr_depth = 0;
+
         private Expr opt_expr (Expr e) {
+            if (expr_depth >= MAX_EXPR_DEPTH)
+                return e;
+            expr_depth++;
+            try {
+                return opt_expr_node (e);
+            } finally {
+                expr_depth--;
+            }
+        }
+
+        private Expr opt_expr_node (Expr e) {
             if (e is UnaryExpr) {
                 var u = (UnaryExpr) e;
                 u.operand = opt_expr (u.operand);

@@ -204,7 +204,33 @@ namespace Planc {
             return tn == "uint" || tn == "uint64" || tn == "ulong" || tn == "uint32";
         }
 
+        private static int pow2_exponent (int64 v) {
+            if (v <= 0) return -1;
+            int k = 0;
+            while ((v & 1) == 0) {
+                v >>= 1;
+                k++;
+            }
+            return (v == 1) ? k : -1;
+        }
+
+        // Recursion budget: a tree deeper than this falls back to the generic
+        // AST codegen, which has its own depth guard.
+        private const int MAX_EXPR_DEPTH = 600;
+        private int check_depth = 0;
+
         private bool check_expr_supported (Expr? e) {
+            if (check_depth >= MAX_EXPR_DEPTH)
+                return false;
+            check_depth++;
+            try {
+                return check_expr_supported_node (e);
+            } finally {
+                check_depth--;
+            }
+        }
+
+        private bool check_expr_supported_node (Expr? e) {
             if (e == null) return true;
             if (e is IntLiteral || e is BoolLiteral) return true;
             if (e is VarRef) {
@@ -416,6 +442,67 @@ namespace Planc {
                     return d;
                 }
                 int lv = lower_expr (b.left);
+                // Power-of-two divisor: lower to shifts/ands so the register
+                // allocator never has to pin rax/rdx/rcx for an idiv.
+                if ((b.op == "/" || b.op == "%") && b.right is IntLiteral) {
+                    int64 dv = ((IntLiteral) b.right).value;
+                    int pk = pow2_exponent (dv);
+                    bool lu = vreg_is_unsigned[lv];
+                    if (pk == 0) {
+                        if (b.op == "/")
+                            return lv;
+                        int z = new_vreg (false, lu);
+                        emit_ir (new IRInst () { op = IROp.MOV_IMM, dst = z, imm = 0 });
+                        return z;
+                    }
+                    if (pk > 0 && pk <= 31) {
+                        int64 mask = (((int64) 1) << pk) - 1;
+                        if (lu) {
+                            int d = new_vreg (false, true);
+                            emit_ir (new IRInst () {
+                                op = IROp.BIN_IMM, dst = d,
+                                sop = (b.op == "/") ? ">>" : "&", lhs = lv,
+                                imm = (b.op == "/") ? pk : mask, is_unsigned = true
+                            });
+                            return d;
+                        }
+                        // Signed: truncate toward zero, so bias by the sign
+                        // mask before the arithmetic shift.
+                        int sign = new_vreg ();
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN_IMM, dst = sign, sop = ">>", lhs = lv,
+                            imm = 63, is_unsigned = false
+                        });
+                        int corr = new_vreg ();
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN_IMM, dst = corr, sop = "&", lhs = sign,
+                            imm = mask, is_unsigned = false
+                        });
+                        int sum = new_vreg ();
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN, dst = sum, sop = "+", lhs = lv, rhs = corr,
+                            is_unsigned = false
+                        });
+                        int q = new_vreg ();
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN_IMM, dst = q, sop = ">>", lhs = sum,
+                            imm = pk, is_unsigned = false
+                        });
+                        if (b.op == "/")
+                            return q;
+                        int qd = new_vreg ();
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN_IMM, dst = qd, sop = "<<", lhs = q,
+                            imm = pk, is_unsigned = false
+                        });
+                        int r = new_vreg ();
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN, dst = r, sop = "-", lhs = lv, rhs = qd,
+                            is_unsigned = false
+                        });
+                        return r;
+                    }
+                }
                 if (b.right is IntLiteral && b.op != "/" && b.op != "%") {
                     int64 imm = ((IntLiteral) b.right).value;
                     bool shift_ok = (b.op != "<<" && b.op != ">>") || (imm >= 0 && imm < 64);
@@ -1927,6 +2014,29 @@ namespace Planc {
             }
         }
 
+        // lea dst, [base + index*2^scale_log2]   (displacement 0)
+        // Returns false (emitting nothing) when the index has no SIB encoding,
+        // i.e. rsp/r12: the SIB index field 100 means "no index".
+        private bool emit_lea_index (Reg dst, Reg base_r, Reg index_r, int scale_log2) {
+            if (((int) index_r & 7) == 4)
+                return false;
+            uint8 rex = (uint8) (0x48
+                | (Reg.is_extended (dst) ? 4 : 0)
+                | (Reg.is_extended (index_r) ? 2 : 0)
+                | (Reg.is_extended (base_r) ? 1 : 0));
+            code.u8 (rex);
+            code.u8 (0x8D);
+            int d7 = (int) dst & 7;
+            int b7 = (int) base_r & 7;
+            int i7 = (int) index_r & 7;
+            // [rbp]/[r13] cannot be encoded with mod=00.
+            int mod = (b7 == 5) ? 1 : 0;
+            code.u8 ((uint8) ((mod << 6) | (d7 << 3) | 4));
+            code.u8 ((uint8) ((scale_log2 << 6) | (i7 << 3) | b7));
+            if (mod == 1) code.u8 (0x00);
+            return true;
+        }
+
         private void emit_load_rbp (Reg dst, int disp) {
             emit_rex (true, dst, Reg.RBP);
             code.u8 (0x8B);
@@ -2016,21 +2126,30 @@ namespace Planc {
             code.u8 (0x0F); code.u8 (0xB6); code.u8 ((uint8) (0xC0 | ((d & 7) << 3) | (d & 7))); // movzx dst32, dst8
         }
 
+        // Condition-code dispatch on the operator's first character: comparing
+        // Vala strings compiles to g_strcmp0, and these helpers run once per
+        // comparison in the hottest emission loop.
         private static uint8 cmp_cc (string op, bool is_u) {
-            if (op == "==") return 0x94;
-            if (op == "!=") return 0x95;
-            if (op == "<") return is_u ? 0x92 : 0x9C;
-            if (op == "<=") return is_u ? 0x96 : 0x9E;
-            if (op == ">") return is_u ? 0x97 : 0x9F;
+            char c0 = op[0];
+            if (c0 == '=') return 0x94;
+            if (c0 == '!') return 0x95;
+            if (op.length == 1) {
+                if (c0 == '<') return is_u ? 0x92 : 0x9C;
+                return is_u ? 0x97 : 0x9F;
+            }
+            if (c0 == '<') return is_u ? 0x96 : 0x9E;
             return is_u ? 0x93 : 0x9D;
         }
 
         private static BranchKind inverted_br (string op, bool is_u) {
-            if (op == "==") return BranchKind.JNE;
-            if (op == "!=") return BranchKind.JE;
-            if (op == "<") return is_u ? BranchKind.JAE : BranchKind.JGE;
-            if (op == "<=") return is_u ? BranchKind.JA : BranchKind.JG;
-            if (op == ">") return is_u ? BranchKind.JBE : BranchKind.JLE;
+            char c0 = op[0];
+            if (c0 == '=') return BranchKind.JNE;
+            if (c0 == '!') return BranchKind.JE;
+            if (op.length == 1) {
+                if (c0 == '<') return is_u ? BranchKind.JAE : BranchKind.JGE;
+                return is_u ? BranchKind.JBE : BranchKind.JLE;
+            }
+            if (c0 == '<') return is_u ? BranchKind.JA : BranchKind.JG;
             return is_u ? BranchKind.JB : BranchKind.JL;
         }
 
@@ -2342,7 +2461,14 @@ namespace Planc {
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
                             int32 imm32 = (int32) ins.imm;
                             if (ins.sop == "*") {
-                                emit_imul_rri (d, s, imm32);
+                                // x*(1+2^k) for k in 0..3 -> lea dst,[x+x*2^k]
+                                // (x*2, x*3, x*5, x*9), one cycle, no flags.
+                                int lg = pow2_exponent (ins.imm - 1);
+                                bool lea_ok = false;
+                                if (lg >= 0 && lg <= 3)
+                                    lea_ok = emit_lea_index (d, s, s, lg);
+                                if (!lea_ok)
+                                    emit_imul_rri (d, s, imm32);
                             } else if (ins.sop == "+") {
                                 if (d != s) emit_lea_disp (d, s, imm32);
                                 else emit_alu_ri (0, d, imm32);
@@ -2400,7 +2526,13 @@ namespace Planc {
                                 Reg l = read_vreg (ins.lhs, Reg.R10);
                                 Reg r = read_vreg (ins.rhs, Reg.R11);
                                 Reg d = dst_reg_for (ins.dst, Reg.R10);
-                                if (d == r && ins.sop != "-") {
+                                if (ins.sop == "+" && d != l && d != r) {
+                                    if (!emit_lea_index (d, l, r, 0)
+                                        && !emit_lea_index (d, r, l, 0)) {
+                                        emit_mov_rr (d, l);
+                                        emit_alu_rr (0x01, d, r);
+                                    }
+                                } else if (d == r && ins.sop != "-") {
                                     // Commutative: d == r, do d op= l!
                                     if (ins.sop == "+") emit_alu_rr (0x01, d, l);
                                     else if (ins.sop == "*") emit_imul_rr (d, l);

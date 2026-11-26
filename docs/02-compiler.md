@@ -382,6 +382,9 @@ Table-driven mapping from IR operations to x86_64 sequences. Cases that require 
 |---|---|
 | integer `div` | sign-extend, `idiv`, move from `rdx:rax` |
 | integer `rem` | idem, keep `rdx` |
+| integer `/ 2^k` (signed) | `sar (x + ((x >> 63) & (2^k-1))), k` — truncated, not floored |
+| integer `/ 2^k` (unsigned), `% 2^k` | `shr`, `and` |
+| integer `* 3` / `* 5` / `* 9` | `lea d, [x + x*2^k]` |
 | floating `cmp.lt` | `ucomisd` + `setb` + `movzx` |
 | `fptosi` conversion | `cvttsd2si` with range checking if the value can overflow |
 | dense `switch` | jump table in `.rodata` |
@@ -390,6 +393,8 @@ Table-driven mapping from IR operations to x86_64 sequences. Cases that require 
 ### 10.2 Register allocation
 
 *Linear scan* over live intervals, with separate GPR and SSE classes, and *spilling* to stack slots. Constraints: registers fixed by the ABI, `rax`/`rdx` reserved around `div`, `rcx` for variable shifts.
+
+Division and modulo by a power-of-two constant are lowered before allocation (see [slice 56](planc/slice-56-operators.md)), so the `rax`/`rdx` constraint only appears for a variable or non-power-of-two divisor.
 
 Prologue and epilogue generated per function: in builds with `debug = dwarf` the **frame pointer** (`rbp`) is kept even when it is not needed, because GDB rebuilds the stack with it; without CFI, the alternative would be to emit `.eh_frame`, which is not needed because there is no unwinding.
 
@@ -561,6 +566,7 @@ Consequences that must be respected:
 | Badly applied relocations | It links, it boots, it fails on the first call | Relocation test with symbols at known distances |
 | Incorrect DWARF | GDB shows the wrong line | Comparison of `bt` and `info locals` against expectation |
 | The bootstrap subset breaks | `planc-0` stops compiling `planc` | Bootstrap lint in CI (TC-09) |
+| Pathologically nested expression exhausts the compiler stack | `STATUS_STACK_OVERFLOW` while compiling valid source | `MAX_EXPR_DEPTH` guard in `gen_expr`/`expr_type_full`/`prepare_expr` (`codegen.vala`) raising a positioned diagnostic, plus the split of the 32 KB recursive frames ([slice 56](planc/slice-56-operators.md)) |
 
 ## 17. Recent built-in additions (`uintptr`, `char`, `unichar`, parser/codegen)
 

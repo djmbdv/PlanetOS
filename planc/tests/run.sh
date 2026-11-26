@@ -1147,6 +1147,29 @@ for lv in 1 2; do
     fi
 done
 
+# Constant division/modulo is strength-reduced to shifts: the values must match
+# the idiv path at every level, including the register-allocated one.
+for lv in 1 2; do
+    if ! "$PLANC" $TARGET_FLAGS "-O$lv" "$HERE/valid/divmod_constants.vala" -o "$WORK/divmod_o${lv}${BIN_EXT}" 2>"$WORK/divmod_o$lv.err"; then
+        ko "divmod_constants_o$lv" "compile failed: $(cat "$WORK/divmod_o$lv.err")"
+    elif ! run_bin "$WORK/divmod_o${lv}${BIN_EXT}" >"$WORK/divmod_o$lv.stdout" 2>&1; then
+        ko "divmod_constants_o$lv" "non-zero exit"
+    elif ! files_equal "$WORK/divmod_o$lv.stdout" "$HERE/valid/divmod_constants.out"; then
+        ko "divmod_constants_o$lv" "stdout differs"
+    else
+        ok "divmod_constants_o$lv"
+    fi
+done
+
+# A long operator chain must not exhaust the compiler stack either.
+if ! "$PLANC" $TARGET_FLAGS -O2 "$HERE/valid/deep_expr_chain.vala" -o "$WORK/deep_o2${BIN_EXT}" 2>"$WORK/deep_o2.err"; then
+    ko "deep_expr_chain_o2" "compile failed: $(cat "$WORK/deep_o2.err")"
+elif ! run_bin "$WORK/deep_o2${BIN_EXT}" >"$WORK/deep_o2.stdout" 2>&1; then
+    ko "deep_expr_chain_o2" "non-zero exit"
+else
+    ok "deep_expr_chain_o2"
+fi
+
 echo
 echo "SUMMARY: $((PASS + FAIL)) cases, $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

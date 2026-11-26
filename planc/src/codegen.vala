@@ -338,6 +338,11 @@ namespace Planc {
         private bool need_spin_lock = false;
         private bool need_spin_unlock = false;
         private bool main_takes_args = false;
+        // Expression codegen and type inference walk the tree recursively, so
+        // a pathologically nested expression must be rejected with a
+        // diagnostic instead of exhausting the compiler's stack.
+        private const int MAX_EXPR_DEPTH = 400;
+        private int expr_depth = 0;
         private int lambda_counter = 0;
         private int cur_func_index = -1;
         private int local_lambda_idx = 0;
@@ -4719,6 +4724,7 @@ namespace Planc {
         private int prepare_function (Function f, out int ref_temp_start) throws SemanticError {
             current = f;
             current_file = f.file;
+            expr_depth = 0;
             // Definite-assignment analysis runs first: it decides whether
             // locals without an initializer are legal in this body.
             da_reset ();
@@ -5251,6 +5257,19 @@ namespace Planc {
         }
 
         private void prepare_expr (Expr e, ref int struct_temps, ref int ref_temps)
+                throws SemanticError {
+            if (expr_depth >= MAX_EXPR_DEPTH)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"expression nested too deeply (more than $(MAX_EXPR_DEPTH) levels) at $(e.line):$(e.column)");
+            expr_depth++;
+            try {
+                prepare_expr_node (e, ref struct_temps, ref ref_temps);
+            } finally {
+                expr_depth--;
+            }
+        }
+
+        private void prepare_expr_node (Expr e, ref int struct_temps, ref int ref_temps)
                 throws SemanticError {
             if (e is UnaryExpr) {
                 var ue = (UnaryExpr) e;
@@ -6634,6 +6653,7 @@ namespace Planc {
         private void generate_function (Function f) throws SemanticError {
             if (imported_syms != null && imported_syms.lookup (f.name) >= 0)
                 return;
+            expr_depth = 0;
             if (f.is_asm_body) {
                 if (!allow_asm) {
                     throw new SemanticError.TYPE_MISMATCH (
@@ -9143,7 +9163,105 @@ namespace Planc {
             return expr_type_full (e, out unused);
         }
 
+        private ValaType type_of_binary (BinaryExpr b, out string tname) throws SemanticError {
+            tname = "";
+            string lt_name = "";
+            string rt_name = "";
+            var lt = expr_type_full (b.left, out lt_name);
+            ValaType rt;
+            if (b.op == "&&" || b.op == "||") {
+                var snap = clone_non_null ();
+                var nn_rhs = new GenericArray<string> ();
+                collect_non_null_when (b.left, b.op == "&&", nn_rhs);
+                add_all_non_null (nn_rhs);
+                rt = expr_type_full (b.right, out rt_name);
+                restore_non_null (snap);
+            } else {
+                rt = expr_type_full (b.right, out rt_name);
+            }
+            if (b.op == "in") {
+                if (rt == ValaType.STRING) {
+                    if (lt != ValaType.STRING)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'in' on a string requires a string operand, got $(type_label (lt, lt_name)) at $(b.line):$(b.column)");
+                    return ValaType.BOOL;
+                }
+                if (rt != ValaType.ARRAY)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'in' requires an array or string on the right, got $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+                if (is_2d_array_type (rt_name))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'in' is not supported on multidimensional arrays at $(b.line):$(b.column)");
+                ValaType et = ValaType.INT;
+                string etn = "";
+                parse_array_elem (rt_name, out et, out etn);
+                if (!type_compatible (et, etn, lt, lt_name)
+                    && !type_compatible (lt, lt_name, et, etn))
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"cannot look up $(type_label (lt, lt_name)) in $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+                return ValaType.BOOL;
+            }
+            if (b.op == "+" && lt == ValaType.STRING && rt == ValaType.STRING
+                && !is_nullable_type (lt, lt_name) && !is_nullable_type (rt, rt_name)) {
+                return ValaType.STRING;
+            }
+            if (b.op == "==" || b.op == "!=") {
+                if (!eq_compatible (lt, lt_name, rt, rt_name)) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"cannot compare $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) with '$(b.op)' at $(b.line):$(b.column)");
+                }
+                return ValaType.BOOL;
+            }
+            if (lt == ValaType.POINTER || rt == ValaType.POINTER) {
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"pointer arithmetic ('$(b.op)') is not supported (safe pointers only) at $(b.line):$(b.column)");
+            }
+            if (lt == ValaType.ENUM && rt == ValaType.ENUM && strip_null (lt_name) == strip_null (rt_name)) {
+                if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=")
+                    return ValaType.BOOL;
+                if (b.op == "|" || b.op == "&" || b.op == "^") {
+                    tname = strip_null (lt_name);
+                    return ValaType.ENUM;
+                }
+            }
+            if (is_numeric_type (lt) && is_numeric_type (rt) && (is_fp_type (lt) || is_fp_type (rt))) {
+                if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/")
+                    return (lt == ValaType.DOUBLE || rt == ValaType.DOUBLE) ? ValaType.DOUBLE : ValaType.FLOAT;
+                if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=")
+                    return ValaType.BOOL;
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"operator '$(b.op)' is not supported on $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+            }
+            if (!is_int_like (lt) || !is_int_like (rt))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"operator '$(b.op)' requires int or bool operands, got $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
+            if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
+                || b.op == "&&" || b.op == "||") {
+                return ValaType.BOOL;
+            }
+            if (b.op == "<<" || b.op == ">>") {
+                tname = is_unsigned_64 (lt_name) ? "uint64" : (is_unsigned_32 (lt_name) ? "uint32" : "");
+                return ValaType.INT;
+            }
+            tname = promote_int_type (lt_name, rt_name);
+            return ValaType.INT;
+        }
+
         private ValaType expr_type_full (Expr e, out string tname) throws SemanticError {
+            if (expr_depth >= MAX_EXPR_DEPTH) {
+                tname = "";
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"expression nested too deeply (more than $(MAX_EXPR_DEPTH) levels) at $(e.line):$(e.column)");
+            }
+            expr_depth++;
+            try {
+                return expr_type_full_node (e, out tname);
+            } finally {
+                expr_depth--;
+            }
+        }
+
+        private ValaType expr_type_full_node (Expr e, out string tname) throws SemanticError {
             tname = "";
             if (e is MemberAccessExpr && ((MemberAccessExpr) e).is_null_cond) {
                 var nc_ma = (MemberAccessExpr) e;
@@ -10061,89 +10179,8 @@ namespace Planc {
                 tname = (is_unsigned_64 (ot_name) || is_unsigned_32 (ot_name)) ? ot_name : "";
                 return ValaType.INT;
             }
-            if (e is BinaryExpr) {
-                var b = (BinaryExpr) e;
-                string lt_name = "";
-                string rt_name = "";
-                var lt = expr_type_full (b.left, out lt_name);
-                ValaType rt;
-                if (b.op == "&&" || b.op == "||") {
-                    var snap = clone_non_null ();
-                    var nn_rhs = new GenericArray<string> ();
-                    collect_non_null_when (b.left, b.op == "&&", nn_rhs);
-                    add_all_non_null (nn_rhs);
-                    rt = expr_type_full (b.right, out rt_name);
-                    restore_non_null (snap);
-                } else {
-                    rt = expr_type_full (b.right, out rt_name);
-                }
-                if (b.op == "in") {
-                    if (rt == ValaType.STRING) {
-                        if (lt != ValaType.STRING)
-                            throw new SemanticError.TYPE_MISMATCH (
-                                @"'in' on a string requires a string operand, got $(type_label (lt, lt_name)) at $(b.line):$(b.column)");
-                        return ValaType.BOOL;
-                    }
-                    if (rt != ValaType.ARRAY)
-                        throw new SemanticError.TYPE_MISMATCH (
-                            @"'in' requires an array or string on the right, got $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
-                    if (is_2d_array_type (rt_name))
-                        throw new SemanticError.TYPE_MISMATCH (
-                            @"'in' is not supported on multidimensional arrays at $(b.line):$(b.column)");
-                    ValaType et = ValaType.INT;
-                    string etn = "";
-                    parse_array_elem (rt_name, out et, out etn);
-                    if (!type_compatible (et, etn, lt, lt_name)
-                        && !type_compatible (lt, lt_name, et, etn))
-                        throw new SemanticError.TYPE_MISMATCH (
-                            @"cannot look up $(type_label (lt, lt_name)) in $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
-                    return ValaType.BOOL;
-                }
-                if (b.op == "+" && lt == ValaType.STRING && rt == ValaType.STRING
-                    && !is_nullable_type (lt, lt_name) && !is_nullable_type (rt, rt_name)) {
-                    return ValaType.STRING;
-                }
-                if (b.op == "==" || b.op == "!=") {
-                    if (!eq_compatible (lt, lt_name, rt, rt_name)) {
-                        throw new SemanticError.TYPE_MISMATCH (
-                            @"cannot compare $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) with '$(b.op)' at $(b.line):$(b.column)");
-                    }
-                    return ValaType.BOOL;
-                }
-                if (lt == ValaType.POINTER || rt == ValaType.POINTER) {
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"pointer arithmetic ('$(b.op)') is not supported (safe pointers only) at $(b.line):$(b.column)");
-                }
-                if (lt == ValaType.ENUM && rt == ValaType.ENUM && strip_null (lt_name) == strip_null (rt_name)) {
-                    if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=")
-                        return ValaType.BOOL;
-                    if (b.op == "|" || b.op == "&" || b.op == "^") {
-                        tname = strip_null (lt_name);
-                        return ValaType.ENUM;
-                    }
-                }
-                if (is_numeric_type (lt) && is_numeric_type (rt) && (is_fp_type (lt) || is_fp_type (rt))) {
-                    if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/")
-                        return (lt == ValaType.DOUBLE || rt == ValaType.DOUBLE) ? ValaType.DOUBLE : ValaType.FLOAT;
-                    if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=")
-                        return ValaType.BOOL;
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"operator '$(b.op)' is not supported on $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
-                }
-                if (!is_int_like (lt) || !is_int_like (rt))
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"operator '$(b.op)' requires int or bool operands, got $(type_label (lt, lt_name)) and $(type_label (rt, rt_name)) at $(b.line):$(b.column)");
-                if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">="
-                    || b.op == "&&" || b.op == "||") {
-                    return ValaType.BOOL;
-                }
-                if (b.op == "<<" || b.op == ">>") {
-                    tname = is_unsigned_64 (lt_name) ? "uint64" : (is_unsigned_32 (lt_name) ? "uint32" : "");
-                    return ValaType.INT;
-                }
-                tname = promote_int_type (lt_name, rt_name);
-                return ValaType.INT;
-            }
+            if (e is BinaryExpr)
+                return type_of_binary ((BinaryExpr) e, out tname);
             if (e is CallExpr) {
                 var ce = (CallExpr) e;
                 if (ce.callee == "__planc_hash") {
@@ -12762,33 +12799,50 @@ namespace Planc {
         // Expressions. Every path leaves its value (or struct/ref ptr) in rax.
         // ------------------------------------------------------------------
 
+        private static int pow2_exponent (int64 v) {
+            if (v <= 0) return -1;
+            int k = 0;
+            while ((v & 1) == 0) {
+                v >>= 1;
+                k++;
+            }
+            return (v == 1) ? k : -1;
+        }
+
         private void setcc (string op, bool is_unsigned = false) {
             uint8 cc;
-            if (op == "==") cc = 0x94;
-            else if (op == "!=") cc = 0x95;
-            else if (op == "<") cc = is_unsigned ? 0x92 : 0x9C;
-            else if (op == "<=") cc = is_unsigned ? 0x96 : 0x9E;
-            else if (op == ">") cc = is_unsigned ? 0x97 : 0x9F;
-            else cc = is_unsigned ? 0x93 : 0x9D;
+            char c0 = op[0];
+            if (c0 == '=') cc = 0x94;
+            else if (c0 == '!') cc = 0x95;
+            else if (op.length == 1)
+                cc = (c0 == '<') ? (is_unsigned ? 0x92 : 0x9C) : (is_unsigned ? 0x97 : 0x9F);
+            else if (c0 == '<')
+                cc = is_unsigned ? 0x96 : 0x9E;
+            else
+                cc = is_unsigned ? 0x93 : 0x9D;
             emitter.setcc_al (cc);
             emitter.movzx_eax_al ();
         }
 
         private static BranchKind inverted_branch (string op, bool is_unsigned = false) {
-            if (op == "==") return BranchKind.JNE;
-            if (op == "!=") return BranchKind.JE;
-            if (op == "<") return is_unsigned ? BranchKind.JAE : BranchKind.JGE;
-            if (op == "<=") return is_unsigned ? BranchKind.JA : BranchKind.JG;
-            if (op == ">") return is_unsigned ? BranchKind.JBE : BranchKind.JLE;
+            char c0 = op[0];
+            if (c0 == '=') return BranchKind.JNE;
+            if (c0 == '!') return BranchKind.JE;
+            if (op.length == 1)
+                return (c0 == '<') ? (is_unsigned ? BranchKind.JAE : BranchKind.JGE)
+                                   : (is_unsigned ? BranchKind.JBE : BranchKind.JLE);
+            if (c0 == '<') return is_unsigned ? BranchKind.JA : BranchKind.JG;
             return is_unsigned ? BranchKind.JB : BranchKind.JL;
         }
 
         private static BranchKind direct_branch (string op, bool is_unsigned = false) {
-            if (op == "==") return BranchKind.JE;
-            if (op == "!=") return BranchKind.JNE;
-            if (op == "<") return is_unsigned ? BranchKind.JB : BranchKind.JL;
-            if (op == "<=") return is_unsigned ? BranchKind.JBE : BranchKind.JLE;
-            if (op == ">") return is_unsigned ? BranchKind.JA : BranchKind.JG;
+            char c0 = op[0];
+            if (c0 == '=') return BranchKind.JE;
+            if (c0 == '!') return BranchKind.JNE;
+            if (op.length == 1)
+                return (c0 == '<') ? (is_unsigned ? BranchKind.JB : BranchKind.JL)
+                                   : (is_unsigned ? BranchKind.JA : BranchKind.JG);
+            if (c0 == '<') return is_unsigned ? BranchKind.JBE : BranchKind.JLE;
             return is_unsigned ? BranchKind.JAE : BranchKind.JGE;
         }
 
@@ -12953,9 +13007,359 @@ namespace Planc {
         }
 
         private void gen_expr (Expr e) throws SemanticError {
-            gen_expr_impl (e);
-            if (program_uses_heap && e.ref_temp_slot >= 0)
-                add_live_ref_slot (e.ref_temp_slot);
+            if (expr_depth >= MAX_EXPR_DEPTH)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"expression nested too deeply (more than $(MAX_EXPR_DEPTH) levels) at $(e.line):$(e.column)");
+            expr_depth++;
+            try {
+                gen_expr_impl (e);
+                if (program_uses_heap && e.ref_temp_slot >= 0)
+                    add_live_ref_slot (e.ref_temp_slot);
+            } finally {
+                expr_depth--;
+            }
+        }
+
+        private void gen_binary (BinaryExpr b) throws SemanticError {
+            if (b.op == "in") {
+                gen_in (b);
+                return;
+            }
+            if (b.op == "&&") {
+                gen_and (b);
+                return;
+            }
+            if (b.op == "||") {
+                gen_or (b);
+                return;
+            }
+            string lt_name = "";
+            string rt_name = "";
+            var lt = expr_type_full (b.left, out lt_name);
+            var rt = expr_type_full (b.right, out rt_name);
+            if (is_fp_type (lt) || is_fp_type (rt)) {
+                var ct = (lt == ValaType.DOUBLE || rt == ValaType.DOUBLE) ? ValaType.DOUBLE : ValaType.FLOAT;
+                bool is_f32 = (ct == ValaType.FLOAT);
+                gen_expr (b.left);
+                emit_fp_coerce (lt, ct);
+                emitter.push_xmm0 ();
+                push_depth++;
+                gen_expr (b.right);
+                emit_fp_coerce (rt, ct);
+                emitter.movq_rax_xmm (0);
+                emitter.movq_xmm_rax (1);
+                emitter.pop_xmm0 ();
+                push_depth--;
+                if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
+                    emit_fp_alu (b.op, is_f32);
+                } else if (b.op == "==") {
+                    if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
+                    emitter.setcc_al (0x94);
+                    emitter.setcc_cl (0x9B);
+                    emitter.and_al_cl ();
+                    emitter.movzx_eax_al ();
+                } else if (b.op == "!=") {
+                    if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
+                    emitter.setcc_al (0x95);
+                    emitter.setcc_cl (0x9A);
+                    emitter.or_al_cl ();
+                    emitter.movzx_eax_al ();
+                } else if (b.op == ">") {
+                    if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
+                    emitter.setcc_al (0x97);
+                    emitter.movzx_eax_al ();
+                } else if (b.op == ">=") {
+                    if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
+                    emitter.setcc_al (0x93);
+                    emitter.movzx_eax_al ();
+                } else if (b.op == "<") {
+                    if (is_f32) emitter.ucomiss_xmm1_xmm0 (); else emitter.ucomisd_xmm1_xmm0 ();
+                    emitter.setcc_al (0x97);
+                    emitter.movzx_eax_al ();
+                } else { // "<="
+                    if (is_f32) emitter.ucomiss_xmm1_xmm0 (); else emitter.ucomisd_xmm1_xmm0 ();
+                    emitter.setcc_al (0x93);
+                    emitter.movzx_eax_al ();
+                }
+                return;
+            }
+            if (b.op == "+" && expr_type (b.left) == ValaType.STRING) {
+                gen_expr (b.left);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (b.right);
+                emitter.mov_rsi_rax ();
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                need_str_concat = true;
+                call_aligned ("__planc_str_concat");
+                if (b.ref_temp_slot >= 0)
+                    emitter.store_local (b.ref_temp_slot);
+                return;
+            }
+            if ((b.op == "==" || b.op == "!=")
+                && ((is_delegate_type (program, lt, lt_name) && rt == ValaType.NULL)
+                    || (is_delegate_type (program, rt, rt_name) && lt == ValaType.NULL))) {
+                gen_expr ((rt == ValaType.NULL) ? b.left : b.right);
+                emitter.load_rax_disp (0);
+                emitter.test_rax_rax ();
+                setcc (b.op);
+                return;
+            }
+            var is_str_cmp = (b.op == "==" || b.op == "!=")
+                          && lt == ValaType.STRING
+                          && rt == ValaType.STRING;
+            if (!is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER) {
+                if ((b.op == "<<" || b.op == ">>") && b.right is IntLiteral) {
+                    bool opt_handled = (opt_level >= 1 && b.left is IntLiteral
+                        && (((IntLiteral) b.left).is_unsigned == ((IntLiteral) b.right).is_unsigned
+                            || (((IntLiteral) b.left).is_unsigned && !((IntLiteral) b.right).is_unsigned)));
+                    if (!opt_handled) {
+                        int64 sh = ((IntLiteral) b.right).value;
+                        int max_bits = is_unsigned_32 (lt_name) ? 32 : (lt_name == "int32" ? 32 : 64);
+                        if (sh < 0 || sh >= max_bits) {
+                            string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
+                            Host.eprintln (@"planc: warning: shift count $(sh) out of range for $(lt_name != "" ? lt_name : "int64") in '$(b.op)' at $loc");
+                        }
+                    }
+                }
+                if (is_unsigned_int_type (lt_name) && !(b.left is IntLiteral)
+                    && b.right is IntLiteral && ((IntLiteral) b.right).value == 0) {
+                    if (b.op == "<" || b.op == ">=") {
+                        string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
+                        string res_s = (b.op == "<") ? "false" : "true";
+                        Host.eprintln (@"planc: warning: comparison of unsigned expression '$(b.op) 0' is always $res_s at $loc");
+                    }
+                } else if (is_unsigned_int_type (rt_name) && !(b.right is IntLiteral)
+                    && b.left is IntLiteral && ((IntLiteral) b.left).value == 0) {
+                    if (b.op == ">" || b.op == "<=") {
+                        string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
+                        string res_s = (b.op == ">") ? "false" : "true";
+                        Host.eprintln (@"planc: warning: comparison '0 $(b.op)' unsigned expression is always $res_s at $loc");
+                    }
+                }
+            }
+            // Division by a power-of-two constant: shifts instead of the
+            // 20-40 cycle idiv, keeping truncated-toward-zero semantics for
+            // signed operands via the (x + ((x >> 63) & (d-1))) correction.
+            if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
+                && (b.op == "/" || b.op == "%") && b.right is IntLiteral) {
+                int pk = pow2_exponent (((IntLiteral) b.right).value);
+                if (pk == 0 && b.op == "/") {
+                    gen_expr (b.left);
+                    return;
+                }
+                if (pk == 0 && b.op == "%") {
+                    gen_expr (b.left);
+                    emitter.mov_rax_imm (0);
+                    return;
+                }
+                if (pk > 0 && pk <= 31) {
+                    string res_tn_d = promote_int_type (lt_name, rt_name);
+                    bool is_u_d = is_unsigned_int_type (res_tn_d);
+                    bool is_u32_d = is_unsigned_32 (res_tn_d);
+                    int64 mask_d = (((int64) 1) << pk) - 1;
+                    gen_expr (b.left);
+                    if (is_u_d) {
+                        if (b.op == "/") {
+                            emitter.shr_rax_imm ((uint8) pk);
+                        } else {
+                            emitter.and_rax_imm ((int32) mask_d);
+                        }
+                        if (is_u32_d) emit_int_narrow ("uint32");
+                    } else if (b.op == "/") {
+                        emitter.mov_rcx_rax ();
+                        emitter.sar_rcx_imm (63);
+                        emitter.and_rcx_imm ((int32) mask_d);
+                        emitter.add_rax_rcx ();
+                        emitter.sar_rax_imm ((uint8) pk);
+                    } else {
+                        emitter.mov_rdx_rax ();
+                        emitter.mov_rcx_rax ();
+                        emitter.sar_rcx_imm (63);
+                        emitter.and_rcx_imm ((int32) mask_d);
+                        emitter.add_rax_rcx ();
+                        emitter.sar_rax_imm ((uint8) pk);
+                        emitter.shl_rax_imm ((uint8) pk);
+                        emitter.sub_rdx_rax ();
+                        emitter.mov_rax_rdx ();
+                    }
+                    return;
+                }
+            }
+            if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
+                && b.op != "/" && b.op != "%" && b.right is IntLiteral) {
+                int64 imm = ((IntLiteral) b.right).value;
+                bool shift_ok = (b.op != "<<" && b.op != ">>") || (imm >= 0 && imm < 64);
+                if (shift_ok && imm >= int32.MIN && imm <= int32.MAX) {
+                    gen_expr (b.left);
+                    string res_tn = promote_int_type (lt_name, rt_name);
+                    bool is_u = is_unsigned_int_type (res_tn);
+                    bool is_u32 = is_unsigned_32 (res_tn);
+                    int32 imm32 = (int32) imm;
+                    switch (b.op) {
+                        case "+":
+                            emitter.add_rax_imm (imm32);
+                            if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                            if (is_u32) emit_int_narrow ("uint32");
+                            break;
+                        case "-":
+                            emitter.sub_rax_imm (imm32);
+                            if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                            if (is_u32) emit_int_narrow ("uint32");
+                            break;
+                        case "*":
+                            emitter.imul_rax_imm (imm32);
+                            if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                            if (is_u32) emit_int_narrow ("uint32");
+                            break;
+                        case "&":
+                            emitter.and_rax_imm (imm32);
+                            if (is_u32) emit_int_narrow ("uint32");
+                            break;
+                        case "|":
+                            emitter.or_rax_imm (imm32);
+                            if (is_u32) emit_int_narrow ("uint32");
+                            break;
+                        case "^":
+                            emitter.xor_rax_imm (imm32);
+                            if (is_u32) emit_int_narrow ("uint32");
+                            break;
+                        case "<<":
+                            emitter.shl_rax_imm ((uint8) imm32);
+                            if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                            break;
+                        case ">>":
+                            if (is_unsigned_int_type (lt_name))
+                                emitter.shr_rax_imm ((uint8) imm32);
+                            else
+                                emitter.sar_rax_imm ((uint8) imm32);
+                            if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                            break;
+                        default:
+                            if (imm32 == 0)
+                                emitter.test_rax_rax ();
+                            else
+                                emitter.cmp_rax_imm (imm32);
+                            setcc (b.op, is_u);
+                            break;
+                    }
+                    return;
+                }
+            }
+            int rhs_slot = (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER)
+                ? local_var_slot_for_rcx (b.right)
+                : -1;
+            if (rhs_slot >= 0 && !expr_may_mutate (b.left)) {
+                gen_expr (b.left);
+                emitter.load_local_to_rcx (rhs_slot);
+            } else {
+                gen_expr (b.left);
+                emitter.push_rax ();
+                push_depth++;
+                gen_expr (b.right);
+                emitter.mov_rcx_rax ();
+                emitter.pop_rax ();
+                push_depth--;
+            }
+            if ((b.op == "==" || b.op == "!=") && (lt == ValaType.POINTER || rt == ValaType.POINTER)) {
+                var l_p1 = emitter.new_label ();
+                var l_p2 = emitter.new_label ();
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JE, l_p1);
+                emitter.load_rax_disp (24);
+                emitter.bind (l_p1);
+                emitter.push_rax ();
+                push_depth++;
+                emitter.mov_rax_rcx ();
+                emitter.test_rax_rax ();
+                emitter.branch (BranchKind.JE, l_p2);
+                emitter.load_rax_disp (24);
+                emitter.bind (l_p2);
+                emitter.mov_rcx_rax ();
+                emitter.pop_rax ();
+                push_depth--;
+                emitter.cmp_rax_rcx ();
+                setcc (b.op);
+                return;
+            }
+            if (is_str_cmp) {
+                emitter.mov_rdi_rax ();
+                emitter.mov_rsi_rcx ();
+                need_str_eq = true;
+                call_aligned ("__planc_str_eq");
+                if (b.op == "!=")
+                    emitter.xor_rax_one ();
+                return;
+            }
+            string res_tn = promote_int_type (lt_name, rt_name);
+            bool is_u = is_unsigned_int_type (res_tn);
+            bool is_u32 = is_unsigned_32 (res_tn);
+            switch (b.op) {
+                case "+":
+                    emitter.add_rax_rcx ();
+                    if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "-":
+                    emitter.sub_rax_rcx ();
+                    if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "*":
+                    emitter.imul_rax_rcx ();
+                    if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "/":
+                    if (is_u) {
+                        emitter.xor_edx ();
+                        emitter.div_rcx ();
+                    } else {
+                        emitter.cqo ();
+                        emitter.idiv_rcx ();
+                    }
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "%":
+                    if (is_u) {
+                        emitter.xor_edx ();
+                        emitter.div_rcx ();
+                    } else {
+                        emitter.cqo ();
+                        emitter.idiv_rcx ();
+                    }
+                    emitter.mov_rax_rdx ();
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "&":
+                    emitter.and_rax_rcx ();
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "|":
+                    emitter.or_rax_rcx ();
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "^":
+                    emitter.xor_rax_rcx ();
+                    if (is_u32) emit_int_narrow ("uint32");
+                    break;
+                case "<<":
+                    emitter.shl_rax_cl ();
+                    if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                    break;
+                case ">>":
+                    if (is_unsigned_int_type (lt_name))
+                        emitter.shr_rax_cl ();
+                    else
+                        emitter.sar_rax_cl ();
+                    if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
+                    break;
+                default:
+                    emitter.cmp_rax_rcx ();
+                    setcc (b.op, is_u);
+                    break;
+            }
         }
 
         private void gen_expr_impl (Expr e) throws SemanticError {
@@ -14441,298 +14845,7 @@ namespace Planc {
                     }
                 }
             } else if (e is BinaryExpr) {
-                var b = (BinaryExpr) e;
-                if (b.op == "in") {
-                    gen_in (b);
-                    return;
-                }
-                if (b.op == "&&") {
-                    gen_and (b);
-                    return;
-                }
-                if (b.op == "||") {
-                    gen_or (b);
-                    return;
-                }
-                string lt_name = "";
-                string rt_name = "";
-                var lt = expr_type_full (b.left, out lt_name);
-                var rt = expr_type_full (b.right, out rt_name);
-                if (is_fp_type (lt) || is_fp_type (rt)) {
-                    var ct = (lt == ValaType.DOUBLE || rt == ValaType.DOUBLE) ? ValaType.DOUBLE : ValaType.FLOAT;
-                    bool is_f32 = (ct == ValaType.FLOAT);
-                    gen_expr (b.left);
-                    emit_fp_coerce (lt, ct);
-                    emitter.push_xmm0 ();
-                    push_depth++;
-                    gen_expr (b.right);
-                    emit_fp_coerce (rt, ct);
-                    emitter.movq_rax_xmm (0);
-                    emitter.movq_xmm_rax (1);
-                    emitter.pop_xmm0 ();
-                    push_depth--;
-                    if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-                        emit_fp_alu (b.op, is_f32);
-                    } else if (b.op == "==") {
-                        if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
-                        emitter.setcc_al (0x94);
-                        emitter.setcc_cl (0x9B);
-                        emitter.and_al_cl ();
-                        emitter.movzx_eax_al ();
-                    } else if (b.op == "!=") {
-                        if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
-                        emitter.setcc_al (0x95);
-                        emitter.setcc_cl (0x9A);
-                        emitter.or_al_cl ();
-                        emitter.movzx_eax_al ();
-                    } else if (b.op == ">") {
-                        if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
-                        emitter.setcc_al (0x97);
-                        emitter.movzx_eax_al ();
-                    } else if (b.op == ">=") {
-                        if (is_f32) emitter.ucomiss_xmm0_xmm1 (); else emitter.ucomisd_xmm0_xmm1 ();
-                        emitter.setcc_al (0x93);
-                        emitter.movzx_eax_al ();
-                    } else if (b.op == "<") {
-                        if (is_f32) emitter.ucomiss_xmm1_xmm0 (); else emitter.ucomisd_xmm1_xmm0 ();
-                        emitter.setcc_al (0x97);
-                        emitter.movzx_eax_al ();
-                    } else { // "<="
-                        if (is_f32) emitter.ucomiss_xmm1_xmm0 (); else emitter.ucomisd_xmm1_xmm0 ();
-                        emitter.setcc_al (0x93);
-                        emitter.movzx_eax_al ();
-                    }
-                    return;
-                }
-                if (b.op == "+" && expr_type (b.left) == ValaType.STRING) {
-                    gen_expr (b.left);
-                    emitter.push_rax ();
-                    push_depth++;
-                    gen_expr (b.right);
-                    emitter.mov_rsi_rax ();
-                    emitter.pop_reg (Reg.RDI);
-                    push_depth--;
-                    need_str_concat = true;
-                    call_aligned ("__planc_str_concat");
-                    if (e.ref_temp_slot >= 0)
-                        emitter.store_local (e.ref_temp_slot);
-                    return;
-                }
-                if ((b.op == "==" || b.op == "!=")
-                    && ((is_delegate_type (program, lt, lt_name) && rt == ValaType.NULL)
-                        || (is_delegate_type (program, rt, rt_name) && lt == ValaType.NULL))) {
-                    gen_expr ((rt == ValaType.NULL) ? b.left : b.right);
-                    emitter.load_rax_disp (0);
-                    emitter.test_rax_rax ();
-                    setcc (b.op);
-                    return;
-                }
-                var is_str_cmp = (b.op == "==" || b.op == "!=")
-                              && lt == ValaType.STRING
-                              && rt == ValaType.STRING;
-                if (!is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER) {
-                    if ((b.op == "<<" || b.op == ">>") && b.right is IntLiteral) {
-                        bool opt_handled = (opt_level >= 1 && b.left is IntLiteral
-                            && (((IntLiteral) b.left).is_unsigned == ((IntLiteral) b.right).is_unsigned
-                                || (((IntLiteral) b.left).is_unsigned && !((IntLiteral) b.right).is_unsigned)));
-                        if (!opt_handled) {
-                            int64 sh = ((IntLiteral) b.right).value;
-                            int max_bits = is_unsigned_32 (lt_name) ? 32 : (lt_name == "int32" ? 32 : 64);
-                            if (sh < 0 || sh >= max_bits) {
-                                string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
-                                Host.eprintln (@"planc: warning: shift count $(sh) out of range for $(lt_name != "" ? lt_name : "int64") in '$(b.op)' at $loc");
-                            }
-                        }
-                    }
-                    if (is_unsigned_int_type (lt_name) && !(b.left is IntLiteral)
-                        && b.right is IntLiteral && ((IntLiteral) b.right).value == 0) {
-                        if (b.op == "<" || b.op == ">=") {
-                            string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
-                            string res_s = (b.op == "<") ? "false" : "true";
-                            Host.eprintln (@"planc: warning: comparison of unsigned expression '$(b.op) 0' is always $res_s at $loc");
-                        }
-                    } else if (is_unsigned_int_type (rt_name) && !(b.right is IntLiteral)
-                        && b.left is IntLiteral && ((IntLiteral) b.left).value == 0) {
-                        if (b.op == ">" || b.op == "<=") {
-                            string loc = current_file != "" ? @"$current_file:$(b.line):$(b.column)" : @"$(b.line):$(b.column)";
-                            string res_s = (b.op == ">") ? "false" : "true";
-                            Host.eprintln (@"planc: warning: comparison '0 $(b.op)' unsigned expression is always $res_s at $loc");
-                        }
-                    }
-                }
-                if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
-                    && b.op != "/" && b.op != "%" && b.right is IntLiteral) {
-                    int64 imm = ((IntLiteral) b.right).value;
-                    bool shift_ok = (b.op != "<<" && b.op != ">>") || (imm >= 0 && imm < 64);
-                    if (shift_ok && imm >= int32.MIN && imm <= int32.MAX) {
-                        gen_expr (b.left);
-                        string res_tn = promote_int_type (lt_name, rt_name);
-                        bool is_u = is_unsigned_int_type (res_tn);
-                        bool is_u32 = is_unsigned_32 (res_tn);
-                        int32 imm32 = (int32) imm;
-                        switch (b.op) {
-                            case "+":
-                                emitter.add_rax_imm (imm32);
-                                if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
-                                if (is_u32) emit_int_narrow ("uint32");
-                                break;
-                            case "-":
-                                emitter.sub_rax_imm (imm32);
-                                if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
-                                if (is_u32) emit_int_narrow ("uint32");
-                                break;
-                            case "*":
-                                emitter.imul_rax_imm (imm32);
-                                if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
-                                if (is_u32) emit_int_narrow ("uint32");
-                                break;
-                            case "&":
-                                emitter.and_rax_imm (imm32);
-                                if (is_u32) emit_int_narrow ("uint32");
-                                break;
-                            case "|":
-                                emitter.or_rax_imm (imm32);
-                                if (is_u32) emit_int_narrow ("uint32");
-                                break;
-                            case "^":
-                                emitter.xor_rax_imm (imm32);
-                                if (is_u32) emit_int_narrow ("uint32");
-                                break;
-                            case "<<":
-                                emitter.shl_rax_imm ((uint8) imm32);
-                                if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
-                                break;
-                            case ">>":
-                                if (is_unsigned_int_type (lt_name))
-                                    emitter.shr_rax_imm ((uint8) imm32);
-                                else
-                                    emitter.sar_rax_imm ((uint8) imm32);
-                                if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
-                                break;
-                            default:
-                                if (imm32 == 0)
-                                    emitter.test_rax_rax ();
-                                else
-                                    emitter.cmp_rax_imm (imm32);
-                                setcc (b.op, is_u);
-                                break;
-                        }
-                        return;
-                    }
-                }
-                int rhs_slot = (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER)
-                    ? local_var_slot_for_rcx (b.right)
-                    : -1;
-                if (rhs_slot >= 0 && !expr_may_mutate (b.left)) {
-                    gen_expr (b.left);
-                    emitter.load_local_to_rcx (rhs_slot);
-                } else {
-                    gen_expr (b.left);
-                    emitter.push_rax ();
-                    push_depth++;
-                    gen_expr (b.right);
-                    emitter.mov_rcx_rax ();
-                    emitter.pop_rax ();
-                    push_depth--;
-                }
-                if ((b.op == "==" || b.op == "!=") && (lt == ValaType.POINTER || rt == ValaType.POINTER)) {
-                    var l_p1 = emitter.new_label ();
-                    var l_p2 = emitter.new_label ();
-                    emitter.test_rax_rax ();
-                    emitter.branch (BranchKind.JE, l_p1);
-                    emitter.load_rax_disp (24);
-                    emitter.bind (l_p1);
-                    emitter.push_rax ();
-                    push_depth++;
-                    emitter.mov_rax_rcx ();
-                    emitter.test_rax_rax ();
-                    emitter.branch (BranchKind.JE, l_p2);
-                    emitter.load_rax_disp (24);
-                    emitter.bind (l_p2);
-                    emitter.mov_rcx_rax ();
-                    emitter.pop_rax ();
-                    push_depth--;
-                    emitter.cmp_rax_rcx ();
-                    setcc (b.op);
-                    return;
-                }
-                if (is_str_cmp) {
-                    emitter.mov_rdi_rax ();
-                    emitter.mov_rsi_rcx ();
-                    need_str_eq = true;
-                    call_aligned ("__planc_str_eq");
-                    if (b.op == "!=")
-                        emitter.xor_rax_one ();
-                    return;
-                }
-                string res_tn = promote_int_type (lt_name, rt_name);
-                bool is_u = is_unsigned_int_type (res_tn);
-                bool is_u32 = is_unsigned_32 (res_tn);
-                switch (b.op) {
-                    case "+":
-                        emitter.add_rax_rcx ();
-                        if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "-":
-                        emitter.sub_rax_rcx ();
-                        if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "*":
-                        emitter.imul_rax_rcx ();
-                        if (!is_u && check_overflow) { need_overflow_panic = true; emitter.branch (BranchKind.JO, overflow_panic_label); }
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "/":
-                        if (is_u) {
-                            emitter.xor_edx ();
-                            emitter.div_rcx ();
-                        } else {
-                            emitter.cqo ();
-                            emitter.idiv_rcx ();
-                        }
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "%":
-                        if (is_u) {
-                            emitter.xor_edx ();
-                            emitter.div_rcx ();
-                        } else {
-                            emitter.cqo ();
-                            emitter.idiv_rcx ();
-                        }
-                        emitter.mov_rax_rdx ();
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "&":
-                        emitter.and_rax_rcx ();
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "|":
-                        emitter.or_rax_rcx ();
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "^":
-                        emitter.xor_rax_rcx ();
-                        if (is_u32) emit_int_narrow ("uint32");
-                        break;
-                    case "<<":
-                        emitter.shl_rax_cl ();
-                        if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
-                        break;
-                    case ">>":
-                        if (is_unsigned_int_type (lt_name))
-                            emitter.shr_rax_cl ();
-                        else
-                            emitter.sar_rax_cl ();
-                        if (is_unsigned_32 (lt_name)) emit_int_narrow ("uint32");
-                        break;
-                    default:
-                        emitter.cmp_rax_rcx ();
-                        setcc (b.op, is_u);
-                        break;
-                }
+                gen_binary ((BinaryExpr) e);
             } else if (e is YieldExpr) {
                 gen_yield_expr ((YieldExpr) e);
             } else if (e is CallExpr) {
