@@ -4759,6 +4759,7 @@ namespace Planc {
                 else if (se is LambdaExpr) ((LambdaExpr) se).temp_slot = slot;
                 else if (se is TernaryExpr) ((TernaryExpr) se).temp_slot = slot;
                 else if (se is CoalesceExpr) ((CoalesceExpr) se).temp_slot = slot;
+                else if (se is IndexExpr) ((IndexExpr) se).temp_slot = slot;
             }
 
             ref_temp_start = var_end + struct_temp_slots;
@@ -5110,7 +5111,9 @@ namespace Planc {
                     }
                 }
 
-                var eslot = next_var_slot++;
+                bool p_fe_struct = !is_iter && !is_ga && !is_al && is_struct_elem (et, et_name);
+                var eslot = next_var_slot;
+                next_var_slot += p_fe_struct ? type_slots (ValaType.STRUCT, et_name) : 1;
                 push_local (fe.var_name, vtype, vtname, eslot, !is_iter && fe.is_unowned);
 
                 prepare_stmt (fe.body, ref struct_temps, ref ref_temps);
@@ -5408,6 +5411,16 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 prepare_expr (ix.target, ref struct_temps, ref ref_temps);
                 prepare_expr (ix.index, ref struct_temps, ref ref_temps);
+                string itn_s = "";
+                var itn = expr_type_full (e, out itn_s);
+                if (is_struct_elem (itn, itn_s)) {
+                    // `arr[i]` used as a value needs a stack slot to copy the
+                    // element's slots into; the address of that copy is what the
+                    // surrounding expression sees.
+                    pending_struct_exprs.add (e);
+                    pending_struct_rel_slots.add (struct_temps);
+                    struct_temps += type_slots (ValaType.STRUCT, strip_null (itn_s));
+                }
             } else if (e is ArrayNewExpr) {
                 prepare_expr (((ArrayNewExpr) e).length_expr, ref struct_temps, ref ref_temps);
             } else if (e is ArrayNew2Expr) {
@@ -7671,8 +7684,50 @@ namespace Planc {
                 et_name = "?";
         }
 
-        private static int array_rank (string tname) {
-            string raw = strip_null (tname);
+        // Bytes per element of an array: 1 for the packed byte arrays, `8 *
+        // slots` for a struct (contiguous slab), one slot for anything else.
+        // A struct name that is not a struct declaration (a delegate) keeps the
+        // old one-slot layout.
+        private int elem_stride_bytes (ValaType et, string et_name) {
+            if (et == ValaType.INT && (et_name == "uint8" || et_name == "int8"))
+                return 1;
+            if (et == ValaType.STRUCT) {
+                unowned var sd = program.find_struct (strip_null (et_name));
+                if (sd != null)
+                    return 8 * type_slots (ValaType.STRUCT, sd.name);
+            }
+            return 8;
+        }
+
+        private bool is_struct_elem (ValaType et, string et_name) {
+            return et == ValaType.STRUCT && program.find_struct (strip_null (et_name)) != null;
+        }
+
+        // rax = array header, rcx = index -> rax = address of the element.
+        // x86 `lea` only scales by 1/2/4/8, so any other stride multiplies the
+        // index first. The bounds check has already rejected negative indexes.
+        private void emit_index_elem_addr (int stride) {
+            switch (stride) {
+                case 1:
+                    emitter.lea_rax_rax_rcx_1_16 ();
+                    break;
+                case 2:
+                    emitter.lea_rax_rax_rcx_2_16 ();
+                    break;
+                case 4:
+                    emitter.lea_rax_rax_rcx_4_16 ();
+                    break;
+                case 8:
+                    emitter.lea_rax_rax_rcx_8_16 ();
+                    break;
+                default:
+                    emitter.imul_rcx_imm ((int32) stride);
+                    emitter.lea_rax_rax_rcx_1_16 ();
+                    break;
+            }
+        }
+
+        private static int array_rank (string tname) {            string raw = strip_null (tname);
             int r = 1;
             while (raw.has_suffix ("[]")) {
                 r++;
@@ -10438,8 +10493,11 @@ namespace Planc {
                     ltname = ga_etn;
                     return;
                 }
-                bool is_signed_b = false;
-                if (is_byte_array_type (tt_name, out is_signed_b))
+                ValaType la_et = ValaType.INT;
+                string la_etn = "";
+                parse_array_elem (tt_name, out la_et, out la_etn);
+                bool la_signed_b = false;
+                if (is_byte_array_type (tt_name, out la_signed_b))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"cannot pass packed byte array element by ref or out at $(e.line):$(e.column)");
                 if (bounds_check) {
@@ -10447,8 +10505,10 @@ namespace Planc {
                     emitter.cmp_rcx_rax_len ();
                     emitter.branch (BranchKind.JAE, bounds_panic_label);
                 }
-                emitter.lea_rax_rax_rcx_8_16 ();
-                parse_array_elem (tt_name, out ltype, out ltname);
+                emit_index_elem_addr (is_struct_elem (la_et, la_etn)
+                    ? elem_stride_bytes (la_et, la_etn) : 8);
+                ltype = la_et;
+                ltname = la_etn;
                 return;
             }
             throw new SemanticError.TYPE_MISMATCH (
@@ -11617,7 +11677,8 @@ namespace Planc {
                     emitter.lea_rax_rax_rcx_1_16 ();
                     emit_byte_elem_store (is_signed_b, ia.op, ia.value);
                 } else {
-                    emitter.lea_rax_rax_rcx_8_16 ();
+                    emit_index_elem_addr (is_struct_elem (et, et_name)
+                        ? elem_stride_bytes (et, et_name) : 8);
                     emit_field_store (et, et_name, ia.op, ia.value);
                 }
                 cleanup_expr_temps (ia.target);
@@ -11913,7 +11974,10 @@ namespace Planc {
                 break_scope_marks.add (iter_mark);
                 continue_scope_marks.add (iter_mark);
 
-                var eslot = next_var_slot++;
+                var eslot = next_var_slot;
+                bool fe_struct = !is_iter && !is_ga && !is_al && is_struct_elem (et, et_name);
+                int fe_nslots = fe_struct ? type_slots (ValaType.STRUCT, et_name) : 1;
+                next_var_slot += fe_nslots;
                 push_local (fe.var_name, vtype, vtname, eslot, !is_iter && fe.is_unowned);
 
                 emitter.bind (l_cond);
@@ -11946,26 +12010,34 @@ namespace Planc {
                     emitter.load_local (col_slot);
                     if (is_ga_fast)
                         emitter.load_rax_disp (16);
-                    bool fe_signed_b = false;
-                    bool fe_byte = is_ga_fast
-                        ? (et == ValaType.INT && is_byte_array_type (et_name, out fe_signed_b))
-                        : (ct == ValaType.ARRAY && is_byte_array_type (ct_name, out fe_signed_b));
-                    if (fe_byte) {
-                        emitter.load_byte_rax_rcx_16 ();
-                        if (fe_signed_b)
-                            emitter.sign_extend_rax (8);
+                    if (fe_struct) {
+                        // The loop variable is a copy of the element's slots, so
+                        // the body sees a value and cannot alias the slab.
+                        emit_index_elem_addr (elem_stride_bytes (et, et_name));
+                        emitter.lea_rcx_rbp_disp (struct_base_disp (eslot, fe_nslots));
+                        copy_struct_rax_to_rcx (fe_nslots);
                     } else {
-                        emitter.load_qword_rax_rcx_16 ();
-                        if (et == ValaType.INT)
-                            emit_int_narrow (et_name);
+                        bool fe_signed_b = false;
+                        bool fe_byte = is_ga_fast
+                            ? (et == ValaType.INT && is_byte_array_type (et_name, out fe_signed_b))
+                            : (ct == ValaType.ARRAY && is_byte_array_type (ct_name, out fe_signed_b));
+                        if (fe_byte) {
+                            emitter.load_byte_rax_rcx_16 ();
+                            if (fe_signed_b)
+                                emitter.sign_extend_rax (8);
+                        } else {
+                            emitter.load_qword_rax_rcx_16 ();
+                            if (et == ValaType.INT)
+                                emit_int_narrow (et_name);
+                        }
+                        if (vtype == ValaType.INT)
+                            emit_int_narrow (vtname);
+                        if (program_uses_heap && is_ref_type (vtype) && !fe.is_unowned) {
+                            emitter.mov_rdi_rax ();
+                            call_aligned ("__planc_ref");
+                        }
+                        emitter.store_local (eslot);
                     }
-                    if (vtype == ValaType.INT)
-                        emit_int_narrow (vtname);
-                    if (program_uses_heap && is_ref_type (vtype) && !fe.is_unowned) {
-                        emitter.mov_rdi_rax ();
-                        call_aligned ("__planc_ref");
-                    }
-                    emitter.store_local (eslot);
                 }
 
                 var body_mark = locals.length;
@@ -12990,15 +13062,23 @@ namespace Planc {
                     }
                 }
                 bool elem_ref = is_ref_type (an.elem_type);
-                bool byte_arr = (an.elem_type == ValaType.INT)
-                    && (an.elem_type_name == "uint8" || an.elem_type_name == "int8");
+                int stride = elem_stride_bytes (an.elem_type, an.elem_type_name);
+                bool byte_arr = (stride == 1);
+                if (is_struct_elem (an.elem_type, an.elem_type_name)) {
+                    unowned var sd = program.find_struct (strip_null (an.elem_type_name));
+                    // A struct array is one slab that is freed without walking
+                    // it, so the element type must own no references.
+                    if (sd != null && struct_has_string (sd))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"array of struct '$(sd.name)' is not supported: the struct holds references at $(an.line):$(an.column)");
+                    elem_ref = false;
+                }
                 gen_expr (an.length_expr);
                 emitter.test_rax_rax ();
                 need_bounds_panic = true;
                 emitter.branch (BranchKind.JL, bounds_panic_label);
                 int64 max_n = int64.MAX - 16;
-                if (!byte_arr)
-                    max_n /= 8;
+                max_n /= stride;
                 emitter.mov_rcx_rax ();
                 emitter.mov_rax_imm (max_n);
                 emitter.cmp_rax_rcx ();
@@ -13007,8 +13087,8 @@ namespace Planc {
                 emitter.push_rax ();
                 push_depth++;
                 emitter.mov_rdi_rax ();
-                if (!byte_arr)
-                    emitter.shl_rdi_3 ();
+                if (stride != 1)
+                    emitter.imul_rdi_imm ((int32) stride);
                 emitter.mov_esi_imm (elem_ref ? 1 : 0);
                 call_aligned ("__planc_alloc");
                 emitter.pop_reg (Reg.RCX);
@@ -13457,20 +13537,35 @@ namespace Planc {
                         emitter.branch (BranchKind.JAE, bounds_panic_label);
                     }
                     if (tt == ValaType.ARRAY) {
-                        bool is_signed_b = false;
-                        if (is_byte_array_type (tt_name, out is_signed_b)) {
-                            emitter.load_byte_rax_rcx_16 ();
-                            if (is_signed_b)
-                                emitter.sign_extend_rax (8);
+                        ValaType arr_et = ValaType.INT;
+                        string arr_etn = "";
+                        parse_array_elem (tt_name, out arr_et, out arr_etn);
+                        if (is_struct_elem (arr_et, arr_etn)) {
+                            // The element is inline in the slab: copy its slots
+                            // into the reserved stack temp and hand out that
+                            // address, so `P a = arr[i]` and `f (arr[i])` see a
+                            // value, exactly like any other struct expression.
+                            int nsl = type_slots (ValaType.STRUCT, strip_null (arr_etn));
+                            if (ix.temp_slot < 0)
+                                throw new SemanticError.TYPE_MISMATCH (
+                                    @"internal: struct array element without a temp slot at $(ix.line):$(ix.column)");
+                            emit_index_elem_addr (elem_stride_bytes (arr_et, arr_etn));
+                            emitter.lea_rcx_rbp_disp (struct_base_disp (ix.temp_slot, nsl));
+                            copy_struct_rax_to_rcx (nsl);
+                            emitter.lea_rax_rbp_disp (struct_base_disp (ix.temp_slot, nsl));
                         } else {
-                            emitter.load_qword_rax_rcx_16 ();
-                            ValaType arr_et;
-                            string arr_etn;
-                            parse_array_elem (tt_name, out arr_et, out arr_etn);
-                            if (is_fp_type (arr_et))
-                                emitter.movq_xmm_rax (0);
-                            else if (arr_et == ValaType.INT)
-                                emit_int_narrow (arr_etn);
+                            bool is_signed_b = false;
+                            if (is_byte_array_type (tt_name, out is_signed_b)) {
+                                emitter.load_byte_rax_rcx_16 ();
+                                if (is_signed_b)
+                                    emitter.sign_extend_rax (8);
+                            } else {
+                                emitter.load_qword_rax_rcx_16 ();
+                                if (is_fp_type (arr_et))
+                                    emitter.movq_xmm_rax (0);
+                                else if (arr_et == ValaType.INT)
+                                    emit_int_narrow (arr_etn);
+                            }
                         }
                     } else {
                         emitter.load_byte_rax_rcx_16 ();
@@ -14600,6 +14695,9 @@ namespace Planc {
             ValaType et = ValaType.INT;
             string etn = "";
             parse_array_elem (rt_name, out et, out etn);
+            if (is_struct_elem (et, etn))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'in' is not supported on arrays of struct '$(etn)': structs have no '==' at $(b.line):$(b.column)");
             gen_expr (b.left);
             if (is_fp_type (lt))
                 emitter.movq_rax_xmm (0);
@@ -14844,6 +14942,9 @@ namespace Planc {
             ValaType et = ValaType.INT;
             string etn = "";
             parse_array_elem (lt_name, out et, out etn);
+            if (is_struct_elem (et, etn))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"resize is not supported on arrays of struct '$(etn)': the elements live inline in the slab at $(mc.line):$(mc.column)");
             bool elem_ref = is_ref_type (et);
             int64 max_n = int64.MAX - 16;
             if (!byte_arr)
@@ -14936,6 +15037,9 @@ namespace Planc {
             ValaType et = ValaType.INT;
             string etn = "";
             parse_array_elem (ttn, out et, out etn);
+            if (is_struct_elem (et, etn))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"move is not supported on arrays of struct '$(etn)': the elements live inline in the slab at $(mc.line):$(mc.column)");
             for (int i = 0; i < 3; i++) {
                 string an = "";
                 var at = expr_type_full (mc.args[i], out an);

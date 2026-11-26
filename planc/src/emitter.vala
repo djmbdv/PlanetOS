@@ -903,6 +903,26 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE7); code.u8 (0x03);
         }
 
+        // imul rdi, rdi, imm32               48 69 FF imm32
+        public void imul_rdi_imm (int32 v) {
+            code.u8 (0x48); code.u8 (0x69); code.u8 (0xFF); code.u32le ((uint32) v);
+        }
+
+        // imul rcx, rcx, imm32               48 69 C9 imm32
+        public void imul_rcx_imm (int32 v) {
+            code.u8 (0x48); code.u8 (0x69); code.u8 (0xC9); code.u32le ((uint32) v);
+        }
+
+        // lea rax, [rax + rcx*2 + 16]        48 8D 44 48 10
+        public void lea_rax_rax_rcx_2_16 () {
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x44); code.u8 (0x48); code.u8 (0x10);
+        }
+
+        // lea rax, [rax + rcx*4 + 16]        48 8D 44 88 10
+        public void lea_rax_rax_rcx_4_16 () {
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x44); code.u8 (0x88); code.u8 (0x10);
+        }
+
         // mov esi, imm32                     BE + imm32
         public void mov_esi_imm (uint32 v) {
             code.u8 (0xBE); code.u32le (v);

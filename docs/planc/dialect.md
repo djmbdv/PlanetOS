@@ -106,19 +106,42 @@ Tests: `if_else`, `while_loop`, `do_while`, `for_break_continue`, `foreach_array
 | Señales de clase: `signal`, `.connect`, `.disconnect`, handler por defecto | soportado | `signals` |
 | `[Compact]` | clase sin vtable ni destructor, `free ()` manual | `compact_manual`, `compact_nested` |
 | `struct` | valor: copia en asignación, paso y retorno; campos anidados; campos `string`; dentro de `[Compact]` | `struct_type` |
+| Arrays de `struct` (`P[]`, slab contiguo con stride) | un solo bloque de `n * stride` bytes, cero-inicializado; `arr[i].campo` es un *lvalue*, `P a = arr[i]` copia, `ref arr[i]` alcanza el slab, `foreach` copia el elemento; solo structs **POD** | `struct_array`, `bounds/struct_array_oob`, `invalid/struct_array_ref_field`, `invalid/struct_array_resize` |
 | `union` | se parsea; el caso con arrays de delegates **falla** (único test rojo de la suite) | `struct_union_delegate_arrays` |
 | `enum` (+ conversión con `int`) | soportado | `enum_type` |
 | Delegates y lambdas | capturas, `weak`, tipos anidados | `delegates_and_lambdas`, `nullable_delegate` |
 | Genéricos: clases, métodos, funciones, interfaces | monomorfización por lista de argumentos; inferencia desde `T`/`T[]`; tope anti-DoS | `generics_and_array`, `generic_methods`, `generic_interfaces` |
 | Namespaces y tipos hacia delante | soportado | `namespaces_and_forward_types` |
 
-### Límites de `struct` (medidos)
+### `struct` en arrays (slab contiguo)
 
-* **Arrays de structs**: `new P[n]` + `arr[i].campo` **no funciona todavía**; el
-  tamaño de elemento está fijado a 8 B y el stride del índice también. Es la
-  siguiente pieza a implementar (slab con stride).
-* **Campos array de tamaño fijo** (`int16 lumps[8]`): no hay sintaxis.
-* **Dirección de un local**: prohibida (sección 6).
+`T[]` con `T` struct es **un solo bloque** de `16 + n * stride` bytes, con
+`stride = 8 * slots del struct`:
+
+* el header guarda `n` como número de elementos, así que `.length` y el
+  *bounds check* (`indice < n`) no cambian;
+* `arr[i]` calcula la dirección del elemento (`i * stride`); en x86 `lea` solo
+  escala por 1/2/4/8, así que cualquier otro stride multiplica el índice antes
+  (`imul`) y luego suma;
+* `P a = arr[i]` y `f (arr[i])` copian los slots a un temporal de pila: el valor
+  nunca aliasa el slab;
+* `arr[i].campo = v`, `ref arr[i]` y `arr[i]++` operan sobre el elemento real;
+* `foreach (var p in arr)` copia el elemento en cada iteración;
+* el bloque llega **cero-inicializado** (clases recicladas y bloques grandes se
+  limpian al asignar, y las páginas nuevas vienen a cero del kernel).
+
+Restricciones, por seguridad del runtime:
+
+* solo structs **POD**: un struct con campos de referencia (`string`, arrays,
+  clases) se rechaza, porque el bloque se libera sin recorrer elementos;
+* `resize` y `move` se rechazan sobre arrays de structs (moverían elementos
+  inline sin refcount);
+* `in` se rechaza (los structs no tienen `==`);
+* 2D (`P[,]`, `P[][]`) sigue rechazado.
+
+Límites que quedan: no hay campo array de tamaño fijo dentro de un struct
+(`int16 lumps[8]`), y `&local` sigue prohibido, así que un struct no puede
+direccionarse ni escapar de su ámbito.
 * Un struct **POD** puede copiarse en crudo; uno con campos `string`/array
   necesita las rutinas de ref/unref (las tiene en asignación, no en `memcpy`).
 
@@ -229,11 +252,13 @@ el marcador `*.allow_asm`.
 
 ## 10. Huecos conocidos (orden de prioridad)
 
-1. **Arrays de structs** (`new P[n]` + `arr[i].campo`): requieren slab con stride;
-   hoy el elemento se trata como un slot de 8 B. Bloquea el resto de la lista.
-2. **Inicialización de arrays estáticos** en `c2vala` (218 globales `T[]` sin
-   inicializar en el port de DOOM): con arrays de structs se resuelve con un único
-   bloque cero-inicializado.
-3. **`union` con arrays de delegates** (único test rojo).
+1. **Inicialización de arrays estáticos** en `c2vala` (218 globales `T[]` sin
+   inicializar en el port de DOOM): con arrays de structs ya soportados se
+   resuelve con un único bloque cero-inicializado por array.
+2. **Array literal con elementos delegate** (`Op[] ops = { f, g }`): único test
+   rojo de la suite (`struct_union_delegate_arrays`). Los structs y uniones de ese
+   caso ya funcionan.
+3. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; hay que
+   aplanarlos a N campos o dejar la struct como clase.
 4. **`--dump-text`/`typeof`/`.vapi`**: fuera de alcance por decisión, no por falta
    de tiempo.
