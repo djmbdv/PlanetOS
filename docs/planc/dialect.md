@@ -160,6 +160,7 @@ direccionarse ni escapar de su ámbito.
 | Sin `.vapi`, `--pkg`, `[CCode]`, `typeof` | decisión de diseño: el dialecto es el lenguaje, no los bindings | `--import-lib`/`--library-dir` con `.dlib`/`.hlib` propias |
 | `Object` es la base implícita de toda clase | permite `Object o = cualquierCosa` sin declarar la base | ninguno: es una comodidad, no rompe semántica (`is`/`as`/`==` idénticos) |
 | Visibilidad `private`/`protected`/`internal` se acepta y se ignora salvo `--strict-visibility`/`--enforce-visibility` | activarla puede romper fuentes existentes | compilar con `--strict-visibility` |
+| `new string[n]` rellena cada hueco con `""`, no con `null` | un array de `string` no admitidos como nulos evita el `NullPointerError` a mitad de un literal o de un `.length` | declarar el array como `string?[]` si de verdad hacen falta huecos nulos; el idioma C de tabla terminada en `NULL` no se traduce solo |
 | `#pragma`/`#line`, `typeof`, `[NoReturn]`, `[SimpleType]`, `[PointerType]` | aceptados e inertes o no implementados | — |
 
 Otras divergencias medidas y por qué no se implementan (comentario anidado,
@@ -228,7 +229,7 @@ planc <fuentes.vala>… -o <salida> [flags]
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **283 casos, 282 pasan**. El único fallo es
+Estado actual: **287 casos, 286 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
@@ -248,17 +249,30 @@ Convenciones: un caso `valid/` puede llevar un `.out` con la salida esperada; lo
 con el panic declarado en su `.panic`; los tests que necesitan asm propio llevan
 el marcador `*.allow_asm`.
 
+El traductor C→Vala tiene su propia suite diferencial (compila con gcc y compara
+la salida con la del Vala generado):
+
+```
+python tools/c2vala_tests/run.py    # 21 casos, incluido struct_array_members
+```
+
 ---
 
 ## 10. Huecos conocidos (orden de prioridad)
 
-1. **Inicialización de arrays estáticos** en `c2vala` (218 globales `T[]` sin
-   inicializar en el port de DOOM): con arrays de structs ya soportados se
-   resuelve con un único bloque cero-inicializado por array.
+1. **Arrays de C con inicializador** (`c2vala`): los globales `T[]` sin
+   inicializador, los miembros array de un struct y las dimensiones internas de un
+   array multidimensional ya se asignan (ver §9 y el caso
+   `c2vala_tests/cases/struct_array_members`). Lo que sigue sin cubrirse son los
+   inicializadores de tablas de structs (`state_t states[] = {{...}}`) cuando el
+   struct contiene una unión de punteros a función: el literal elige un delegado
+   de 0 parámetros y las acciones de DOOM llevan 2.
 2. **Array literal con elementos delegate** (`Op[] ops = { f, g }`): único test
    rojo de la suite (`struct_union_delegate_arrays`). Los structs y uniones de ese
    caso ya funcionan.
-3. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; hay que
-   aplanarlos a N campos o dejar la struct como clase.
+3. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; `c2vala`
+   los emite como `T[]` y los asigna en el constructor por defecto (con
+   `this.campo`, porque un campo no ensombrece a un global homónimo dentro de un
+   constructor).
 4. **`--dump-text`/`typeof`/`.vapi`**: fuera de alcance por decisión, no por falta
    de tiempo.

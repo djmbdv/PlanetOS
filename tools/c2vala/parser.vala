@@ -137,6 +137,36 @@ namespace C2Vala {
             pending_attrs = new GenericArray<string> ();
         }
 
+        // The same global is usually declared `extern T x[];` in a header and
+        // defined with an initializer in a .c file. Keep one entry per name (the
+        // translator's emit order depends on it) but prefer the definition, so a
+        // `char *sprnames[] = { ... }` does not lose its initializer. Returns
+        // true when this is a new definition, i.e. when it needs a top_order
+        // entry of its own.
+        private bool merge_global_def (TranslationUnit tu, GlobalVarDef gv) {
+            for (int i = 0; i < tu.globals.length; i++) {
+                var prev = tu.globals[i];
+                if (prev.name != gv.name)
+                    continue;
+                // The definition wins when it carries an initializer, as long as
+                // it is not a struct/union (or a table of them): those go
+                // through the initializer-list path, which is still incomplete.
+                bool mergeable = gv.init != null
+                    && gv.ctype.kind != CTypeKind.STRUCT && gv.ctype.kind != CTypeKind.UNION
+                    && !(gv.ctype.kind == CTypeKind.ARRAY && gv.ctype.inner != null
+                         && (((CType) gv.ctype.inner).kind == CTypeKind.STRUCT
+                             || ((CType) gv.ctype.inner).kind == CTypeKind.UNION));
+                bool better = prev.init == null && mergeable;
+                if (better) {
+                    gv.ignored_attrs = prev.ignored_attrs;
+                    tu.globals[i] = gv;
+                }
+                return false;
+            }
+            tu.globals.add (gv);
+            return true;
+        }
+
         private void skip_attributes () {
             while (at (TokKind.IDENT)) {
                 string kw = cur ().text;
@@ -292,9 +322,10 @@ namespace C2Vala {
                 }
                 var gv = new GlobalVarDef (name, decl_t, ginit, start_tok.file, start_tok.line);
                 take_pending_attrs (gv.ignored_attrs);
-                tu.globals.add (gv);
-                tu.top_order.add (name);
-                tu.top_kinds.add ("global");
+                if (merge_global_def (tu, gv)) {
+                    tu.top_order.add (name);
+                    tu.top_kinds.add ("global");
+                }
                 if (at (TokKind.COMMA)) {
                     advance ();
                     continue;

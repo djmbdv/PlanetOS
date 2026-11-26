@@ -39,6 +39,10 @@ namespace C2Vala {
         private int[] del_lock = new int[1];
         private GenericArray<GenericArray<LocalInfo>> fn_locals = new GenericArray<GenericArray<LocalInfo>> ();
 
+        // Monotonic counter for the loop variables of the array allocation
+        // statements, so no two allocations in the same scope can collide.
+        private int alloc_uniq = 0;
+
         // Struct types whose `T *` is used as an array (indexed, offset or
         // passed where an array is expected). Deciding this per *type* keeps
         // every declaration of that pointer consistent: a `T?` field can no
@@ -1360,6 +1364,13 @@ namespace C2Vala {
             bool is_scalar_or_enum = (g.ctype.kind == CTypeKind.SCALAR || g.ctype.kind == CTypeKind.ENUM);
 
             if (g.init == null) {
+                // A global struct needs an instance: planc has no implicit
+                // default value for a class-typed global.
+                if (g.ctype.kind == CTypeKind.STRUCT || g.ctype.kind == CTypeKind.UNION) {
+                    sb.append (@"public $vt $gname;\n");
+                    runtime_globals.add (g);
+                    return;
+                }
                 sb.append (@"public $vt $gname;\n");
                 if (g.ctype.kind == CTypeKind.ARRAY && g.ctype.array_len != null)
                     runtime_globals.add (g);
@@ -1779,6 +1790,9 @@ namespace C2Vala {
                     var sd = find_struct (elem_ct.name);
                     if (sd != null)
                         emit_struct_init_assigns (sb, @"$lhs[$idx_s]", (StructDef) sd, (ExprInitList) il.items[ii], level);
+                } else if (elem_t == "string" && is_null_ptr_expr (il.items[ii])) {
+                    // Not stored: the slot is left as `new T[n]` made it, and a
+                    // C NULL terminator carries no data.
                 } else {
                     indent (sb, level);
                     sb.append (@"$lhs[$idx_s] = $(coerce_value (il.items[ii], etgt));\n");
@@ -1789,20 +1803,18 @@ namespace C2Vala {
         private void emit_global_init (StrBuilder sb, GlobalVarDef g) throws RefuseError {
             string gname = esc_ident (g.name);
             if (g.init == null) {
-                if (g.ctype.kind == CTypeKind.STRUCT && (g.ctype.name == "pthread_mutex_t" || g.ctype.name == "pthread_cond_t")) {
-                    sb.append (@"    $gname = new $(vala_type (g.ctype, false)) ();\n");
+                if (g.ctype.kind == CTypeKind.STRUCT || g.ctype.kind == CTypeKind.UNION) {
+                    var gsd0 = find_struct (g.ctype.name);
+                    bool u0 = (gsd0 != null) && gsd0.is_union && !union_needs_class ((StructDef) gsd0);
+                    sb.append (u0
+                        ? @"    $gname = $(esc_ident (g.ctype.name)) ();\n"
+                        : @"    $gname = new $(esc_ident (g.ctype.name)) ();\n");
                     return;
                 }
                 if (g.ctype.kind == CTypeKind.ARRAY && g.ctype.inner != null && g.ctype.array_len != null) {
-                    var elem_ct = (CType) g.ctype.inner;
-                    string elem_t = vala_type (elem_ct, false);
-                    string len_s = emit_expr ((CExpr) g.ctype.array_len);
-                    var galt = infer_type ((CExpr) g.ctype.array_len);
-                    if (galt != null && galt.kind == CTypeKind.ENUM)
-                        len_s = @"(int) ($len_s)";
-                    sb.append (@"    $gname = new $elem_t[$len_s];\n");
-                    if (elem_ct.kind == CTypeKind.STRUCT || elem_ct.kind == CTypeKind.UNION)
-                        sb.append (@"    for (int _c2v_i = 0; _c2v_i < $gname.length; _c2v_i++) { $gname[_c2v_i] = new $elem_t (); }\n");
+                    int d_uniq = alloc_uniq;
+                    emit_array_alloc_stmts (sb, gname, g.ctype, 1, ref d_uniq);
+                    alloc_uniq = d_uniq;
                 }
                 return;
             }
@@ -1844,15 +1856,23 @@ namespace C2Vala {
                     } else {
                         string len_s = (g.ctype.array_len != null)
                             ? emit_expr ((CExpr) g.ctype.array_len)
-                            : @"$(il.items.length)";
+                            : @"$(init_list_len (elem_t, il))";
                         if (g.ctype.array_len != null) {
                             var galt2 = infer_type ((CExpr) g.ctype.array_len);
                             if (galt2 != null && galt2.kind == CTypeKind.ENUM)
                                 len_s = @"(int) ($len_s)";
                         }
-                        sb.append (@"    $gname = new $elem_t[$len_s];\n");
-                        if (elem_ct.kind == CTypeKind.STRUCT || elem_ct.kind == CTypeKind.UNION)
-                            sb.append (@"    for (int _c2v_i = 0; _c2v_i < $gname.length; _c2v_i++) { $gname[_c2v_i] = new $elem_t (); }\n");
+                        if (elem_ct.kind == CTypeKind.ARRAY) {
+                            // Multi-dimensional: allocate every level, not just
+                            // the outer one, or the rows stay null.
+                            int il_uniq = alloc_uniq;
+                            emit_array_alloc_stmts (sb, gname, g.ctype, 1, ref il_uniq);
+                            alloc_uniq = il_uniq;
+                        } else {
+                            sb.append (@"    $gname = new $elem_t[$len_s];\n");
+                            if (elem_ct.kind == CTypeKind.STRUCT || elem_ct.kind == CTypeKind.UNION)
+                                sb.append (@"    for (int _c2v_i = 0; _c2v_i < $gname.length; _c2v_i++) { $gname[_c2v_i] = new $elem_t (); }\n");
+                        }
                         if (!is_zero_init_list (il) || elem_ct.kind == CTypeKind.STRUCT || elem_ct.kind == CTypeKind.UNION)
                             emit_array_init_elems (sb, gname, elem_ct, elem_t, il, 1);
                     }
@@ -2125,6 +2145,67 @@ namespace C2Vala {
             foff += alen * eb;
         }
 
+        // Length to allocate for an unsized array initializer. A trailing NULL
+        // terminator (`{ "a", "b", 0 }`) is not stored: planc's string arrays
+        // hold no nulls, so the slot is dropped and `.length` stays meaningful.
+        private static int init_list_len (string elem_t, ExprInitList il) {
+            int n = il.items.length;
+            if (elem_t == "string") {
+                while (n > 0 && is_null_ptr_expr (il.items[n - 1]))
+                    n--;
+            }
+            return n;
+        }
+
+        // Length expression of a C array type, cast when it names an enum.
+        private string array_len_expr (CType arr_ct) throws RefuseError {
+            if (arr_ct.array_len is ExprInt)
+                return ((ExprInt) arr_ct.array_len).val.to_string ();
+            string s = emit_expr ((CExpr) arr_ct.array_len);
+            var t = infer_type ((CExpr) arr_ct.array_len);
+            if (t != null && t.kind == CTypeKind.ENUM)
+                s = @"(int) ($s)";
+            return s;
+        }
+
+        // C array storage is inline; the Vala model is a reference, so every
+        // array has to be allocated level by level (rows of a 2-D array, one
+        // object per struct element). Scalar levels need nothing else: `new T[n]`
+        // hands out zeroed slots (and `""` for non-nullable string elements).
+        private void emit_array_alloc_stmts (StrBuilder body, string target, CType arr_ct,
+                                             int indent, ref int uniq) throws RefuseError {
+            if (arr_ct.inner == null || arr_ct.array_len == null)
+                return;
+            var elem_ct = (CType) arr_ct.inner;
+            // Derive the element type from the array's own Vala type: a char
+            // array is a byte array (`uint8[]`) even though the scalar leaf is
+            // `char`, so recomputing it from the element yields a type mismatch.
+            string arr_vt = vala_type (arr_ct, false);
+            if (!arr_vt.has_suffix ("[]"))
+                return;
+            string elem_t = arr_vt.substring (0, arr_vt.length - 2);
+            string len_s = array_len_expr (arr_ct);
+            string pad = "";
+            for (int k = 0; k < indent; k++)
+                pad += "    ";
+            body.append (@"$pad$target = new $elem_t[$len_s];\n");
+            string iv = @"_c2v_ai$(uniq)";
+            uniq++;
+            // A 2-D target must spell out which dimension it means; dim 0 is the
+            // outer (row) count, which is what the per-row allocation loops over.
+            string elem_core = elem_t.has_suffix ("?")
+                ? elem_t.substring (0, elem_t.length - 1) : elem_t;
+            string lenc = (elem_core.has_suffix ("[]") && !elem_core.has_suffix ("[][]"))
+                ? ".length[0]" : ".length";
+            if (elem_ct.kind == CTypeKind.ARRAY) {
+                body.append (@"$pad" + @"for (int $iv = 0; $iv < $target$lenc; $iv++) {" + "\n");
+                emit_array_alloc_stmts (body, @"$target[$iv]", elem_ct, indent + 1, ref uniq);
+                body.append (@"$pad}" + "\n");
+            } else if (elem_ct.kind == CTypeKind.STRUCT || elem_ct.kind == CTypeKind.UNION) {
+                body.append (@"$pad" + @"for (int $iv = 0; $iv < $target$lenc; $iv++) { $target[$iv] = new $elem_t (); }" + "\n");
+            }
+        }
+
         private void emit_struct (StrBuilder sb, StructDef sd) throws RefuseError {
             if (sd.name == "_c2v_FILE" || sd.name == "FILE" || sd.name == "tm"
                 || sd.name == "_c2v_pthread_t" || sd.name == "pthread_mutex_t"
@@ -2231,7 +2312,6 @@ namespace C2Vala {
                 if (need_byte_view) {
                     sb.append ("    public uint8[]? _c2v_data = null;\n");
                     sb.append ("    public int _off = 0;\n");
-                    sb.append (@"    public $sname () {}\n");
                     sb.append (@"    public $sname.at (uint8[] buf, int off = 0) {\n");
                     sb.append ("        _c2v_data = buf;\n");
                     sb.append ("        _off = off;\n");
@@ -2294,6 +2374,7 @@ namespace C2Vala {
                             foff = (foff + 7) & ~7;
                     }
                 }
+                emit_struct_array_ctor (sb, sd, sname, need_byte_view);
                 sb.append ("}\n");
                 return;
             }
@@ -2302,7 +2383,6 @@ namespace C2Vala {
             if (need_byte_view) {
                 sb.append ("    public uint8[]? _c2v_data = null;\n");
                 sb.append ("    public int _off = 0;\n");
-                sb.append (@"    public $sname () {}\n");
                 sb.append (@"    public $sname.at (uint8[] buf, int off = 0) {\n");
                 sb.append ("        _c2v_data = buf;\n");
                 sb.append ("        _off = off;\n");
@@ -2426,7 +2506,48 @@ namespace C2Vala {
                 bf_off += w;
             }
             sb.append (bf_sb.str);
+            emit_struct_array_ctor (sb, sd, sname, need_byte_view);
             sb.append ("}\n");
+        }
+
+        // Inline C arrays are modelled as references, so the default constructor
+        // has to allocate them; without this every instance of the struct starts
+        // with null array members (the DOOM `sprtemp[i].lump` bug). Fields that
+        // `need_byte_view` turns into byte-slice properties already carry their
+        // own backing initializer and are skipped here.
+        private void emit_struct_array_ctor (StrBuilder sb, StructDef sd, string sname,
+                                             bool need_byte_view) throws RefuseError {
+            var saved_locals = cur_locals;
+            var saved_fn = cur_fn;
+            cur_locals = new GenericArray<LocalInfo> ();
+            cur_fn = null;
+            var ctor_body = new StrBuilder ();
+            int ctor_uniq = alloc_uniq;
+            try {
+                for (int ci = 0; ci < sd.fields.length; ci++) {
+                    var cf = sd.fields[ci];
+                    if (cf.name == "")
+                        continue;
+                    if (cf.ctype.kind != CTypeKind.ARRAY || cf.ctype.inner == null || cf.ctype.array_len == null)
+                        continue;
+                    if (need_byte_view && cf.ctype.array_len is ExprInt
+                        && (cf.ctype.inner.kind == CTypeKind.SCALAR || cf.ctype.inner.kind == CTypeKind.ENUM))
+                        continue;
+                    string cfn = (sd.name == "tm") ? map_tm_field (cf.name) : esc_ident (cf.name);
+                    emit_array_alloc_stmts (ctor_body, @"this.$cfn", cf.ctype, 2, ref ctor_uniq);
+                }
+            } finally {
+                alloc_uniq = ctor_uniq;
+                cur_locals = saved_locals;
+                cur_fn = saved_fn;
+            }
+            if (ctor_body.str.length > 0) {
+                sb.append (@"    public $sname () {\n");
+                sb.append (ctor_body.str);
+                sb.append ("    }\n");
+            } else {
+                sb.append (@"    public $sname () {}\n");
+            }
         }
 
         // ---- Function emission ----
@@ -3885,6 +4006,21 @@ namespace C2Vala {
                 } else if ((f.ctype.kind == CTypeKind.PTR || f.ctype.kind == CTypeKind.FUNC_PTR) && is_null_ptr_expr (il.items[fi])) {
                     indent (sb, level);
                     sb.append (@"$fpath = $(ptr_null_value (f.ctype));\n");
+                } else if (f.ctype.kind == CTypeKind.ARRAY && il.items[fi] is ExprStr
+                           && vala_type (f.ctype, false) == "uint8[]") {
+                    // `char name[8] = "pistol"`: copy the bytes, the field is a
+                    // byte slice rather than a Vala string.
+                    indent (sb, level);
+                    sb.append (@"c_strcpy_buf ($fpath, $(emit_expr (il.items[fi])));\n");
+                } else if (f.ctype.kind == CTypeKind.PTR && il.items[fi] is ExprUnary
+                           && ((ExprUnary) il.items[fi]).op == "&"
+                           && ((ExprUnary) il.items[fi]).operand is ExprIndex) {
+                    // `link = &S_sfx[sfx_pistol]`: a pointer into the array is
+                    // the element itself once arrays are references.
+                    var link_operand = (CExpr) ((ExprUnary) il.items[fi]).operand;
+                    string link_s = emit_expr (link_operand);
+                    indent (sb, level);
+                    sb.append (@"$fpath = $link_s;\n");
                 } else {
                     string? ft = (f.ctype.kind == CTypeKind.SCALAR || f.ctype.kind == CTypeKind.ENUM)
                         ? vala_type (f.ctype, false) : null;
