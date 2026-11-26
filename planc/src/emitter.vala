@@ -1865,9 +1865,17 @@ namespace Planc {
             branch (BranchKind.JNE, l_large_search);
             branch (BranchKind.JMP, l_large_alloc);
             bind (l_large_reuse);
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xD2);                   // mov r10, rdx (keep the block)
             code.u8 (0x48); code.u8 (0x8B); code.u8 (0x42); code.u8 (0x08);   // mov rax, [rdx + 8]
             code.u8 (0x49); code.u8 (0x89); code.u8 (0x00);                   // mov [r8], rax
-            code.u8 (0x48); code.u8 (0x89); code.u8 (0xD0);                   // mov rax, rdx
+            // A recycled large block is not fresh memory: zero the payload that
+            // was asked for, so `new T[n]` keeps its zeros (arrays of references
+            // would otherwise start with stale pointers).
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7A); code.u8 (0x10);   // lea rdi, [rdx + 16]
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE1);                   // mov rcx, r12
+            xor_eax ();
+            code.u8 (0xF3); code.u8 (0xAA);                                   // rep stosb
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xD0);                   // mov rax, r10
             code.u8 (0xB1); code.u8 (0xFF);                                   // mov cl, 255
             branch (BranchKind.JMP, l_init_header);
 
