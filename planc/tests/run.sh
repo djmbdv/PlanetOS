@@ -1170,6 +1170,34 @@ else
     ok "deep_expr_chain_o2"
 fi
 
+# Condition-code selection dispatches on op[0]: every comparison must keep its
+# meaning for signed and unsigned operands, as a value and as a branch.
+for lv in 1 2; do
+    if ! "$PLANC" $TARGET_FLAGS "-O$lv" "$HERE/valid/comparison_operators.vala" -o "$WORK/cmpops_o${lv}${BIN_EXT}" 2>"$WORK/cmpops_o$lv.err"; then
+        ko "comparison_operators_o$lv" "compile failed: $(cat "$WORK/cmpops_o$lv.err")"
+    elif ! run_bin "$WORK/cmpops_o${lv}${BIN_EXT}" >"$WORK/cmpops_o$lv.stdout" 2>&1; then
+        ko "comparison_operators_o$lv" "non-zero exit"
+    elif ! files_equal "$WORK/cmpops_o$lv.stdout" "$HERE/valid/comparison_operators.out"; then
+        ko "comparison_operators_o$lv" "stdout differs"
+    else
+        ok "comparison_operators_o$lv"
+    fi
+done
+
+# Reciprocal division has to survive register pressure: the multiplier vreg can
+# land in rax, which `mul` clobbers.
+for lv in 1 2; do
+    if ! "$PLANC" $TARGET_FLAGS "-O$lv" "$HERE/valid/divmod_regpressure.vala" -o "$WORK/regp_o${lv}${BIN_EXT}" 2>"$WORK/regp_o$lv.err"; then
+        ko "divmod_regpressure_o$lv" "compile failed: $(cat "$WORK/regp_o$lv.err")"
+    elif ! run_bin "$WORK/regp_o${lv}${BIN_EXT}" >"$WORK/regp_o$lv.stdout" 2>&1; then
+        ko "divmod_regpressure_o$lv" "non-zero exit"
+    elif ! files_equal "$WORK/regp_o$lv.stdout" "$HERE/valid/divmod_regpressure.out"; then
+        ko "divmod_regpressure_o$lv" "stdout differs"
+    else
+        ok "divmod_regpressure_o$lv"
+    fi
+done
+
 echo
 echo "SUMMARY: $((PASS + FAIL)) cases, $PASS pass, $FAIL fail"
 [ "$FAIL" -eq 0 ]

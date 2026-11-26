@@ -13020,6 +13020,52 @@ namespace Planc {
             }
         }
 
+        // q = mulhi_u (|x|, multiplier) >> shift, negated back for signed types
+        // (that keeps truncation toward zero, and stays exact for INT64_MIN
+        // because the product is read unsigned); rem = x - q*divisor.
+        // Only called with a reciprocal whose bound checked out.
+        private void emit_reciprocal_divmod (bool need_rem, string lt_name, string rt_name,
+                                            uint64 multiplier, int shift, int64 divisor,
+                                            Expr operand) throws SemanticError {
+            string res_tn = promote_int_type (lt_name, rt_name);
+            bool is_u = is_unsigned_int_type (res_tn);
+            bool is_u32 = is_unsigned_32 (res_tn);
+            gen_expr (operand);
+            if (need_rem) {
+                emitter.push_rax ();
+                push_depth++;
+            }
+            if (!is_u) {
+                emitter.mov_rdi_rax ();
+                emitter.sar_rdi_imm (63);
+                emitter.xor_rax_rdi ();
+                emitter.sub_rax_rdi ();
+            }
+            emitter.mov_rcx_imm (multiplier);
+            emitter.mul_rcx ();
+            emitter.mov_rax_rdx ();
+            if (shift > 0)
+                emitter.shr_rax_imm ((uint8) shift);
+            if (!is_u) {
+                emitter.xor_rax_rdi ();
+                emitter.sub_rax_rdi ();
+            }
+            if (need_rem) {
+                if (divisor >= int32.MIN && divisor <= int32.MAX) {
+                    emitter.imul_rax_imm ((int32) divisor);
+                } else {
+                    emitter.mov_rcx_imm ((uint64) divisor);
+                    emitter.imul_rax_rcx ();
+                }
+                emitter.mov_rdx_rax ();
+                emitter.pop_rax ();
+                push_depth--;
+                emitter.sub_rax_rdx ();
+            }
+            if (is_u32)
+                emit_int_narrow ("uint32");
+        }
+
         private void gen_binary (BinaryExpr b) throws SemanticError {
             if (b.op == "in") {
                 gen_in (b);
@@ -13145,6 +13191,9 @@ namespace Planc {
             if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
                 && (b.op == "/" || b.op == "%") && b.right is IntLiteral) {
                 int pk = pow2_exponent (((IntLiteral) b.right).value);
+                string res_tn_d = promote_int_type (lt_name, rt_name);
+                bool is_u_d = is_unsigned_int_type (res_tn_d);
+                bool is_u32_d = is_unsigned_32 (res_tn_d);
                 if (pk == 0 && b.op == "/") {
                     gen_expr (b.left);
                     return;
@@ -13154,10 +13203,9 @@ namespace Planc {
                     emitter.mov_rax_imm (0);
                     return;
                 }
-                if (pk > 0 && pk <= 31) {
-                    string res_tn_d = promote_int_type (lt_name, rt_name);
-                    bool is_u_d = is_unsigned_int_type (res_tn_d);
-                    bool is_u32_d = is_unsigned_32 (res_tn_d);
+                // A divisor mask has to fit in an imm32, so only unsigned
+                // division goes past 2^31 (it needs no mask).
+                if (pk > 0 && (pk <= 31 || (is_u_d && b.op == "/"))) {
                     int64 mask_d = (((int64) 1) << pk) - 1;
                     gen_expr (b.left);
                     if (is_u_d) {
@@ -13184,6 +13232,19 @@ namespace Planc {
                         emitter.sub_rdx_rax ();
                         emitter.mov_rax_rdx ();
                     }
+                    return;
+                }
+            }
+            // Division by a constant that is neither a power of two nor
+            // foldable: mulhi + shift with a reciprocal whose exactness was
+            // verified when it was built, instead of the idiv sequence.
+            if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
+                && (b.op == "/" || b.op == "%") && b.right is IntLiteral) {
+                var rec = DivReciprocal.get (((IntLiteral) b.right).value);
+                if (rec != null) {
+                    emit_reciprocal_divmod (b.op == "%", lt_name, rt_name,
+                                            rec.multiplier, rec.shift,
+                                            ((IntLiteral) b.right).value, b.left);
                     return;
                 }
             }

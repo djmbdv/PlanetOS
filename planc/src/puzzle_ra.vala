@@ -10,6 +10,7 @@ namespace Planc {
         UNARY,
         BIN,
         BIN_IMM,
+        MULHI,
         CMP_JMP_FALSE,
         CMP_IMM_JMP_FALSE,
         TEST_JMP_FALSE,
@@ -455,7 +456,7 @@ namespace Planc {
                         emit_ir (new IRInst () { op = IROp.MOV_IMM, dst = z, imm = 0 });
                         return z;
                     }
-                    if (pk > 0 && pk <= 31) {
+                    if (pk > 0 && (pk <= 31 || (lu && b.op == "/"))) {
                         int64 mask = (((int64) 1) << pk) - 1;
                         if (lu) {
                             int d = new_vreg (false, true);
@@ -501,6 +502,75 @@ namespace Planc {
                             is_unsigned = false
                         });
                         return r;
+                    }
+                }
+                // Constant divisor that is not a power of two: mulhi + shift
+                // with a verified reciprocal, so no rax/rdx/rcx constraint.
+                if ((b.op == "/" || b.op == "%") && b.right is IntLiteral) {
+                    var mrec = DivReciprocal.get (((IntLiteral) b.right).value);
+                    if (mrec != null) {
+                        bool lu = vreg_is_unsigned[lv];
+                        int mv = new_vreg (false, true);
+                        emit_ir (new IRInst () {
+                            op = IROp.MOV_IMM, dst = mv, imm = (int64) mrec.multiplier
+                        });
+                        int ax = lv;
+                        int sg = -1;
+                        if (!lu) {
+                            sg = new_vreg (false, true);
+                            emit_ir (new IRInst () {
+                                op = IROp.BIN_IMM, dst = sg, sop = ">>", lhs = lv,
+                                imm = 63, is_unsigned = false
+                            });
+                            int x1 = new_vreg (false, true);
+                            emit_ir (new IRInst () {
+                                op = IROp.BIN, dst = x1, sop = "^", lhs = lv, rhs = sg,
+                                is_unsigned = true
+                            });
+                            int x2 = new_vreg (false, true);
+                            emit_ir (new IRInst () {
+                                op = IROp.BIN, dst = x2, sop = "-", lhs = x1, rhs = sg,
+                                is_unsigned = true
+                            });
+                            ax = x2;
+                        }
+                        int hi = new_vreg (false, true);
+                        emit_ir (new IRInst () { op = IROp.MULHI, dst = hi, lhs = ax, rhs = mv });
+                        int q = new_vreg (false, true);
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN_IMM, dst = q, sop = ">>", lhs = hi,
+                            imm = mrec.shift, is_unsigned = true
+                        });
+                        if (!lu) {
+                            int n1 = new_vreg (false, true);
+                            emit_ir (new IRInst () {
+                                op = IROp.BIN, dst = n1, sop = "^", lhs = q, rhs = sg,
+                                is_unsigned = true
+                            });
+                            int n2 = new_vreg (false, lu);
+                            emit_ir (new IRInst () {
+                                op = IROp.BIN, dst = n2, sop = "-", lhs = n1, rhs = sg,
+                                is_unsigned = lu
+                            });
+                            q = n2;
+                        }
+                        if (b.op == "/")
+                            return q;
+                        int dv = new_vreg (false, true);
+                        emit_ir (new IRInst () {
+                            op = IROp.MOV_IMM, dst = dv, imm = ((IntLiteral) b.right).value
+                        });
+                        int qd = new_vreg (false, lu);
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN, dst = qd, sop = "*", lhs = q, rhs = dv,
+                            is_unsigned = lu
+                        });
+                        int rm = new_vreg (false, lu);
+                        emit_ir (new IRInst () {
+                            op = IROp.BIN, dst = rm, sop = "-", lhs = lv, rhs = qd,
+                            is_unsigned = lu
+                        });
+                        return rm;
                     }
                 }
                 if (b.right is IntLiteral && b.op != "/" && b.op != "%") {
@@ -1767,7 +1837,8 @@ namespace Planc {
                             if (def >= 0 && hint_phys[def] < 0)
                                 hint_phys[def] = 0; // RAX
                         }
-                    } else if (ins.op == IROp.BIN && (ins.sop == "/" || ins.sop == "%")) {
+                    } else if ((ins.op == IROp.BIN && (ins.sop == "/" || ins.sop == "%"))
+                               || ins.op == IROp.MULHI) {
                         // Clobbers RAX (0) and RDX (2)
                         uint32 no_ax_dx = ~((1u << 0) | (1u << 2));
                         for (int w = 0; w < words; w++) {
@@ -2492,6 +2563,25 @@ namespace Planc {
                                 emit_setcc (d, cmp_cc (ins.sop, ins.is_unsigned));
                             }
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
+                            break;
+                        }
+                        case IROp.MULHI: {
+                            // mulhi_u (lhs, rhs): mov rax, lhs; mul rhs; dst = rdx
+                            // Both operands are read before rax is written, and a
+                            // rhs that lives in rax is copied to a scratch that is
+                            // neither operand, so any allocation works.
+                            Reg l = read_vreg (ins.lhs, Reg.R10);
+                            Reg r = (ins.rhs == ins.lhs) ? l : read_vreg (ins.rhs, Reg.R11);
+                            if (r == Reg.RAX) {
+                                Reg tmp = (l == Reg.R10) ? Reg.R11 : Reg.R10;
+                                emit_mov_rr (tmp, Reg.RAX);
+                                r = tmp;
+                            }
+                            emit_mov_rr (Reg.RAX, l);
+                            emit_rex (true, Reg.RAX, r);
+                            code.u8 (0xF7);
+                            code.u8 ((uint8) (0xE0 | ((int) r & 7))); // mul r
+                            write_vreg_from (ins.dst, Reg.RDX);
                             break;
                         }
                         case IROp.BIN: {

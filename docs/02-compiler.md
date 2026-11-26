@@ -384,6 +384,7 @@ Table-driven mapping from IR operations to x86_64 sequences. Cases that require 
 | integer `rem` | idem, keep `rdx` |
 | integer `/ 2^k` (signed) | `sar (x + ((x >> 63) & (2^k-1))), k` — truncated, not floored |
 | integer `/ 2^k` (unsigned), `% 2^k` | `shr`, `and` |
+| integer `x / d`, `x % d` for constant `d` | verified reciprocal: `mul` (mulhi) + `shr` + sign fixup, no `idiv` |
 | integer `* 3` / `* 5` / `* 9` | `lea d, [x + x*2^k]` |
 | floating `cmp.lt` | `ucomisd` + `setb` + `movzx` |
 | `fptosi` conversion | `cvttsd2si` with range checking if the value can overflow |
@@ -394,7 +395,7 @@ Table-driven mapping from IR operations to x86_64 sequences. Cases that require 
 
 *Linear scan* over live intervals, with separate GPR and SSE classes, and *spilling* to stack slots. Constraints: registers fixed by the ABI, `rax`/`rdx` reserved around `div`, `rcx` for variable shifts.
 
-Division and modulo by a power-of-two constant are lowered before allocation (see [slice 56](planc/slice-56-operators.md)), so the `rax`/`rdx` constraint only appears for a variable or non-power-of-two divisor.
+Division and modulo by a power-of-two constant are lowered before allocation (see [slice 56](planc/slice-56-operators.md)), so the `rax`/`rdx` constraint only appears for a variable or non-power-of-two divisor. Other constant divisors use a reciprocal (`MULHI` + shift) whose exactness is proved by the Granlund–Montgomery bound, which keeps the `rax`/`rdx` clobber local to one instruction.
 
 Prologue and epilogue generated per function: in builds with `debug = dwarf` the **frame pointer** (`rbp`) is kept even when it is not needed, because GDB rebuilds the stack with it; without CFI, the alternative would be to emit `.eh_frame`, which is not needed because there is no unwinding.
 

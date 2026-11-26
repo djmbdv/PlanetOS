@@ -1149,6 +1149,37 @@ namespace Planc {
             code.u8 (0x48); code.u8 (0x0F); code.u8 (0xAF); code.u8 (0xC1);
         }
 
+        // mov rcx, imm64                     48 C7 C1 imm32 | 48 B9 imm64
+        public void mov_rcx_imm (uint64 v) {
+            if (v <= (uint64) int32.MAX) {
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC1);
+                code.u32le ((uint32) v);
+            } else {
+                code.u8 (0x48); code.u8 (0xB9);
+                code.u64le (v);
+            }
+        }
+
+        // mul rcx                            48 F7 E1   (rdx:rax = rax * rcx, unsigned)
+        public void mul_rcx () {
+            code.u8 (0x48); code.u8 (0xF7); code.u8 (0xE1);
+        }
+
+        // sar rdi, imm8                      48 C1 FF imm8
+        public void sar_rdi_imm (uint8 c) {
+            code.u8 (0x48); code.u8 (0xC1); code.u8 (0xFF); code.u8 (c & 63);
+        }
+
+        // xor rax, rdi                       48 31 F8
+        public void xor_rax_rdi () {
+            code.u8 (0x48); code.u8 (0x31); code.u8 (0xF8);
+        }
+
+        // sub rax, rdi                       48 29 F8
+        public void sub_rax_rdi () {
+            code.u8 (0x48); code.u8 (0x29); code.u8 (0xF8);
+        }
+
         // cqo                                48 99   (sign-extend rax into rdx:rax)
         public void cqo () {
             code.u8 (0x48); code.u8 (0x99);

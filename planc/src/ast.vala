@@ -3211,4 +3211,78 @@ namespace Planc {
             return ((uint64) biased_exp << (p - 1)) | (uint64) mant;
         }
     }
+
+    // Reciprocal of an integer constant divisor: the quotient is
+    // mulhi_u (x, multiplier) >> shift, so `idiv` (20-40 cycles, and a hard
+    // rax/rdx constraint in the register allocator) is not needed.
+    //
+    // Granlund & Montgomery (1994), Theorem 4.2 / Warren, Hacker's Delight
+    // §10-8: with p = 64 + s and m = floor (2^p / d) + 1, the identity
+    // floor (m*x / 2^p) = floor (x / d) holds for every 0 <= x < 2^64 as soon
+    // as m*d - 2^p <= 2^s. `get ()` checks that bound exactly and returns null
+    // otherwise, so callers that honour the null never change a result.
+    public class DivReciprocal : Object {
+        public uint64 multiplier { get; set; }
+        public int shift { get; set; }
+
+        public static DivReciprocal? get (int64 divisor) {
+            if (divisor < 2)
+                return null;
+            uint64 d = (uint64) divisor;
+            if ((d & (d - 1)) == 0)
+                return null;                     // power of two: a shift is cheaper
+            for (int s = 0; s < 64; s++) {
+                uint64 pow2_s = ((uint64) 1) << s;
+                if (pow2_s >= d)
+                    break;                       // multiplier would not fit in 64 bits
+                uint64 m = div_128_by_64 (pow2_s, 0, d) + 1;
+                uint64 hi;
+                uint64 lo;
+                mul_64x64 (m, d, out hi, out lo);
+                // err = m*d - 2^(64+s), require 0 < err <= 2^s.
+                if (hi != pow2_s)
+                    continue;
+                if (lo > pow2_s)
+                    continue;
+                var r = new DivReciprocal ();
+                r.multiplier = m;
+                r.shift = s;
+                return r;
+            }
+            return null;
+        }
+
+        // floor ((hi*2^64 + lo) / d) for a quotient that fits in 64 bits.
+        private static uint64 div_128_by_64 (uint64 hi, uint64 lo, uint64 d) {
+            uint64 q = 0;
+            uint64 rem = 0;
+            for (int i = 127; i >= 0; i--) {
+                uint64 bit = (i >= 64) ? ((hi >> (i - 64)) & 1) : ((lo >> i) & 1);
+                bool carry = (rem >> 63) != 0;
+                rem = (rem << 1) | bit;
+                if (carry || rem >= d) {
+                    // Correct even with `carry`: the true value is 2^64 + rem
+                    // and 2^64 + rem - d is exactly rem - d modulo 2^64.
+                    rem = rem - d;
+                    if (i < 64)
+                        q = q | (((uint64) 1) << i);
+                }
+            }
+            return q;
+        }
+
+        private static void mul_64x64 (uint64 a, uint64 b, out uint64 hi, out uint64 lo) {
+            uint64 al = a & 0xFFFFFFFF;
+            uint64 ah = a >> 32;
+            uint64 bl = b & 0xFFFFFFFF;
+            uint64 bh = b >> 32;
+            uint64 ll = al * bl;
+            uint64 lh = al * bh;
+            uint64 hl = ah * bl;
+            uint64 hh = ah * bh;
+            uint64 mid = (ll >> 32) + (lh & 0xFFFFFFFF) + (hl & 0xFFFFFFFF);
+            lo = (mid << 32) | (ll & 0xFFFFFFFF);
+            hi = hh + (lh >> 32) + (hl >> 32) + (mid >> 32);
+        }
+    }
 }
