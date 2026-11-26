@@ -276,6 +276,12 @@ Reglas del traductor que importan al portar C:
   cuadrático. Lo mismo al re-basar la vista
   (`vista = (post_t *)((byte *)vista + vista->length + 4)` ahora es
   `new post_t.at (buf, vista._off + length + 4)`); es el caso `byte_view_alias`.
+* `p->campo[i]` sobre un array *inline* de un struct leído de un búfer usa
+  los accesores `campo_at`/`campo_set` de la clase de vista: la propiedad
+  `campo` materializa todos los elementos que quedan en el búfer (el miembro
+  flexible `patch_t.columnofs` copiaba el lump entero en cada acceso, 136 KB
+  por columna). Los `get` que construyen el array se emiten con `owned get` para que valac también los acepte; el caso es
+  `inline_array_member`.
 * si el inicializador no se puede traducir, el array exterior queda con el
   tamaño declarado (escalares a cero) en vez de nulo, que es lo que C haría.
 

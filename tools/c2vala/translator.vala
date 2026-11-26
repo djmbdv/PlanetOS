@@ -2202,7 +2202,9 @@ namespace C2Vala {
             }
             sb.append (@"    private $vt _$fn = new $elem[$(alen)];\n");
             sb.append (@"    public $vt $fn {\n");
-            sb.append ("        get {\n");
+            // The getter builds the array from the buffer, so it hands over
+            // ownership (valac rejects a plain `get` that returns a local).
+            sb.append ("        owned get {\n");
             sb.append (@"            if (_c2v_data == null) return _$fn;\n");
             // A trailing array in a C struct is a flexible member: the byte
             // buffer, not the declared length, bounds it (e.g. patch_t's
@@ -2227,6 +2229,19 @@ namespace C2Vala {
             sb.append (@"            for (int _i = 0; _i < $count_s && _i < value.length; _i++)\n");
             sb.append (@"                $wr;\n");
             sb.append ("        }\n");
+            sb.append ("    }\n");
+            // Single-element accessors: `p->field[i]` must read the buffer
+            // directly, because the property above materialises every element
+            // that is left in the buffer (a flexible member like patch_t's
+            // columnofs would copy the whole lump on each access).
+            string wr_v = wr.replace ("value[_i]", "_v");
+            sb.append (@"    public $elem $(fn)_at (int _i) {\n");
+            sb.append (@"        if (_c2v_data == null) return _$fn[_i];\n");
+            sb.append (@"        return $rd;\n");
+            sb.append ("    }\n");
+            sb.append (@"    public void $(fn)_set (int _i, $elem _v) {\n");
+            sb.append (@"        if (_c2v_data == null) { _$fn[_i] = _v; return; }\n");
+            sb.append (@"        $wr_v;\n");
             sb.append ("    }\n");
             foff += alen * eb;
         }
@@ -5588,6 +5603,87 @@ namespace C2Vala {
             return @"new $fcls (() => { return $id_s; }, (v) => { $id_s = v; })";
         }
 
+        // True for an inline scalar array field of a struct, which gets the
+        // single-element accessors emitted above.
+        private bool is_inline_scalar_array_field (StructDef sd, string fname) {
+            for (int i = 0; i < sd.fields.length; i++) {
+                var f = sd.fields[i];
+                if (f.name == "" || esc_ident (f.name) != fname)
+                    continue;
+                if (f.ctype.kind != CTypeKind.ARRAY || f.ctype.inner == null)
+                    return false;
+                string ev = vala_type ((CType) f.ctype.inner, false);
+                if (ev.has_suffix ("[]") || ev.has_suffix ("?"))
+                    return false;
+                return union_scalar_bytes (ev) > 0;
+            }
+            return false;
+        }
+
+        // `p->field[i]` on an inline array of a byte view: read the buffer, do
+        // not build the whole array.
+        private string? inline_array_read (CExpr array, CExpr index) throws RefuseError {
+            if (!(array is ExprMember))
+                return null;
+            var im = (ExprMember) array;
+            if (!im.is_arrow)
+                return null;
+            var omt = infer_type (im.obj);
+            var ome = (omt != null && omt.kind == CTypeKind.PTR && omt.inner != null) ? (CType) omt.inner : omt;
+            if (ome == null || (ome.kind != CTypeKind.STRUCT && ome.kind != CTypeKind.UNION))
+                return null;
+            if (byte_cast_struct_map.get_index (ome.name) < 0)
+                return null;
+            var osd = find_struct (ome.name);
+            if (osd == null)
+                return null;
+            string of = esc_ident (im.field);
+            if (!is_inline_scalar_array_field (osd, of))
+                return null;
+            // An offset tracked for the base local is not part of the view.
+            if (im.obj is ExprIdent) {
+                var oli = find_local (cur_locals, ((ExprIdent) im.obj).name);
+                if (oli != null && oli.has_ptr_arith)
+                    return null;
+            }
+            string obj_s = emit_expr (im.obj);
+            return @"$obj_s.$(of)_at ((int) ($(emit_expr (index))))";
+        }
+
+        // `p->field[i] = v` (and `op=`) on an inline array of a byte view:
+        // store straight into the buffer instead of building the array.
+        private string? inline_array_write (ExprIndex ix, CExpr value, string op = "=") throws RefuseError {
+            if (!(ix.array is ExprMember))
+                return null;
+            var im = (ExprMember) ix.array;
+            if (!im.is_arrow)
+                return null;
+            var omt = infer_type (im.obj);
+            var ome = (omt != null && omt.kind == CTypeKind.PTR && omt.inner != null) ? (CType) omt.inner : omt;
+            if (ome == null || (ome.kind != CTypeKind.STRUCT && ome.kind != CTypeKind.UNION))
+                return null;
+            if (byte_cast_struct_map.get_index (ome.name) < 0)
+                return null;
+            var osd = find_struct (ome.name);
+            if (osd == null)
+                return null;
+            string of = esc_ident (im.field);
+            if (!is_inline_scalar_array_field (osd, of))
+                return null;
+            if (im.obj is ExprIdent) {
+                var oli = find_local (cur_locals, ((ExprIdent) im.obj).name);
+                if (oli != null && oli.has_ptr_arith)
+                    return null;
+            }
+            string obj_s = emit_expr (im.obj);
+            string idx_s = @"(int) ($(emit_expr (ix.index)))";
+            if (op != "=") {
+                string bin = op.substring (0, op.length - 1);
+                return @"$obj_s.$(of)_set ($idx_s, $obj_s.$(of)_at ($idx_s) $bin ($(emit_expr (value))))";
+            }
+            return @"$obj_s.$(of)_set ($idx_s, $(emit_expr (value)))";
+        }
+
         private string emit_expr (CExpr e, bool as_stmt = false) throws RefuseError {
             if (e is ExprInt)
                 return norm_int_lit ((ExprInt) e);
@@ -6271,11 +6367,21 @@ namespace C2Vala {
                         return @"((!) $(esc_ident (li.name))).set_val ($cp)";
                     }
                 }
+                if (a.lvalue is ExprIndex && a.op.has_suffix ("=") && a.op != "=") {
+                    string? iset_c = inline_array_write ((ExprIndex) a.lvalue, a.rvalue, a.op);
+                    if (iset_c != null)
+                        return iset_c;
+                }
                 if (a.op == "=") {
                     var lt = infer_type (a.lvalue);
                     var rt = infer_type (a.rvalue);
                     if (lt != null && rt != null && is_union_type (lt) && is_union_type (rt) && lt.name == rt.name)
                         return @"$(emit_expr (a.lvalue)).copy_from ($(emit_expr (a.rvalue)))";
+                    if (a.lvalue is ExprIndex) {
+                        string? iset = inline_array_write ((ExprIndex) a.lvalue, a.rvalue);
+                        if (iset != null)
+                            return iset;
+                    }
                     return @"$(emit_expr (a.lvalue)) = $(coerce_assign (a.lvalue, a.rvalue))";
                 }
                 if (a.lvalue is ExprMember && a.op.has_suffix ("=")) {
@@ -6299,6 +6405,9 @@ namespace C2Vala {
             }
             if (e is ExprIndex) {
                 var ix = (ExprIndex) e;
+                string? iar = inline_array_read (ix.array, ix.index);
+                if (iar != null)
+                    return iar;
                 string base_s = emit_expr (ix.array);
                 string idx_s = @"(int) ($(emit_expr (ix.index)))";
                 if (ix.array is ExprIdent) {
