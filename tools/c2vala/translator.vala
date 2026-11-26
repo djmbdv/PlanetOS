@@ -647,10 +647,13 @@ namespace C2Vala {
                     collect_locals_for_fixpoint (b.stmts[i], locals);
             } else if (s is StmtDecl) {
                 var d = (StmtDecl) s;
-                var li = new LocalInfo (d.name, d.ctype, false);
-                if (d.ctype.kind == CTypeKind.ARRAY)
-                    li.is_array = true;
-                locals.add (li);
+                // `extern int x;` names a global: no local may shadow it.
+                if (!d.is_extern) {
+                    var li = new LocalInfo (d.name, d.ctype, false);
+                    if (d.ctype.kind == CTypeKind.ARRAY)
+                        li.is_array = true;
+                    locals.add (li);
+                }
             } else if (s is StmtIf) {
                 var ifs = (StmtIf) s;
                 collect_locals_for_fixpoint (ifs.then_branch, locals);
@@ -705,6 +708,8 @@ namespace C2Vala {
                     if (scan_stmt_for_arrays (b.stmts[i], locals, cur_sig)) changed = true;
             } else if (s is StmtDecl) {
                 var d = (StmtDecl) s;
+                if (d.is_extern)
+                    return false;
                 if (d.init != null) {
                     if (is_alloc_call (d.init)) {
                         var li = find_local (locals, d.name);
@@ -714,6 +719,18 @@ namespace C2Vala {
                         if (csig != null && csig.ret_is_array) {
                             var li = find_local (locals, d.name);
                             if (li != null && !li.is_array) { li.is_array = true; changed = true; }
+                        }
+                    } else if (d.init is ExprBinary) {
+                        // `p = row_of_2d + n`: the row is a reference, so `p`
+                        // carries an offset instead of a copied slice.
+                        var ib0 = (ExprBinary) d.init;
+                        if ((ib0.op == "+" || ib0.op == "-") && ib0.left is ExprIndex
+                            && is_row_of_2d (((ExprIndex) ib0.left).array)) {
+                            var li = find_local (locals, d.name);
+                            if (li != null) {
+                                if (!li.is_array) { li.is_array = true; changed = true; }
+                                if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
+                            }
                         }
                     }
                     if (scan_expr_for_arrays ((CExpr) d.init, locals)) changed = true;
@@ -834,6 +851,15 @@ namespace C2Vala {
                         if (li.ctype.kind == CTypeKind.PTR && (a.op == "+=" || a.op == "-=")) {
                             if (!li.is_array) { li.is_array = true; changed = true; }
                             if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
+                        }
+                        if (a.op == "=" && a.rvalue is ExprBinary) {
+                            // `p = row_of_2d + n` needs an offset, not a copy.
+                            var ar = (ExprBinary) a.rvalue;
+                            if ((ar.op == "+" || ar.op == "-") && ar.left is ExprIndex
+                                && is_row_of_2d (((ExprIndex) ar.left).array)) {
+                                if (!li.is_array) { li.is_array = true; changed = true; }
+                                if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
+                            }
                         }
                         if (!li.is_array) {
                             if (is_alloc_call (a.rvalue)) {
@@ -3868,6 +3894,20 @@ namespace C2Vala {
             }
         }
 
+        // True when `e` names a 2-D array (or pointer-to-pointer), so indexing
+        // it once yields a row that is itself a reference to a slice.
+        private bool is_row_of_2d (CExpr e) throws RefuseError {
+            var t = infer_type (e);
+            if (t == null)
+                return false;
+            if (t.kind != CTypeKind.PTR && t.kind != CTypeKind.ARRAY)
+                return false;
+            if (t.inner == null)
+                return false;
+            var inn = (CType) t.inner;
+            return inn.kind == CTypeKind.PTR || inn.kind == CTypeKind.ARRAY;
+        }
+
         // Statement form of `p = ...` when `p` tracks a pointer offset: Vala
         // cannot express the offset bookkeeping as a ternary in statement
         // position, so the assignment and the offset update are two statements.
@@ -3911,6 +3951,30 @@ namespace C2Vala {
                             sb.append (@"$lname = $(coerce_ptr (rb.right, pli.ctype, a.lvalue));\n");
                         indent (sb, level);
                         sb.append (@"_off_$(pli.name) = $base_off + (int) ($(emit_expr (rb.left)));\n");
+                        return;
+                    }
+                }
+                // The base may also be a *row* of a 2-D array
+                // (`ylookup[y] + columnofs[x]`): that row is already a
+                // reference, so it must not be copied. Only rows qualify;
+                // a cast such as `(byte *)column + 3` still needs a view.
+                if ((rb.op == "+" || rb.op == "-") && rb.left is ExprIndex) {
+                    var bix = (ExprIndex) rb.left;
+                    if (is_row_of_2d (bix.array)) {
+                        indent (sb, level);
+                        sb.append (@"$lname = $(emit_expr (bix));\n");
+                        indent (sb, level);
+                        sb.append (@"_off_$(pli.name) = (int) ($(emit_expr (rb.right)));\n");
+                        return;
+                    }
+                }
+                if (rb.op == "+" && rb.right is ExprIndex) {
+                    var bix2 = (ExprIndex) rb.right;
+                    if (is_row_of_2d (bix2.array)) {
+                        indent (sb, level);
+                        sb.append (@"$lname = $(emit_expr (bix2));\n");
+                        indent (sb, level);
+                        sb.append (@"_off_$(pli.name) = (int) ($(emit_expr (rb.left)));\n");
                         return;
                     }
                 }
@@ -4031,6 +4095,9 @@ namespace C2Vala {
         }
 
         private void emit_decl (StrBuilder sb, StmtDecl d, int level) throws RefuseError {
+            // `extern int x;` only re-states a global declaration.
+            if (d.is_extern)
+                return;
             var li = new LocalInfo (d.name, d.ctype, false);
             bool is_malloc_init = is_alloc_call (d.init);
             if (d.ctype.kind == CTypeKind.ARRAY || is_malloc_init)
@@ -4157,6 +4224,20 @@ namespace C2Vala {
 
             string vt = vala_type (d.ctype, li.is_array);
             assert_supported_type (vt);
+            // `T *p = row_of_2d + n;` keeps the row as the base and n as an
+            // offset, so writes through `p` land in the 2-D array.
+            if (d.init is ExprBinary && vt.has_suffix ("[]")) {
+                var ib = (ExprBinary) d.init;
+                if ((ib.op == "+" || ib.op == "-") && ib.left is ExprIndex
+                    && is_row_of_2d (((ExprIndex) ib.left).array)) {
+                    var row_ix = (ExprIndex) ib.left;
+                    indent (sb, level);
+                    sb.append (@"$vt $dname = $(emit_expr (row_ix));\n");
+                    indent (sb, level);
+                    sb.append (@"int _off_$(d.name) = (int) ($(emit_expr (ib.right)));\n");
+                    return;
+                }
+            }
             // `&x` needs a box only for scalars; structs/pointers already map
             // to references/arrays in Vala.
             if (li.has_addr_taken && d.ctype.kind == CTypeKind.PTR && vt.has_suffix ("[]")) {

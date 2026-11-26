@@ -401,6 +401,12 @@ namespace Planet {
             return __sys4 (60, ms, 0, 0, 0);
         }
 
+        // Free 4 KiB frames left in the user pool; useful to watch a program
+        // that allocates a lot. Returns -1 on an older kernel.
+        public static int free_pages () {
+            return __sys4 (73, 0, 0, 0, 0);
+        }
+
         // Waits until one of `fds` is ready; returns a bitmask of ready
         // entries (bit i = fds[i]), 0 on timeout, -1 on error.
         public static int poll (int[] fds, int timeout_ms) {

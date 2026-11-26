@@ -296,6 +296,9 @@ namespace C2Vala {
         public CType ctype;
         public CExpr? init = null;
         public GenericArray<string> ignored_attrs = new GenericArray<string> ();
+        // `extern int x;` inside a function refers to a global; it must not
+        // create a local, or the name would shadow the global with a zero.
+        public bool is_extern = false;
     }
 
     public class StmtIf : CStmt {

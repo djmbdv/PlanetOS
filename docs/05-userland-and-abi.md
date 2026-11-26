@@ -85,6 +85,7 @@ The running kernel dispatches through `SYS_*` numbers in [kernel/syscall.vala](.
 | 70 | `SYS_HANDLE_SEND(tid, handle)` | sends a handle to another task, returns the receiver's value |
 | 71 | `SYS_HANDLE_RECV()` | receives a handle sent to the caller |
 | 72 | `SYS_HANDLE_INFO(handle, out16)` | kind plus rights of a handle the caller owns |
+| 73 | `SYS_MEM_FREE()` | free 4 KiB frames left in the user pool (`Sys.free_pages ()`), for watching a program's footprint |
 
 Failures still return `-1` (the existing `== -1` checks keep working); the cause is read with `SYS_ERRNO` and mirrors Linux numbering (`ENOENT = 2`, `EACCES = 13`, `EISDIR = 21`, `ETIMEDOUT = 110`, …). `Planet.Sys` exposes them as `Sys.ENOENT`, `Sys.errno_code ()` and `Sys.strerror ()`.
 

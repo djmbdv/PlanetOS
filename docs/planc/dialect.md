@@ -255,8 +255,20 @@ El traductor C→Vala tiene su propia suite diferencial (compila con gcc y compa
 la salida con la del Vala generado):
 
 ```
-python tools/c2vala_tests/run.py    # 21 casos, incluido struct_array_members
+python tools/c2vala_tests/run.py    # 22 casos (ptr_into_row necesita planc)
 ```
+
+Reglas del traductor que importan al portar C:
+
+* un `extern T x;` **dentro de una función** nombra al global: c2vala no crea un
+  local que lo ensombrezca (el caso `extern_local`), porque en C ese `extern` es
+  una redeclaración y en Vala un local nuevo valdría 0;
+* `p = fila_de_array_2D + n` conserva el **alias**: se emite `T[] p = fila;` más
+  `int _off_p = n;`, así que escribir por `p` toca el array (el caso
+  `ptr_into_row`, que necesita planc porque los arrays *jagged* no existen en
+  valac). Copiar la fila, que es lo que hacía antes, rompe cualquier pintado.
+* si el inicializador no se puede traducir, el array exterior queda con el
+  tamaño declarado (escalares a cero) en vez de nulo, que es lo que C haría.
 
 ---
 

@@ -1665,6 +1665,9 @@ namespace Planet.Kernel {
                     return fail (E_INVAL);
                 ok ();
                 return k72;
+            case 73: // SYS_MEM_FREE() -> free 4 KiB frames left in the user pool
+                ok ();
+                return Pmm.free_frames ();
             default:
                 return -1;
         }
