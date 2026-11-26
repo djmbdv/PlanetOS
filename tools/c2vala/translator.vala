@@ -700,6 +700,45 @@ namespace C2Vala {
             return false;
         }
 
+        // Structural test for `(byte *)view + n` (see byte_view_base): such a
+        // value is carried as a (buffer, offset) pair, so the destination
+        // pointer must track an offset instead of holding a copied slice.
+        private bool is_byte_view_offset_expr (CExpr e, GenericArray<LocalInfo> locals) throws RefuseError {
+            var ce = e;
+            while (ce is ExprBinary) {
+                var b = (ExprBinary) ce;
+                if (b.op != "+" && b.op != "-")
+                    return false;
+                var rt = infer_type (b.right);
+                if (rt != null && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY))
+                    return false;
+                ce = b.left;
+            }
+            if (ce is ExprCast) {
+                var c = (ExprCast) ce;
+                var ct = c.target_type;
+                if (ct.kind != CTypeKind.PTR || ct.inner == null)
+                    return false;
+                var ci = (CType) ct.inner;
+                if (!(ci.is_scalar ("char") || ci.is_scalar ("void") || ci.is_scalar ("uchar")
+                      || ci.is_scalar ("uint8") || ci.is_scalar ("int8")))
+                    return false;
+                ce = c.expr;
+            }
+            if (!(ce is ExprIdent))
+                return false;
+            var li = find_local (locals, ((ExprIdent) ce).name);
+            if (li == null || li.ctype.kind != CTypeKind.PTR || li.ctype.inner == null)
+                return false;
+            var inn = (CType) li.ctype.inner;
+            if (inn.kind != CTypeKind.STRUCT && inn.kind != CTypeKind.UNION)
+                return false;
+            if (byte_cast_struct_map.get_index (inn.name) < 0)
+                return false;
+            var sd = find_struct (inn.name);
+            return sd != null && sd.fields.length > 0;
+        }
+
         private bool scan_stmt_for_arrays (CStmt s, GenericArray<LocalInfo> locals, FuncSig cur_sig) throws RefuseError {
             bool changed = false;
             if (s is StmtBlock) {
@@ -726,6 +765,13 @@ namespace C2Vala {
                         var ib0 = (ExprBinary) d.init;
                         if ((ib0.op == "+" || ib0.op == "-") && ib0.left is ExprIndex
                             && is_row_of_2d (((ExprIndex) ib0.left).array)) {
+                            var li = find_local (locals, d.name);
+                            if (li != null) {
+                                if (!li.is_array) { li.is_array = true; changed = true; }
+                                if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
+                            }
+                        }
+                        if ((ib0.op == "+" || ib0.op == "-") && is_byte_view_offset_expr (ib0, locals)) {
                             var li = find_local (locals, d.name);
                             if (li != null) {
                                 if (!li.is_array) { li.is_array = true; changed = true; }
@@ -857,6 +903,12 @@ namespace C2Vala {
                             var ar = (ExprBinary) a.rvalue;
                             if ((ar.op == "+" || ar.op == "-") && ar.left is ExprIndex
                                 && is_row_of_2d (((ExprIndex) ar.left).array)) {
+                                if (!li.is_array) { li.is_array = true; changed = true; }
+                                if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
+                            }
+                            // `p = (byte *)view + n` carries the view's buffer
+                            // plus an offset; a slice would copy the lump.
+                            if ((ar.op == "+" || ar.op == "-") && is_byte_view_offset_expr (ar, locals)) {
                                 if (!li.is_array) { li.is_array = true; changed = true; }
                                 if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
                             }
@@ -1079,6 +1131,14 @@ namespace C2Vala {
 
         public string translate (bool report_mode, string ns_name = "") throws RefuseError {
             resolve_enums ();
+            // The array fixpoint needs the byte-view map: `(byte *)view + n`
+            // is carried as a buffer plus an offset, and that is only valid for
+            // structs that got a byte view.
+            for (int fi_b = 0; fi_b < tu.funcs.length; fi_b++) {
+                var bfn = tu.funcs[fi_b];
+                if (bfn.body != null)
+                    scan_stmt_byte_casts ((CStmt) bfn.body);
+            }
             build_sigs_and_fixpoint ();
 
             for (int fi_s = 0; fi_s < tu.funcs.length; fi_s++) {
@@ -3908,6 +3968,63 @@ namespace C2Vala {
             return inn.kind == CTypeKind.PTR || inn.kind == CTypeKind.ARRAY;
         }
 
+        // Splits an additive chain over a byte view of a struct pointer
+        // (`(byte *)column + column->length + 4`) into the view's underlying
+        // buffer and the summed offset. The buffer can then be aliased instead
+        // of copying a slice of it, which is what made per-post reads of a
+        // patch quadratic in the lump size.
+        private bool byte_view_base (CExpr e, out string buf_s, out string off_s) throws RefuseError {
+            buf_s = "";
+            off_s = "";
+            var terms = new GenericArray<string> ();
+            CExpr cur = e;
+            while (cur is ExprBinary) {
+                var b = (ExprBinary) cur;
+                if (b.op != "+" && b.op != "-")
+                    break;
+                var rt = infer_type (b.right);
+                if (rt == null || rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY)
+                    break;
+                string t_s = @"(int) ($(emit_expr (b.right)))";
+                terms.add ((b.op == "+") ? t_s : @"(-($t_s))");
+                cur = b.left;
+            }
+            if (cur is ExprCast) {
+                var ce = (ExprCast) cur;
+                var ct = ce.target_type;
+                if (ct.kind != CTypeKind.PTR || ct.inner == null)
+                    return false;
+                var ci = (CType) ct.inner;
+                if (!(ci.is_scalar ("char") || ci.is_scalar ("void") || ci.is_scalar ("uchar")
+                      || ci.is_scalar ("uint8") || ci.is_scalar ("int8")))
+                    return false;
+                cur = ce.expr;
+            }
+            if (!(cur is ExprIdent))
+                return false;
+            string vn = ((ExprIdent) cur).name;
+            var vli = find_local (cur_locals, vn);
+            if (vli == null || vli.ctype.kind != CTypeKind.PTR || vli.ctype.inner == null)
+                return false;
+            var vinner = (CType) vli.ctype.inner;
+            if (vinner.kind != CTypeKind.STRUCT && vinner.kind != CTypeKind.UNION)
+                return false;
+            var bsd = find_struct (vinner.name);
+            if (bsd == null || bsd.fields.length == 0)
+                return false;
+            if (byte_cast_struct_map.get_index (vinner.name) < 0)
+                return false;
+            if (ptr_view (cur, vli.ctype) != 1)
+                return false;
+            buf_s = @"((!) $(esc_ident (vn))._c2v_data)";
+            var osb = new StrBuilder ();
+            osb.append (@"$(esc_ident (vn))._off");
+            for (int ti = terms.length - 1; ti >= 0; ti--)
+                osb.append (@" + $(terms[ti])");
+            off_s = osb.str;
+            return true;
+        }
+
         // Statement form of `p = ...` when `p` tracks a pointer offset: Vala
         // cannot express the offset bookkeeping as a ternary in statement
         // position, so the assignment and the offset update are two statements.
@@ -3978,6 +4095,17 @@ namespace C2Vala {
                         return;
                     }
                 }
+            }
+            // `source = (byte *)column + 3`: alias the byte view's buffer and
+            // keep the offset in `_off_source`.
+            string bv_buf;
+            string bv_off;
+            if (byte_view_base (rv, out bv_buf, out bv_off)) {
+                indent (sb, level);
+                sb.append (@"$lname = $bv_buf;\n");
+                indent (sb, level);
+                sb.append (@"_off_$(pli.name) = $bv_off;\n");
+                return;
             }
             indent (sb, level);
             sb.append (@"$lname = $(coerce_assign (a.lvalue, rv));\n");
@@ -5553,6 +5681,12 @@ namespace C2Vala {
                             && byte_cast_struct_map.get_index (inner_ct.name) >= 0) {
                             var bsd = find_struct (inner_ct.name);
                             if (bsd != null && bsd.fields.length > 0) {
+                                // Rebase a byte view instead of slicing the
+                                // buffer: `(post_t *)((byte *)column + n)`.
+                                string bv_buf;
+                                string bv_off;
+                                if (byte_view_base (c.expr, out bv_buf, out bv_off))
+                                    return @"new $(esc_ident (bsd.name)).at ($bv_buf, $bv_off)";
                                 if (c.expr is ExprBinary) {
                                     var cb = (ExprBinary) c.expr;
                                     if (cb.op == "+" || cb.op == "-") {

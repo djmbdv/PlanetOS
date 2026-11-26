@@ -203,6 +203,7 @@ planc <fuentes.vala>… -o <salida> [flags]
 | `--no-bounds-check`, `--no-null-check` | desactivan las comprobaciones (solo para benchmarks/tests del compilador) |
 | `--check-leaks`, `--check-overflow` | instrumentación de fugas y de desbordamiento aritmético |
 | `--debug-memory` | UAF: sin reciclado, relleno `0xDD`, `__planc_check_ref` |
+| `--trace-alloc[=N]` | escribe `planc: alloc 0x<16 hex>` en stderr por cada reserva de N bytes o más (por defecto 1): localiza fugas y *churn* por tamaños |
 | `--strict-ownership` | reglas de préstamos de la sección 6 |
 | `--strict-null`, `--strict-unused`, `--no-warn-unused` | rigor de nulos y de variables sin usar |
 | `--strict-visibility`, `--enforce-visibility` | aplican `private`/`internal`/`protected` |
@@ -231,7 +232,7 @@ planc <fuentes.vala>… -o <salida> [flags]
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **293 casos, 292 pasan**. El único fallo es
+Estado actual: **294 casos, 293 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
@@ -267,6 +268,14 @@ Reglas del traductor que importan al portar C:
   `int _off_p = n;`, así que escribir por `p` toca el array (el caso
   `ptr_into_row`, que necesita planc porque los arrays *jagged* no existen en
   valac). Copiar la fila, que es lo que hacía antes, rompe cualquier pintado.
+* `p = (byte *)vista + n`, donde `vista` es un puntero a un struct con *byte
+  view* (el `T.at (buf, off)` que c2vala genera para los casts de bytes), se
+  emite como **par** `(buf, off)`: `p = ((!) vista._c2v_data);` más
+  `int _off_p = vista._off + n;`. Copiar la cola del búfer (lo que hacía antes)
+  convertía cada post de un patch en una copia de todo el lump, es decir coste
+  cuadrático. Lo mismo al re-basar la vista
+  (`vista = (post_t *)((byte *)vista + vista->length + 4)` ahora es
+  `new post_t.at (buf, vista._off + length + 4)`); es el caso `byte_view_alias`.
 * si el inicializador no se puede traducir, el array exterior queda con el
   tamaño declarado (escalares a cero) en vez de nulo, que es lo que C haría.
 

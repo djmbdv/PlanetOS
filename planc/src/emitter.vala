@@ -1869,6 +1869,95 @@ namespace Planc {
             symbols.add (new Symbol ("__planc_weak_clear", s_clr, here () - s_clr));
         }
 
+        // `--trace-alloc[=N]`: before the allocator dispatches, report every
+        // request of at least N bytes (0 = all) on stderr as
+        // "planc: alloc 0x<16 hex digits>". A diagnostic for finding where a
+        // program's memory goes; code size grows by the unrolled hex loop only
+        // when the flag is on.
+        public int64 trace_alloc_min = -1;
+
+        // __planc_trace_alloc: rdi = bytes. Clobbers rax, rcx, rdx.
+        public void emit_rt_trace_alloc (int prefix_off, int prefix_len, bool freestanding = false,
+                                         bool target_planetos = false) {
+            // Layout on the stack: 16 hex digits at [rbp-32 .. rbp-17], '\n' at
+            // [rbp-16].
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            sub_rsp (48);
+            push_reg (Reg.RBX);
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xFB); // mov rbx, rdi
+            for (int i = 0; i < 16; i++) {
+                int shift = (15 - i) * 4;
+                // mov rax, rbx
+                code.u8 (0x48); code.u8 (0x89); code.u8 (0xD8);
+                // mov ecx, shift; shr rax, cl
+                code.u8 (0xB9); code.u32le ((uint32) shift);
+                code.u8 (0x48); code.u8 (0xD3); code.u8 (0xE8);
+                // and eax, 0xF
+                code.u8 (0x83); code.u8 (0xE0); code.u8 (0x0F);
+                // cmp eax, 9; jbe +7 (skip the +39)
+                code.u8 (0x83); code.u8 (0xF8); code.u8 (0x09);
+                code.u8 (0x76); code.u8 (0x03);
+                // add eax, 39            (0..9 -> 48, 10..15 -> 87 = 'a'-10)
+                code.u8 (0x83); code.u8 (0xC0); code.u8 (0x27);
+                // add eax, 48
+                code.u8 (0x83); code.u8 (0xC0); code.u8 (0x30);
+                // mov [rbp + disp8], al
+                code.u8 (0x88); code.u8 (0x45); code.u8 ((uint8) ((int8) (-32 + i)));
+            }
+            // mov byte ptr [rbp - 16], '\n'
+            code.u8 (0xC6); code.u8 (0x45); code.u8 (0xF0); code.u8 (0x0A);
+            pop_reg (Reg.RBX);
+            // Keep rbp valid for the two writes below.
+
+            // Prefix: rodata string, buf = [rip + off + 16], len = prefix_len.
+            if (target_windows) {
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x35);
+                record_rip (prefix_off + 16, PatchSpace.RODATA);
+                code.u8 (0xBA); code.u32le ((uint32) prefix_len); // mov edx, len
+                emit_win32_write_buf (2);
+                // lea rsi, [rbp - 32]; mov edx, 17
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x75); code.u8 (0xE0);
+                code.u8 (0xBA); code.u32le (17);
+                emit_win32_write_buf (2);
+            } else if (target_planetos) {
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x3D);
+                record_rip (prefix_off + 16, PatchSpace.RODATA);
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC6); code.u32le ((uint32) prefix_len); // mov rsi, len
+                mov_eax (1);
+                int80 ();
+                // lea rdi, [rbp - 32]; mov rsi, 17
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7D); code.u8 (0xE0);
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC6); code.u32le (17);
+                mov_eax (1);
+                int80 ();
+            } else if (freestanding) {
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x3D);
+                record_rip (prefix_off + 16, PatchSpace.RODATA);
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC6); code.u32le ((uint32) prefix_len);
+                call_rel32 ("__planet_console_write");
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x7D); code.u8 (0xE0);
+                code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC6); code.u32le (17);
+                call_rel32 ("__planet_console_write");
+            } else {
+                // write(2, prefix, len)
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x35);
+                record_rip (prefix_off + 16, PatchSpace.RODATA);
+                code.u8 (0xBA); code.u32le ((uint32) prefix_len);
+                mov_eax (1);
+                mov_edi (2);
+                syscall ();
+                // write(2, buf, 17)
+                code.u8 (0x48); code.u8 (0x8D); code.u8 (0x75); code.u8 (0xE0);
+                code.u8 (0xBA); code.u32le (17);
+                mov_eax (1);
+                mov_edi (2);
+                syscall ();
+            }
+            leave ();
+            ret ();
+        }
+
         public void emit_rt_alloc (int bss_base, Label mem_panic_lbl, int free_heap_bss_off = -1, bool target_planetos = false, Label? oom_panic_lbl = null) {
             Label oom_lbl = (oom_panic_lbl != null) ? oom_panic_lbl : mem_panic_lbl;
             var l_class_loop = new_label ();
@@ -1891,6 +1980,15 @@ namespace Planc {
             // mov r12, rdi; mov r13, rsi
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xF5);
+            if (trace_alloc_min >= 0) {
+                var l_skip_trace = new_label ();
+                // cmp r12, min ; jb skip
+                code.u8 (0x49); code.u8 (0x81); code.u8 (0xFC); code.u32le ((uint32) trace_alloc_min);
+                branch (BranchKind.JB, l_skip_trace);
+                code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE7); // mov rdi, r12
+                call_rel32 ("__planc_trace_alloc");
+                bind (l_skip_trace);
+            }
             // lea rbx, [rip + bss_base]       48 8D 1D + disp32
             code.u8 (0x48); code.u8 (0x8D); code.u8 (0x1D);
             record_rip (bss_base, PatchSpace.BSS);

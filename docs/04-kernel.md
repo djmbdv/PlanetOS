@@ -157,7 +157,7 @@ It prints: reason, CPU, thread, `rip`, `rsp`, `cr2` if it is a *page fault*, fra
 ## 4. Memory
 
 ```
-Pmm   buddy over the Limine map
+Pmm   buddy over the Limine map (4 KiB frames, Fibonacci buddy)
       ├── zone <4 GiB (DMA, tables)
       └── high zone
 Vmm   4-level tables
@@ -332,4 +332,5 @@ Permanent instrumentation in the kernel:
 - **Blocking, errno and readiness** ([kernel/sched.vala](../kernel/sched.vala), [kernel/syscall.vala](../kernel/syscall.vala), [kernel/klog.vala](../kernel/klog.vala)): `TASK_BLOCKED` plus per-task errno and futex bookkeeping (kept in scheduler arrays, since the 128-byte TCB is full). `sched_tick` resumes blocked tasks whose deadline expired and `SYS_WAKE_ADDR` resumes the ones parked on a matching address; `SYS_WAIT_ADDR` uses both, `SYS_POLL`/`SYS_SLEEP_MS` wait on the tick. `Klog` gained the `user` category (7) and `write_bytes`, so `SYS_KLOG_WRITE` copies the record straight from user memory.
 - **User stack is 1 MiB** ([kernel/elf_loader.vala](../kernel/elf_loader.vala)): `USER_STACK_PAGES = 257` (1 bottom guard + 256 usable) replaces the old 16 usable pages. `planc.elf` is expected to build programs on-target, and compiling the concatenated SDK prelude (~120 KB) recursed deep enough in `Codegen.expr_type_full` to fault in the guard page at `cr2 = stack_base + 4096`.
 - **Transitional mapping**: `SYS_MAP_USER_AT` (50) and `SYS_MAP_USER_RO_AT` (53) take a physical address and check only a range. [08](08-io-data-path.md) replaces both with `SYS_GRANT` over a handle, so a `.dlib` or a shared surface is backed by owned frames instead of an address the caller guessed.
+- **VM memory is 1 GiB** ([kernel/pmm.vala](../kernel/pmm.vala), [kernel/layout.vala](../kernel/layout.vala), `run-qemu.ps1`/`run-qemu.sh` `-m 1024M`): the buddy covers `MAX_BYTES = 0x40000000` with `MAX_ORDER = 29`, so the per-frame metadata window grows to `PMM_BITMAP_SIZE = 0x80200` bytes and `USER_LIMIT` moves to `0x40000000`; the identity map already covered 1 GiB (512 x 2 MiB pages). It was raised because the DOOM port needed more than the 256 MiB that used to be configured.
 - **XFS bounce frame** ([kernel/xfs.vala](../kernel/xfs.vala)): `read_file`/`write_file` used a per-call `Pmm.alloc_frame ()` for the ATA transfer. A user CR3 maps only the supervisor window, so once the allocator returned a frame above it, `rep insw`/`outsw` faulted (`Page Fault [kernel/write/unmapped]`, `rip` in `ata_read_words`). The bounce frame is now allocated once with `xfs_sec_buf` and reused, which also removes one frame alloc/free per read.

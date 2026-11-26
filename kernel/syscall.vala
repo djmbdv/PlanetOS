@@ -45,7 +45,7 @@ namespace Planet.Kernel {
     private const int R_SEEK  = 4;
     private const int R_POLL  = 8;
     private const int R_CLOSE = 16;
-    private const int USER_LIMIT = 0x10000000; // 256 MiB, the PMM cap
+    private const int USER_LIMIT = 0x40000000; // 1 GiB, the PMM cap and identity map
     private const int MAX_PATH = 512;
     private const int MAX_XFER = 1048576;
 

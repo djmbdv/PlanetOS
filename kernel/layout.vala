@@ -99,8 +99,8 @@ namespace Planet.Kernel {
         // CR3; a Pmm frame would not be mapped there.
         public const int IO_SCRATCH = 0x10A000;
         public const int IO_SCRATCH_SIZE = 0x4000; // 16 KiB
-        public const int PMM_BITMAP = 0x130000;    // 256 MiB / 4 KiB frames: Fibonacci buddy meta + tables
-        public const int PMM_BITMAP_SIZE = 0x21000;
+        public const int PMM_BITMAP = 0x130000;    // 1 GiB / 4 KiB frames: Fibonacci buddy meta + tables
+        public const int PMM_BITMAP_SIZE = 0x80200;
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
         public const int RAMFS_TABLE_SIZE = 0x2000;
         public const int SCHED_CUR = 0x123FF0;     // current tid

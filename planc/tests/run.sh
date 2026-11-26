@@ -980,11 +980,11 @@ PYEOF
     if ! "$PLANC" --freestanding "$ROOT/planetrt/boot_mb2.vala" "$ROOT/planetrt/serial.vala" "$ROOT/kernel/layout.vala" "$ROOT/kernel/klog.vala" "$ROOT/kernel/cpu.vala" "$ROOT/kernel/vga.vala" "$ROOT/kernel/fb.vala" "$ROOT/kernel/pmm.vala" "$ROOT/kernel/vmm.vala" "$ROOT/kernel/console_font.vala" "$ROOT/kernel/virtio_gpu.vala" "$ROOT/kernel/virtio_blk.vala" "$ROOT/kernel/virtio_net.vala" "$ROOT/kernel/env.vala" "$ROOT/kernel/ramfs.vala" "$ROOT/kernel/keyboard.vala" "$ROOT/kernel/rtc.vala" "$ROOT/kernel/mouse.vala" "$ROOT/kernel/ata.vala" "$ROOT/kernel/xfs.vala" "$ROOT/kernel/vfs.vala" "$ROOT/kernel/syscall.vala" "$ROOT/kernel/elf_loader.vala" "$ROOT/kernel/sched.vala" "$ROOT/kernel/main.vala" -o "$k_bin" 2>"$WORK/k.err"; then
         ko "freestanding_qemu" "compile failed: $(cat "$WORK/k.err")"
     else
-        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ñ €\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec cairo_demo.elf --once\nexec spv_demo.elf --once\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
+        printf '\nhelp\nls\ncat hello.txt\nwrite nota.txt hola ?? ???\ncat nota.txt\nFOO=planet; echo "var=$FOO" > r.txt; cat < r.txt\ntrue && echo ok-and\nfalse || echo ok-or\nls | cat\nexec wc.elf hello.txt\nexec cairo_demo.elf --once\nexec spv_demo.elf --once\nexec worker.elf &\nps\nexec init.elf\nwait 1\nticks\nexit\n' | timeout 6 qemu-system-x86_64 -kernel "$k_bin" -drive file="$k_disk",format=raw,if=ide -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 >"$k_ser" 2>/dev/null
         qcode=$?
         if [ "$qcode" != "1" ]; then
             ko "freestanding_qemu" "qemu exit $qcode, expected 1"
-        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.2" "$k_ser" || ! grep -q "PlanetOS dash" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ñ €" "$k_ser" || ! grep -q "var=planet" "$k_ser" || ! grep -q "ok-and" "$k_ser" || ! grep -q "ok-or" "$k_ser" || ! grep -q "hello.txt: lines=1 words=4 bytes=30 chars=30 \[has PlanetOS\]" "$k_ser" || ! grep -q "cairo_demo: done" "$k_ser" || ! grep -q "spv_demo: frag.spv" "$k_ser" || ! grep -q "rgb=(56,188,247)" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 'ñandú' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
+        elif ! grep -q "PlanetOS v0.1 booted in x86-64 Long Mode" "$k_ser" || ! grep -q "PlanetOS Shell v0.2" "$k_ser" || ! grep -q "PlanetOS dash" "$k_ser" || ! grep -q "shell.elf" "$k_ser" || ! grep -q "hola ?? ???" "$k_ser" || ! grep -q "var=planet" "$k_ser" || ! grep -q "ok-and" "$k_ser" || ! grep -q "ok-or" "$k_ser" || ! grep -q "hello.txt: lines=1 words=4 bytes=30 chars=30 \[has PlanetOS\]" "$k_ser" || ! grep -q "cairo_demo: done" "$k_ser" || ! grep -q "spv_demo: frag.spv" "$k_ser" || ! grep -q "rgb=(56,188,247)" "$k_ser" || ! grep -q "spawn: tid=1" "$k_ser" || ! grep -q "worker: completed after" "$k_ser" || ! grep -q "wait: tid=1 exit=7" "$k_ser" || ! grep -q "user/init.elf: hello from --target=planetos!" "$k_ser" || ! grep -q "user/init.elf: Counter.next() = 42" "$k_ser" || ! grep -q "user/init.elf: utf8 '??and??' chars=5 valid=1" "$k_ser" || ! grep -q "exec: exit=0" "$k_ser" || ! grep -q "ticks: " "$k_ser"; then
             ko "freestanding_qemu" "unexpected serial: $(cat "$k_ser")"
         else
             ok "freestanding_qemu"
@@ -1099,6 +1099,18 @@ PYEOF
     else
         ok "spirv_shader"
     fi
+fi
+
+echo
+echo "== --trace-alloc =="
+if ! "$PLANC" $TARGET_FLAGS --trace-alloc=1024 "$HERE/trace_alloc.vala" -o "$WORK/trace_alloc_bin${BIN_EXT}" 2>"$WORK/trace_alloc.err"; then
+    ko "trace_alloc" "compile failed: $(cat "$WORK/trace_alloc.err")"
+elif ! run_bin "$WORK/trace_alloc_bin${BIN_EXT}" >"$WORK/trace_alloc.stdout" 2>&1; then
+    ko "trace_alloc" "non-zero exit"
+elif ! files_equal "$WORK/trace_alloc.stdout" "$HERE/trace_alloc.out"; then
+    ko "trace_alloc" "stdout differs from trace_alloc.out"
+else
+    ok "trace_alloc"
 fi
 
 echo

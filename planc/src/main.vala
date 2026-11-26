@@ -22,7 +22,7 @@ namespace Planc {
         }
     }
 
-    private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--target=planetos|windows|spirv] [--freestanding] [--nostdlib] [--image-base=ADDR] [--format=elf|plan|dlib] [--import-lib=NAME] [--import-dlib=PATH] [--library-dir=DIR] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--debug-memory] [--strict-ownership] [--strict-visibility] [--enforce-visibility] [--allow-asm-anywhere] [--error-limit N] [--no-error-recovery]";
+    private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--target=planetos|windows|spirv] [--freestanding] [--nostdlib] [--image-base=ADDR] [--format=elf|plan|dlib] [--import-lib=NAME] [--import-dlib=PATH] [--library-dir=DIR] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--debug-memory] [--trace-alloc[=N]] [--strict-ownership] [--strict-visibility] [--enforce-visibility] [--allow-asm-anywhere] [--error-limit N] [--no-error-recovery]";
 
     private static int parse_uint (string s) {
         int v = 0;
@@ -122,6 +122,7 @@ namespace Planc {
         var opt_level = 0;
         var check_leaks = false;
         var check_overflow = false;
+        var trace_alloc = -1; // --trace-alloc[=N]: report allocations of N bytes or more
         var freestanding = false;
         var error_recovery = true;
         var error_limit = 200;
@@ -202,6 +203,10 @@ namespace Planc {
                 error_recovery = false;
             } else if (a == "--check-leaks") {
                 check_leaks = true;
+            } else if (a == "--trace-alloc") {
+                trace_alloc = 0;
+            } else if (a.has_prefix ("--trace-alloc=")) {
+                trace_alloc = parse_uint (a.substring (14));
             } else if (a == "--freestanding") {
                 freestanding = true;
             } else if (a == "--nostdlib") {
@@ -579,6 +584,7 @@ namespace Planc {
         codegen.check_overflow = check_overflow;
         codegen.allow_asm = allow_asm;
         codegen.check_leaks = check_leaks;
+        codegen.trace_alloc = trace_alloc;
         codegen.freestanding = freestanding;
         codegen.target_planetos = target_planetos;
         codegen.target_windows = target_windows;

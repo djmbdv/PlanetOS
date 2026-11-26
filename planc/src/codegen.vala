@@ -180,6 +180,8 @@ namespace Planc {
         public int opt_level { get; set; default = 0; }
         public bool check_leaks { get; set; default = false; }
         public bool check_overflow { get; set; default = false; }
+        // --trace-alloc[=N]: report allocations of N bytes or more (-1 = off).
+        public int trace_alloc { get; set; default = -1; }
         public string current_file { get; private set; default = ""; }
         public bool freestanding { get; set; default = false; }
         public bool target_planetos { get; set; default = false; }
@@ -2512,6 +2514,13 @@ namespace Planc {
             }
             if (need_alloc || need_ref || need_unref) {
                 need_oom_panic = true;
+                if (trace_alloc >= 0) {
+                    emitter.trace_alloc_min = trace_alloc;
+                    var start_trace = emitter.here ();
+                    var trace_prefix = emitter.add_string ("planc: alloc 0x");
+                    emitter.emit_rt_trace_alloc (trace_prefix, 15, freestanding, target_planetos);
+                    symbols.add (new Symbol ("__planc_trace_alloc", start_trace, emitter.here () - start_trace));
+                }
                 var start_alloc = emitter.here ();
                 emitter.emit_rt_alloc (alloc_bss_offset, mem_panic_label, freestanding_heap_off, target_planetos, oom_panic_label);
                 symbols.add (new Symbol ("__planc_alloc", start_alloc, emitter.here () - start_alloc));
