@@ -1,0 +1,30 @@
+# C files c2vala does not translate for this port.
+#
+# The other platform backends (allegro/sdl/xlib/win/...) are replaced by
+# doom_platform.vala, and the sound, music, joystick, CD, wipe and zone
+# sources are stubs or need features the port does not use: the zone is the
+# planc allocator, wipes are disabled and the build defines PLANETOS_NOSOUND.
+
+doomgeneric_allegro.c
+doomgeneric_emscripten.c
+doomgeneric_linuxvt.c
+doomgeneric_sdl.c
+doomgeneric_soso.c
+doomgeneric_sosox.c
+doomgeneric_win.c
+doomgeneric_xlib.c
+i_allegromusic.c
+i_allegrosound.c
+i_cdmus.c
+i_joystick.c
+i_scale.c
+i_sdlmusic.c
+i_sdlsound.c
+i_sound.c
+s_sound.c
+gusconf.c
+mus2mid.c
+dummy.c
+icon.c
+z_zone.c
+f_wipe.c

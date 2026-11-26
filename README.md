@@ -170,7 +170,13 @@ problems** and **creates six**:
 | — | **Recent enhancements**: x86-64-v3 SIMD (`AVX2`/`FMA3`/`SSE4.1`) in `mathlib.dlib`, `Cairo`, `Fb`, and `Gsk.Path`; modular `stdlib/gdk/` and `stdlib/gsk/`; PS/2 IntelliMouse scroll wheel (`kernel/mouse.vala` → `Gdk.EventType.SCROLL` → `Gtk`/`Compositor`); draggable `ScrolledWindow`, `Switch`, `Scale`, and `Frame` widgets; dedicated `vte_sh.elf` (`0xB00000`) for compositor VTE; native editors `pluto.elf` (nano-style TUI) and `saturn.elf` (Geany-style GTK IDE) |
 | — | **Stdlib & Compiler hardening**: generic delegates (`CompareDataFunc<G>`, `MapFunc<R, G>`, etc.) and transitive generic inheritance/monomorphization with anti-DoS cap (`MAX_GENERIC_INSTANTIATIONS`) in `planc`; modular `stdlib/glib/` (`Math`, `Process`, memoized ReDoS-safe `Regex`), `stdlib/gee/` (`gee-0.8` `Iterator`/`Iterable`/`Collection`/`List`/`Set`/`Queue`/`Deque`, Robin Hood hashing + backward-shift deletion, Introsort), and `stdlib/gio/` (`OutputStream.write_string`, bitmask flags, `File.replace` backup, `ListStore.splice`); safe `GLib.Process` argument quoting/splitting integrated into `saturn.elf`, `pcm4.elf`, and `Gio.AppInfo` |
 
-## 5. State of the measurements
+## 5. Ports
+
+| Port | What it shows |
+| --- | --- |
+| [ports/doom](ports/doom/README.md) | `doomgeneric` translated with `c2vala` and built with `planc`: WAD from XFS, software renderer, virtio-gpu present. `ports/doom/build.ps1` then `run-qemu.ps1 -Add/-Run` |
+
+## 6. State of the measurements
 
 The specification distinguishes **decisions** (we make them) from
 **assumptions** (they must be measured). Seven assumptions are already answered
@@ -365,7 +371,7 @@ workers via `--jobs`/`-j`, auto-detecting KVM on Linux with `--accel auto`,
 and using `--delay 0.005` between typed characters), and reports the serial log
 when a case fails.
 
-## 6. Changes from the previous revision
+## 7. Changes from the previous revision
 
 | Before | Now |
 |---|---|
@@ -378,7 +384,7 @@ when a case fails.
 
 ---
 
-## 7. Next Milestones & Ambitious Roadmap
+## 8. Next Milestones & Ambitious Roadmap
 
 | Track | Next Milestones | Target Outcome |
 |---|---|---|
