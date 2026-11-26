@@ -80,34 +80,48 @@ private int __c2v_arr_addr (uint8[] a) {
 }
 
 public void c_memcpy (uint8[] dst, uint8[] src, size_t n) {
-    int limit = (int) n;
-    if (limit <= 0) return;
-    if (limit > dst.length) limit = dst.length;
-    if (limit > src.length) limit = src.length;
-    if (limit <= 0) return;
-#if PLANC
-    GLib.Memory.copy (__c2v_arr_addr (dst), __c2v_arr_addr (src), (size_t) limit);
-#else
-    for (int i = 0; i < limit; i++)
-        dst[i] = src[i];
-#endif
+    c_memcpy_off (dst, 0, src, 0, n);
 }
 
 public void c_memmove (uint8[] dst, uint8[] src, size_t n) {
+    c_memmove_off (dst, 0, src, 0, n);
+}
+
+// Offset forms: copying from `buf + off` must not slice the buffer, which
+// would copy its whole tail before the memcpy even starts.
+public void c_memcpy_off (uint8[] dst, int doff, uint8[] src, int soff, size_t n) {
     int limit = (int) n;
+    if (doff < 0) { limit += doff; doff = 0; }
+    if (soff < 0) { limit += soff; soff = 0; }
     if (limit <= 0) return;
-    if (limit > dst.length) limit = dst.length;
-    if (limit > src.length) limit = src.length;
+    if (doff + limit > dst.length) limit = dst.length - doff;
+    if (soff + limit > src.length) limit = src.length - soff;
     if (limit <= 0) return;
 #if PLANC
-    GLib.Memory.move (__c2v_arr_addr (dst), __c2v_arr_addr (src), (size_t) limit);
+    GLib.Memory.copy (__c2v_arr_addr (dst) + doff, __c2v_arr_addr (src) + soff, (size_t) limit);
+#else
+    for (int i = 0; i < limit; i++)
+        dst[doff + i] = src[soff + i];
+#endif
+}
+
+public void c_memmove_off (uint8[] dst, int doff, uint8[] src, int soff, size_t n) {
+    int limit = (int) n;
+    if (doff < 0) { limit += doff; doff = 0; }
+    if (soff < 0) { limit += soff; soff = 0; }
+    if (limit <= 0) return;
+    if (doff + limit > dst.length) limit = dst.length - doff;
+    if (soff + limit > src.length) limit = src.length - soff;
+    if (limit <= 0) return;
+#if PLANC
+    GLib.Memory.move (__c2v_arr_addr (dst) + doff, __c2v_arr_addr (src) + soff, (size_t) limit);
 #else
     // glib-2.0's Memory.move takes void*, so stage the source for the overlap.
     var tmp = new uint8[limit];
     for (int i = 0; i < limit; i++)
-        tmp[i] = src[i];
+        tmp[i] = src[soff + i];
     for (int i = 0; i < limit; i++)
-        dst[i] = tmp[i];
+        dst[doff + i] = tmp[i];
 #endif
 }
 

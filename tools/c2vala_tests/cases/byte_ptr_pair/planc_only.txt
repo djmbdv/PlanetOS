@@ -1,0 +1,1 @@
+Aliasing a global byte buffer from a local pointer: under valac an owned array assignment copies the buffer, so this case only runs on planc.

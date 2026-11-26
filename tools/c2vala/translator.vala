@@ -700,11 +700,11 @@ namespace C2Vala {
             return false;
         }
 
-        // Structural test for `(byte *)view + n` (see byte_view_base): such a
-        // value is carried as a (buffer, offset) pair, so the destination
-        // pointer must track an offset instead of holding a copied slice.
-        private bool is_byte_view_offset_expr (CExpr e, GenericArray<LocalInfo> locals) throws RefuseError {
+        // Structural form of ptr_pair_base: `(byte *)view + n`, `byte_array + n`
+        // and chains of them can be carried as a (buffer, offset) pair.
+        private bool is_byte_pair_expr (CExpr e, GenericArray<LocalInfo> locals) throws RefuseError {
             var ce = e;
+            bool any_term = false;
             while (ce is ExprBinary) {
                 var b = (ExprBinary) ce;
                 if (b.op != "+" && b.op != "-")
@@ -712,8 +712,11 @@ namespace C2Vala {
                 var rt = infer_type (b.right);
                 if (rt != null && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY))
                     return false;
+                any_term = true;
                 ce = b.left;
             }
+            if (!any_term)
+                return false;
             if (ce is ExprCast) {
                 var c = (ExprCast) ce;
                 var ct = c.target_type;
@@ -727,16 +730,34 @@ namespace C2Vala {
             }
             if (!(ce is ExprIdent))
                 return false;
-            var li = find_local (locals, ((ExprIdent) ce).name);
-            if (li == null || li.ctype.kind != CTypeKind.PTR || li.ctype.inner == null)
+            string an = ((ExprIdent) ce).name;
+            var li = find_local (locals, an);
+            if (li != null) {
+                if (li.ctype.kind == CTypeKind.PTR && li.ctype.inner != null) {
+                    var inn = (CType) li.ctype.inner;
+                    if (inn.kind == CTypeKind.STRUCT || inn.kind == CTypeKind.UNION) {
+                        if (byte_cast_struct_map.get_index (inn.name) < 0)
+                            return false;
+                        var sd = find_struct (inn.name);
+                        return sd != null && sd.fields.length > 0;
+                    }
+                    return inn.is_scalar ("uint8") || inn.is_scalar ("uchar")
+                        || inn.is_scalar ("char") || inn.is_scalar ("void");
+                }
+                if (li.is_array && li.ctype.kind != CTypeKind.PTR)
+                    return true;
+                if (li.ctype.kind == CTypeKind.ARRAY && li.ctype.inner != null) {
+                    var ain = (CType) li.ctype.inner;
+                    return ain.is_scalar ("uint8") || ain.is_scalar ("uchar")
+                        || ain.is_scalar ("char") || ain.is_scalar ("void");
+                }
                 return false;
-            var inn = (CType) li.ctype.inner;
-            if (inn.kind != CTypeKind.STRUCT && inn.kind != CTypeKind.UNION)
-                return false;
-            if (byte_cast_struct_map.get_index (inn.name) < 0)
-                return false;
-            var sd = find_struct (inn.name);
-            return sd != null && sd.fields.length > 0;
+            }
+            var gt = infer_type (ce);
+            return gt != null && gt.inner != null
+                && (gt.kind == CTypeKind.ARRAY || gt.kind == CTypeKind.PTR)
+                && (((CType) gt.inner).is_scalar ("uint8") || ((CType) gt.inner).is_scalar ("uchar")
+                    || ((CType) gt.inner).is_scalar ("char") || ((CType) gt.inner).is_scalar ("void"));
         }
 
         private bool scan_stmt_for_arrays (CStmt s, GenericArray<LocalInfo> locals, FuncSig cur_sig) throws RefuseError {
@@ -771,7 +792,7 @@ namespace C2Vala {
                                 if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
                             }
                         }
-                        if ((ib0.op == "+" || ib0.op == "-") && is_byte_view_offset_expr (ib0, locals)) {
+                        if ((ib0.op == "+" || ib0.op == "-") && is_byte_pair_expr (ib0, locals)) {
                             var li = find_local (locals, d.name);
                             if (li != null) {
                                 if (!li.is_array) { li.is_array = true; changed = true; }
@@ -908,7 +929,7 @@ namespace C2Vala {
                             }
                             // `p = (byte *)view + n` carries the view's buffer
                             // plus an offset; a slice would copy the lump.
-                            if ((ar.op == "+" || ar.op == "-") && is_byte_view_offset_expr (ar, locals)) {
+                            if ((ar.op == "+" || ar.op == "-") && is_byte_pair_expr (ar, locals)) {
                                 if (!li.is_array) { li.is_array = true; changed = true; }
                                 if (!li.has_ptr_arith) { li.has_ptr_arith = true; changed = true; }
                             }
@@ -2234,7 +2255,7 @@ namespace C2Vala {
             // directly, because the property above materialises every element
             // that is left in the buffer (a flexible member like patch_t's
             // columnofs would copy the whole lump on each access).
-            string wr_v = wr.replace ("value[_i]", "_v");
+            string wr_v = replace_all (wr, "value[_i]", "_v");
             sb.append (@"    public $elem $(fn)_at (int _i) {\n");
             sb.append (@"        if (_c2v_data == null) return _$fn[_i];\n");
             sb.append (@"        return $rd;\n");
@@ -4040,6 +4061,97 @@ namespace C2Vala {
             return true;
         }
 
+        // (buffer, offset) for a value that is a byte array plus additive
+        // offsets, so `p = buffer + i + j` keeps the buffer instead of copying
+        // its tail. Handles the byte views of struct pointers and plain byte
+        // arrays (locals or globals).
+        private bool ptr_pair_base (CExpr e, out string buf_s, out string off_s) throws RefuseError {
+            buf_s = "";
+            off_s = "";
+            var terms = new GenericArray<string> ();
+            CExpr cur = e;
+            while (cur is ExprBinary) {
+                var b = (ExprBinary) cur;
+                if (b.op != "+" && b.op != "-")
+                    break;
+                var rt = infer_type (b.right);
+                if (rt != null && (rt.kind == CTypeKind.PTR || rt.kind == CTypeKind.ARRAY))
+                    break;
+                string t_s = @"(int) ($(emit_expr (b.right)))";
+                terms.add ((b.op == "+") ? t_s : @"(-($t_s))");
+                cur = b.left;
+            }
+            var probe = cur;
+            if (probe is ExprCast) {
+                var ce = (ExprCast) probe;
+                var ct = ce.target_type;
+                if (ct.kind == CTypeKind.PTR && ct.inner != null) {
+                    var ci = (CType) ct.inner;
+                    if (ci.is_scalar ("char") || ci.is_scalar ("void") || ci.is_scalar ("uchar")
+                        || ci.is_scalar ("uint8") || ci.is_scalar ("int8"))
+                        probe = ce.expr;
+                }
+            }
+            if (probe is ExprIdent) {
+                string vn = ((ExprIdent) probe).name;
+                var vli = find_local (cur_locals, vn);
+                if (vli != null && vli.ctype.kind == CTypeKind.PTR && vli.ctype.inner != null) {
+                    var vinner = (CType) vli.ctype.inner;
+                    if ((vinner.kind == CTypeKind.STRUCT || vinner.kind == CTypeKind.UNION)
+                        && byte_cast_struct_map.get_index (vinner.name) >= 0
+                        && ptr_view (probe, vli.ctype) == 1) {
+                        var bsd = find_struct (vinner.name);
+                        if (bsd != null && bsd.fields.length > 0) {
+                            buf_s = @"((!) $(esc_ident (vn))._c2v_data)";
+                            var osb = new StrBuilder ();
+                            osb.append (@"$(esc_ident (vn))._off");
+                            for (int ti = terms.length - 1; ti >= 0; ti--)
+                                osb.append (@" + $(terms[ti])");
+                            off_s = osb.str;
+                            return true;
+                        }
+                    }
+                }
+            }
+            if (!(cur is ExprIdent))
+                return false;
+            string an = ((ExprIdent) cur).name;
+            var ali = find_local (cur_locals, an);
+            bool is_bytes = false;
+            if (ali != null) {
+                is_bytes = ali.is_array && ali.ctype.kind != CTypeKind.PTR;
+                if (!is_bytes && ali.ctype.inner != null
+                    && (ali.ctype.kind == CTypeKind.ARRAY || ali.ctype.kind == CTypeKind.PTR)) {
+                    var ain = (CType) ali.ctype.inner;
+                    is_bytes = ain.is_scalar ("uint8") || ain.is_scalar ("uchar")
+                        || ain.is_scalar ("char") || ain.is_scalar ("void");
+                }
+            } else {
+                var gt = infer_type (cur);
+                is_bytes = gt != null && gt.inner != null
+                    && (gt.kind == CTypeKind.ARRAY || gt.kind == CTypeKind.PTR)
+                    && (((CType) gt.inner).is_scalar ("uint8") || ((CType) gt.inner).is_scalar ("uchar")
+                        || ((CType) gt.inner).is_scalar ("char") || ((CType) gt.inner).is_scalar ("void"));
+            }
+            if (!is_bytes)
+                return false;
+            buf_s = esc_ident (an);
+            var osb2 = new StrBuilder ();
+            bool first = true;
+            if (ali != null && ali.has_ptr_arith) {
+                osb2.append (@"_off_$an");
+                first = false;
+            }
+            for (int ti = terms.length - 1; ti >= 0; ti--) {
+                if (!first)
+                    osb2.append (" + ");
+                osb2.append (terms[ti]);
+                first = false;
+            }
+            off_s = first ? "0" : osb2.str;
+            return true;
+        }
+
         // Statement form of `p = ...` when `p` tracks a pointer offset: Vala
         // cannot express the offset bookkeeping as a ternary in statement
         // position, so the assignment and the offset update are two statements.
@@ -4053,6 +4165,20 @@ namespace C2Vala {
                 indent (sb, level);
                 sb.append (@"_off_$(pli.name) = 0;\n");
                 return;
+            }
+            // A byte buffer plus offsets keeps the buffer and the offset:
+            // copying its tail would duplicate the screen (or the whole lump)
+            // on every patch, block or column.
+            if (rv is ExprBinary) {
+                string pb_buf;
+                string pb_off;
+                if (ptr_pair_base (rv, out pb_buf, out pb_off)) {
+                    indent (sb, level);
+                    sb.append (@"$lname = $pb_buf;\n");
+                    indent (sb, level);
+                    sb.append (@"_off_$(pli.name) = $pb_off;\n");
+                    return;
+                }
             }
             if (rv is ExprBinary) {
                 var rb = (ExprBinary) rv;
@@ -5603,9 +5729,28 @@ namespace C2Vala {
             return @"new $fcls (() => { return $id_s; }, (v) => { $id_s = v; })";
         }
 
+        // `string.replace` is a GLib 2.68+ API that planc does not provide.
+        private static string replace_all (string s, string from, string to) {
+            if (from == "" || s.index_of (from, 0) < 0)
+                return s;
+            var rsb = new StrBuilder ();
+            int i = 0;
+            while (true) {
+                int j = s.index_of (from, i);
+                if (j < 0) {
+                    rsb.append (s.substring (i));
+                    break;
+                }
+                rsb.append (s.substring (i, j - i));
+                rsb.append (to);
+                i = j + from.length;
+            }
+            return rsb.str;
+        }
+
         // True for an inline scalar array field of a struct, which gets the
         // single-element accessors emitted above.
-        private bool is_inline_scalar_array_field (StructDef sd, string fname) {
+        private bool is_inline_scalar_array_field (StructDef sd, string fname) throws RefuseError {
             for (int i = 0; i < sd.fields.length; i++) {
                 var f = sd.fields[i];
                 if (f.name == "" || esc_ident (f.name) != fname)
@@ -6822,6 +6967,17 @@ namespace C2Vala {
 
             if (fn == "memcpy" || fn == "memmove" || fn == "memset" || fn == "memcmp") {
                 if ((fn == "memcpy" || fn == "memmove") && c.args.length == 3) {
+                    // `memcpy (screen + ofs, back + ofs, n)`: pass the buffers
+                    // and the offsets, so neither argument slices the buffer.
+                    string bp_db = "";
+                    string bp_dof = "";
+                    string bp_sb = "";
+                    string bp_sof = "";
+                    if (ptr_pair_base (c.args[0], out bp_db, out bp_dof)
+                        && ptr_pair_base (c.args[1], out bp_sb, out bp_sof)) {
+                        string bh = (fn == "memcpy") ? "c_memcpy_off" : "c_memmove_off";
+                        return @"$bh ($bp_db, $bp_dof, $bp_sb, $bp_sof, (size_t) ($(emit_expr (c.args[2]))))";
+                    }
                     CExpr? d_base = null;
                     CExpr? d_off = null;
                     string? d_sname = null;

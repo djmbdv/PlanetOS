@@ -282,6 +282,13 @@ Reglas del traductor que importan al portar C:
   flexible `patch_t.columnofs` copiaba el lump entero en cada acceso, 136 KB
   por columna). Los `get` que construyen el array se emiten con `owned get` para que valac también los acepte; el caso es
   `inline_array_member`.
+* cualquier `p = buffer + i + j` cuyo destino ya lleva offset (un `uint8*` o
+  `char*` local, tomado de un array local o de un global como `dest_screen` o
+  `I_VideoBuffer`) se emite como par `(buffer, offset)`; copiar la cola del
+  buffer duplicaba la pantalla en cada patch. Es el caso `byte_ptr_pair`.
+* `memcpy`/`memmove` cuyos dos punteros vienen desplazados pasan a
+  `c_memcpy_off`/`c_memmove_off`: los buffers y los offsets van por separado y
+  no se corta ningun array antes de copiar.
 * si el inicializador no se puede traducir, el array exterior queda con el
   tamaño declarado (escalares a cero) en vez de nulo, que es lo que C haría.
 
