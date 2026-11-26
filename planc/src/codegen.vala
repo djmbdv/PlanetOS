@@ -21,6 +21,19 @@ namespace Planc {
         BAD_MAIN
     }
 
+    // One piece of a parsed `printf` format string: either literal text or one
+    // conversion with its flags, width, precision and argument index.
+    public sealed class PrintfPart : Object {
+        public bool is_literal { get; set; default = true; }
+        public string text { get; set; default = ""; }
+        public int arg { get; set; default = -1; }
+        public char conv { get; set; default = ' '; }
+        public int width { get; set; default = 0; }
+        public int precision { get; set; default = -1; }
+        public bool zero { get; set; default = false; }
+        public bool left { get; set; default = false; }
+    }
+
     private sealed class CgFuncResult : Object {
         public Emitter emitter;
         public GenericArray<Symbol> symbols;
@@ -51,6 +64,7 @@ namespace Planc {
         public bool need_str_strip = false;
         public bool need_int_to_str = false;
         public bool need_uint_to_str = false;
+        public bool need_str_printf_rt = false;
         public bool need_is_instance = false;
         public bool need_mem_panic = false;
         public bool need_oom_panic = false;
@@ -274,6 +288,7 @@ namespace Planc {
         private bool need_str_strip = false;
         private bool need_int_to_str = false;
         private bool need_uint_to_str = false;
+        private bool need_str_printf_rt = false;
         private bool need_is_instance = false;
         private bool need_mem_panic = false;
         private bool need_oom_panic = false;
@@ -620,6 +635,7 @@ namespace Planc {
             need_write_uint = false; need_bounds_panic = false; need_alloc = false;
             need_ref = false; need_unref = false; need_str_concat = false;
             need_str_slice = false; need_str_strip = false; need_int_to_str = false; need_uint_to_str = false;
+            need_str_printf_rt = false;
             need_is_instance = false; need_mem_panic = false; need_null_panic = false;
             need_oom_panic = false;
             need_cast_panic = false; need_leak_panic = false; need_overflow_panic = false;
@@ -665,6 +681,7 @@ namespace Planc {
             r.need_ref = need_ref; r.need_unref = need_unref;
             r.need_str_concat = need_str_concat; r.need_str_slice = need_str_slice; r.need_str_strip = need_str_strip;
             r.need_int_to_str = need_int_to_str; r.need_uint_to_str = need_uint_to_str;
+            r.need_str_printf_rt = need_str_printf_rt;
             r.need_is_instance = need_is_instance; r.need_mem_panic = need_mem_panic;
             r.need_oom_panic = need_oom_panic;
             r.need_null_panic = need_null_panic; r.need_cast_panic = need_cast_panic;
@@ -757,6 +774,7 @@ namespace Planc {
             if (r.need_str_strip) need_str_strip = true;
             if (r.need_int_to_str) need_int_to_str = true;
             if (r.need_uint_to_str) need_uint_to_str = true;
+            if (r.need_str_printf_rt) need_str_printf_rt = true;
             if (r.need_is_instance) need_is_instance = true;
             if (r.need_mem_panic) need_mem_panic = true;
             if (r.need_oom_panic) need_oom_panic = true;
@@ -2452,7 +2470,7 @@ namespace Planc {
                 need_uaf_panic = true;
             }
             if (need_str_concat || need_int_to_str || need_uint_to_str || need_double_to_str || need_str_slice
-                || need_bytes_to_str || need_read_file || need_write_file) {
+                || need_bytes_to_str || need_read_file || need_write_file || need_str_printf_rt) {
                 need_alloc = true;
                 need_mem_panic = true;
             }
@@ -2548,6 +2566,23 @@ namespace Planc {
                 var start = emitter.here ();
                 emitter.emit_rt_uint_to_str ();
                 symbols.add (new Symbol ("__planc_uint_to_str", start, emitter.here () - start));
+            }
+            if (need_str_printf_rt) {
+                var start = emitter.here ();
+                emitter.emit_rt_int_to_str_pad ();
+                symbols.add (new Symbol ("__planc_int_to_str_pad", start, emitter.here () - start));
+                var start_u = emitter.here ();
+                emitter.emit_rt_uint_to_str_pad ();
+                symbols.add (new Symbol ("__planc_uint_to_str_pad", start_u, emitter.here () - start_u));
+                var start_h = emitter.here ();
+                emitter.emit_rt_uint_to_hex ();
+                symbols.add (new Symbol ("__planc_uint_to_hex", start_h, emitter.here () - start_h));
+                var start_c = emitter.here ();
+                emitter.emit_rt_char_to_str ();
+                symbols.add (new Symbol ("__planc_char_to_str", start_c, emitter.here () - start_c));
+                var start_p = emitter.here ();
+                emitter.emit_rt_str_pad ();
+                symbols.add (new Symbol ("__planc_str_pad", start_p, emitter.here () - start_p));
             }
             if (need_is_instance) {
                 var start = emitter.here ();
@@ -5575,6 +5610,16 @@ namespace Planc {
                         need_str_to_double = true;
                     else if (bi_kind == "async_run" || bi_kind == "async_run_parallel")
                         need_async = true;
+                    else if (bi_kind == "str_printf") {
+                        // The accumulator has to survive the concatenations.
+                        need_str_concat = true;
+                        need_str_printf_rt = true;
+                        need_double_to_str = true;
+                        if (program_uses_heap) {
+                            pending_ref_exprs.add (e);
+                            ref_temps++;
+                        }
+                    }
                 } else {
             Expr? begin_recv = null;
                     var begin_fn = resolve_begin_call (mc, out begin_recv);
@@ -8793,13 +8838,7 @@ namespace Planc {
                     throw new SemanticError.WRONG_ARG_COUNT (
                         @"$(mc.method_name) expects 0 argument(s), got $(mc.args.length) at $(mc.line):$(mc.column)");
             } else if (kind == "str_printf") {
-                for (int i = 0; i < mc.args.length; i++) {
-                    string an = "";
-                    var at = expr_type_full (mc.args[i], out an);
-                    if (!is_int_like (at) && !is_fp_type (at) && at != ValaType.STRING && at != ValaType.ENUM)
-                        throw new SemanticError.TYPE_MISMATCH (
-                            @"argument $(i + 1) of 'printf' has unsupported type $(type_label (at, an)) at $(mc.args[i].line):$(mc.args[i].column)");
-                }
+                check_printf (mc);
             } else if (kind == "err_matches") {
                 if (mc.args.length != 2)
                     throw new SemanticError.WRONG_ARG_COUNT (
@@ -10364,6 +10403,261 @@ namespace Planc {
                     return true;
             }
             return false;
+        }
+
+        // ---- printf ------------------------------------------------------
+
+        // Parses a literal `printf` format. Supported conversions: %d %i %u %x
+        // %X %c %s %f %g %e %p and %%; flags '-' and '0'; a decimal width and a
+        // `.N` precision (integers only). The l/ll/h/hh/z/t/j modifiers are
+        // accepted and ignored because every planc integer is 64 bits. Anything
+        // else is refused instead of guessed.
+        private GenericArray<PrintfPart> parse_printf_format (string fmt, int line, int column)
+                throws SemanticError {
+            var parts = new GenericArray<PrintfPart> ();
+            int n = fmt.length;
+            int i = 0;
+            int lit_start = 0;
+            int argi = 0;
+            string loc = (current_file != "") ? @"$current_file:$line:$column" : @"$line:$column";
+            while (i < n) {
+                if (fmt[i] != '%') {
+                    i++;
+                    continue;
+                }
+                if (lit_start < i)
+                    parts.add (new PrintfPart () { is_literal = true, text = fmt.substring (lit_start, i - lit_start) });
+                i++;
+                if (i >= n)
+                    throw new SemanticError.TYPE_MISMATCH (@"'printf': the format ends with a lone '%' at $loc");
+                if (fmt[i] == '%') {
+                    parts.add (new PrintfPart () { is_literal = true, text = "%" });
+                    i++;
+                    lit_start = i;
+                    continue;
+                }
+                var part = new PrintfPart () { is_literal = false };
+                bool more_flags = true;
+                while (i < n && more_flags) {
+                    if (fmt[i] == '-') {
+                        part.left = true;
+                    } else if (fmt[i] == '0') {
+                        part.zero = true;
+                    } else if (fmt[i] == '+' || fmt[i] == ' ' || fmt[i] == '#') {
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': the '$(fmt[i])' flag is not supported at $loc");
+                    } else {
+                        more_flags = false;
+                    }
+                    if (more_flags)
+                        i++;
+                }
+                while (i < n && fmt[i] >= '0' && fmt[i] <= '9') {
+                    part.width = part.width * 10 + (fmt[i] - '0');
+                    i++;
+                }
+                if (part.width > 64)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'printf': width $(part.width) is too large (64 at most) at $loc");
+                if (i < n && fmt[i] == '.') {
+                    i++;
+                    if (i >= n || fmt[i] < '0' || fmt[i] > '9')
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': the precision after '.' needs a number at $loc");
+                    part.precision = 0;
+                    while (i < n && fmt[i] >= '0' && fmt[i] <= '9') {
+                        part.precision = part.precision * 10 + (fmt[i] - '0');
+                        i++;
+                    }
+                    if (part.precision > 64)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': precision $(part.precision) is too large (64 at most) at $loc");
+                }
+                while (i < n && (fmt[i] == 'l' || fmt[i] == 'h' || fmt[i] == 'z'
+                                 || fmt[i] == 'L' || fmt[i] == 'j' || fmt[i] == 't'))
+                    i++;
+                if (i >= n)
+                    throw new SemanticError.TYPE_MISMATCH (@"'printf': the format ends with a lone '%' at $loc");
+                char conv = fmt[i];
+                i++;
+                part.conv = conv;
+                if (conv == 'd' || conv == 'i' || conv == 'u' || conv == 'x' || conv == 'X'
+                    || conv == 'c' || conv == 's' || conv == 'f' || conv == 'g' || conv == 'e') {
+                    part.arg = argi;
+                    argi++;
+                    parts.add (part);
+                } else if (conv == 'p') {
+                    // A pointer prints as "0x" followed by the value in hex.
+                    parts.add (new PrintfPart () { is_literal = true, text = "0x" });
+                    part.arg = argi;
+                    argi++;
+                    part.conv = 'x';
+                    part.precision = -1;
+                    parts.add (part);
+                } else {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'printf': the '%$(conv)' conversion is not supported at $loc");
+                }
+                lit_start = i;
+            }
+            if (lit_start < n)
+                parts.add (new PrintfPart () { is_literal = true, text = fmt.substring (lit_start, n - lit_start) });
+            return parts;
+        }
+
+        private static int printf_arg_count (GenericArray<PrintfPart> parts) {
+            int used = 0;
+            foreach (var p in parts) {
+                if (p.arg >= 0 && p.arg + 1 > used)
+                    used = p.arg + 1;
+            }
+            return used;
+        }
+
+        private void check_printf (MethodCallExpr mc) throws SemanticError {
+            if (!(mc.target is StringLiteral))
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'printf' needs a literal format string: a format built at run time cannot be type checked, so build the message with a template string instead at $(mc.line):$(mc.column)");
+            var parts = parse_printf_format (((StringLiteral) mc.target).value, mc.line, mc.column);
+            int used = printf_arg_count (parts);
+            if (used != mc.args.length)
+                throw new SemanticError.WRONG_ARG_COUNT (
+                    @"'printf' has $(mc.args.length) argument(s) for $used conversion(s) at $(mc.line):$(mc.column)");
+            foreach (var p in parts) {
+                if (p.is_literal)
+                    continue;
+                unowned var arg = mc.args[p.arg];
+                string an = "";
+                var at = expr_type_full (arg, out an);
+                if (p.conv == 's') {
+                    if (at != ValaType.STRING || an.has_suffix ("?"))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': %s needs a non-null string, got $(type_label (at, an)) at $(arg.line):$(arg.column)");
+                    if (p.precision >= 0)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': precision is not supported on %s at $(arg.line):$(arg.column)");
+                } else if (p.conv == 'f' || p.conv == 'g' || p.conv == 'e') {
+                    if (!is_fp_type (at))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': %$(p.conv) needs a float or double, got $(type_label (at, an)) at $(arg.line):$(arg.column)");
+                    if (p.precision >= 0)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'printf': precision is not supported on %$(p.conv) at $(arg.line):$(arg.column)");
+                } else if (!is_int_like (at) && at != ValaType.ENUM) {
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'printf': %$(p.conv) needs an integer, got $(type_label (at, an)) at $(arg.line):$(arg.column)");
+                }
+            }
+        }
+
+        // Emits one part of a `printf` format with its value in rax. Returns
+        // true when that value is a freshly allocated string the caller owns.
+        private bool gen_printf_part (PrintfPart part, MethodCallExpr mc) throws SemanticError {
+            if (part.is_literal) {
+                emitter.lea_rax_rip (emitter.add_string (part.text));
+                return false;
+            }
+            unowned var arg = mc.args[part.arg];
+            bool fresh = true;
+            int min_digits = -1;
+            if (part.conv == 's') {
+                gen_expr (arg);
+                fresh = false;
+            } else if (part.conv == 'c') {
+                gen_expr (arg);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_char_to_str");
+            } else if (part.conv == 'f' || part.conv == 'g' || part.conv == 'e') {
+                string an = "";
+                var at = expr_type_full (arg, out an);
+                gen_expr (arg);
+                if (at == ValaType.FLOAT)
+                    emitter.cvtss2sd_xmm0_xmm0 ();
+                call_aligned ("__planc_double_to_str");
+            } else {
+                // Numbers: the precision, or the '0' flag plus the width, is a
+                // minimum digit count handled by the converter itself.
+                if (part.precision > 0)
+                    min_digits = part.precision;
+                else if (part.zero && part.width > 0 && !part.left)
+                    min_digits = part.width;
+                int pad = (min_digits > 0) ? min_digits : 0;
+                gen_expr (arg);
+                emitter.mov_rdi_rax ();
+                if (part.conv == 'x' || part.conv == 'X') {
+                    emitter.mov_esi_imm ((uint32) pad);
+                    emitter.mov_edx_imm ((uint32) (part.conv == 'X' ? 1 : 0));
+                    call_aligned ("__planc_uint_to_hex");
+                } else if (part.conv == 'u') {
+                    emitter.mov_esi_imm ((uint32) pad);
+                    call_aligned ("__planc_uint_to_str_pad");
+                } else {
+                    emitter.mov_esi_imm ((uint32) pad);
+                    call_aligned ("__planc_int_to_str_pad");
+                }
+            }
+            if (part.width > 0 && min_digits < 0) {
+                need_str_printf_rt = true;
+                emitter.push_rax ();
+                push_depth++;
+                emitter.mov_rdi_rax ();
+                emitter.mov_esi_imm ((uint32) part.width);
+                emitter.mov_edx_imm ((uint32) ' ');
+                emitter.mov_ecx_imm (part.left ? 1 : 0);
+                call_aligned ("__planc_str_pad");
+                emitter.pop_reg (Reg.RDI);
+                push_depth--;
+                if (fresh) {
+                    emitter.push_rax ();
+                    push_depth++;
+                    call_aligned ("__planc_unref");
+                    emitter.pop_rax ();
+                    push_depth--;
+                }
+            }
+            return fresh;
+        }
+
+        private void gen_str_printf (MethodCallExpr mc) throws SemanticError {
+            var parts = parse_printf_format (((StringLiteral) mc.target).value, mc.line, mc.column);
+            int slot = mc.ref_temp_slot;
+            if (slot < 0)
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"'printf' cannot be used in this position at $(mc.line):$(mc.column)");
+            need_str_concat = true;
+            need_str_printf_rt = true;
+            emitter.lea_rax_rip (emitter.add_string (""));
+            emitter.store_local (slot);
+            add_live_ref_slot (slot);
+            foreach (var part in parts) {
+                bool fresh = gen_printf_part (part, mc);
+                emitter.push_rax ();
+                push_depth++;
+                emitter.load_local (slot);
+                emitter.mov_rdi_rax ();
+                if (fresh) {
+                    emitter.mov_rsi_rsp ();
+                    call_aligned ("__planc_str_concat");
+                    emitter.pop_reg (Reg.RDI);
+                    push_depth--;
+                    emitter.push_rax ();
+                    push_depth++;
+                    call_aligned ("__planc_unref");
+                } else {
+                    emitter.pop_reg (Reg.RSI);
+                    push_depth--;
+                    call_aligned ("__planc_str_concat");
+                    emitter.push_rax ();
+                    push_depth++;
+                }
+                emitter.load_local (slot);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_unref");
+                emitter.pop_rax ();
+                push_depth--;
+                emitter.store_local (slot);
+            }
+            emitter.load_local (slot);
         }
 
         private void gen_lvalue_addr (Expr e, out ValaType ltype, out string ltname) throws SemanticError {
@@ -15572,6 +15866,10 @@ namespace Planc {
                 emitter.bind (l_no);
                 emitter.mov_rax_imm (0);
                 emitter.bind (l_done);
+                return;
+            }
+            if (kind == "str_printf") {
+                gen_str_printf (mc);
                 return;
             }
             if (kind == "str_strip") {

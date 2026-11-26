@@ -1,0 +1,12 @@
+plain
+d=-42 i=7
+u=42 x=ff X=FF p=0x1000
+s=hi c=A pct=%
+f=3.5 g=2.5
+[033][00042][-000042][7     ][      ab][cd ]
+[0000beef][  ff][05]
+len=1234567890123 short=9 big=42
+empty=[]
+v=-7!
+v=-7/x
+dir=1

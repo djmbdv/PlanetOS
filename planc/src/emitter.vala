@@ -928,6 +928,16 @@ namespace Planc {
             code.u8 (0xBE); code.u32le (v);
         }
 
+        // mov edx, imm
+        public void mov_edx_imm (uint32 v) {
+            code.u8 (0xBA); code.u32le (v);
+        }
+
+        // mov ecx, imm
+        public void mov_ecx_imm (uint32 v) {
+            code.u8 (0xB9); code.u32le (v);
+        }
+
         // mov rdi, imm
         public void mov_rdi_imm (int64 v) {
             if (v >= int32.MIN && v <= int32.MAX) {
@@ -1612,9 +1622,20 @@ namespace Planc {
 
         // Shared decimal formatter: converts int64/uint64 in `rdi` into [rbp - 32 .. rbp],
         // leaving start pointer in `rcx` and length in `rbp - rcx`.
-        private void emit_format_int_to_stack (bool is_unsigned = false) {
+        // Formats rax as ASCII digits into a buffer that grows downwards from
+        // rcx.  Inputs beyond the value:
+        //   r9  = base (10 or 16)
+        //   r10 = minimum number of digits (zero fill), used when pad_from_reg
+        //   r11 = addend for the hex letters ('a'-10 = 87 or 'A'-10 = 55)
+        // On return rcx points at the first character and r13 holds the count.
+        private void emit_format_int_to_stack (bool is_unsigned = false, int radix = 10,
+                                               bool hex = false, bool pad_from_reg = false) {
             var l_pos = new_label ();
             var l_loop = new_label ();
+            var l_digit = new_label ();
+            var l_store = new_label ();
+            var l_pad_loop = new_label ();
+            var l_pad_done = new_label ();
             var l_done = new_label ();
             // mov rcx, rbp                    48 89 E9
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xE9);
@@ -1630,21 +1651,56 @@ namespace Planc {
                 code.u8 (0x41); code.u8 (0xB8); code.u32le (1);
                 bind (l_pos);
             }
-            // mov r9d, 10                     41 B9 0A 00 00 00
-            code.u8 (0x41); code.u8 (0xB9); code.u32le (10);
+            // mov r9d, <base>                 41 B9 imm32
+            code.u8 (0x41); code.u8 (0xB9); code.u32le ((uint32) radix);
+            if (pad_from_reg) {
+                // xor r13d, r13d              45 31 ED
+                code.u8 (0x45); code.u8 (0x31); code.u8 (0xED);
+            }
             bind (l_loop);
             // xor edx, edx                    31 D2
             code.u8 (0x31); code.u8 (0xD2);
             // div r9                          49 F7 F1
             code.u8 (0x49); code.u8 (0xF7); code.u8 (0xF1);
-            // add edx, 48                     83 C2 30
-            code.u8 (0x83); code.u8 (0xC2); code.u8 (0x30);
+            if (hex) {
+                // cmp edx, 9                  83 FA 09
+                code.u8 (0x83); code.u8 (0xFA); code.u8 (0x09);
+                branch (BranchKind.JBE, l_digit);
+                // add edx, r11d               44 01 DA
+                code.u8 (0x44); code.u8 (0x01); code.u8 (0xDA);
+                branch (BranchKind.JMP, l_store);
+                bind (l_digit);
+                // add edx, 48                 83 C2 30
+                code.u8 (0x83); code.u8 (0xC2); code.u8 (0x30);
+                bind (l_store);
+            } else {
+                // add edx, 48                     83 C2 30
+                code.u8 (0x83); code.u8 (0xC2); code.u8 (0x30);
+            }
             // dec rcx                         48 FF C9
             code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9);
             // mov [rcx], dl                   88 11
             code.u8 (0x88); code.u8 (0x11);
+            if (pad_from_reg) {
+                // inc r13                     49 FF C5
+                code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC5);
+            }
             test_rax_rax ();
             branch (BranchKind.JNE, l_loop);
+            if (pad_from_reg) {
+                bind (l_pad_loop);
+                // cmp r13, r10                4D 39 D5
+                code.u8 (0x4D); code.u8 (0x39); code.u8 (0xD5);
+                branch (BranchKind.JAE, l_pad_done);
+                // dec rcx                     48 FF C9
+                code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC9);
+                // mov byte ptr [rcx], '0'     C6 01 30
+                code.u8 (0xC6); code.u8 (0x01); code.u8 (0x30);
+                // inc r13                     49 FF C5
+                code.u8 (0x49); code.u8 (0xFF); code.u8 (0xC5);
+                branch (BranchKind.JMP, l_pad_loop);
+                bind (l_pad_done);
+            }
             if (!is_unsigned) {
                 // test r8d, r8d               45 85 C0
                 code.u8 (0x45); code.u8 (0x85); code.u8 (0xC0);
@@ -2519,13 +2575,34 @@ namespace Planc {
             ret ();
         }
 
-        private void emit_rt_int_to_str_impl (bool is_unsigned) {
+        // Shared body of the number-to-string routines.  `hex` reads the letter
+        // case from rdx (0 = lowercase) and, together with `min_digits`, the
+        // minimum digit count from rsi.
+        private void emit_rt_int_to_str_impl (bool is_unsigned, int radix = 10, bool hex = false,
+                                              bool min_digits = false) {
             push_rbp ();
             mov_rsp_to_rbp ();
-            sub_rsp (32);
+            // 104 bytes of scratch: 20 digits + up to 64 zero-fill + sign + pad.
+            sub_rsp (104);
             push_reg (Reg.RBX);
             code.u8 (0x41); code.u8 (0x54); // push r12
-            emit_format_int_to_stack (is_unsigned);
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            if (min_digits) {
+                // mov r10, rsi                49 89 F2
+                code.u8 (0x49); code.u8 (0x89); code.u8 (0xF2);
+            }
+            if (hex) {
+                // mov r11d, 87                41 BB 57 00 00 00
+                code.u8 (0x41); code.u8 (0xBB); code.u32le (87);
+                var l_lower = new_label ();
+                // test rdx, rdx               48 85 D2
+                code.u8 (0x48); code.u8 (0x85); code.u8 (0xD2);
+                branch (BranchKind.JE, l_lower);
+                // mov r11d, 55                41 BB 37 00 00 00
+                code.u8 (0x41); code.u8 (0xBB); code.u32le (55);
+                bind (l_lower);
+            }
+            emit_format_int_to_stack (is_unsigned, radix, hex, min_digits);
             // mov r12, rcx; mov rbx, rbp; sub rbx, rcx
             code.u8 (0x49); code.u8 (0x89); code.u8 (0xCC);
             code.u8 (0x48); code.u8 (0x89); code.u8 (0xEB);
@@ -2545,6 +2622,7 @@ namespace Planc {
             code.u8 (0xF3); code.u8 (0xA4);                 // rep movsb
             // mov byte ptr [rdi], 0
             code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00);
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
             code.u8 (0x41); code.u8 (0x5C); // pop r12
             pop_reg (Reg.RBX);
             leave ();
@@ -2559,6 +2637,128 @@ namespace Planc {
         // string* __planc_uint_to_str(uint64 rdi)
         public void emit_rt_uint_to_str () {
             emit_rt_int_to_str_impl (true);
+        }
+
+        // string* __planc_int_to_str_pad(int64 rdi, int64 rsi_min_digits)
+        public void emit_rt_int_to_str_pad () {
+            emit_rt_int_to_str_impl (false, 10, false, true);
+        }
+
+        // string* __planc_uint_to_str_pad(uint64 rdi, int64 rsi_min_digits)
+        public void emit_rt_uint_to_str_pad () {
+            emit_rt_int_to_str_impl (true, 10, false, true);
+        }
+
+        // string* __planc_uint_to_hex(uint64 rdi, int64 rsi_min_digits, int64 rdx_upper)
+        public void emit_rt_uint_to_hex () {
+            emit_rt_int_to_str_impl (true, 16, true, true);
+        }
+
+        // string* __planc_char_to_str(int64 rdi)
+        public void emit_rt_char_to_str () {
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            // mov r12, rdi                    49 89 FC
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
+            // mov rdi, 2; xor esi, esi; call __planc_alloc
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0xC7); code.u32le (2);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            // [rax + 8] = 1                   48 C7 40 08 01 00 00 00
+            code.u8 (0x48); code.u8 (0xC7); code.u8 (0x40); code.u8 (0x08); code.u32le (1);
+            // [rax + 16] = r12b               4C 88 60 10
+            code.u8 (0x4C); code.u8 (0x88); code.u8 (0x60); code.u8 (0x10);
+            // [rax + 17] = 0                  C6 40 11 00
+            code.u8 (0xC6); code.u8 (0x40); code.u8 (0x11); code.u8 (0x00);
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
+        }
+
+        // string* __planc_str_pad(string* rdi, int64 rsi_width, int64 rdx_padch,
+        //                         int64 rcx_left_align)
+        // Always returns a fresh string; the input keeps its own reference.
+        public void emit_rt_str_pad () {
+            push_rbp ();
+            mov_rsp_to_rbp ();
+            sub_rsp (32);
+            push_reg (Reg.RBX);
+            code.u8 (0x41); code.u8 (0x54); // push r12
+            code.u8 (0x41); code.u8 (0x55); // push r13
+            code.u8 (0x41); code.u8 (0x56); // push r14
+            var l_width_ok = new_label ();
+            var l_left = new_label ();
+            var l_done = new_label ();
+            // mov r12, rdi                    49 89 FC
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xFC);
+            // mov r13, [r12 + 8]              4D 8B 6C 24 08
+            code.u8 (0x4D); code.u8 (0x8B); code.u8 (0x6C); code.u8 (0x24); code.u8 (0x08);
+            // mov r14, rsi                    49 89 F6
+            code.u8 (0x49); code.u8 (0x89); code.u8 (0xF6);
+            // mov [rbp - 8], rdx              48 89 55 F8
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x55); code.u8 (0xF8);
+            // mov rbx, rcx                    48 89 CB
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0xCB);
+            // if (width < len) width = len:  cmp r14, r13
+            code.u8 (0x4D); code.u8 (0x39); code.u8 (0xEE);
+            branch (BranchKind.JAE, l_width_ok);
+            // mov r14, r13                    4D 89 EE
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0xEE);
+            bind (l_width_ok);
+            // alloc (r14 + 1): mov rdi, r14; inc rdi; xor esi, esi
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xF7);
+            code.u8 (0x48); code.u8 (0xFF); code.u8 (0xC7);
+            code.u8 (0x31); code.u8 (0xF6);
+            call_rel32 ("__planc_alloc");
+            // [rax + 8] = r14                 4C 89 70 08
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0x70); code.u8 (0x08);
+            // mov [rbp - 16], rax             48 89 45 F0
+            code.u8 (0x48); code.u8 (0x89); code.u8 (0x45); code.u8 (0xF0);
+            // mov rdi, rax; add rdi, 16       48 8D 78 10
+            code.u8 (0x48); code.u8 (0x8D); code.u8 (0x78); code.u8 (0x10);
+            // r8 = padcount = r14 - r13       4D 89 F0 / 4D 29 E8
+            code.u8 (0x4D); code.u8 (0x89); code.u8 (0xF0);
+            code.u8 (0x4D); code.u8 (0x29); code.u8 (0xE8);
+            // test rbx, rbx                    48 85 DB
+            code.u8 (0x48); code.u8 (0x85); code.u8 (0xDB);
+            branch (BranchKind.JNE, l_left);
+            // Right aligned: pad, then copy the string.
+            // mov rcx, r8                      4C 89 C1
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC1);
+            // mov al, [rbp - 8]                8A 45 F8
+            code.u8 (0x8A); code.u8 (0x45); code.u8 (0xF8);
+            // rep stosb                        F3 AA
+            code.u8 (0xF3); code.u8 (0xAA);
+            // mov rsi, r12; add rsi, 16; mov rcx, r13; rep movsb
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE6);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE9);
+            code.u8 (0xF3); code.u8 (0xA4);
+            branch (BranchKind.JMP, l_done);
+            bind (l_left);
+            // Left aligned: copy the string, then pad.
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE6);
+            code.u8 (0x48); code.u8 (0x83); code.u8 (0xC6); code.u8 (0x10);
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xE9);
+            code.u8 (0xF3); code.u8 (0xA4);
+            // mov rcx, r8; mov al, [rbp - 8]; rep stosb
+            code.u8 (0x4C); code.u8 (0x89); code.u8 (0xC1);
+            code.u8 (0x8A); code.u8 (0x45); code.u8 (0xF8);
+            code.u8 (0xF3); code.u8 (0xAA);
+            bind (l_done);
+            // mov byte ptr [rdi], 0            C6 07 00
+            code.u8 (0xC6); code.u8 (0x07); code.u8 (0x00);
+            // mov rax, [rbp - 16]              48 8B 45 F0
+            code.u8 (0x48); code.u8 (0x8B); code.u8 (0x45); code.u8 (0xF0);
+            code.u8 (0x41); code.u8 (0x5E); // pop r14
+            code.u8 (0x41); code.u8 (0x5D); // pop r13
+            code.u8 (0x41); code.u8 (0x5C); // pop r12
+            pop_reg (Reg.RBX);
+            leave ();
+            ret ();
         }
 
         public void emit_check_leaks (int bss_base, Label leak_panic_lbl) {

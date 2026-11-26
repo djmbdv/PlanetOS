@@ -74,6 +74,7 @@ El detalle completo, con las reglas de `unowned`/`weak`, los estados envenenado 
 | Casts `(T)`, `as`, `is` | conversión de tipos y comprobación dinámica | `null_and_cast`, `object_root` |
 | `sizeof`, `assert`, `exit (n)` | `exit` exige entero | `sizeof`, `exit_code`, `exit_expr` |
 | `print` | **exige** `string` o plantilla | `hello`, `invalid/print_needs_string` |
+| `(fmt).printf (args)` | formato **literal** (se analiza al compilar): `%d %i %u %x %X %c %s %f %g %e %p %%`, flags `-`/`0`, ancho y `.precisión` (enteros); modificadores `l/ll/h/hh/z` ignorados (todo entero es 64 bits); formato dinámico, `+`/espacio/`#`, `%o`, precisión en `%s`/`%f` se **rechazan** | `printf_format`, `invalid/printf_dynamic_format`, `invalid/printf_arg_count`, `invalid/printf_arg_type`, `invalid/printf_unsupported_conv` |
 | `main` | `int main ()` sin parámetros; no `string` | `invalid/main_with_params`, `invalid/string_main` |
 
 ---
@@ -230,7 +231,7 @@ planc <fuentes.vala>… -o <salida> [flags]
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **288 casos, 287 pasan**. El único fallo es
+Estado actual: **293 casos, 292 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
@@ -261,25 +262,19 @@ python tools/c2vala_tests/run.py    # 21 casos, incluido struct_array_members
 
 ## 10. Huecos conocidos (orden de prioridad)
 
-1. **`string.printf` no está implementado**: el parser lo acepta y el chequeo de
-   tipos lo valida (`str_printf`), pero el emisor nunca lo baja. Con argumentos
-   genera código que revienta en ejecución (`planc: panic: index out of bounds`)
-   y sin argumentos **rompe el compilador** (segfault). Es lo que detiene
-   `HU_Init` en el port de DOOM (`("STCFN%.3d").printf (j++)`). Mientras no se
-   implemente, usar `c_snprintf_buf` o concatenar con `$(...)`.
-2. **Arrays de C con inicializador** (`c2vala`): los globales `T[]` sin
+1. **Arrays de C con inicializador** (`c2vala`): los globales `T[]` sin
    inicializador, los miembros array de un struct y las dimensiones internas de un
    array multidimensional ya se asignan (ver §9 y el caso
    `c2vala_tests/cases/struct_array_members`). Lo que sigue sin cubrirse son los
    inicializadores de tablas de structs (`state_t states[] = {{...}}`) cuando el
    struct contiene una unión de punteros a función: el literal elige un delegado
    de 0 parámetros y las acciones de DOOM llevan 2.
-3. **Array literal con elementos delegate** (`Op[] ops = { f, g }`): único test
+2. **Array literal con elementos delegate** (`Op[] ops = { f, g }`): único test
    rojo de la suite (`struct_union_delegate_arrays`). Los structs y uniones de ese
    caso ya funcionan.
-4. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; `c2vala`
+3. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; `c2vala`
    los emite como `T[]` y los asigna en el constructor por defecto (con
    `this.campo`, porque un campo no ensombrece a un global homónimo dentro de un
    constructor).
-5. **`--dump-text`/`typeof`/`.vapi`**: fuera de alcance por decisión, no por falta
+4. **`--dump-text`/`typeof`/`.vapi`**: fuera de alcance por decisión, no por falta
    de tiempo.
