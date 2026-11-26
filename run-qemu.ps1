@@ -102,6 +102,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# `powershell -File run-qemu.ps1 -Add a.elf,b.wad` passes one string, so split
+# the list on commas before it is used.
+$Add = @($Add | ForEach-Object { $_ -split ',' } | Where-Object { $_ -and $_.Trim() -ne '' })
+
 $Root = $PSScriptRoot
 if (-not $Root) {
     $Root = Split-Path -Parent $MyInvocation.MyCommand.Definition
@@ -512,13 +516,23 @@ if (-not $NoBuild) {
     }
 
     Write-Step 'Building the boot disk image...'
-    $addArgs = @()
-    foreach ($addFile in $Add) {
-        $resolved = $addFile
-        if (-not (Test-Path $resolved)) { $resolved = Join-Path $Root $addFile }
-        if (-not (Test-Path $resolved)) { Fail ('-Add: file not found: ' + $addFile) }
-        $addArgs += @('--add', ((Split-Path -Leaf $resolved) + '=' + $resolved))
+$addArgs = @()
+foreach ($addFile in $Add) {
+    $tried = @()
+    $resolved = $null
+    $candidates = @($addFile, (Join-Path $Root $addFile))
+    # Ports are usually built into the artifact directory, so a bare name works.
+    if (-not [System.IO.Path]::IsPathRooted($addFile)) { $candidates += (Out-Path $addFile) }
+    foreach ($cand in $candidates) {
+        $tried += $cand
+        if (Test-Path $cand) { $resolved = (Resolve-Path $cand).Path; break }
     }
+    if ($resolved -eq $null) {
+        Fail ('-Add: file not found: ' + $addFile + ' (tried: ' + ($tried -join ', ') +
+              '; pass an absolute path if it lives elsewhere)')
+    }
+    $addArgs += @('--add', ((Split-Path -Leaf $resolved) + '=' + $resolved))
+}
     & $Python (Join-Path $Root 'tools\mkdisk.py') `
         (Out-Path 'disk.img') `
         (Out-Path 'init.elf') `
@@ -583,6 +597,11 @@ $kernelPath = Out-Path 'planet-kernel'
 $diskPath = Out-Path 'disk.img'
 if (-not (Test-Path $kernelPath)) { Fail ('missing ' + $kernelPath + ' (run without -NoBuild)') }
 if (-not (Test-Path $diskPath)) { Fail ('missing ' + $diskPath + ' (run without -NoBuild)') }
+
+if ($NoBuild -and $Add.Count -gt 0) {
+    # The image is only written during the build, so -Add cannot take effect.
+    Fail '-Add needs the image rebuilt; drop -NoBuild'
+}
 
 if ($BuildOnly) {
     Write-Host ('PLANETOS_OUT=' + $Out)
