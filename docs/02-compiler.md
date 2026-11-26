@@ -569,7 +569,7 @@ Consequences that must be respected:
 | Badly applied relocations | It links, it boots, it fails on the first call | Relocation test with symbols at known distances |
 | Incorrect DWARF | GDB shows the wrong line | Comparison of `bt` and `info locals` against expectation |
 | The bootstrap subset breaks | `planc-0` stops compiling `planc` | Bootstrap lint in CI (TC-09) |
-| Pathologically nested expression exhausts the compiler stack | `STATUS_STACK_OVERFLOW` while compiling valid source | `MAX_EXPR_DEPTH` guard in `gen_expr`/`expr_type_full`/`prepare_expr` (`codegen.vala`) raising a positioned diagnostic, plus the split of the 32 KB recursive frames ([slice 56](planc/slice-56-operators.md)) |
+| Pathologically nested expression exhausts the compiler stack | `STATUS_STACK_OVERFLOW` while compiling valid source | Parser bounds the depth while building the tree (`chain_step`, `parse_ternary` nesting, `check_expr_depth`) because the finalizers are recursive too; `MAX_EXPR_DEPTH` guards in `gen_expr`/`expr_type_full`/`prepare_expr`/`SpirvBackend.gen_expr` raise positioned diagnostics, and the 32 KB recursive frames were split ([slice 56](planc/slice-56-operators.md)) |
 
 ## 17. Recent built-in additions (`uintptr`, `char`, `unichar`, parser/codegen)
 

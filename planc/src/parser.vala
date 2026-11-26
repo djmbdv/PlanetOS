@@ -4235,11 +4235,163 @@ namespace Planc {
         // dispatching a statement). Threading `seed` down to `parse_mul`
         // preserves full operator precedence across all binary levels.
 
+        // Expression trees are torn down recursively by the GObject
+        // finalizers, so a pathologically nested one must be rejected while it
+        // is being built: by the time a later pass saw it, freeing it would
+        // already overflow the stack. Chains are bounded per precedence level
+        // and nesting is bounded separately, which together cap the depth at
+        // roughly MAX_EXPR_DEPTH per level (comparable to the codegen limit).
+        private const int MAX_EXPR_DEPTH = 400;
+        private int expr_nest = 0;
+
+        private void chain_step (ref int n, int line, int col) throws ParseError {
+            n++;
+            if (n > MAX_EXPR_DEPTH)
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"expression nested too deeply (more than $(MAX_EXPR_DEPTH) operators in one expression) at $line:$col");
+        }
+
+        private static void check_expr_depth (Expr root) throws ParseError {
+            // Explicit stack: the check itself must not recurse.
+            var nodes = new GenericArray<Expr> ();
+            var depths = new GenericArray<int> ();
+            nodes.add (root);
+            depths.add (1);
+            while (nodes.length > 0) {
+                int last = nodes.length - 1;
+                var e = nodes[last];
+                int d = depths[last];
+                nodes.length = last;
+                depths.length = last;
+                if (d > MAX_EXPR_DEPTH)
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expression nested too deeply (more than $(MAX_EXPR_DEPTH) levels) at $(e.line):$(e.column)");
+                if (e is BinaryExpr) {
+                    var be = (BinaryExpr) e;
+                    nodes.add (be.left);
+                    depths.add (d + 1);
+                    nodes.add (be.right);
+                    depths.add (d + 1);
+                } else if (e is UnaryExpr) {
+                    nodes.add (((UnaryExpr) e).operand);
+                    depths.add (d + 1);
+                } else if (e is TernaryExpr) {
+                    var te = (TernaryExpr) e;
+                    nodes.add (te.condition);
+                    depths.add (d + 1);
+                    nodes.add (te.then_expr);
+                    depths.add (d + 1);
+                    nodes.add (te.else_expr);
+                    depths.add (d + 1);
+                } else if (e is CoalesceExpr) {
+                    var ce = (CoalesceExpr) e;
+                    nodes.add (ce.left);
+                    depths.add (d + 1);
+                    nodes.add (ce.right);
+                    depths.add (d + 1);
+                } else if (e is IndexExpr) {
+                    var ix = (IndexExpr) e;
+                    nodes.add (ix.target);
+                    depths.add (d + 1);
+                    nodes.add (ix.index);
+                    depths.add (d + 1);
+                } else if (e is MemberAccessExpr) {
+                    nodes.add (((MemberAccessExpr) e).target);
+                    depths.add (d + 1);
+                } else if (e is AddrOfExpr) {
+                    nodes.add (((AddrOfExpr) e).target);
+                    depths.add (d + 1);
+                } else if (e is DerefExpr) {
+                    nodes.add (((DerefExpr) e).target);
+                    depths.add (d + 1);
+                } else if (e is IncDecExpr) {
+                    nodes.add (((IncDecExpr) e).target);
+                    depths.add (d + 1);
+                } else if (e is CallExpr) {
+                    var ce = (CallExpr) e;
+                    for (int i = 0; i < ce.args.length; i++) {
+                        nodes.add (ce.args[i]);
+                        depths.add (d + 1);
+                    }
+                } else if (e is MethodCallExpr) {
+                    var mc = (MethodCallExpr) e;
+                    if (mc.target != null) {
+                        nodes.add (mc.target);
+                        depths.add (d + 1);
+                    }
+                    for (int i = 0; i < mc.args.length; i++) {
+                        nodes.add (mc.args[i]);
+                        depths.add (d + 1);
+                    }
+                } else if (e is ClassNewExpr) {
+                    var cn = (ClassNewExpr) e;
+                    for (int i = 0; i < cn.args.length; i++) {
+                        nodes.add (cn.args[i]);
+                        depths.add (d + 1);
+                    }
+                    for (int i = 0; i < cn.init_values.length; i++) {
+                        nodes.add (cn.init_values[i]);
+                        depths.add (d + 1);
+                    }
+                } else if (e is SliceExpr) {
+                    var sl = (SliceExpr) e;
+                    nodes.add (sl.target);
+                    depths.add (d + 1);
+                    if (sl.start != null) {
+                        nodes.add (sl.start);
+                        depths.add (d + 1);
+                    }
+                    if (sl.end != null) {
+                        nodes.add (sl.end);
+                        depths.add (d + 1);
+                    }
+                } else if (e is ArrayNewExpr) {
+                    nodes.add (((ArrayNewExpr) e).length_expr);
+                    depths.add (d + 1);
+                } else if (e is ArrayNew2Expr) {
+                    var an2 = (ArrayNew2Expr) e;
+                    nodes.add (an2.dim0);
+                    depths.add (d + 1);
+                    nodes.add (an2.dim1);
+                    depths.add (d + 1);
+                } else if (e is LengthDimExpr) {
+                    var ld = (LengthDimExpr) e;
+                    nodes.add (ld.target);
+                    depths.add (d + 1);
+                    nodes.add (ld.dim);
+                    depths.add (d + 1);
+                } else if (e is TypeCheckExpr) {
+                    nodes.add (((TypeCheckExpr) e).operand);
+                    depths.add (d + 1);
+                } else if (e is TemplateExpr) {
+                    var te = (TemplateExpr) e;
+                    for (int i = 0; i < te.parts.length; i++) {
+                        nodes.add (te.parts[i]);
+                        depths.add (d + 1);
+                    }
+                }
+            }
+        }
+
         private Expr parse_expr () throws ParseError, LexError {
-            return parse_ternary (null);
+            var e = parse_ternary (null);
+            check_expr_depth (e);
+            return e;
         }
 
         private Expr parse_ternary (Expr? seed) throws ParseError, LexError {
+            if (expr_nest >= MAX_EXPR_DEPTH)
+                throw new ParseError.UNEXPECTED_TOKEN (
+                    @"expression nested too deeply (more than $(MAX_EXPR_DEPTH) levels) at $(current.line):$(current.column)");
+            expr_nest++;
+            try {
+                return parse_ternary_level (seed);
+            } finally {
+                expr_nest--;
+            }
+        }
+
+        private Expr parse_ternary_level (Expr? seed) throws ParseError, LexError {
             var cond = parse_coalesce (seed);
             if (current.kind == TokenKind.QUESTION) {
                 var l = cond.line;
@@ -4262,11 +4414,13 @@ namespace Planc {
 
         private Expr parse_coalesce (Expr? seed) throws ParseError, LexError {
             var left = parse_lor (seed);
+            int chain = 0;
             while (current.kind == TokenKind.QUESTION_QUESTION) {
                 var l = left.line;
                 var c = left.column;
                 advance ();
                 var right = parse_lor (null);
+                chain_step (ref chain, l, c);
                 left = new CoalesceExpr () { left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4276,11 +4430,13 @@ namespace Planc {
 
         private Expr parse_lor (Expr? seed) throws ParseError, LexError {
             var left = parse_land (seed);
+            int chain = 0;
             while (current.kind == TokenKind.OROR) {
                 var l = left.line;
                 var c = left.column;
                 advance ();
                 var right = parse_land (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = "||", left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4290,11 +4446,13 @@ namespace Planc {
 
         private Expr parse_land (Expr? seed) throws ParseError, LexError {
             var left = parse_bor (seed);
+            int chain = 0;
             while (current.kind == TokenKind.ANDAND) {
                 var l = left.line;
                 var c = left.column;
                 advance ();
                 var right = parse_bor (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = "&&", left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4304,11 +4462,13 @@ namespace Planc {
 
         private Expr parse_bor (Expr? seed) throws ParseError, LexError {
             var left = parse_bxor (seed);
+            int chain = 0;
             while (current.kind == TokenKind.PIPE) {
                 var l = left.line;
                 var c = left.column;
                 advance ();
                 var right = parse_bxor (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = "|", left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4318,11 +4478,13 @@ namespace Planc {
 
         private Expr parse_bxor (Expr? seed) throws ParseError, LexError {
             var left = parse_band (seed);
+            int chain = 0;
             while (current.kind == TokenKind.CARET) {
                 var l = left.line;
                 var c = left.column;
                 advance ();
                 var right = parse_band (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = "^", left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4332,11 +4494,13 @@ namespace Planc {
 
         private Expr parse_band (Expr? seed) throws ParseError, LexError {
             var left = parse_cmp (seed);
+            int chain = 0;
             while (current.kind == TokenKind.AMP) {
                 var l = left.line;
                 var c = left.column;
                 advance ();
                 var right = parse_cmp (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = "&", left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4346,6 +4510,7 @@ namespace Planc {
 
         private Expr parse_cmp (Expr? seed) throws ParseError, LexError {
             var left = parse_shift (seed);
+            int chain = 0;
             while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
                    && (current.text == "is" || current.text == "as")) {
                 var op = current.text;
@@ -4383,6 +4548,7 @@ namespace Planc {
                 var op = current.text;
                 advance ();
                 var right = parse_shift (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = op, left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4393,6 +4559,7 @@ namespace Planc {
                 var c = left.column;
                 advance ();
                 var right = parse_shift (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = "in", left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4402,12 +4569,14 @@ namespace Planc {
 
         private Expr parse_shift (Expr? seed) throws ParseError, LexError {
             var left = parse_add (seed);
+            int chain = 0;
             while (current.kind == TokenKind.SHL || current.kind == TokenKind.SHR) {
                 var l = left.line;
                 var c = left.column;
                 var op = current.text;
                 advance ();
                 var right = parse_add (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = op, left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4417,12 +4586,14 @@ namespace Planc {
 
         private Expr parse_add (Expr? seed) throws ParseError, LexError {
             var left = parse_mul (seed);
+            int chain = 0;
             while (current.kind == TokenKind.PLUS || current.kind == TokenKind.MINUS) {
                 var l = left.line;
                 var c = left.column;
                 var op = current.text;
                 advance ();
                 var right = parse_mul (null);
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = op, left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4432,6 +4603,7 @@ namespace Planc {
 
         private Expr parse_mul (Expr? seed) throws ParseError, LexError {
             var left = (seed != null) ? seed : parse_unary ();
+            int chain = 0;
             while (current.kind == TokenKind.STAR || current.kind == TokenKind.SLASH
                    || current.kind == TokenKind.PERCENT) {
                 var l = left.line;
@@ -4439,6 +4611,7 @@ namespace Planc {
                 var op = current.text;
                 advance ();
                 var right = parse_unary ();
+                chain_step (ref chain, l, c);
                 left = new BinaryExpr () { op = op, left = left, right = right };
                 left.line = l;
                 left.column = c;
@@ -4494,10 +4667,14 @@ namespace Planc {
 
         private Expr parse_postfix (Expr expr) throws ParseError, LexError {
             var e = expr;
+            // `.x`, `()`, `[]`, `++` each add a level to the built tree, and the
+            // loop is iterative, so bound the links here.
+            int links = 0;
             while (current.kind == TokenKind.DOT || current.kind == TokenKind.QUESTION_DOT
                    || current.kind == TokenKind.LBRACKET
                    || current.kind == TokenKind.PLUSPLUS || current.kind == TokenKind.MINUSMINUS
                    || current.kind == TokenKind.LPAREN) {
+                chain_step (ref links, current.line, current.column);
                 var l = current.line;
                 var c = current.column;
                 if (current.kind == TokenKind.QUESTION_DOT) {

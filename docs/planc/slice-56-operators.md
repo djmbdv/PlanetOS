@@ -14,22 +14,39 @@ with one stack slot per temporary, so each recursive level cost
 **32 KB** (`mov $0x7d28,%eax` / `mov $0x7ec8,%eax` before `___chkstk_ms`). With a 1 MB
 stack that is ~30 levels of headroom, not 64.
 
-**Fix.**
+**Fix, part 1 — smaller frames.**
 - `codegen.vala`: the `BinaryExpr` branch of `gen_expr_impl` moved to `gen_binary ()`
   and the `BinaryExpr` branch of `expr_type_full` moved to `type_of_binary ()`, so the
   recursive frames shrank to **200 B** and **232 B** (~100× smaller).
 - Explicit depth guards: `MAX_EXPR_DEPTH = 400` in `gen_expr`, `expr_type_full` and
   `prepare_expr` (each wrapped in `try/finally` so the counter never leaks), `600` in
-  `Optimizer.opt_expr` (deeper subtrees are left unoptimized) and `600` in
-  `PuzzleRA.check_expr_supported` (deeper functions fall back to the AST path).
-  Exceeding the limit is now a positioned diagnostic:
+  `Optimizer.opt_expr` (deeper subtrees are left unoptimized), `600` in
+  `PuzzleRA.check_expr_supported` (deeper functions fall back to the AST path) and
+  `400` in `SpirvBackend.gen_expr` (which had the same hazard and died at 10 000
+  operators).
 
-  ```
-  x.vala:4:12: semantic error: expression nested too deeply (more than 400 levels)
-  ```
+**Fix, part 2 — the tree must never get that deep.** A tree still deep enough to
+overflow has to be freed, and the finalizers are recursive too, so a post-parse check
+cannot save the process: at 10 000 operators (and at 2 000 with a syntax error later in
+the file, i.e. with no codegen at all) the compiler still died while tearing the AST
+down. The parser therefore bounds depth **while building**:
+
+- `chain_step ()` counts the operators of each precedence level and rejects more than
+  400 in one expression;
+- `parse_ternary` tracks parenthesis/ternary nesting and rejects more than 400 levels;
+- `check_expr_depth ()` walks the finished tree with an explicit stack (no recursion)
+  and catches the case that multiplication across levels can still produce, e.g. a
+  300-term chain of a 300-term chain.
+
+All three report a positioned syntax error:
+
+```
+x.vala:2:813: syntax error: expression nested too deeply (more than 400 levels)
+```
 
 Measured after the change: `-O0` compiles 399 chained operators and rejects 405 with
-that diagnostic (it used to crash at 64).
+that diagnostic; 4 000 and 40 000 operators, and 20 000 nested parentheses, are rejected
+cleanly instead of crashing (they used to die at 64).
 
 ## 2. Division and modulo by a power of two leave `idiv` out
 
@@ -173,14 +190,21 @@ The reduced forms were checked against the `idiv` path for every operand in
 | `valid/deep_expr_chain.vala` (`.code`, plus `-O2` run) | a 300-operator chain compiles (it used to crash) |
 | `valid/comparison_operators.vala` (`.out`, `.code`, plus `-O1`/`-O2` runs) | all six comparison operators keep their meaning for signed and unsigned operands, as values and as branches |
 | `valid/fp_locals.vala` (`.out`, `.code`) | FP parameters (8 in `xmm`, 2 on the stack), FP locals, compound assignment, `float` round trips, and FP/int slots sharing a frame |
-| `invalid/expr_too_deep.vala` | 500 levels is a positioned diagnostic, not a stack overflow |
+| `invalid/expr_too_deep.vala` | 800 levels is a positioned diagnostic, not a stack overflow |
+| `invalid/expr_huge_chain.vala` | 4 000 operators is rejected by the parser before a tree that would overflow on teardown is built |
 
 ## Not done (deliberately)
 
-- **A per-expression type cache** would not pay off: measured compile time per
-  operator is flat in the chain length (50 → 399 operators all land around
-  35–58 ms), so `expr_type_full` is not dominating. It also stays unsound without
-  keying on the `non_null_vars` narrowing state (see [slice 51](slice-51-throughput.md)).
+- **A per-expression type cache** was judged unnecessary from operator chains alone
+  (compile time per operator is flat: 50 → 399 operators all land around 35–58 ms), but
+  this work found a case where it is the real fix: **chained method calls are
+  exponential**. `c.next().next()…` costs 0.15 s at six links and 3.0 s at eight
+  (`-O0` and `-O1`; `-O2` is fast because the optimizer runs first), which matches
+  `expr_type_full` re-deriving the receiver's type several times per level, i.e. a
+  factor per link. That is a pre-existing defect, reproduced identically with the
+  compiler built from the previous commit, and it needs a cache keyed by the
+  `non_null_vars` generation (see [slice 51](slice-51-throughput.md)) — a slice of its
+  own.
 - **`enum BinOp` in the AST**: 440 `op`/`sop` string comparisons remain across
   `codegen`/`opt`/`puzzle_ra`; converting them is mechanical but touches every
   expression site, so only the hottest helpers were switched to character dispatch.

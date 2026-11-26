@@ -224,7 +224,27 @@ namespace Planc {
             return res;
         }
 
+        // SPIR-V expression lowering recurses once per operator, so a
+        // pathologically nested expression must be a diagnostic rather than a
+        // compiler stack overflow (the AST/RA backends use the same budget).
+        private const int MAX_EXPR_DEPTH = 400;
+        private int expr_depth = 0;
+
         private uint32 gen_expr (Expr e, out uint32 out_ty) throws SemanticError {
+            if (expr_depth >= MAX_EXPR_DEPTH) {
+                out_ty = ty_void;
+                throw new SemanticError.TYPE_MISMATCH (
+                    @"[spirv] expression nested too deeply (more than $(MAX_EXPR_DEPTH) levels) at $(e.line):$(e.column)");
+            }
+            expr_depth++;
+            try {
+                return gen_expr_node (e, out out_ty);
+            } finally {
+                expr_depth--;
+            }
+        }
+
+        private uint32 gen_expr_node (Expr e, out uint32 out_ty) throws SemanticError {
             if (e is IntLiteral) {
                 var il = (IntLiteral) e;
                 out_ty = ty_i32;
