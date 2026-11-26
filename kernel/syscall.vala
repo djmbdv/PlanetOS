@@ -45,7 +45,7 @@ namespace Planet.Kernel {
     private const int R_SEEK  = 4;
     private const int R_POLL  = 8;
     private const int R_CLOSE = 16;
-    private const int USER_LIMIT = 0x4000000; // 64 MiB, the PMM cap
+    private const int USER_LIMIT = 0x10000000; // 256 MiB, the PMM cap
     private const int MAX_PATH = 512;
     private const int MAX_XFER = 1048576;
 
@@ -751,10 +751,16 @@ namespace Planet.Kernel {
             case 2: // SYS_TICKS()
                 return Hal.ticks ();
             case 3: // SYS_ALLOC_PAGE(num_pages)
-                if (a0 < 0 || a0 > 1024)
+                if (a0 < 0 || a0 > 1024) {
+                    print (@"sys:alloc_page_reject n=$a0\n");
                     return -1;
+                }
                 int count = (a0 > 1) ? a0 : 1;
                 int phys = (count > 1) ? Pmm.alloc_contiguous (count) : Pmm.alloc_frame ();
+                if (phys == 0) {
+                    print (@"sys:alloc_page_fail n=$count\n");
+                    return 0;
+                }
                 if (phys != 0) {
                     int ucr3 = Sched.current_cr3 ();
                     if (ucr3 != 0) {
@@ -762,6 +768,7 @@ namespace Planet.Kernel {
                         // the frames back and report failure instead of handing
                         // userland memory whose first write would page fault.
                         if (Vmm.map_user_range_checked (ucr3, phys, count * 4096) == 0) {
+                            print (@"sys:alloc_page_mapfail n=$count phys=$phys\n");
                             for (int i = 0; i < count; i++)
                                 Pmm.free_frame (phys + i * 4096);
                             return 0;

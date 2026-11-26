@@ -247,6 +247,7 @@ echo "GPU: $GPU_MODE [$GPU_LINE]"
 echo "Booting PlanetOS in QEMU (type 'exit' in the guest shell to quit)..."
 exec qemu-system-x86_64 \
     -cpu max \
+    -m 256M \
     -kernel "$OUT/planet-kernel" \
     -drive file="$OUT/disk.img",format=raw,if=ide \
     -netdev user,id=net0 \

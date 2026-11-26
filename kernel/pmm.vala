@@ -1,9 +1,9 @@
 // Physical Memory Manager (PMM): Fibonacci Buddy System over 4 KiB frames (TAOCP Vol. 1, Sec. 2.5).
 //
-// Metadata lives in the KernelLayout.PMM_BITMAP window (0x110000..0x119000):
-//   +0x0000..+0x7FFF: META[0..16383] (16 bits per frame: free, is_root, order, lbc)
-//   +0x8000..+0x805F: AVAIL[0..23]   (32-bit head frame index per Fibonacci order, -1 = empty)
-//   +0x8100..+0x815F: FIB[0..23]     (32-bit precomputed Fibonacci block sizes in 4 KiB pages)
+// Metadata lives in the KernelLayout.PMM_BITMAP window (0x130000..0x151000):
+//   +0x0000..+0x1FFFF: META[0..65535] (16 bits per frame: free, is_root, order, lbc)
+//   +0x20000..+0x2005F: AVAIL[0..25]  (32-bit head frame index per Fibonacci order, -1 = empty)
+//   +0x20100..+0x20167: FIB[0..25]    (32-bit precomputed Fibonacci block sizes in 4 KiB pages)
 // Doubly-linked free-list pointers (next, prev) are stored in the first 8 bytes of each free page.
 
 namespace Planet.Kernel {
@@ -56,12 +56,12 @@ namespace Planet.Kernel {
         private static int pmm_free_count = 0;
         private static int pmm_double_free_count = 0;
         private const int PAGE_SIZE = 4096;
-        private const int MAX_BYTES = 0x4000000;   // 64 MiB cap (16384 frames)
+        private const int MAX_BYTES = 0x10000000;  // 256 MiB cap (65536 frames)
         private const int MAX_FRAMES = MAX_BYTES / PAGE_SIZE;
-        private const int MAX_ORDER = 23;          // F[22] = 17711 > 16384
+        private const int MAX_ORDER = 26;          // F[25] = 75025 > 65536
 
         private const int META_BASE = KernelLayout.PMM_BITMAP;
-        private const int AVAIL_BASE = META_BASE + 0x8000;
+        private const int AVAIL_BASE = META_BASE + 0x20000;
         private const int FIB_BASE = AVAIL_BASE + 0x100;
 
         // 16-bit META layout per frame:
@@ -335,6 +335,7 @@ namespace Planet.Kernel {
             while (j < MAX_ORDER && avail_head (j) == NIL)
                 j = j + 1;
             if (j >= MAX_ORDER) {
+                print (@"pmm:no_block want=$num_pages free=$pmm_free_count\n");
                 cpu_irq_restore (irq);
                 return 0;
             }

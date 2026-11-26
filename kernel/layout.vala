@@ -99,8 +99,8 @@ namespace Planet.Kernel {
         // CR3; a Pmm frame would not be mapped there.
         public const int IO_SCRATCH = 0x10A000;
         public const int IO_SCRATCH_SIZE = 0x4000; // 16 KiB
-        public const int PMM_BITMAP = 0x110000;    // 64 MiB / 4 KiB frames: Fibonacci buddy meta + tables
-        public const int PMM_BITMAP_SIZE = 0x9000;
+        public const int PMM_BITMAP = 0x130000;    // 256 MiB / 4 KiB frames: Fibonacci buddy meta + tables
+        public const int PMM_BITMAP_SIZE = 0x21000;
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
         public const int RAMFS_TABLE_SIZE = 0x2000;
         public const int SCHED_CUR = 0x123FF0;     // current tid
@@ -120,7 +120,9 @@ namespace Planet.Kernel {
         // Tasks allowed to map a grant, indexed by handle slot: 64 x 4 tids.
         public const int GRANT_ACL = ALLOC_TABLE + ALLOC_TABLE_SIZE;
         public const int GRANT_ACL_SIZE = 0x400;
-        public const int WINDOW_END = GRANT_ACL + GRANT_ACL_SIZE;
+        // The PMM metadata is the largest fixed structure (one 16-bit word per
+        // 4 KiB frame), so it is placed last: it grows with the RAM cap.
+        public const int WINDOW_END = PMM_BITMAP + PMM_BITMAP_SIZE;
 
         // --- legacy bootstrap stack used by ElfLoader.load_and_run --------
         public const int LEGACY_STACK = 0x1FE000;
@@ -195,8 +197,6 @@ namespace Planet.Kernel {
             if (r != 0) return r;
             r = step (R_IO_SCRATCH, IO_SCRATCH, IO_SCRATCH_SIZE);
             if (r != 0) return r;
-            r = step (R_PMM_BITMAP, PMM_BITMAP, PMM_BITMAP_SIZE);
-            if (r != 0) return r;
             r = step (R_RAMFS_TABLE, RAMFS_TABLE, RAMFS_TABLE_SIZE);
             if (r != 0) return r;
             r = step (R_SCHED_VARS, SCHED_CUR, SCHED_VARS_SIZE);
@@ -208,6 +208,8 @@ namespace Planet.Kernel {
             r = step (R_ALLOC_TABLE, ALLOC_TABLE, ALLOC_TABLE_SIZE);
             if (r != 0) return r;
             r = step (R_GRANT_ACL, GRANT_ACL, GRANT_ACL_SIZE);
+            if (r != 0) return r;
+            r = step (R_PMM_BITMAP, PMM_BITMAP, PMM_BITMAP_SIZE);
             if (r != 0) return r;
 
             if (WINDOW_END > STACK_LIMIT)

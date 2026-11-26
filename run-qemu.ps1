@@ -641,6 +641,7 @@ Write-Host ('GPU: ' + $GpuMode + ' [' + $gpuLine + ']')
 
 $qemuArgs = @(
     '-cpu', 'max',
+    '-m', '256M',
     '-kernel', (To-QemuPath $kernelPath),
     '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=ide'),
     '-drive', ('file=' + (To-QemuPath $diskPath) + ',format=raw,if=none,id=vd0,readonly=on'),

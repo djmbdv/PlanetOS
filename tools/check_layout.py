@@ -46,11 +46,13 @@ REGIONS = [
     ("guarded copy variables", "COPY_VARS", "COPY_VARS_SIZE"),
     ("kernel log ring", "KLOG_RING", "KLOG_RING_SIZE"),
     ("io scratch", "IO_SCRATCH", "IO_SCRATCH_SIZE"),
-    ("pmm bitmap", "PMM_BITMAP", "PMM_BITMAP_SIZE"),
     ("ramfs table", "RAMFS_TABLE", "RAMFS_TABLE_SIZE"),
     ("scheduler variables", "SCHED_CUR", "SCHED_VARS_SIZE"),
     ("TCB table", "TCB_TABLE", "TCB_TABLE_SIZE"),
     ("FXSAVE area", "FXSAVE_AREA", "FXSAVE_AREA_SIZE"),
+    ("alloc table", "ALLOC_TABLE", "ALLOC_TABLE_SIZE"),
+    ("grant acl", "GRANT_ACL", "GRANT_ACL_SIZE"),
+    ("pmm bitmap", "PMM_BITMAP", "PMM_BITMAP_SIZE"),
 ]
 
 # Addresses that only exist as literals inside asm bodies, which cannot use the
