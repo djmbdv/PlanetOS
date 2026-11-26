@@ -261,19 +261,25 @@ python tools/c2vala_tests/run.py    # 21 casos, incluido struct_array_members
 
 ## 10. Huecos conocidos (orden de prioridad)
 
-1. **Arrays de C con inicializador** (`c2vala`): los globales `T[]` sin
+1. **`string.printf` no está implementado**: el parser lo acepta y el chequeo de
+   tipos lo valida (`str_printf`), pero el emisor nunca lo baja. Con argumentos
+   genera código que revienta en ejecución (`planc: panic: index out of bounds`)
+   y sin argumentos **rompe el compilador** (segfault). Es lo que detiene
+   `HU_Init` en el port de DOOM (`("STCFN%.3d").printf (j++)`). Mientras no se
+   implemente, usar `c_snprintf_buf` o concatenar con `$(...)`.
+2. **Arrays de C con inicializador** (`c2vala`): los globales `T[]` sin
    inicializador, los miembros array de un struct y las dimensiones internas de un
    array multidimensional ya se asignan (ver §9 y el caso
    `c2vala_tests/cases/struct_array_members`). Lo que sigue sin cubrirse son los
    inicializadores de tablas de structs (`state_t states[] = {{...}}`) cuando el
    struct contiene una unión de punteros a función: el literal elige un delegado
    de 0 parámetros y las acciones de DOOM llevan 2.
-2. **Array literal con elementos delegate** (`Op[] ops = { f, g }`): único test
+3. **Array literal con elementos delegate** (`Op[] ops = { f, g }`): único test
    rojo de la suite (`struct_union_delegate_arrays`). Los structs y uniones de ese
    caso ya funcionan.
-3. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; `c2vala`
+4. **Campos array de tamaño fijo** dentro de un struct: no hay sintaxis; `c2vala`
    los emite como `T[]` y los asigna en el constructor por defecto (con
    `this.campo`, porque un campo no ensombrece a un global homónimo dentro de un
    constructor).
-4. **`--dump-text`/`typeof`/`.vapi`**: fuera de alcance por decisión, no por falta
+5. **`--dump-text`/`typeof`/`.vapi`**: fuera de alcance por decisión, no por falta
    de tiempo.
