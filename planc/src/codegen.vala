@@ -4894,7 +4894,7 @@ namespace Planc {
                     }
                 } else {
                     var gi = lookup_global (a.name);
-                    if (gi >= 0) {
+                    if (gi >= 0 && !shadows_a_member (a.name)) {
                         has_var_or_field = true;
                         bind_delegate_target (a.value, global_types[gi], global_type_names[gi]);
                     } else {
@@ -9923,7 +9923,7 @@ namespace Planc {
                     return local_types[slot];
                 }
                 var gi = lookup_global (v.name);
-                if (gi >= 0) {
+                if (gi >= 0 && !shadows_a_member (v.name)) {
                     tname = maybe_narrow_var (v.name, global_type_names[gi]);
                     return global_types[gi];
                 }
@@ -9939,7 +9939,16 @@ namespace Planc {
                             tname = maybe_narrow_var (v.name, cf.type_name);
                             return cf.field_type;
                         }
+                        unowned var pg = find_this_prop_getter (v.name);
+                        if (pg != null) {
+                            tname = maybe_narrow_var (v.name, pg.return_type_name);
+                            return pg.return_type;
+                        }
                     }
+                }
+                if (gi >= 0) {
+                    tname = maybe_narrow_var (v.name, global_type_names[gi]);
+                    return global_types[gi];
                 }
                 if (current_struct != null) {
                     unowned var s_const = program.find_const (current_struct.name, v.name);
@@ -10342,6 +10351,21 @@ namespace Planc {
             }
         }
 
+        // A field (or property) of the enclosing class shadows a same-named
+        // global, as in standard Vala. Resolving the global instead would
+        // silently read or write the wrong storage, so the member paths below
+        // have to be consulted first.
+        private bool shadows_a_member (string name) {
+            if (current_class != null && current != null && !current.is_static) {
+                unowned ClassField? cf = null;
+                if (class_field_offset_slots (current_class, name, out cf) >= 0 && cf != null)
+                    return true;
+                if (find_this_prop_getter (name) != null)
+                    return true;
+            }
+            return false;
+        }
+
         private void gen_lvalue_addr (Expr e, out ValaType ltype, out string ltname) throws SemanticError {
             if (e is VarRef) {
                 var vr = (VarRef) e;
@@ -10362,7 +10386,7 @@ namespace Planc {
                     return;
                 }
                 var gi = lookup_global (vr.name);
-                if (gi >= 0) {
+                if (gi >= 0 && !shadows_a_member (vr.name)) {
                     ltype = global_types[gi];
                     ltname = global_type_names[gi];
                     emitter.lea_rax_space (global_offsets[gi], global_spaces[gi]);
@@ -10387,6 +10411,12 @@ namespace Planc {
                         ltname = cf.type_name;
                         return;
                     }
+                }
+                if (gi >= 0) {
+                    ltype = global_types[gi];
+                    ltname = global_type_names[gi];
+                    emitter.lea_rax_space (global_offsets[gi], global_spaces[gi]);
+                    return;
                 }
                 if (current_struct != null && !current.is_static) {
                     unowned StructField? sf = null;
@@ -11247,6 +11277,8 @@ namespace Planc {
                     update_non_null_on_assign (a.name, vt, vt_name);
                 } else {
                     var gi = lookup_global (a.name);
+                    if (gi >= 0 && shadows_a_member (a.name))
+                        gi = -1;
                     if (gi < 0) {
                         var sg_static = static_field_global_of_this_class (a.name);
                         if (sg_static >= 0)
@@ -13909,7 +13941,7 @@ namespace Planc {
                         emitter.movq_xmm_rax (0);
                 } else {
                     var gi = lookup_global (v.name);
-                    if (gi >= 0) {
+                    if (gi >= 0 && !shadows_a_member (v.name)) {
                         if (global_types[gi] == ValaType.STRUCT)
                             emitter.lea_rax_space (global_offsets[gi], global_spaces[gi]);
                         else

@@ -112,6 +112,7 @@ Tests: `if_else`, `while_loop`, `do_while`, `for_break_continue`, `foreach_array
 | Delegates y lambdas | capturas, `weak`, tipos anidados | `delegates_and_lambdas`, `nullable_delegate` |
 | Genéricos: clases, métodos, funciones, interfaces | monomorfización por lista de argumentos; inferencia desde `T`/`T[]`; tope anti-DoS | `generics_and_array`, `generic_methods`, `generic_interfaces` |
 | Namespaces y tipos hacia delante | soportado | `namespaces_and_forward_types` |
+| Campo de la clase con el mismo nombre que un global | el campo gana (lectura, escritura y escritura indexada), como en Vala estándar | `field_shadows_global` |
 
 ### `struct` en arrays (slab contiguo)
 
@@ -229,7 +230,7 @@ planc <fuentes.vala>… -o <salida> [flags]
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **287 casos, 286 pasan**. El único fallo es
+Estado actual: **288 casos, 287 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
