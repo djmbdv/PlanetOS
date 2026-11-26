@@ -386,6 +386,8 @@ Table-driven mapping from IR operations to x86_64 sequences. Cases that require 
 | integer `/ 2^k` (unsigned), `% 2^k` | `shr`, `and` |
 | integer `x / d`, `x % d` for constant `d` | verified reciprocal: `mul` (mulhi) + `shr` + sign fixup, no `idiv` |
 | integer `* 3` / `* 5` / `* 9` | `lea d, [x + x*2^k]` |
+| `double`/`float` local | `movsd`/`movss` straight to and from the slot (no `movq` via `rax`) |
+| `d = l + r` | `lea d, [l + r]` (falls back to `mov`+`add` for an `rsp`/`r12` index) |
 | floating `cmp.lt` | `ucomisd` + `setb` + `movzx` |
 | `fptosi` conversion | `cvttsd2si` with range checking if the value can overflow |
 | dense `switch` | jump table in `.rodata` |

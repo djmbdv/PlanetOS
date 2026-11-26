@@ -97,6 +97,37 @@ once per comparison (`setcc`, `inverted_branch`, `direct_branch` in `codegen.val
 `cmp_cc`, `inverted_br` in `puzzle_ra.vala`) now dispatch on `op[0]` and `op.length`,
 which removes 5–6 calls per emitted comparison.
 
+## 5. Floating-point locals stay in `xmm0`
+
+The AST backend moved every `double`/`float` local through a general-purpose register:
+
+```
+movq rax, xmm0 ; mov [rbp-8], rax        store a double local
+mov rax, [rbp-8] ; movq xmm0, rax        load it back
+```
+
+`Emitter.load_local_fp` / `store_local_fp` emit `movsd xmm0, [rbp-8]` and
+`movsd [rbp-8], xmm0` instead: one instruction per access instead of two, and no
+detour through `rax`. The same applies to the parameter spill (eight `xmm` registers,
+via `store_local_fp_x`) and to the FP binary-op sequence, where
+`movq rax, xmm0; movq xmm1, rax` became `movapd xmm1, xmm0`.
+
+Three details keep it safe:
+
+- the direct path is skipped when the slot is addressed indirectly (async task frame)
+  or when the slot lives in a register (`get_slot_reg`), falling back to the old pair;
+- it invalidates the `last_store_local` peephole, which reasons about `rax` and an
+  adjacent load, so an integer slot is never cancelled across an FP store;
+- it is used only for non-`by_ref`, non-struct, non-weak locals, and `float` keeps
+  working because the slot has always held the full 64-bit `xmm` value.
+
+Measured on eight `double` locals updated in a tight loop (30 M iterations): 346.5 →
+290.8 ms at `-O2` (**16 %**), and the same gain at `-O0`/`-O1` since all levels share
+this path. A first benchmark built around `divsd` and function calls showed nothing,
+because it was latency-bound elsewhere — the win only shows when local traffic is on
+the critical path.
+
+
 ## Measured
 
 Division-heavy loop (`s += a[i]/8 + a[i]%8 + a[i]*3`, 20 M iterations,
@@ -138,8 +169,10 @@ The reduced forms were checked against the `idiv` path for every operand in
 | Case | What it pins |
 |---|---|
 | `valid/divmod_constants.vala` (`.out`, `.code`, plus `-O1`/`-O2` runs) | reduced `/` and `%` match the `idiv` path for powers of two and reciprocals, signed, unsigned, and at the 64-bit boundaries |
+| `valid/divmod_regpressure.vala` (`.out`, `.code`, plus `-O1`/`-O2` runs) | the reciprocal still holds when the multiplier vreg is allocated to `rax` |
 | `valid/deep_expr_chain.vala` (`.code`, plus `-O2` run) | a 300-operator chain compiles (it used to crash) |
 | `valid/comparison_operators.vala` (`.out`, `.code`, plus `-O1`/`-O2` runs) | all six comparison operators keep their meaning for signed and unsigned operands, as values and as branches |
+| `valid/fp_locals.vala` (`.out`, `.code`) | FP parameters (8 in `xmm`, 2 on the stack), FP locals, compound assignment, `float` round trips, and FP/int slots sharing a frame |
 | `invalid/expr_too_deep.vala` | 500 levels is a positioned diagnostic, not a stack overflow |
 
 ## Not done (deliberately)
@@ -151,6 +184,12 @@ The reduced forms were checked against the `idiv` path for every operand in
 - **`enum BinOp` in the AST**: 440 `op`/`sop` string comparisons remain across
   `codegen`/`opt`/`puzzle_ra`; converting them is mechanical but touches every
   expression site, so only the hottest helpers were switched to character dispatch.
-- **Floating-point operators in `PuzzleRA`**: `addsd`/`mulsd`/`ucomisd` would let
-  `float`/`double` code skip the stack machine too, but `check_expr_supported` rejects
-  every non-integer type, so that is a separate slice.
+  It is also not worth much: at ~20 `g_strcmp0` per binary node and ~300 k nodes in a
+  200 k-line build, the cost is on the order of 30 ms (≈1.5 % of the compile), so the
+  440-site churn would buy less than it risks.
+- **Floating-point register allocation**: `float`/`double` still go through the stack
+  machine at every level; `check_expr_supported` rejects non-integer types, so `-O2`
+  keeps using `gen_binary` for FP. Adding an `xmm` bank to the puzzle allocator (with
+  the `xmm` calling convention and 16-byte spill slots) is the next real win, but it is
+  a slice of its own. The instruction-selection work above (section 5) took the cheap
+  part of it.

@@ -5010,6 +5010,60 @@ namespace Planc {
             code.u8 (0x66); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC9);
         }
 
+        // movapd xmm1, xmm0                  66 0F 28 C8
+        // (register form: no alignment requirement, one instruction instead of
+        // the xmm0 -> rax -> xmm1 round trip)
+        public void movapd_xmm1_xmm0 () {
+            code.u8 (0x66); code.u8 (0x0F); code.u8 (0x28); code.u8 (0xC8);
+        }
+
+        // movsd xmm0, [rbp + d]              F2 0F 10 45 d8 | F2 0F 10 85 d32
+        // movsd [rbp + d], xmm0              F2 0F 11 45 d8 | F2 0F 11 85 d32
+        // A double lives in one slot exactly like an integer, so keeping it in
+        // xmm0 avoids the movq-via-rax pair. Falls back to the general path when
+        // the slot is addressed indirectly (async task frame) or when a slot
+        // register cache is active; the `last_store_local` peephole is
+        // invalidated on the direct path because it reasons about rax.
+        public void load_local_fp (int slot) {
+            if (async_task_rbp_offset != 0 || get_slot_reg (slot) >= 0) {
+                load_local (slot);
+                movq_xmm_rax (0);
+                return;
+            }
+            last_store_local_slot = -1;
+            int d = slot_offset (slot);
+            code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x10);
+            if (d >= -128 && d <= 127) {
+                code.u8 (0x45); code.u8 ((uint8) d);
+            } else {
+                code.u8 (0x85); code.u32le ((uint32) d);
+            }
+        }
+
+        public void store_local_fp (int slot) {
+            store_local_fp_x (slot, 0);
+        }
+
+        // Generic form: the async wrapper spills one parameter per xmm register.
+        public void store_local_fp_x (int slot, int xmm) {
+            if (async_task_rbp_offset != 0 || get_slot_reg (slot) >= 0) {
+                movq_rax_xmm (xmm);
+                store_local (slot);
+                return;
+            }
+            last_store_local_slot = -1;
+            int d = slot_offset (slot);
+            code.u8 (0xF2);
+            if (xmm >= 8)
+                code.u8 (0x44);                     // REX.R
+            code.u8 (0x0F); code.u8 (0x11);
+            if (d >= -128 && d <= 127) {
+                code.u8 ((uint8) (0x45 | ((xmm & 7) << 3))); code.u8 ((uint8) d);
+            } else {
+                code.u8 ((uint8) (0x85 | ((xmm & 7) << 3))); code.u32le ((uint32) d);
+            }
+        }
+
         public void push_xmm0 () {
             sub_rsp (8);
             code.u8 (0xF2); code.u8 (0x0F); code.u8 (0x11); code.u8 (0x04); code.u8 (0x24);

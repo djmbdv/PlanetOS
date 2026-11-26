@@ -6182,8 +6182,7 @@ namespace Planc {
             for (int i = 0; i < f.params.length; i++) {
                 bool is_fp = is_fp_type (f.params[i].param_type);
                 if (is_fp && xmm_idx < 8) {
-                    emitter.movq_rax_xmm (xmm_idx++);
-                    emitter.store_local (i);
+                    emitter.store_local_fp_x (i, xmm_idx++);
                 } else if (!is_fp && gpr_idx < NUM_ARG_REGS) {
                     emitter.store_local_reg (i, arg_reg (gpr_idx++));
                 } else {
@@ -6753,8 +6752,7 @@ namespace Planc {
                 if (!by_ref && f.params[i].param_type != ValaType.STRUCT)
                     try_alloc_reg_slot (raw_slot, f.params[i].param_type, f.params[i].name);
                 if (is_fp && xmm_idx < 8) {
-                    emitter.movq_rax_xmm (xmm_idx++);
-                    emitter.store_local (raw_slot);
+                    emitter.store_local_fp_x (raw_slot, xmm_idx++);
                 } else if (!is_fp && gpr_idx < NUM_ARG_REGS) {
                     emitter.store_local_reg (raw_slot, arg_reg (gpr_idx++));
                 } else {
@@ -11507,11 +11505,12 @@ namespace Planc {
                         gen_expr (d.init);
                         if (is_fp_type (vtype)) {
                             emit_fp_coerce (init_t, vtype);
-                            emitter.movq_rax_xmm (0);
-                        } else if (vtype == ValaType.INT) {
-                            emit_int_narrow (vtname);
+                            emitter.store_local_fp (slot);
+                        } else {
+                            if (vtype == ValaType.INT)
+                                emit_int_narrow (vtname);
+                            emitter.store_local (slot);
                         }
-                        emitter.store_local (slot);
                         cleanup_expr_temps (d.init);
                     } else {
                         emitter.zero_local (slot);
@@ -11606,11 +11605,12 @@ namespace Planc {
                         } else {
                             if (is_fp_type (local_types[idx])) {
                                 emit_fp_coerce (vt, local_types[idx]);
-                                emitter.movq_rax_xmm (0);
-                            } else if (local_types[idx] == ValaType.INT) {
-                                emit_int_narrow (local_type_names[idx]);
+                                emitter.store_local_fp (local_slots[idx]);
+                            } else {
+                                if (local_types[idx] == ValaType.INT)
+                                    emit_int_narrow (local_type_names[idx]);
+                                emitter.store_local (local_slots[idx]);
                             }
-                            emitter.store_local (local_slots[idx]);
                         }
                     }
                     cleanup_expr_temps (a.value);
@@ -13092,8 +13092,7 @@ namespace Planc {
                 push_depth++;
                 gen_expr (b.right);
                 emit_fp_coerce (rt, ct);
-                emitter.movq_rax_xmm (0);
-                emitter.movq_xmm_rax (1);
+                emitter.movapd_xmm1_xmm0 ();
                 emitter.pop_xmm0 ();
                 push_depth--;
                 if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
@@ -14693,6 +14692,8 @@ namespace Planc {
                 }
                 var idx = lookup (v.name);
                 if (idx >= 0) {
+                    bool fp_direct = is_fp_type (local_types[idx]) && !local_by_ref[idx]
+                                     && local_types[idx] != ValaType.STRUCT && !local_is_weak[idx];
                     if (local_by_ref[idx]) {
                         emitter.load_local (local_slots[idx]);
                         if (local_types[idx] != ValaType.STRUCT)
@@ -14700,12 +14701,14 @@ namespace Planc {
                     } else if (local_types[idx] == ValaType.STRUCT) {
                         var n = type_slots (ValaType.STRUCT, local_type_names[idx]);
                         emitter.lea_rax_rbp_disp (struct_base_disp (local_slots[idx], n));
+                    } else if (fp_direct) {
+                        emitter.load_local_fp (local_slots[idx]);
                     } else {
                         emitter.load_local (local_slots[idx]);
                         if (local_is_weak[idx])
                             emit_load_weak (v.ref_temp_slot);
                     }
-                    if (is_fp_type (local_types[idx]))
+                    if (!fp_direct && is_fp_type (local_types[idx]))
                         emitter.movq_xmm_rax (0);
                 } else {
                     var gi = lookup_global (v.name);
@@ -15209,8 +15212,9 @@ namespace Planc {
                     @"'in' is not supported on arrays of struct '$(etn)': structs have no '==' at $(b.line):$(b.column)");
             gen_expr (b.left);
             if (is_fp_type (lt))
-                emitter.movq_rax_xmm (0);
-            emitter.store_local (b.in_needle_slot);
+                emitter.store_local_fp (b.in_needle_slot);
+            else
+                emitter.store_local (b.in_needle_slot);
             gen_expr (b.right);
             emit_null_check_if_nullable (rt, rt_name);
             emitter.store_local (b.in_arr_slot);
