@@ -3281,6 +3281,7 @@ namespace Planc {
                         name = mname,
                         return_type = ft,
                         return_type_name = ft_name,
+                        return_unowned = mem_is_unowned,
                         is_virtual = is_virtual,
                         is_override = is_override,
                         is_abstract = is_abstract_m,

@@ -2961,7 +2961,7 @@ namespace Planc {
                 local_borrow_dead[dst_idx] = true;
                 return true;
             }
-            if (src_expr != null) {
+            if (src_expr != null && is_borrowing_temporary (src_expr)) {
                 local_borrow_src[dst_idx] = BORROW_TEMP;
                 local_borrow_dead[dst_idx] = true;
                 return true;
@@ -2969,6 +2969,64 @@ namespace Planc {
             local_borrow_src[dst_idx] = -1;
             local_borrow_dead[dst_idx] = false;
             return false;
+        }
+
+        private bool is_borrowing_temporary (Expr e) {
+            if (e is NullLiteral || e is StringLiteral || e is VarRef
+                || e is IntLiteral || e is BoolLiteral || e is FloatLiteral)
+                return false;
+            if (e is ClassNewExpr || e is ArrayNewExpr || e is ArrayNew2Expr
+                || e is ArrayLiteralExpr || e is SliceExpr || e is TemplateExpr)
+                return true;
+            if (e is UnaryExpr)
+                return ((UnaryExpr) e).op == "owned";
+            if (e is BinaryExpr)
+                return ((BinaryExpr) e).op == "+";
+            if (e is TypeCheckExpr)
+                return is_borrowing_temporary (((TypeCheckExpr) e).operand);
+            if (e is TernaryExpr) {
+                var t = (TernaryExpr) e;
+                return is_borrowing_temporary (t.then_expr) || is_borrowing_temporary (t.else_expr);
+            }
+            if (e is CoalesceExpr) {
+                var c = (CoalesceExpr) e;
+                return is_borrowing_temporary (c.left) || is_borrowing_temporary (c.right);
+            }
+            if (e is CallExpr) {
+                string cname = ((CallExpr) e).callee;
+                unowned var fn = program.find (cname);
+                if (fn == null && current_class != null)
+                    fn = find_class_method (current_class, cname);
+                if (fn != null && (fn.return_unowned || !is_ref_type (fn.return_type)))
+                    return false;
+                return true;
+            }
+            if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                if (mc.target is VarRef) {
+                    string tname = ((VarRef) mc.target).name;
+                    int tidx = lookup (tname);
+                    string cls_name = "";
+                    if (tidx >= 0) {
+                        cls_name = strip_null (local_type_names[tidx]);
+                    } else if (current_class != null) {
+                        for (int fi = 0; fi < current_class.fields.length; fi++) {
+                            if (current_class.fields[fi].name == tname) {
+                                cls_name = strip_null (current_class.fields[fi].type_name);
+                                break;
+                            }
+                        }
+                    }
+                    if (cls_name == "")
+                        cls_name = tname;
+                    unowned var cd = program.find_class (cls_name);
+                    unowned var m = find_class_method (cd, mc.method_name);
+                    if (m != null && (m.return_unowned || !is_ref_type (m.return_type)))
+                        return false;
+                }
+                return true;
+            }
+            return true;
         }
 
         private static bool is_storage_location (Expr e) {
@@ -13859,7 +13917,6 @@ namespace Planc {
                 }
                 bool elem_ref = is_ref_type (an.elem_type);
                 int stride = elem_stride_bytes (an.elem_type, an.elem_type_name);
-                bool byte_arr = (stride == 1);
                 if (is_struct_elem (an.elem_type, an.elem_type_name)) {
                     unowned var sd = program.find_struct (strip_null (an.elem_type_name));
                     // A struct array is one slab that is freed without walking

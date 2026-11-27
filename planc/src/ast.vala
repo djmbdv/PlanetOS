@@ -576,6 +576,7 @@ namespace Planc {
         public string method_name { get; set; default = ""; }
         public ValaType return_type { get; set; default = ValaType.VOID; }
         public string return_type_name { get; set; default = ""; }
+        public bool return_unowned { get; set; default = false; }
         public bool is_void {
             get { return return_type == ValaType.VOID; }
         }
@@ -623,6 +624,7 @@ namespace Planc {
         public string name { get; set; }
         public ValaType return_type { get; set; default = ValaType.VOID; }
         public string return_type_name { get; set; default = ""; }
+        public bool return_unowned { get; set; default = false; }
         public GenericArray<Param> params { get; private set; }
         public bool is_virtual { get; set; default = false; }
         public Function? default_handler { get; set; default = null; }
@@ -846,6 +848,7 @@ namespace Planc {
         public GenericArray<string> type_params { get; private set; }
         public ValaType return_type { get; set; default = ValaType.VOID; }
         public string return_type_name { get; set; default = ""; }
+        public bool return_unowned { get; set; default = false; }
         public GenericArray<Param> params { get; private set; }
         public GenericArray<string> throws_domains { get; private set; }
         public int line { get; set; }
