@@ -554,7 +554,8 @@ namespace Planc {
                 if (fn.params[i].is_ref || fn.params[i].is_out || fn.params[i].param_type == ValaType.STRUCT)
                     return false;
             }
-            if (fn.body == null || fn.body.length == 0 || fn.body.length > 8)
+            int max_stmts = fn.is_always_inline ? 32 : 8;
+            if (fn.body == null || fn.body.length == 0 || fn.body.length > max_stmts)
                 return false;
             var lnames = new GenericArray<string> ();
             for (int i = 0; i < fn.body.length; i++) {

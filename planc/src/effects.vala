@@ -177,7 +177,7 @@ namespace Planc {
             mod.add (name);
         }
 
-        private static bool holds (GenericArray<string> mod, string name) {
+        public static bool holds (GenericArray<string> mod, string name) {
             for (int i = 0; i < mod.length; i++) {
                 if (mod[i] == name) return true;
             }

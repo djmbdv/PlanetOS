@@ -1141,6 +1141,11 @@ namespace Planc {
             program.consts.add (cd);
         }
 
+        private bool last_noalloc_attr = false;
+        private bool last_inline_attr = false;
+        private bool last_checked_ov_attr = false;
+        private bool last_wrap_attr = false;
+
         private void parse_attributes (out string? asm_body, out int asm_line, out int asm_col,
                                        out bool compact_attr, out bool simple_type_attr,
                                        out bool arena_attr)
@@ -1151,6 +1156,10 @@ namespace Planc {
             compact_attr = false;
             simple_type_attr = false;
             arena_attr = false;
+            last_noalloc_attr = false;
+            last_inline_attr = false;
+            last_checked_ov_attr = false;
+            last_wrap_attr = false;
             while (current.kind == TokenKind.LBRACKET) {
                 advance (); // '['
                 if (current.kind != TokenKind.IDENTIFIER)
@@ -1166,6 +1175,14 @@ namespace Planc {
                     simple_type_attr = true;
                 else if (attr_name == "Arena")
                     arena_attr = true;
+                else if (attr_name == "NoAlloc")
+                    last_noalloc_attr = true;
+                else if (attr_name == "AlwaysInline")
+                    last_inline_attr = true;
+                else if (attr_name == "CheckedOverflow")
+                    last_checked_ov_attr = true;
+                else if (attr_name == "Wrap")
+                    last_wrap_attr = true;
                 if (attr_name == "AsmBody") {
                     expect (TokenKind.LPAREN, "'('");
                     if (current.kind != TokenKind.STRING && current.kind != TokenKind.TEMPLATE_STRING)
@@ -1415,6 +1432,10 @@ namespace Planc {
                 f.is_static = is_static;
                 f.is_async = is_async;
                 f.is_arena = arena_attr;
+                f.is_noalloc = last_noalloc_attr;
+                f.is_always_inline = last_inline_attr;
+                f.is_checked_overflow = last_checked_ov_attr;
+                f.is_wrap = last_wrap_attr;
                 if (has_top_name (name))
                     throw new ParseError.DUPLICATE_FUNCTION (
                         @"duplicate name: $name at $(f.line):$(f.column)");
@@ -1688,6 +1709,21 @@ namespace Planc {
                 bits ^= as_f32 ? (uint64) 0x80000000 : (uint64) 0x8000000000000000;
             advance ();
             return (int64) bits;
+        }
+
+        private void parse_contracts (Function f) throws ParseError, LexError {
+            while (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
+                   && (current.text == "requires" || current.text == "ensures")) {
+                bool is_req = (current.text == "requires");
+                advance ();
+                expect (TokenKind.LPAREN, "'('");
+                var ex = parse_expr ();
+                expect (TokenKind.RPAREN, "')'");
+                if (is_req)
+                    f.requires_exprs.add (ex);
+                else
+                    f.ensures_exprs.add (ex);
+            }
         }
 
         private void parse_throws_clause (GenericArray<string> dst) throws ParseError, LexError {
@@ -2683,14 +2719,19 @@ namespace Planc {
                     }
                     bool is_ref = false;
                     bool is_out = false;
+                    bool is_in = false;
                     if (is_tok_kw (current, "ref")) {
                         is_ref = true;
                         advance ();
                     } else if (is_tok_kw (current, "out")) {
                         is_out = true;
                         advance ();
+                    } else if (is_tok_kw (current, "in")) {
+                        is_in = true;
+                        advance ();
                     }
-                    parse_ownership_weak ();
+                    bool p_unowned = false;
+                    bool p_weak = parse_ownership (out p_unowned);
                     ValaType pt = ValaType.VOID;
                     string pt_name = "";
                     if (!parse_type_with_ns (out pt, out pt_name) || pt == ValaType.VOID) {
@@ -2710,6 +2751,9 @@ namespace Planc {
                         name = current.text,
                         is_ref = is_ref,
                         is_out = is_out,
+                        is_in = is_in,
+                        is_unowned = p_unowned || is_in,
+                        is_weak = p_weak,
                         line = current.line,
                         column = current.column
                     };
@@ -3287,6 +3331,11 @@ namespace Planc {
                         is_abstract = is_abstract_m,
                         is_static = is_static_m,
                         is_async = is_async_m,
+                        is_arena = m_arena,
+                        is_noalloc = last_noalloc_attr,
+                        is_always_inline = last_inline_attr,
+                        is_checked_overflow = last_checked_ov_attr,
+                        is_wrap = last_wrap_attr,
                         owner_class = cd.name,
                         visibility = m_vis,
                         line = mem_l,
@@ -3300,6 +3349,7 @@ namespace Planc {
                     foreach (var p in plist)
                         mfn.params.add (p);
                     parse_throws_clause (mfn.throws_domains);
+                    parse_contracts (mfn);
                     if (m_asm != null) {
                         mfn.is_asm_body = true;
                         mfn.asm_body = m_asm;
@@ -3447,6 +3497,7 @@ namespace Planc {
             foreach (var p in plist)
                 f.params.add (p);
             parse_throws_clause (f.throws_domains);
+            parse_contracts (f);
             if (asm_body != null) {
                 f.is_asm_body = true;
                 f.asm_body = asm_body;
@@ -4531,11 +4582,17 @@ namespace Planc {
                 parse_generic_type_args (ref tt, ref tt_name);
                 if ((tt == ValaType.CLASS || tt == ValaType.INTERFACE) && current.kind == TokenKind.QUESTION)
                     advance ();
+                string bname = "";
+                if (op == "is" && current.kind == TokenKind.IDENTIFIER && !is_tok_reserved (current)) {
+                    bname = current.text;
+                    advance ();
+                }
                 var tc = new TypeCheckExpr () {
                     op = op,
                     operand = left,
                     target_type = tt,
-                    target_type_name = tt_name
+                    target_type_name = tt_name,
+                    bind_name = bname
                 };
                 tc.line = l;
                 tc.column = c;

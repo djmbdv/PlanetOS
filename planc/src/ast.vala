@@ -257,6 +257,8 @@ namespace Planc {
         public Expr operand { get; set; }
         public ValaType target_type { get; set; default = ValaType.CLASS; }
         public string target_type_name { get; set; default = ""; }
+        public string bind_name { get; set; default = ""; }
+        public int bind_slot { get; set; default = -1; }
     }
 
     public class SliceExpr : Expr {
@@ -557,6 +559,7 @@ namespace Planc {
         public bool unmanaged { get; set; default = false; }
         public bool is_ref { get; set; default = false; }
         public bool is_out { get; set; default = false; }
+        public bool is_in { get; set; default = false; }
         public Expr? default_value { get; set; default = null; }
         public int line { get; set; }
         public int column { get; set; }
@@ -570,6 +573,10 @@ namespace Planc {
         public string file { get; set; default = ""; }
         public bool is_compact_free { get; set; default = false; }
         public bool is_arena { get; set; default = false; }
+        public bool is_noalloc { get; set; default = false; }
+        public bool is_always_inline { get; set; default = false; }
+        public bool is_checked_overflow { get; set; default = false; }
+        public bool is_wrap { get; set; default = false; }
         public bool is_varargs { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
         public bool is_generic_template { get; set; default = false; }
@@ -607,12 +614,16 @@ namespace Planc {
             get { return throws_domains.length > 0; }
         }
         public GenericArray<Param> params { get; private set; }
+        public GenericArray<Expr> requires_exprs { get; private set; }
+        public GenericArray<Expr> ensures_exprs { get; private set; }
         public GenericArray<Statement> body { get; private set; }
         public int line { get; set; }
         public int column { get; set; }
 
         public Function () {
             params = new GenericArray<Param> ();
+            requires_exprs = new GenericArray<Expr> ();
+            ensures_exprs = new GenericArray<Expr> ();
             body = new GenericArray<Statement> ();
             base_args = new GenericArray<Expr> ();
             throws_domains = new GenericArray<string> ();

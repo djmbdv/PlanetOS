@@ -25,6 +25,7 @@ namespace Planc {
         ARR_LOAD,
         ARR_STORE,
         ARR_LEN,
+        BOUNDS_PANIC,
         SIMD_ARR_REDUCE,
         PRINT_STR,
         PRINT_INT
@@ -1037,6 +1038,43 @@ namespace Planc {
             bce_bnd_max_v.length = n;
             bce_bnd_max_off.length = n;
             bce_bnd_max_arr.length = n;
+        }
+
+        private void bce_try_push_requires (Expr? req, GenericArray<string> body_mod) {
+            if (!(req is BinaryExpr)) return;
+            var b = (BinaryExpr) req;
+            if (b.op == "&&") {
+                if (b.left is BinaryExpr && b.right is BinaryExpr) {
+                    var bl = (BinaryExpr) b.left;
+                    var br = (BinaryExpr) b.right;
+                    string? nonneg_var = null;
+                    if (bl.op == ">=" && bl.left is VarRef && bl.right is IntLiteral && ((IntLiteral) bl.right).value >= 0)
+                        nonneg_var = ((VarRef) bl.left).name;
+                    else if (bl.op == "<=" && bl.left is IntLiteral && ((IntLiteral) bl.left).value >= 0 && bl.right is VarRef)
+                        nonneg_var = ((VarRef) bl.right).name;
+                    if (nonneg_var != null && br.op == "<" && br.left is VarRef && ((VarRef) br.left).name == nonneg_var
+                        && br.right is MemberAccessExpr) {
+                        var ma = (MemberAccessExpr) br.right;
+                        if (ma.member == "length" && ma.target is VarRef) {
+                            string aname = ((VarRef) ma.target).name;
+                            if (!Effects.holds (body_mod, aname) && !Effects.holds (body_mod, nonneg_var)) {
+                                int vi = lookup_var (nonneg_var);
+                                int ai = lookup_var (aname);
+                                if (vi >= 0 && ai >= 0) {
+                                    bce_bnd_vreg.add (var_vregs[vi]);
+                                    bce_bnd_min.add (0);
+                                    bce_bnd_max_c.add (-1);
+                                    bce_bnd_max_v.add (-1);
+                                    bce_bnd_max_off.add (0);
+                                    bce_bnd_max_arr.add (var_vregs[ai]);
+                                }
+                            }
+                        }
+                    }
+                }
+                bce_try_push_requires (b.left, body_mod);
+                bce_try_push_requires (b.right, body_mod);
+            }
         }
 
         private bool bce_var_lt_var (int vv, int target_v, int64 k) {
@@ -2811,6 +2849,11 @@ namespace Planc {
                                 emitter.branch (BranchKind.JMP, (Label) blocks[ins.target_bb].label);
                             break;
                         }
+                        case IROp.BOUNDS_PANIC: {
+                            used_bounds_panic = true;
+                            emitter.branch (BranchKind.JMP, bounds_panic_label);
+                            break;
+                        }
                         case IROp.CALL: {
                             emit_parallel_arg_moves (ins.args);
                             emitter.call_rel32 (ins.str_val);
@@ -3261,6 +3304,10 @@ namespace Planc {
                 ra.var_types.add (p.param_type);
                 ra.var_tnames.add (p.type_name);
             }
+            for (int i = 0; i < f.requires_exprs.length; i++) {
+                if (!ra.check_expr_supported (f.requires_exprs[i]))
+                    return false;
+            }
             for (int i = 0; i < f.body.length; i++) {
                 if (!ra.check_stmt_supported (f.body[i]))
                     return false;
@@ -3292,8 +3339,31 @@ namespace Planc {
                 ra.tre_acc_vreg = ra.new_vreg ();
                 ra.emit_ir (new IRInst () { op = IROp.MOV_IMM, dst = ra.tre_acc_vreg, imm = 0 });
             }
+            if (f.requires_exprs.length > 0) {
+                var body_mod = new GenericArray<string> ();
+                bool body_mod_ok = true;
+                for (int i = 0; i < f.body.length; i++) {
+                    if (!Effects.collect_stmt (f.body[i], body_mod, false)) {
+                        body_mod_ok = false;
+                        break;
+                    }
+                }
+                for (int i = 0; i < f.requires_exprs.length; i++) {
+                    var req = f.requires_exprs[i];
+                    if (bounds_check) {
+                        int bb_ok = ra.new_bb ();
+                        int bb_fail = ra.new_bb ();
+                        ra.lower_cond_jump_false (req, bb_fail, bb_ok);
+                        ra.cur_bb = bb_fail;
+                        ra.emit_ir (new IRInst () { op = IROp.BOUNDS_PANIC });
+                        ra.cur_bb = bb_ok;
+                    }
+                    if (body_mod_ok)
+                        ra.bce_try_push_requires (req, body_mod);
+                }
+            }
             ra.tre_loop_bb = ra.new_bb ();
-            ra.blocks[0].succs.add (ra.tre_loop_bb);
+            ra.blocks[ra.cur_bb].succs.add (ra.tre_loop_bb);
             ra.cur_bb = ra.tre_loop_bb;
             for (int i = 0; i < f.body.length; i++)
                 ra.lower_stmt (f.body[i]);

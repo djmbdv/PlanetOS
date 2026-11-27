@@ -22,7 +22,7 @@ namespace Planc {
         }
     }
 
-    private const string USAGE = "usage: planc <source.vala>... -o <output> [-D NAME] [--target=planetos|windows|spirv] [--freestanding] [--nostdlib] [--image-base=ADDR] [--format=elf|plan|dlib] [--import-lib=NAME] [--import-dlib=PATH] [--library-dir=DIR] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--debug-memory] [--trace-alloc[=N]] [--strict-ownership] [--strict-visibility] [--enforce-visibility] [--allow-asm-anywhere] [--error-limit N] [--no-error-recovery]";
+    private const string USAGE = "usage: planc <source.plan|source.vala>... -o <output> [-D NAME] [--target=planetos|windows|spirv] [--freestanding] [--nostdlib] [--image-base=ADDR] [--format=elf|plan|dlib] [--import-lib=NAME] [--import-dlib=PATH] [--library-dir=DIR] [--dump-text] [--no-bounds-check] [--no-null-check] [--check-leaks] [--debug-memory] [--trace-alloc[=N]] [--strict-ownership] [--strict-visibility] [--enforce-visibility] [--allow-asm-anywhere] [--error-limit N] [--no-error-recovery]";
 
     private static int parse_uint (string s) {
         int v = 0;
@@ -106,6 +106,7 @@ namespace Planc {
     public static int main (string[] args) {
         var source_paths = new GenericArray<string> ();
         var defines = new GenericArray<string> ();
+        defines.add ("PLANC");
         var output_path = "";
         var dump = false;
         var bounds_check = true;

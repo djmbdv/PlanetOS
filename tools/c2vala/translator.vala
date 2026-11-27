@@ -5,6 +5,7 @@ using Planc;
 namespace C2Vala {
 
     public class Translator : Object {
+        public bool plan_mode { get; set; default = false; }
         private TranslationUnit tu;
         private GenericArray<FuncSig> sigs = new GenericArray<FuncSig> ();
         private GenericArray<string> enum_member_names = new GenericArray<string> ();
@@ -2780,6 +2781,8 @@ namespace C2Vala {
                 var prescan_p = fn_locals[func_idx];
                 string ret_t = vala_type (fn.ret_type, sig.ret_is_array);
                 assert_supported_type (ret_t);
+                if (plan_mode)
+                    sb.append ("[Wrap]\n");
                 sb.append (@"$ret_t $(esc_ident (fn.name)) (");
                 for (int i = 0; i < fn.params.length; i++) {
                     var p = fn.params[i];

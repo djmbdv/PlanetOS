@@ -4,7 +4,7 @@ using Planc;
 
 namespace C2Vala {
 
-    private const string USAGE = "usage: c2vala <input.c>... [-I dir] [-D NAME[=VAL]] [--namespace Name] [-o out.vala] [--report]";
+    private const string USAGE = "usage: c2vala <input.c>... [-I dir] [-D NAME[=VAL]] [--namespace Name] [-o out.vala|out.plan] [--plan] [--report]";
 
     private static int count_lines (string s) {
         if (s.length == 0)
@@ -26,6 +26,7 @@ namespace C2Vala {
         string output_path = "";
         string ns_name = "";
         bool report_mode = false;
+        bool plan_mode = false;
         bool verbose = false;
 
         for (int i = 1; i < args.length; i++) {
@@ -65,6 +66,8 @@ namespace C2Vala {
                 ns_name = a.substring (12);
             } else if (a == "--report") {
                 report_mode = true;
+            } else if (a == "--plan") {
+                plan_mode = true;
             } else if (a == "-v" || a == "--verbose") {
                 verbose = true;
             } else if (a == "-h" || a == "--help") {
@@ -115,6 +118,7 @@ namespace C2Vala {
 
             if (verbose) Host.eprintln (@"[c2vala] 4/4 translate ($(tu.funcs.length) funcs)...");
             var tr = new Translator (tu);
+            tr.plan_mode = plan_mode || output_path.has_suffix (".plan");
             string vala_out = tr.translate (report_mode, ns_name);
 
             if (output_path != "") {

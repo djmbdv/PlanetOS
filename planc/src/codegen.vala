@@ -440,6 +440,7 @@ namespace Planc {
             }
 
             program_uses_heap = check_leaks || debug_memory || main_takes_args || scan_program_heap ();
+            check_noalloc_functions ();
             if (main_takes_args)
                 need_build_args = true;
             if (program_uses_heap) {
@@ -1033,7 +1034,9 @@ namespace Planc {
             }
             if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
-                if (b.op == "+" && may_be_string (b.left))
+                if (b.op == "+" && may_be_string (b.left)
+                    && !(noalloc_scan_fn != null && is_known_non_string_in_fn (noalloc_scan_fn, b.left)
+                         && is_known_non_string_in_fn (noalloc_scan_fn, b.right)))
                     return true;
                 return scan_expr_heap (b.left) || scan_expr_heap (b.right);
             }
@@ -1063,6 +1066,154 @@ namespace Planc {
                 return false;
             }
             return false;
+        }
+
+        private void collect_stmt_callees (Statement? s, GenericArray<string> out_names) {
+            if (s == null) return;
+            if (s is BlockStatement) {
+                foreach (var st in ((BlockStatement) s).statements) collect_stmt_callees (st, out_names);
+            } else if (s is IfStatement) {
+                var i = (IfStatement) s;
+                collect_stmt_callees (i.then_body, out_names);
+                collect_stmt_callees (i.else_body, out_names);
+                collect_expr_callees (i.condition, out_names);
+            } else if (s is WhileStatement) {
+                var w = (WhileStatement) s;
+                collect_expr_callees (w.condition, out_names);
+                collect_stmt_callees (w.body, out_names);
+            } else if (s is DoWhileStatement) {
+                var dw = (DoWhileStatement) s;
+                collect_stmt_callees (dw.body, out_names);
+                collect_expr_callees (dw.condition, out_names);
+            } else if (s is ForStatement) {
+                var f = (ForStatement) s;
+                collect_stmt_callees (f.init, out_names);
+                collect_expr_callees (f.condition, out_names);
+                collect_stmt_callees (f.step, out_names);
+                collect_stmt_callees (f.body, out_names);
+            } else if (s is ForeachStatement) {
+                var fe = (ForeachStatement) s;
+                collect_expr_callees (fe.collection, out_names);
+                collect_stmt_callees (fe.body, out_names);
+            } else if (s is VarDeclStatement) {
+                collect_expr_callees (((VarDeclStatement) s).init, out_names);
+            } else if (s is AssignStatement) {
+                collect_expr_callees (((AssignStatement) s).value, out_names);
+            } else if (s is ReturnStatement) {
+                collect_expr_callees (((ReturnStatement) s).value, out_names);
+            } else if (s is ExprStatement) {
+                collect_expr_callees (((ExprStatement) s).expr, out_names);
+            } else if (s is PrintStatement) {
+                collect_expr_callees (((PrintStatement) s).value, out_names);
+            } else if (s is SwitchStatement) {
+                var sw = (SwitchStatement) s;
+                collect_expr_callees (sw.target, out_names);
+                foreach (var sc in sw.cases)
+                    foreach (var bs in sc.body) collect_stmt_callees (bs, out_names);
+                foreach (var ds in sw.default_body) collect_stmt_callees (ds, out_names);
+            }
+        }
+
+        private void collect_expr_callees (Expr? e, GenericArray<string> out_names) {
+            if (e == null) return;
+            if (e is CallExpr) {
+                var ce = (CallExpr) e;
+                out_names.add (ce.callee);
+                foreach (var a in ce.args) collect_expr_callees (a, out_names);
+            } else if (e is MethodCallExpr) {
+                var mc = (MethodCallExpr) e;
+                out_names.add (mc.method_name);
+                collect_expr_callees (mc.target, out_names);
+                foreach (var a in mc.args) collect_expr_callees (a, out_names);
+            } else if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                collect_expr_callees (b.left, out_names);
+                collect_expr_callees (b.right, out_names);
+            } else if (e is UnaryExpr) {
+                collect_expr_callees (((UnaryExpr) e).operand, out_names);
+            } else if (e is TernaryExpr) {
+                var te = (TernaryExpr) e;
+                collect_expr_callees (te.condition, out_names);
+                collect_expr_callees (te.then_expr, out_names);
+                collect_expr_callees (te.else_expr, out_names);
+            } else if (e is IndexExpr) {
+                var ix = (IndexExpr) e;
+                collect_expr_callees (ix.target, out_names);
+                collect_expr_callees (ix.index, out_names);
+            }
+        }
+
+        private static bool is_known_non_string_in_fn (Function? f, Expr e) {
+            if (e is IntLiteral || e is FloatLiteral || e is BoolLiteral) return true;
+            if (e is UnaryExpr) return is_known_non_string_in_fn (f, ((UnaryExpr) e).operand);
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                return is_known_non_string_in_fn (f, b.left) && is_known_non_string_in_fn (f, b.right);
+            }
+            if (e is VarRef && f != null) {
+                string vn = ((VarRef) e).name;
+                for (int i = 0; i < f.params.length; i++) {
+                    if (f.params[i].name == vn)
+                        return f.params[i].param_type != ValaType.STRING;
+                }
+            }
+            return false;
+        }
+
+        private Function? noalloc_scan_fn = null;
+
+        private void check_noalloc_functions () throws SemanticError {
+            var all_fns = new GenericArray<Function> ();
+            foreach (var f in program.functions) all_fns.add (f);
+            foreach (var cd in program.classes) {
+                if (cd.ctor != null) all_fns.add (cd.ctor);
+                foreach (var nc in cd.named_ctors) all_fns.add (nc);
+                foreach (var m in cd.methods) all_fns.add (m);
+            }
+            var allocs = new bool[all_fns.length];
+            var fn_map = new StrIndexMap ();
+            for (int i = 0; i < all_fns.length; i++) {
+                var f = all_fns[i];
+                if (fn_map.lookup (f.name) < 0)
+                    fn_map.put (f.name, i + 1);
+                if (f.method_name != "" && fn_map.lookup (f.method_name) < 0)
+                    fn_map.put (f.method_name, i + 1);
+                noalloc_scan_fn = f;
+                foreach (var st in f.body) {
+                    if (scan_stmt_heap (st)) {
+                        allocs[i] = true;
+                        if (f.is_noalloc) {
+                            noalloc_scan_fn = null;
+                            throw new SemanticError.TYPE_MISMATCH (
+                                @"[NoAlloc] function '$(f.name)' allocates on the heap at $(f.line):$(f.column)");
+                        }
+                        break;
+                    }
+                }
+                noalloc_scan_fn = null;
+            }
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (int i = 0; i < all_fns.length; i++) {
+                    if (allocs[i]) continue;
+                    var callees = new GenericArray<string> ();
+                    foreach (var st in all_fns[i].body) collect_stmt_callees (st, callees);
+                    for (int ci = 0; ci < callees.length; ci++) {
+                        int idx = fn_map.lookup (callees[ci]);
+                        if (idx > 0 && allocs[idx - 1]) {
+                            allocs[i] = true;
+                            changed = true;
+                            if (all_fns[i].is_noalloc) {
+                                var f = all_fns[i];
+                                throw new SemanticError.TYPE_MISMATCH (
+                                    @"[NoAlloc] function '$(f.name)' calls allocating '$(callees[ci])' at $(f.line):$(f.column)");
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         private bool may_be_string (Expr e) {
@@ -4802,6 +4953,7 @@ namespace Planc {
                 else if (se is TernaryExpr) ((TernaryExpr) se).temp_slot = slot;
                 else if (se is CoalesceExpr) ((CoalesceExpr) se).temp_slot = slot;
                 else if (se is IndexExpr) ((IndexExpr) se).temp_slot = slot;
+                else if (se is TypeCheckExpr) ((TypeCheckExpr) se).bind_slot = slot;
             }
 
             ref_temp_start = var_end + struct_temp_slots;
@@ -5051,6 +5203,13 @@ namespace Planc {
 
                 add_all_non_null (nn_then);
                 var saved_then = locals.length;
+                if (i.condition is TypeCheckExpr && ((TypeCheckExpr) i.condition).op == "is"
+                    && ((TypeCheckExpr) i.condition).bind_name != "") {
+                    var btc = (TypeCheckExpr) i.condition;
+                    push_local (btc.bind_name, btc.target_type, btc.target_type_name, 0, true);
+                    local_used[locals.length - 1] = true;
+                    add_non_null (btc.bind_name);
+                }
                 prepare_stmt (i.then_body, ref struct_temps, ref ref_temps);
                 deactivate_from (saved_then);
                 var after_then = clone_non_null ();
@@ -5279,6 +5438,11 @@ namespace Planc {
                     // Folded to a static .rodata string literal at compile time.
                 } else {
                     prepare_expr (tc.operand, ref struct_temps, ref ref_temps);
+                    if (tc.op == "is" && tc.bind_name != "") {
+                        pending_struct_exprs.add (e);
+                        pending_struct_rel_slots.add (struct_temps);
+                        struct_temps++;
+                    }
                     if (tc.op == "cast" && tc.target_type == ValaType.STRING && expr_type (tc.operand) == ValaType.ARRAY) {
                         need_bytes_to_str = true;
                         if (program_uses_heap) {
@@ -6647,7 +6811,49 @@ namespace Planc {
             }
         }
 
+        private void cg_try_push_requires_bce (Expr? req, GenericArray<string> body_mod) {
+            if (!(req is BinaryExpr)) return;
+            var b = (BinaryExpr) req;
+            if (b.op == "&&") {
+                if (b.left is BinaryExpr && b.right is BinaryExpr) {
+                    var bl = (BinaryExpr) b.left;
+                    var br = (BinaryExpr) b.right;
+                    string? nonneg_var = null;
+                    if (bl.op == ">=" && bl.left is VarRef && bl.right is IntLiteral && ((IntLiteral) bl.right).value >= 0)
+                        nonneg_var = ((VarRef) bl.left).name;
+                    else if (bl.op == "<=" && bl.left is IntLiteral && ((IntLiteral) bl.left).value >= 0 && bl.right is VarRef)
+                        nonneg_var = ((VarRef) bl.right).name;
+                    if (nonneg_var != null && br.op == "<" && br.left is VarRef && ((VarRef) br.left).name == nonneg_var
+                        && br.right is MemberAccessExpr) {
+                        var ma = (MemberAccessExpr) br.right;
+                        if (ma.member == "length" && ma.target is VarRef) {
+                            string aname = ((VarRef) ma.target).name;
+                            if (!Effects.holds (body_mod, aname) && !Effects.holds (body_mod, nonneg_var)) {
+                                cg_bce_arrs.add (aname);
+                                cg_bce_idxs.add (nonneg_var);
+                            }
+                        }
+                    }
+                }
+                cg_try_push_requires_bce (b.left, body_mod);
+                cg_try_push_requires_bce (b.right, body_mod);
+            }
+        }
+
         private void generate_function (Function f) throws SemanticError {
+            bool saved_ov = check_overflow;
+            if (f.is_checked_overflow)
+                check_overflow = true;
+            else if (f.is_wrap)
+                check_overflow = false;
+            try {
+                generate_function_impl (f);
+            } finally {
+                check_overflow = saved_ov;
+            }
+        }
+
+        private void generate_function_impl (Function f) throws SemanticError {
             if (imported_syms != null && imported_syms.lookup (f.name) >= 0)
                 return;
             expr_depth = 0;
@@ -6882,11 +7088,36 @@ namespace Planc {
                 }
             }
 
+            int req_bce_mark = cg_bce_arrs.length;
+            if (f.requires_exprs.length > 0) {
+                var body_mod = new GenericArray<string> ();
+                bool body_mod_ok = true;
+                foreach (var st in f.body) {
+                    if (!Effects.collect_stmt (st, body_mod, true)) {
+                        body_mod_ok = false;
+                        break;
+                    }
+                }
+                foreach (var req in f.requires_exprs) {
+                    if (bounds_check) {
+                        need_bounds_panic = true;
+                        emit_cond_jump_if_false (req, bounds_panic_label);
+                    }
+                    if (body_mod_ok)
+                        cg_try_push_requires_bce (req, body_mod);
+                }
+            }
+
             foreach (var s in f.body) {
                 gen_statement (s);
-                if (Diagnostics.is_full ())
+                if (Diagnostics.is_full ()) {
+                    cg_bce_arrs.length = req_bce_mark;
+                    cg_bce_idxs.length = req_bce_mark;
                     return;
+                }
             }
+            cg_bce_arrs.length = req_bce_mark;
+            cg_bce_idxs.length = req_bce_mark;
 
             // Falling off the end: unref locals, then return deterministic default.
             if (program_uses_heap)
@@ -10391,6 +10622,15 @@ namespace Planc {
 
         // Option B software null guard: emits zero instructions when `tt` is statically non-null.
         private void emit_null_check_if_nullable (ValaType tt, string tt_name) throws SemanticError {
+            emit_null_check_if_nullable_at (tt, tt_name, 0, 0);
+        }
+
+        // Same guard, but the panic names the source position. A message that
+        // only says "null pointer dereference" leaves a translated port with
+        // tens of thousands of lines and nothing to look at, so every site that
+        // knows its node passes line and column.
+        private void emit_null_check_if_nullable_at (ValaType tt, string tt_name,
+                                                     int line, int column) throws SemanticError {
             if (debug_memory && (tt == ValaType.CLASS || tt == ValaType.INTERFACE
                                  || tt == ValaType.STRING || tt == ValaType.ARRAY
                                  || tt == ValaType.ERROR)) {
@@ -10406,9 +10646,19 @@ namespace Planc {
                 if (strict_null)
                     throw new SemanticError.TYPE_MISMATCH (@"cannot dereference nullable '$(type_label (tt, tt_name))' without a null check");
                 if (null_check) {
-                    need_null_panic = true;
-                    emitter.test_rax_rax ();
-                    emitter.branch (BranchKind.JE, null_panic_label);
+                    if (line > 0) {
+                        var l_ok = emitter.new_label ();
+                        var msg = @"planc: panic: null pointer dereference at $(current_file):$line:$column\n";
+                        var msg_off = emitter.add_string (msg);
+                        emitter.test_rax_rax ();
+                        emitter.branch (BranchKind.JNE, l_ok);
+                        emitter.emit_rt_panic (msg_off, msg.length, freestanding, target_planetos);
+                        emitter.bind (l_ok);
+                    } else {
+                        need_null_panic = true;
+                        emitter.test_rax_rax ();
+                        emitter.branch (BranchKind.JE, null_panic_label);
+                    }
                 }
             }
         }
@@ -10832,7 +11082,7 @@ namespace Planc {
                             @"class '$(cname)' has no field '$(ma.member)' at $(ma.line):$(ma.column)");
                     check_member_visibility (cf.visibility, cd.name, ma.member, ma.line, ma.column);
                     gen_expr (ma.target);
-                    emit_null_check_if_nullable (peek_t, peek_name);
+                    emit_null_check_if_nullable_at (peek_t, peek_name, ma.line, ma.column);
                     emitter.add_rax_imm (class_field_base (cd) + 8 * slot_off);
                     ltype = cf.field_type;
                     ltname = cf.type_name;
@@ -10871,7 +11121,7 @@ namespace Planc {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"array index must be int, got $(type_label (it, it_name)) at $(ix.index.line):$(ix.index.column)");
                 gen_expr (ix.target);
-                emit_null_check_if_nullable (tt, tt_name);
+                emit_null_check_if_nullable_at (tt, tt_name, ix.line, ix.column);
                 emitter.push_rax ();
                 push_depth++;
                 gen_expr (ix.index);
@@ -11262,7 +11512,7 @@ namespace Planc {
                         throw new SemanticError.TYPE_MISMATCH (
                             @"print expects string, got $(type_label (vt, vt_name)) at $(p.value.line):$(p.value.column)");
                     gen_expr (p.value);
-                    emit_null_check_if_nullable (vt, vt_name);
+                    emit_null_check_if_nullable_at (vt, vt_name, p.value.line, p.value.column);
                     emitter.mov_rdi_rax ();
                     need_write_str = true;
                     call_aligned ("__planc_write_str");
@@ -11918,7 +12168,7 @@ namespace Planc {
                     fa_vt_name = vt_name;
                     fa_is_field = true;
                     gen_expr (fa.target);
-                    emit_null_check_if_nullable (peek_t, peek_name);
+                    emit_null_check_if_nullable_at (peek_t, peek_name, fa.line, fa.column);
                     emitter.add_rax_imm (byte_off);
                 } else {
                     ValaType base_t;
@@ -12076,7 +12326,7 @@ namespace Planc {
                 }
 
                 gen_expr (ia.target);
-                emit_null_check_if_nullable (tt, tt_name);
+                emit_null_check_if_nullable_at (tt, tt_name, ia.line, ia.column);
                 emitter.push_rax ();
                 push_depth++;
                 gen_expr (ia.index);
@@ -12189,6 +12439,14 @@ namespace Planc {
                 if (nn_then != null)
                     add_all_non_null (nn_then);
                 var saved_then = locals.length;
+                if (i.condition is TypeCheckExpr && ((TypeCheckExpr) i.condition).op == "is"
+                    && ((TypeCheckExpr) i.condition).bind_name != "") {
+                    var btc = (TypeCheckExpr) i.condition;
+                    int bslot = btc.bind_slot >= 0 ? btc.bind_slot : 0;
+                    push_local (btc.bind_name, btc.target_type, btc.target_type_name, bslot, true);
+                    local_used[locals.length - 1] = true;
+                    add_non_null (btc.bind_name);
+                }
                 gen_statement (i.then_body);
                 unref_locals_from (saved_then);
                 deactivate_from (saved_then);
@@ -12544,6 +12802,31 @@ namespace Planc {
                             emitter.load_local (sw_slot);
                             emitter.cmp_rax_rcx ();
                             emitter.branch (BranchKind.JE, case_labels[ci]);
+                        }
+                    }
+                }
+                if (st == ValaType.ENUM && !sw.has_default) {
+                    unowned var ed = program.find_enum (st_name);
+                    if (ed != null) {
+                        for (int mi = 0; mi < ed.members.length; mi++) {
+                            string mname = ed.members[mi].name;
+                            bool covered = false;
+                            for (int ci = 0; ci < sw.cases.length && !covered; ci++) {
+                                foreach (var cv in sw.cases[ci].values) {
+                                    if (cv is MemberAccessExpr && ((MemberAccessExpr) cv).member == mname) {
+                                        covered = true;
+                                        break;
+                                    }
+                                    if (cv is VarRef && ((VarRef) cv).name == mname) {
+                                        covered = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!covered) {
+                                string loc = current_file != "" ? @"$current_file:$(sw.line):$(sw.column)" : @"$(sw.line):$(sw.column)";
+                                Host.eprintln (@"planc: warning: non-exhaustive switch on enum '$(ed.name)', missing '$mname' at $loc");
+                            }
                         }
                     }
                 }
@@ -13692,6 +13975,8 @@ namespace Planc {
                     need_iface_lookup = true;
                     gen_expr (tc.operand);
                     if (tc.op == "is") {
+                        if (tc.bind_name != "" && tc.bind_slot >= 0)
+                            emitter.store_local (tc.bind_slot);
                         emitter.mov_rdi_rax ();
                         emitter.mov_rax_imm (itf.iface_id);
                         call_aligned ("__planc_iface_lookup");
@@ -13777,6 +14062,8 @@ namespace Planc {
                         @"'$(tc.op)' cannot target [Compact] class '$(tcd.name)': it has no runtime type at $(tc.line):$(tc.column)");
                 gen_expr (tc.operand);
                 if (tc.op == "is") {
+                    if (tc.bind_name != "" && tc.bind_slot >= 0)
+                        emitter.store_local (tc.bind_slot);
                     emitter.mov_rdi_rax ();
                     emitter.lea_rsi_rip (tcd.vtable_rodata_offset);
                     need_is_instance = true;
@@ -14189,7 +14476,7 @@ namespace Planc {
                 var tt = expr_type_full (m.target, out tt_name);
                 if (tt == ValaType.ERROR) {
                     gen_expr (m.target);
-                    emit_null_check_if_nullable (tt, tt_name);
+                    emit_null_check_if_nullable_at (tt, tt_name, m.line, m.column);
                     if (m.member == "message")
                         emitter.load_rax_disp (16);
                     else if (m.member == "domain")
@@ -14203,12 +14490,12 @@ namespace Planc {
                 }
                 if (tt == ValaType.STRING && m.member == "data") {
                     gen_expr (m.target);
-                    emit_null_check_if_nullable (tt, tt_name);
+                    emit_null_check_if_nullable_at (tt, tt_name, m.line, m.column);
                     return;
                 }
                 if (tt == ValaType.STRING || tt == ValaType.ARRAY) {
                     gen_expr (m.target);
-                    emit_null_check_if_nullable (tt, tt_name);
+                    emit_null_check_if_nullable_at (tt, tt_name, m.line, m.column);
                     emitter.load_rax_disp (8);
                     return;
                 }
@@ -14239,7 +14526,7 @@ namespace Planc {
                                     return;
                                 }
                                 gen_expr (m.target);
-                                emit_null_check_if_nullable (tt, tt_name);
+                                emit_null_check_if_nullable_at (tt, tt_name, m.line, m.column);
                                 if (program_uses_heap) {
                                     emitter.mov_rdi_rax ();
                                     call_aligned ("__planc_ref");
@@ -14261,7 +14548,7 @@ namespace Planc {
                             @"class '$(cname)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
                     }
                     gen_expr (m.target);
-                    emit_null_check_if_nullable (tt, tt_name);
+                    emit_null_check_if_nullable_at (tt, tt_name, m.line, m.column);
                     if (cf.field_type == ValaType.STRUCT)
                         emitter.add_rax_imm (class_field_base (cd) + 8 * fslot);
                     else
@@ -14284,7 +14571,7 @@ namespace Planc {
                         if (mf != null && dd != null) {
                             var base_disp = struct_base_disp (m.temp_slot, 2);
                             gen_expr (m.target);
-                            emit_null_check_if_nullable (tt, tt_name);
+                            emit_null_check_if_nullable_at (tt, tt_name, m.line, m.column);
                             if (program_uses_heap) {
                                 emitter.mov_rdi_rax ();
                                 call_aligned ("__planc_ref");
@@ -14356,7 +14643,7 @@ namespace Planc {
                     }
                 }
                 gen_expr (ix.target);
-                emit_null_check_if_nullable (tt, tt_name);
+                emit_null_check_if_nullable_at (tt, tt_name, ix.line, ix.column);
                 emitter.push_rax ();
                 push_depth++;
                 gen_expr (ix.index);
@@ -14432,7 +14719,7 @@ namespace Planc {
                 string tt_name = "";
                 expr_type_full (se.target, out tt_name);
                 gen_expr (se.target);
-                emit_null_check_if_nullable (ValaType.STRING, tt_name);
+                emit_null_check_if_nullable_at (ValaType.STRING, tt_name, se.line, se.column);
                 emitter.push_rax ();
                 push_depth++;
                 gen_expr (se.start);
@@ -15183,7 +15470,7 @@ namespace Planc {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"cannot dereference 'void*' at $(de.line):$(de.column)");
                 gen_expr (de.target);
-                emit_null_check_if_nullable (ValaType.POINTER, pt_name);
+                emit_null_check_if_nullable_at (ValaType.POINTER, pt_name, de.line, de.column);
                 emitter.load_rax_disp (24);
                 if (inner_t != ValaType.STRUCT)
                     emitter.load_rax_disp (0);
@@ -16997,7 +17284,7 @@ namespace Planc {
                 string tt_name = "";
                 var tt = expr_type_full (target_expr, out tt_name);
                 gen_expr (target_expr);
-                emit_null_check_if_nullable (tt, tt_name);
+                emit_null_check_if_nullable_at (tt, tt_name, target_expr.line, target_expr.column);
             }
             emitter.push_rax ();
             push_depth++;
