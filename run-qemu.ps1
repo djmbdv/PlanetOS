@@ -53,7 +53,9 @@
 
 .PARAMETER Add
     Extra files to place in the image, e.g. a port's binary and its data files.
-    Each one lands in the image root under its own name.
+    Each one lands in the image root under its own name. The image is written
+    from scratch on every build, so these files are not remembered: a later run
+    without -Add boots an image that no longer has them.
 
 .PARAMETER Run
     Command typed at the guest shell once the machine is up, so a headless run
