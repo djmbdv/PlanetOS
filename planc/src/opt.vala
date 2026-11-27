@@ -2008,117 +2008,6 @@ namespace Planc {
             return false;
         }
 
-        private static void add_unique_str (GenericArray<string> arr, string s) {
-            if (s != "" && !arr_contains_str (arr, s))
-                arr.add (s);
-        }
-
-        private bool collect_mod_expr (Expr? e, GenericArray<string> mod) {
-            if (e == null) return true;
-            if (e is LambdaExpr || e is AddrOfExpr) return false;
-            if (e is IncDecExpr) {
-                var inc = (IncDecExpr) e;
-                if (inc.target is VarRef) add_unique_str (mod, ((VarRef) inc.target).name);
-                return true;
-            }
-            if (e is UnaryExpr) return collect_mod_expr (((UnaryExpr) e).operand, mod);
-            if (e is BinaryExpr) {
-                var b = (BinaryExpr) e;
-                return collect_mod_expr (b.left, mod) && collect_mod_expr (b.right, mod);
-            }
-            if (e is IndexExpr) {
-                var ix = (IndexExpr) e;
-                return collect_mod_expr (ix.target, mod) && collect_mod_expr (ix.index, mod);
-            }
-            if (e is MemberAccessExpr) return collect_mod_expr (((MemberAccessExpr) e).target, mod);
-            if (e is CallExpr) {
-                var c = (CallExpr) e;
-                for (int i = 0; i < c.args.length; i++) {
-                    if (c.args[i] is VarRef) add_unique_str (mod, ((VarRef) c.args[i]).name);
-                    if (!collect_mod_expr (c.args[i], mod)) return false;
-                }
-                return true;
-            }
-            if (e is MethodCallExpr) {
-                var mc = (MethodCallExpr) e;
-                // `resize`/`move` rebind the receiver's slot: the collector sees
-                // the target only as a read, but the loop body does change the
-                // array the invariant analysis would hoist.
-                if ((mc.method_name == "resize" || mc.method_name == "move") && mc.target is VarRef)
-                    add_unique_str (mod, ((VarRef) mc.target).name);
-                if (!collect_mod_expr (mc.target, mod)) return false;
-                for (int i = 0; i < mc.args.length; i++) {
-                    if (mc.args[i] is VarRef) add_unique_str (mod, ((VarRef) mc.args[i]).name);
-                    if (!collect_mod_expr (mc.args[i], mod)) return false;
-                }
-                return true;
-            }
-            if (e is TernaryExpr) {
-                var te = (TernaryExpr) e;
-                return collect_mod_expr (te.condition, mod)
-                    && collect_mod_expr (te.then_expr, mod)
-                    && collect_mod_expr (te.else_expr, mod);
-            }
-            return true;
-        }
-
-        private bool collect_mod_stmt (Statement? s, GenericArray<string> mod) {
-            if (s == null) return true;
-            if (s is TryStatement || s is ForeachStatement || s is SwitchStatement) return false;
-            if (s is BlockStatement) {
-                var blk = (BlockStatement) s;
-                for (int i = 0; i < blk.statements.length; i++) {
-                    if (!collect_mod_stmt (blk.statements[i], mod)) return false;
-                }
-                return true;
-            }
-            if (s is VarDeclStatement) {
-                var d = (VarDeclStatement) s;
-                add_unique_str (mod, d.name);
-                return collect_mod_expr (d.init, mod);
-            }
-            if (s is AssignStatement) {
-                var a = (AssignStatement) s;
-                add_unique_str (mod, a.name);
-                return collect_mod_expr (a.value, mod);
-            }
-            if (s is FieldAssignStatement) {
-                var fa = (FieldAssignStatement) s;
-                return collect_mod_expr (fa.target, mod) && collect_mod_expr (fa.value, mod);
-            }
-            if (s is IndexAssignStatement) {
-                var ia = (IndexAssignStatement) s;
-                return collect_mod_expr (ia.target, mod)
-                    && collect_mod_expr (ia.index, mod)
-                    && collect_mod_expr (ia.value, mod);
-            }
-            if (s is ReturnStatement) return collect_mod_expr (((ReturnStatement) s).value, mod);
-            if (s is ExprStatement) return collect_mod_expr (((ExprStatement) s).expr, mod);
-            if (s is PrintStatement) return collect_mod_expr (((PrintStatement) s).value, mod);
-            if (s is IfStatement) {
-                var ifs = (IfStatement) s;
-                return collect_mod_expr (ifs.condition, mod)
-                    && collect_mod_stmt (ifs.then_body, mod)
-                    && collect_mod_stmt (ifs.else_body, mod);
-            }
-            if (s is WhileStatement) {
-                var ws = (WhileStatement) s;
-                return collect_mod_expr (ws.condition, mod) && collect_mod_stmt (ws.body, mod);
-            }
-            if (s is DoWhileStatement) {
-                var dw = (DoWhileStatement) s;
-                return collect_mod_stmt (dw.body, mod) && collect_mod_expr (dw.condition, mod);
-            }
-            if (s is ForStatement) {
-                var fs = (ForStatement) s;
-                return collect_mod_stmt (fs.init, mod)
-                    && collect_mod_expr (fs.condition, mod)
-                    && collect_mod_stmt (fs.step, mod)
-                    && collect_mod_stmt (fs.body, mod);
-            }
-            return true;
-        }
-
         private bool is_licm_pure_arith (Expr? e, GenericArray<string> mod, out bool has_var) {
             has_var = false;
             if (e == null) return false;
@@ -2261,10 +2150,10 @@ namespace Planc {
 
         private void hoist_for_invariants (ForStatement fs, GenericArray<Statement> out_stmts) {
             var mod = new GenericArray<string> ();
-            if (!collect_mod_stmt (fs.init, mod)) return;
-            if (!collect_mod_expr (fs.condition, mod)) return;
-            if (!collect_mod_stmt (fs.step, mod)) return;
-            if (!collect_mod_stmt (fs.body, mod)) return;
+            if (!Effects.collect_stmt (fs.init, mod, true)) return;
+            if (!Effects.collect_expr (fs.condition, mod, true)) return;
+            if (!Effects.collect_stmt (fs.step, mod, true)) return;
+            if (!Effects.collect_stmt (fs.body, mod, true)) return;
             if (fs.condition != null)
                 fs.condition = licm_rewrite_expr (fs.condition, mod, out_stmts, fs.line, fs.column);
             licm_rewrite_stmt (fs.body, mod, out_stmts, fs.line, fs.column);
@@ -2289,7 +2178,7 @@ namespace Planc {
             if (!fe.infer_type && fe.elem_type == ValaType.STRUCT)
                 return fe;
             var mod = new GenericArray<string> ();
-            if (!collect_mod_stmt (fe.body, mod))
+            if (!Effects.collect_stmt (fe.body, mod, true))
                 return fe;
             for (int i = 0; i < mod.length; i++) {
                 if (mod[i] == arr_name)
@@ -2654,7 +2543,7 @@ namespace Planc {
             if (!unroll_stmt_ok (fs.body)) return fs;
 
             var mod = new GenericArray<string> ();
-            if (!collect_mod_stmt (fs.body, mod)) return fs;
+            if (!Effects.collect_stmt (fs.body, mod, true)) return fs;
             if (arr_contains_str (mod, iv)) return fs;
             if (cb.right is VarRef && arr_contains_str (mod, ((VarRef) cb.right).name)) return fs;
 

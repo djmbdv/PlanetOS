@@ -123,6 +123,8 @@ python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
     "$ROOT/planc/src/spirv.vala" \
     "$ROOT/planc/src/opt.vala" \
     "$ROOT/planc/src/pe.vala" \
+    "$ROOT/planc/src/elem_layout.vala" \
+    "$ROOT/planc/src/effects.vala" \
     "$ROOT/planc/src/puzzle_ra.vala" \
     "$ROOT/planc/src/codegen.vala" \
     "$ROOT/planc/src/main.vala" \

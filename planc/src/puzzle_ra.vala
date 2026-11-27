@@ -106,25 +106,14 @@ namespace Planc {
 
         private GenericArray<IRBlock> blocks = new GenericArray<IRBlock> ();
         private int cur_bb = 0;
-        // Packed array element layouts, mirroring the AST backend's PK_* values.
-        private const int PK_SLOT = 0;
-        private const int PK_U8 = 1;
-        private const int PK_I8 = 2;
-        private const int PK_U16 = 3;
-        private const int PK_I16 = 4;
-
-        private static string pz_unwrap (string t) {
-            return t.has_suffix ("?") ? t.substring (0, t.length - 1) : t;
-        }
-
         private int next_vreg = 0;
         private GenericArray<int> vreg_weight = new GenericArray<int> ();
         private GenericArray<bool> vreg_is_arr = new GenericArray<bool> ();
         private GenericArray<bool> vreg_is_unsigned = new GenericArray<bool> ();
-        // Packed element layout of an array vreg: 0 = 8-byte slot, 1 = uint8,
-        // 2 = int8, 3 = uint16, 4 = int16. `vreg_elem_known` says whether the
-        // layout was established; an array of unknown layout may not be indexed
-        // here, because indexing with the wrong stride corrupts memory.
+        // Packed element layout of an array vreg (an ElemLayout kind).
+        // `vreg_elem_known` says whether the layout was established; an array of
+        // unknown layout may not be indexed here, because indexing with the wrong
+        // stride corrupts memory.
         private GenericArray<int> vreg_elem_kind = new GenericArray<int> ();
         private GenericArray<bool> vreg_elem_known = new GenericArray<bool> ();
         private int loop_weight = 1;
@@ -183,7 +172,7 @@ namespace Planc {
             vreg_weight.add (0);
             vreg_is_arr.add (is_arr);
             vreg_is_unsigned.add (is_u);
-            vreg_elem_kind.add (PK_SLOT);
+            vreg_elem_kind.add (ElemLayout.SLOT);
             vreg_elem_known.add (false);
             return v;
         }
@@ -194,9 +183,9 @@ namespace Planc {
         // index lowering rather than guessed.
         private int arr_kind_of_init (string decl_tname, Expr? init) {
             if (decl_tname != "")
-                return arr_kind_of (decl_tname);
+                return ElemLayout.kind (decl_tname);
             if (init is ArrayNewExpr)
-                return arr_kind_of (((ArrayNewExpr) init).elem_type_name);
+                return ElemLayout.kind (((ArrayNewExpr) init).elem_type_name);
             if (init is VarRef) {
                 int si = lookup_var (((VarRef) init).name);
                 if (si >= 0 && vreg_elem_known[var_vregs[si]])
@@ -205,7 +194,7 @@ namespace Planc {
             if (init is CallExpr) {
                 unowned var cf = program.find (((CallExpr) init).callee);
                 if (cf != null && cf.return_type == ValaType.ARRAY)
-                    return arr_kind_of (cf.return_type_name);
+                    return ElemLayout.kind (cf.return_type_name);
             }
             return -1;
         }
@@ -215,21 +204,6 @@ namespace Planc {
                 return;
             vreg_elem_kind[v] = kind;
             vreg_elem_known[v] = true;
-        }
-
-        private static int arr_kind_of (string tname) {
-            var b = pz_unwrap (tname);
-            if (b == "uint8" || b == "uchar" || b == "char") return PK_U8;
-            if (b == "int8") return PK_I8;
-            if (b == "uint16" || b == "ushort") return PK_U16;
-            if (b == "int16" || b == "short") return PK_I16;
-            return PK_SLOT;
-        }
-
-        private static int arr_stride_of (int kind) {
-            if (kind == PK_U8 || kind == PK_I8) return 1;
-            if (kind == PK_U16 || kind == PK_I16) return 2;
-            return 8;
         }
 
         private void touch_vreg (int v) {
@@ -264,15 +238,9 @@ namespace Planc {
             if (t == ValaType.ARRAY) {
                 return tname == "" || tname == "int" || tname == "int64" || tname == "long"
                     || tname == "int[]" || tname == "int64[]" || tname == "long[]"
-                    || arr_is_packed_name (tname);
+                    || ElemLayout.is_packed (tname);
             }
             return false;
-        }
-
-        private static bool arr_is_packed_name (string tn) {
-            var b = pz_unwrap (tn);
-            return b == "uint8" || b == "uchar" || b == "char" || b == "int8"
-                || b == "uint16" || b == "ushort" || b == "int16" || b == "short";
         }
 
         private static bool is_unsigned_name (string tn) {
@@ -420,7 +388,7 @@ namespace Planc {
                 if (vi < 0 || var_types[vi] != ValaType.ARRAY) return false;
                 // `+=`/`-=` use a 64-bit read-modify-write, so they stay on the
                 // slot layout; packed elements go through the AST backend.
-                if (ia.op != "=" && arr_kind_of (var_tnames[vi]) != PK_SLOT)
+                if (ia.op != "=" && ElemLayout.kind (var_tnames[vi]) != ElemLayout.SLOT)
                     return false;
                 return check_expr_supported (ia.index) && check_expr_supported (ia.value);
             }
@@ -714,7 +682,7 @@ namespace Planc {
                 ins.dst = d;
                 unowned var callee_f = program.find (c.callee);
                 if (callee_f != null && callee_f.return_type == ValaType.ARRAY)
-                    set_elem_kind (d, arr_kind_of (callee_f.return_type_name));
+                    set_elem_kind (d, ElemLayout.kind (callee_f.return_type_name));
                 emit_ir (ins);
                 return d;
             }
@@ -722,7 +690,7 @@ namespace Planc {
                 var an = (ArrayNewExpr) e;
                 int lv = lower_expr (an.length_expr);
                 int d = new_vreg (true, false);
-                set_elem_kind (d, arr_kind_of (an.elem_type_name));
+                set_elem_kind (d, ElemLayout.kind (an.elem_type_name));
                 emit_ir (new IRInst () { op = IROp.ARR_NEW, dst = d, lhs = lv });
                 return d;
             }
@@ -895,63 +863,15 @@ namespace Planc {
             }
         }
 
+        // This backend refuses `ref`/`out`, so a call cannot write through its
+        // arguments; the traversal itself is shared with the AST backend.
         private bool bce_stmt_modifies (Statement? s, string vname) {
-            if (s == null) return false;
-            if (s is AssignStatement) {
-                if (((AssignStatement) s).name == vname) return true;
-                return bce_expr_modifies (((AssignStatement) s).value, vname);
-            }
-            if (s is IndexAssignStatement) {
-                var ia = (IndexAssignStatement) s;
-                return bce_expr_modifies (ia.target, vname) || bce_expr_modifies (ia.index, vname) || bce_expr_modifies (ia.value, vname);
-            }
-            if (s is FieldAssignStatement) {
-                var fa = (FieldAssignStatement) s;
-                return bce_expr_modifies (fa.target, vname) || bce_expr_modifies (fa.value, vname);
-            }
-            if (s is ExprStatement) return bce_expr_modifies (((ExprStatement) s).expr, vname);
-            if (s is VarDeclStatement) return bce_expr_modifies (((VarDeclStatement) s).init, vname);
-            if (s is IfStatement) {
-                var ifs = (IfStatement) s;
-                return bce_expr_modifies (ifs.condition, vname) || bce_stmt_modifies (ifs.then_body, vname) || bce_stmt_modifies (ifs.else_body, vname);
-            }
-            if (s is BlockStatement) {
-                var blk = (BlockStatement) s;
-                for (int i = 0; i < blk.statements.length; i++) {
-                    if (bce_stmt_modifies (blk.statements[i], vname)) return true;
-                }
-                return false;
-            }
-            if (s is WhileStatement) {
-                var ws = (WhileStatement) s;
-                return bce_expr_modifies (ws.condition, vname) || bce_stmt_modifies (ws.body, vname);
-            }
-            if (s is ForStatement) {
-                var fs = (ForStatement) s;
-                return bce_stmt_modifies (fs.init, vname) || bce_expr_modifies (fs.condition, vname)
-                    || bce_stmt_modifies (fs.step, vname) || bce_stmt_modifies (fs.body, vname);
-            }
-            return false;
+            return Effects.modifies_stmt (s, vname, false);
         }
 
         private bool bce_expr_modifies (Expr? e, string vname) {
-            if (e == null) return false;
-            if (e is IncDecExpr) {
-                var inc = (IncDecExpr) e;
-                return (inc.target is VarRef && ((VarRef) inc.target).name == vname);
-            }
-            if (e is UnaryExpr) return bce_expr_modifies (((UnaryExpr) e).operand, vname);
-            if (e is BinaryExpr) {
-                var b = (BinaryExpr) e;
-                return bce_expr_modifies (b.left, vname) || bce_expr_modifies (b.right, vname);
-            }
-            if (e is IndexExpr) {
-                var ix = (IndexExpr) e;
-                return bce_expr_modifies (ix.target, vname) || bce_expr_modifies (ix.index, vname);
-            }
-            return false;
+            return Effects.modifies_expr (e, vname, false);
         }
-
         private bool bce_stmt_only_inc (Statement? s, string vname) {
             if (s == null) return true;
             if (s is AssignStatement) {
@@ -1784,7 +1704,7 @@ namespace Planc {
 
                     // A packed array has a different element layout; keep it on
                     // the heap instead of teaching this promotion about strides.
-                    if (vreg_elem_kind[target_v] != PK_SLOT) continue;
+                    if (vreg_elem_kind[target_v] != ElemLayout.SLOT) continue;
                     int alloc_bytes = ((16 + (int) len * 8 + 15) & ~15);
                     if (stack_arr_bytes + alloc_bytes > 2048) continue;
 
@@ -2850,7 +2770,7 @@ namespace Planc {
                             emit_mov_rr (Reg.RDI, lv);
                             emitter.push_reg (Reg.RDI);
                             emitter.sub_rsp (8);
-                            int new_stride = arr_stride_of (vreg_elem_kind[ins.dst]);
+                            int new_stride = ElemLayout.stride (vreg_elem_kind[ins.dst]);
                             if (new_stride == 2)
                                 emit_shift_ri (4, Reg.RDI, 1);
                             else if (new_stride == 8)
@@ -2980,10 +2900,10 @@ namespace Planc {
                             }
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
                             int ld_kind = vreg_elem_kind[ins.lhs];
-                            if (ld_kind == PK_U8 || ld_kind == PK_I8)
-                                emit_load_sib_byte (d, av, iv, 16, ld_kind == PK_I8);
-                            else if (ld_kind == PK_U16 || ld_kind == PK_I16)
-                                emit_load_sib_word (d, av, iv, 16, ld_kind == PK_I16);
+                            if (ld_kind == ElemLayout.U8 || ld_kind == ElemLayout.I8)
+                                emit_load_sib_byte (d, av, iv, 16, ld_kind == ElemLayout.I8);
+                            else if (ld_kind == ElemLayout.U16 || ld_kind == ElemLayout.I16)
+                                emit_load_sib_word (d, av, iv, 16, ld_kind == ElemLayout.I16);
                             else
                                 emit_load_sib8 (d, av, iv, 16);
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
@@ -3000,9 +2920,9 @@ namespace Planc {
                             int st_kind = vreg_elem_kind[ins.dst];
                             if (ins.sop == "=") {
                                 Reg vv = read_vreg (ins.rhs, Reg.RAX);
-                                if (st_kind == PK_U8 || st_kind == PK_I8)
+                                if (st_kind == ElemLayout.U8 || st_kind == ElemLayout.I8)
                                     emit_store_sib_byte (av, iv, 16, vv);
-                                else if (st_kind == PK_U16 || st_kind == PK_I16)
+                                else if (st_kind == ElemLayout.U16 || st_kind == ElemLayout.I16)
                                     emit_store_sib_word (av, iv, 16, vv);
                                 else
                                     emit_store_sib8 (av, iv, 16, vv);
@@ -3298,7 +3218,7 @@ namespace Planc {
                 int v = ra.new_vreg (p.param_type == ValaType.ARRAY, is_unsigned_name (p.type_name));
                 ra.var_vregs[i] = v;
                 if (p.param_type == ValaType.ARRAY)
-                    ra.set_elem_kind (v, arr_kind_of (p.type_name));
+                    ra.set_elem_kind (v, ElemLayout.kind (p.type_name));
             }
             bool has_assoc_tre = false;
             if (f.return_type == ValaType.INT) {

@@ -472,6 +472,8 @@ if (-not $NoBuild) {
         (Join-Path $SrcDir 'spirv.vala'),
         (Join-Path $SrcDir 'opt.vala'),
         (Join-Path $SrcDir 'pe.vala'),
+        (Join-Path $SrcDir 'elem_layout.vala'),
+        (Join-Path $SrcDir 'effects.vala'),
         (Join-Path $SrcDir 'puzzle_ra.vala'),
         (Join-Path $SrcDir 'codegen.vala'),
         (Join-Path $SrcDir 'main.vala'),

@@ -260,6 +260,14 @@ transferencia de propiedad al `return`. Las dos suites comprueban el mismo `.out
 en los tres niveles (`array_return_o1/o2`, `array_alias_local_o1/o2`,
 `packed_arrays_o1/o2`, `bce_loops_o1/o2`, `resize_in_loop_o1/o2`).
 
+Lo que no puede diferir entre backends vive en dos módulos compartidos:
+[elem_layout.vala](../../planc/src/elem_layout.vala) (tipo de elemento →
+ancho, signo y empaquetado) y [effects.vala](../../planc/src/effects.vala)
+(qué variables escribe un árbol, con la política de `ref`/`out` como parámetro).
+Los backends y el optimizador aportan sólo la emisión y las reglas de admisión:
+antes cada uno tenía su copia del mismo análisis y un hueco corregido en una
+quedaba abierto en las demás.
+
 ### `resize` y los patrones de crecimiento
 
 `a.resize (n)` **no reutiliza capacidad**: reserva un bloque nuevo, copia

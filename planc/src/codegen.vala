@@ -3004,93 +3004,10 @@ namespace Planc {
             }
         }
 
-        private static bool cg_expr_modifies (Expr? e, string vname) {
-            if (e == null) return false;
-            if (e is ArrayNew2Expr) {
-                var an2 = (ArrayNew2Expr) e;
-                return cg_expr_modifies (an2.dim0, vname) || cg_expr_modifies (an2.dim1, vname);
-            }
-            if (e is LengthDimExpr) {
-                var ld = (LengthDimExpr) e;
-                return cg_expr_modifies (ld.target, vname) || cg_expr_modifies (ld.dim, vname);
-            }
-            if (e is IncDecExpr) {
-                var inc = (IncDecExpr) e;
-                return (inc.target is VarRef && ((VarRef) inc.target).name == vname) || cg_expr_modifies (inc.target, vname);
-            }
-            if (e is UnaryExpr) return cg_expr_modifies (((UnaryExpr) e).operand, vname);
-            if (e is BinaryExpr) {
-                var b = (BinaryExpr) e;
-                return cg_expr_modifies (b.left, vname) || cg_expr_modifies (b.right, vname);
-            }
-            if (e is TernaryExpr) {
-                var te = (TernaryExpr) e;
-                return cg_expr_modifies (te.condition, vname) || cg_expr_modifies (te.then_expr, vname) || cg_expr_modifies (te.else_expr, vname);
-            }
-            if (e is CallExpr) {
-                var c = (CallExpr) e;
-                for (int i = 0; i < c.args.length; i++) {
-                    if (cg_expr_modifies (c.args[i], vname)) return true;
-                }
-                return false;
-            }
-            if (e is MethodCallExpr) {
-                var mc = (MethodCallExpr) e;
-                // A method on the array itself can resize it (`resize`, `move`),
-                // which changes `.length` behind the loop's back, so treat any
-                // call whose receiver is the tracked name as a modification.
-                if (mc.target is VarRef && ((VarRef) mc.target).name == vname)
-                    return true;
-                if (cg_expr_modifies (mc.target, vname)) return true;
-                for (int i = 0; i < mc.args.length; i++) {
-                    if (cg_expr_modifies (mc.args[i], vname)) return true;
-                }
-                return false;
-            }
-            if (e is IndexExpr) {
-                var ix = (IndexExpr) e;
-                return cg_expr_modifies (ix.target, vname) || cg_expr_modifies (ix.index, vname);
-            }
-            if (e is MemberAccessExpr) return cg_expr_modifies (((MemberAccessExpr) e).target, vname);
-            return false;
-        }
-
+        // The traversal is shared with the backend-independent analysis; here a
+        // call may write through a `ref`/`out` argument.
         private static bool cg_stmt_modifies (Statement? s, string vname) {
-            if (s == null) return false;
-            if (s is BlockStatement) {
-                var blk = (BlockStatement) s;
-                for (int i = 0; i < blk.statements.length; i++) {
-                    if (cg_stmt_modifies (blk.statements[i], vname)) return true;
-                }
-                return false;
-            }
-            if (s is AssignStatement) {
-                var a = (AssignStatement) s;
-                return a.name == vname || cg_expr_modifies (a.value, vname);
-            }
-            if (s is VarDeclStatement) return cg_expr_modifies (((VarDeclStatement) s).init, vname);
-            if (s is ExprStatement) return cg_expr_modifies (((ExprStatement) s).expr, vname);
-            if (s is IfStatement) {
-                var ifs = (IfStatement) s;
-                return cg_expr_modifies (ifs.condition, vname)
-                    || cg_stmt_modifies (ifs.then_body, vname)
-                    || cg_stmt_modifies (ifs.else_body, vname);
-            }
-            if (s is WhileStatement) {
-                var ws = (WhileStatement) s;
-                return cg_expr_modifies (ws.condition, vname) || cg_stmt_modifies (ws.body, vname);
-            }
-            if (s is DoWhileStatement) {
-                var dw = (DoWhileStatement) s;
-                return cg_stmt_modifies (dw.body, vname) || cg_expr_modifies (dw.condition, vname);
-            }
-            if (s is ForStatement) {
-                var fs = (ForStatement) s;
-                return cg_stmt_modifies (fs.init, vname) || cg_expr_modifies (fs.condition, vname)
-                    || cg_stmt_modifies (fs.step, vname) || cg_stmt_modifies (fs.body, vname);
-            }
-            if (s is TryStatement || s is SwitchStatement || s is ForeachStatement) return true;
-            return false;
+            return Effects.modifies_stmt (s, vname, true);
         }
 
         private bool cg_bce_try_push_for (ForStatement fs) {
@@ -7237,47 +7154,35 @@ namespace Planc {
 
         // Packed array elements: 0 keeps the 8-byte slot layout, the rest are
         // stored inline at their own width.
-        private const int PK_SLOT = 0;
-        private const int PK_U8 = 1;
-        private const int PK_I8 = 2;
-        private const int PK_U16 = 3;
-        private const int PK_I16 = 4;
-
-        // Kinds that are stored narrower than a slot.
+        // The element layout itself lives in ElemLayout; these are the names the
+        // AST backend has always used for it.
         private static int packed_kind (string arr_tname) {
-            var b = strip_null (arr_tname);
-            if (b == "uint8" || b == "uchar" || b == "char") return PK_U8;
-            if (b == "int8") return PK_I8;
-            if (b == "uint16" || b == "ushort") return PK_U16;
-            if (b == "int16" || b == "short") return PK_I16;
-            return PK_SLOT;
+            return ElemLayout.kind (arr_tname);
         }
 
         private static int packed_stride (int kind) {
-            if (kind == PK_SLOT) return 8;
-            if (kind == PK_U8 || kind == PK_I8) return 1;
-            return 2;
+            return ElemLayout.stride (kind);
         }
 
         private static bool packed_is_signed (int kind) {
-            return kind == PK_I8 || kind == PK_I16;
+            return ElemLayout.is_signed (kind);
         }
 
         // Element `rax + rcx * stride` of a packed array into rax, zero or sign
         // extended to 64 bits. The index is already bounds-checked.
         private void emit_packed_load (int kind) {
             switch (kind) {
-                case PK_U8:
+                case ElemLayout.U8:
                     emitter.load_byte_rax_rcx_16 ();
                     break;
-                case PK_I8:
+                case ElemLayout.I8:
                     emitter.load_byte_rax_rcx_16 ();
                     emitter.sign_extend_rax (8);
                     break;
-                case PK_U16:
+                case ElemLayout.U16:
                     emitter.load_word_rax_rcx_16 ();
                     break;
-                case PK_I16:
+                case ElemLayout.I16:
                     emitter.load_word_rax_rcx_16 ();
                     emitter.sign_extend_rax (16);
                     break;
@@ -7837,7 +7742,7 @@ namespace Planc {
         // old one-slot layout.
         private int elem_stride_bytes (ValaType et, string et_name) {
             int kind = packed_kind (et_name);
-            if (et == ValaType.INT && kind != PK_SLOT)
+            if (et == ValaType.INT && kind != ElemLayout.SLOT)
                 return packed_stride (kind);
             if (et == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (strip_null (et_name));
@@ -9959,7 +9864,7 @@ namespace Planc {
                     if (tt != ValaType.ARRAY)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"indexed address-of requires an array at $(ao.line):$(ao.column)");
-                    if (packed_kind (tt_name) != PK_SLOT)
+                    if (packed_kind (tt_name) != ElemLayout.SLOT)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"cannot take address of a packed array element ($(strip_null (tt_name)) uses $(packed_stride (packed_kind (tt_name))) byte(s) per element) at $(ao.line):$(ao.column)");
                     ValaType et;
@@ -10916,7 +10821,7 @@ namespace Planc {
                 emitter.pop_rax ();
                 push_depth--;
                 if (is_ga) {
-                    if (ga_et == ValaType.INT && packed_kind (ga_etn) != PK_SLOT)
+                    if (ga_et == ValaType.INT && packed_kind (ga_etn) != ElemLayout.SLOT)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"cannot pass a packed array element ($(strip_null (ga_etn))) by ref or out at $(e.line):$(e.column)");
                     if (bounds_check) {
@@ -10938,7 +10843,7 @@ namespace Planc {
                 ValaType la_et = ValaType.INT;
                 string la_etn = "";
                 parse_array_elem (tt_name, out la_et, out la_etn);
-                if (packed_kind (tt_name) != PK_SLOT)
+                if (packed_kind (tt_name) != ElemLayout.SLOT)
                     throw new SemanticError.TYPE_MISMATCH (
                         @"cannot pass a packed array element ($(strip_null (tt_name))) by ref or out at $(e.line):$(e.column)");
                 if (bounds_check) {
@@ -11223,12 +11128,12 @@ namespace Planc {
             emitter.push_rax ();
             push_depth++;
             gen_expr (val);
-            if (kind != PK_SLOT)
-                emit_int_narrow (kind == PK_I8 || kind == PK_U8 ? "int8" : "int16");
+            if (kind != ElemLayout.SLOT)
+                emit_int_narrow (kind == ElemLayout.I8 || kind == ElemLayout.U8 ? "int8" : "int16");
             if (op == "=") {
                 emitter.pop_rcx ();
                 push_depth--;
-                if (kind == PK_U8 || kind == PK_I8)
+                if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                     emitter.store_rcx_disp_byte_al (0);
                 else
                     emitter.store_rcx_disp_word_ax (0);
@@ -11237,16 +11142,16 @@ namespace Planc {
                 emitter.mov_rcx_rax ();
                 emitter.load_rsp (0);
                 emitter.mov_rdx_rax ();
-                if (kind == PK_U8 || kind == PK_I8)
+                if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                     emitter.load_rdx_byte_to_zx_rax ();
                 else
                     emitter.load_rdx_word_to_zx_rax ();
                 if (is_signed)
-                    emitter.sign_extend_rax (kind == PK_I8 ? 8 : 16);
+                    emitter.sign_extend_rax (kind == ElemLayout.I8 ? 8 : 16);
                 emit_compound_alu (op, !is_signed);
                 emitter.pop_rcx ();
                 push_depth--;
-                if (kind == PK_U8 || kind == PK_I8)
+                if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                     emitter.store_rcx_disp_byte_al (0);
                 else
                     emitter.store_rcx_disp_word_ax (0);
@@ -11255,7 +11160,7 @@ namespace Planc {
 
         private void emit_byte_elem_store (bool is_signed, string op, Expr val)
                 throws SemanticError {
-            emit_packed_elem_store (is_signed ? PK_I8 : PK_U8, op, val);
+            emit_packed_elem_store (is_signed ? ElemLayout.I8 : ElemLayout.U8, op, val);
         }
 
         private void gen_statement (Statement s) throws SemanticError {
@@ -12092,8 +11997,8 @@ namespace Planc {
                 if (!is_ga)
                     parse_array_elem (tt_name, out et, out et_name);
                 int elem_kind = is_ga
-                    ? ((et == ValaType.INT) ? packed_kind (et_name) : PK_SLOT)
-                    : ((tt == ValaType.ARRAY && et == ValaType.INT) ? packed_kind (tt_name) : PK_SLOT);
+                    ? ((et == ValaType.INT) ? packed_kind (et_name) : ElemLayout.SLOT)
+                    : ((tt == ValaType.ARRAY && et == ValaType.INT) ? packed_kind (tt_name) : ElemLayout.SLOT);
                 string vt_name = "";
                 if (ia.op == "=")
                     coerce_byte_array_literal (ia.value, et, et_name);
@@ -12137,7 +12042,7 @@ namespace Planc {
                     emitter.cmp_rcx_rax_len ();
                     emitter.branch (BranchKind.JAE, bounds_panic_label);
                 }
-                if (elem_kind != PK_SLOT) {
+                if (elem_kind != ElemLayout.SLOT) {
                     emit_index_elem_addr (packed_stride (elem_kind));
                     emit_packed_elem_store (elem_kind, ia.op, ia.value);
                 } else {
@@ -12482,10 +12387,10 @@ namespace Planc {
                         copy_struct_rax_to_rcx (fe_nslots);
                     } else {
                         int fe_kind = et == ValaType.INT
-                            ? packed_kind (is_ga_fast ? et_name : ct_name) : PK_SLOT;
+                            ? packed_kind (is_ga_fast ? et_name : ct_name) : ElemLayout.SLOT;
                         if (!is_ga_fast && ct != ValaType.ARRAY)
-                            fe_kind = PK_SLOT;
-                        if (fe_kind != PK_SLOT) {
+                            fe_kind = ElemLayout.SLOT;
+                        if (fe_kind != ElemLayout.SLOT) {
                             emit_packed_load (fe_kind);
                             if (et == ValaType.INT)
                                 emit_int_narrow (et_name);
@@ -13991,7 +13896,7 @@ namespace Planc {
                     emitter.store_local (e.ref_temp_slot);
             } else if (e is ArrayNew2Expr) {
                 var an2 = (ArrayNew2Expr) e;
-                int row_kind = (an2.elem_type == ValaType.INT) ? packed_kind (an2.elem_type_name) : PK_SLOT;
+                int row_kind = (an2.elem_type == ValaType.INT) ? packed_kind (an2.elem_type_name) : ElemLayout.SLOT;
                 int row_stride = packed_stride (row_kind);
                 bool elem_ref = is_ref_type (an2.elem_type);
                 string d0n = "";
@@ -14049,7 +13954,7 @@ namespace Planc {
                     emitter.load_local_to_rcx (an2.slot_dim1);
                     emitter.emit_fill_empty_strings (emitter.add_string (""));
                 }
-                emit_arr_elem_store (an2.slot_outer, an2.slot_idx, PK_SLOT, an2.slot_inner);
+                emit_arr_elem_store (an2.slot_outer, an2.slot_idx, ElemLayout.SLOT, an2.slot_inner);
                 emitter.load_local (an2.slot_idx);
                 emitter.add_rax_imm (1);
                 emitter.store_local (an2.slot_idx);
@@ -14101,7 +14006,7 @@ namespace Planc {
                 var arr = (ArrayLiteralExpr) e;
                 var n = arr.elements.length;
                 bool elem_ref = is_ref_type (arr.elem_type);
-                int lit_kind = (arr.elem_type == ValaType.INT) ? packed_kind (arr.elem_type_name) : PK_SLOT;
+                int lit_kind = (arr.elem_type == ValaType.INT) ? packed_kind (arr.elem_type_name) : ElemLayout.SLOT;
                 int lit_stride = packed_stride (lit_kind);
                 emitter.mov_rdi_imm ((int64) n * lit_stride);
                 emitter.mov_esi_imm (elem_ref ? 1 : 0);
@@ -14122,7 +14027,7 @@ namespace Planc {
                             emitter.movq_rax_xmm (0);
                     } else if (elem_ref) {
                         consume_ref_expr (arr.elements[i]);
-                    } else if (lit_kind == PK_SLOT && arr.elem_type == ValaType.INT) {
+                    } else if (lit_kind == ElemLayout.SLOT && arr.elem_type == ValaType.INT) {
                         emit_int_narrow (arr.elem_type_name);
                     }
                     emitter.mov_rcx_rax ();
@@ -14130,9 +14035,9 @@ namespace Planc {
                     emitter.push_rax ();
                     emitter.mov_rax_rcx ();
                     emitter.pop_reg (Reg.RCX);
-                    if (lit_kind == PK_U8 || lit_kind == PK_I8)
+                    if (lit_kind == ElemLayout.U8 || lit_kind == ElemLayout.I8)
                         emitter.store_rcx_disp_byte_al (16 + i);
-                    else if (lit_kind != PK_SLOT)
+                    else if (lit_kind != ElemLayout.SLOT)
                         emitter.store_rcx_disp_word_ax (16 + 2 * i);
                     else
                         emitter.store_rcx_disp_rax (16 + 8 * i);
@@ -14413,8 +14318,8 @@ namespace Planc {
                         push_depth--;
                     }
                     emitter.load_rax_disp (16);
-                    int ga_kind = (ga_et == ValaType.INT) ? packed_kind (ga_etn) : PK_SLOT;
-                    if (ga_kind != PK_SLOT) {
+                    int ga_kind = (ga_et == ValaType.INT) ? packed_kind (ga_etn) : ElemLayout.SLOT;
+                    if (ga_kind != ElemLayout.SLOT) {
                         emit_packed_load (ga_kind);
                     } else {
                         emitter.load_qword_rax_rcx_16 ();
@@ -14448,8 +14353,8 @@ namespace Planc {
                             emitter.lea_rax_rbp_disp (struct_base_disp (ix.temp_slot, nsl));
                         } else {
                             int arr_kind = (tt == ValaType.ARRAY && arr_et == ValaType.INT)
-                                ? packed_kind (tt_name) : PK_SLOT;
-                            if (arr_kind != PK_SLOT) {
+                                ? packed_kind (tt_name) : ElemLayout.SLOT;
+                            if (arr_kind != ElemLayout.SLOT) {
                                 emit_packed_load (arr_kind);
                                 if (arr_et == ValaType.INT)
                                     emit_int_narrow (arr_etn);
@@ -15061,8 +14966,8 @@ namespace Planc {
                     var ix = (IndexExpr) inc.target;
                     string tt_name = "";
                     var tt = expr_type_full (ix.target, out tt_name);
-                    int inc_kind = (tt == ValaType.ARRAY) ? packed_kind (tt_name) : PK_SLOT;
-                    if (inc_kind != PK_SLOT) {
+                    int inc_kind = (tt == ValaType.ARRAY) ? packed_kind (tt_name) : ElemLayout.SLOT;
+                    if (inc_kind != ElemLayout.SLOT) {
                         bool is_signed_b = packed_is_signed (inc_kind);
                         gen_expr (ix.target);
                         emit_null_check_if_nullable (tt, tt_name);
@@ -15077,7 +14982,7 @@ namespace Planc {
                             emitter.cmp_rcx_rax_len ();
                             emitter.branch (BranchKind.JAE, bounds_panic_label);
                         }
-                        bool wide = (inc_kind == PK_U16 || inc_kind == PK_I16);
+                        bool wide = (inc_kind == ElemLayout.U16 || inc_kind == ElemLayout.I16);
                         emit_index_elem_addr (packed_stride (inc_kind));
                         emitter.mov_rdx_rax ();
                         if (wide)
@@ -15342,8 +15247,8 @@ namespace Planc {
             emitter.load_local (b.in_idx_slot);
             emitter.mov_rcx_rax ();
             emitter.load_local (b.in_arr_slot);
-            int in_kind = (et == ValaType.INT) ? packed_kind (rt_name) : PK_SLOT;
-            if (in_kind != PK_SLOT) {
+            int in_kind = (et == ValaType.INT) ? packed_kind (rt_name) : ElemLayout.SLOT;
+            if (in_kind != ElemLayout.SLOT) {
                 emit_packed_load (in_kind);
                 if (et == ValaType.INT)
                     emit_int_narrow (etn);
@@ -15507,7 +15412,7 @@ namespace Planc {
         private void emit_arr_elem_load (int base_slot, int idx_slot, int kind, int value_slot) {
             emitter.load_local_to_rcx (idx_slot);
             emitter.load_local (base_slot);
-            if (kind != PK_SLOT)
+            if (kind != ElemLayout.SLOT)
                 emit_packed_load (kind);
             else
                 emitter.load_qword_rax_rcx_16 ();
@@ -15523,9 +15428,9 @@ namespace Planc {
             emitter.mov_rdx_rax ();
             emitter.pop_reg (Reg.RAX);
             push_depth--;
-            if (kind == PK_U8 || kind == PK_I8)
+            if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                 emitter.store_byte_rax_rcx_16_dl ();
-            else if (kind != PK_SLOT)
+            else if (kind != ElemLayout.SLOT)
                 emitter.store_word_rax_rcx_16_dx ();
             else
                 emitter.store_qword_rax_rcx_16_rdx ();
