@@ -282,6 +282,11 @@ terminal stays free.
 .\run-qemu.ps1 -Headless   # serial-only
 .\run-qemu.ps1 -NoBuild    # reuse the artifacts from the last build
 
+# Window plus a shell this terminal can type into (the framebuffer stays
+# visible, the keyboard goes to the guest): type the program at the prompt.
+.\run-qemu.ps1 -Sdl -Serial -NoBuild
+#   🪐 : doom.elf -iwad /freedoom1.wad
+
 # Put a program (and its data) in the image and run it headless:
 .\run-qemu.ps1 -Headless -Add .\build\doom.elf,.\build\freedoom1.wad `
         -Run 'doom.elf -iwad /freedoom1.wad' -RunSeconds 60
@@ -291,6 +296,11 @@ terminal stays free.
 (bash: `--run=CMD`, `--run-seconds=N`) types a command at the guest shell, so a
 port can be exercised end to end without rebuilding the launcher. The same
 switches are what the DOOM port uses to run on the stock image.
+
+By default a windowed run writes the guest serial console to `<out>\serial.log`,
+so the shell cannot be typed into. `-Serial` sends it to the terminal instead,
+which is what lets a program be started by hand while its output is on screen;
+it also accepts `-Run` when the window should stay up.
 
 If the execution policy blocks the script:
 

@@ -46,6 +46,11 @@
     on Windows, which decides whether a relative PS/2 mouse gets motion events
     at all.
 
+.PARAMETER Serial
+    With a window, sends the guest serial console (the interactive shell) to
+    this terminal instead of <out>\serial.log, so a program can be typed while
+    the framebuffer is visible. Without it a windowed run cannot be typed into.
+
 .PARAMETER Add
     Extra files to place in the image, e.g. a port's binary and its data files.
     Each one lands in the image root under its own name.
@@ -71,6 +76,10 @@
     .\run-qemu.ps1 -Virtio -NoBuild
 
 .EXAMPLE
+    # Window plus a typeable shell: start a program by hand and watch it.
+    .\run-qemu.ps1 -Sdl -Serial -NoBuild
+
+.EXAMPLE
     # Run a port on the real image: add its binary and data, then type the
     # command at the shell.
     .\run-qemu.ps1 -Headless -Add .\build\doom.elf,.\build\freedoom1.wad `
@@ -91,6 +100,7 @@ param(
     [switch]$Venus,
     [switch]$VirtioGl,
     [switch]$Sdl,
+    [switch]$Serial,
     [switch]$DebugMemory,
     # Extra files to place in the image (a port's binary and its data files).
     [string[]]$Add = @(),
@@ -706,7 +716,11 @@ $qemuArgs = @(
     '-device', 'isa-debug-exit,iobase=0xf4,iosize=0x04'
 ) + $displayArgs
 
-if ($Headless) {
+if ($Serial) {
+    # Window plus a shell this terminal can type into: no monitor multiplexing,
+    # so every keystroke goes to the guest.
+    $qemuArgs += @('-serial', 'stdio')
+} elseif ($Headless) {
     if ($Run -ne '') {
         # mon:stdio hands the keyboard to the monitor, so keep plain stdio to
         # type the command into the guest shell.
@@ -716,7 +730,7 @@ if ($Headless) {
     }
 } else {
     if ($Run -ne '') {
-        Fail '-Run types into the serial console; use it with -Headless'
+        Fail '-Run types into the serial console; use it with -Headless or -Serial'
     }
     $serialLog = Out-Path 'serial.log'
     $qemuArgs += @('-serial', ('file:' + (To-QemuPath $serialLog)))
