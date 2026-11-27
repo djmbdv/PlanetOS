@@ -99,13 +99,34 @@ namespace Planc {
         public bool used_write_str = false;
         public bool used_write_int = false;
         public bool used_bounds_panic = false;
+        // Set when a function indexes an array whose element layout could not
+        // be established: the caller then keeps that function on the AST
+        // backend instead of guessing a stride.
+        public bool unsupported_layout = false;
 
         private GenericArray<IRBlock> blocks = new GenericArray<IRBlock> ();
         private int cur_bb = 0;
+        // Packed array element layouts, mirroring the AST backend's PK_* values.
+        private const int PK_SLOT = 0;
+        private const int PK_U8 = 1;
+        private const int PK_I8 = 2;
+        private const int PK_U16 = 3;
+        private const int PK_I16 = 4;
+
+        private static string pz_unwrap (string t) {
+            return t.has_suffix ("?") ? t.substring (0, t.length - 1) : t;
+        }
+
         private int next_vreg = 0;
         private GenericArray<int> vreg_weight = new GenericArray<int> ();
         private GenericArray<bool> vreg_is_arr = new GenericArray<bool> ();
         private GenericArray<bool> vreg_is_unsigned = new GenericArray<bool> ();
+        // Packed element layout of an array vreg: 0 = 8-byte slot, 1 = uint8,
+        // 2 = int8, 3 = uint16, 4 = int16. `vreg_elem_known` says whether the
+        // layout was established; an array of unknown layout may not be indexed
+        // here, because indexing with the wrong stride corrupts memory.
+        private GenericArray<int> vreg_elem_kind = new GenericArray<int> ();
+        private GenericArray<bool> vreg_elem_known = new GenericArray<bool> ();
         private int loop_weight = 1;
 
         private GenericArray<string> var_names = new GenericArray<string> ();
@@ -162,7 +183,53 @@ namespace Planc {
             vreg_weight.add (0);
             vreg_is_arr.add (is_arr);
             vreg_is_unsigned.add (is_u);
+            vreg_elem_kind.add (PK_SLOT);
+            vreg_elem_known.add (false);
             return v;
+        }
+
+        // Layout of an array local: its declared element name, else the `new`
+        // that filled it, else the array it aliases, else the callee's return
+        // type. An unknown array (nothing above applies) is refused by the
+        // index lowering rather than guessed.
+        private int arr_kind_of_init (string decl_tname, Expr? init) {
+            if (decl_tname != "")
+                return arr_kind_of (decl_tname);
+            if (init is ArrayNewExpr)
+                return arr_kind_of (((ArrayNewExpr) init).elem_type_name);
+            if (init is VarRef) {
+                int si = lookup_var (((VarRef) init).name);
+                if (si >= 0 && vreg_elem_known[var_vregs[si]])
+                    return vreg_elem_kind[var_vregs[si]];
+            }
+            if (init is CallExpr) {
+                unowned var cf = program.find (((CallExpr) init).callee);
+                if (cf != null && cf.return_type == ValaType.ARRAY)
+                    return arr_kind_of (cf.return_type_name);
+            }
+            return -1;
+        }
+
+        private void set_elem_kind (int v, int kind) {
+            if (v < 0 || v >= vreg_elem_kind.length || kind < 0)
+                return;
+            vreg_elem_kind[v] = kind;
+            vreg_elem_known[v] = true;
+        }
+
+        private static int arr_kind_of (string tname) {
+            var b = pz_unwrap (tname);
+            if (b == "uint8" || b == "uchar" || b == "char") return PK_U8;
+            if (b == "int8") return PK_I8;
+            if (b == "uint16" || b == "ushort") return PK_U16;
+            if (b == "int16" || b == "short") return PK_I16;
+            return PK_SLOT;
+        }
+
+        private static int arr_stride_of (int kind) {
+            if (kind == PK_U8 || kind == PK_I8) return 1;
+            if (kind == PK_U16 || kind == PK_I16) return 2;
+            return 8;
         }
 
         private void touch_vreg (int v) {
@@ -196,9 +263,16 @@ namespace Planc {
             }
             if (t == ValaType.ARRAY) {
                 return tname == "" || tname == "int" || tname == "int64" || tname == "long"
-                    || tname == "int[]" || tname == "int64[]" || tname == "long[]";
+                    || tname == "int[]" || tname == "int64[]" || tname == "long[]"
+                    || arr_is_packed_name (tname);
             }
             return false;
+        }
+
+        private static bool arr_is_packed_name (string tn) {
+            var b = pz_unwrap (tn);
+            return b == "uint8" || b == "uchar" || b == "char" || b == "int8"
+                || b == "uint16" || b == "ushort" || b == "int16" || b == "short";
         }
 
         private static bool is_unsigned_name (string tn) {
@@ -344,6 +418,10 @@ namespace Planc {
                 if (!(ia.target is VarRef)) return false;
                 int vi = lookup_var (((VarRef) ia.target).name);
                 if (vi < 0 || var_types[vi] != ValaType.ARRAY) return false;
+                // `+=`/`-=` use a 64-bit read-modify-write, so they stay on the
+                // slot layout; packed elements go through the AST backend.
+                if (ia.op != "=" && arr_kind_of (var_tnames[vi]) != PK_SLOT)
+                    return false;
                 return check_expr_supported (ia.index) && check_expr_supported (ia.value);
             }
             if (s is ReturnStatement) {
@@ -611,6 +689,7 @@ namespace Planc {
             if (e is IndexExpr) {
                 var ix = (IndexExpr) e;
                 int av = var_vregs[lookup_var (((VarRef) ix.target).name)];
+                if (!vreg_elem_known[av]) { unsupported_layout = true; return 0; }
                 int iv = lower_expr (ix.index);
                 int d = new_vreg ();
                 bool bc = !bce_is_safe (av, ix.index);
@@ -633,6 +712,9 @@ namespace Planc {
                     ins.args.add (lower_expr (c.args[i]));
                 int d = new_vreg ();
                 ins.dst = d;
+                unowned var callee_f = program.find (c.callee);
+                if (callee_f != null && callee_f.return_type == ValaType.ARRAY)
+                    set_elem_kind (d, arr_kind_of (callee_f.return_type_name));
                 emit_ir (ins);
                 return d;
             }
@@ -640,6 +722,7 @@ namespace Planc {
                 var an = (ArrayNewExpr) e;
                 int lv = lower_expr (an.length_expr);
                 int d = new_vreg (true, false);
+                set_elem_kind (d, arr_kind_of (an.elem_type_name));
                 emit_ir (new IRInst () { op = IROp.ARR_NEW, dst = d, lhs = lv });
                 return d;
             }
@@ -1231,6 +1314,8 @@ namespace Planc {
                 int v = new_vreg (is_arr, is_u);
                 if (is_arr)
                     arr_locals.add (v);
+                if (is_arr)
+                    set_elem_kind (v, arr_kind_of_init (d.decl_type_name, d.init));
                 if (d.init != null) {
                     int iv = lower_expr (d.init);
                     emit_ir (new IRInst () { op = IROp.MOV, dst = v, lhs = iv });
@@ -1300,6 +1385,7 @@ namespace Planc {
             if (s is IndexAssignStatement) {
                 var ia = (IndexAssignStatement) s;
                 int av = var_vregs[lookup_var (((VarRef) ia.target).name)];
+                if (!vreg_elem_known[av]) { unsupported_layout = true; return; }
                 int iv = lower_expr (ia.index);
                 int vv = lower_expr (ia.value);
                 bool bc = !bce_is_safe (av, ia.index);
@@ -1696,6 +1782,9 @@ namespace Planc {
                     }
                     if (!safe) continue;
 
+                    // A packed array has a different element layout; keep it on
+                    // the heap instead of teaching this promotion about strides.
+                    if (vreg_elem_kind[target_v] != PK_SLOT) continue;
                     int alloc_bytes = ((16 + (int) len * 8 + 15) & ~15);
                     if (stack_arr_bytes + alloc_bytes > 2048) continue;
 
@@ -2158,6 +2247,57 @@ namespace Planc {
             code.u8 (0x8B);
             code.u8 ((uint8) (0x44 | (((int) dst & 7) << 3)));
             code.u8 ((uint8) (0xC0 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
+            code.u8 ((uint8) disp);
+        }
+
+        // movzx/movsx dst, byte [arr + idx + 16]        0F B6/BE + SIB (scale 1)
+        private void emit_load_sib_byte (Reg dst, Reg arr_r, Reg idx_r, int8 disp, bool signed_b) {
+            uint8 rex = (uint8) (0x48
+                | (Reg.is_extended (dst) ? 4 : 0)
+                | (Reg.is_extended (idx_r) ? 2 : 0)
+                | (Reg.is_extended (arr_r) ? 1 : 0));
+            code.u8 (rex);
+            code.u8 (0x0F);
+            code.u8 (signed_b ? 0xBE : 0xB6);
+            code.u8 ((uint8) (0x44 | (((int) dst & 7) << 3)));
+            code.u8 ((uint8) (0x00 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
+            code.u8 ((uint8) disp);
+        }
+
+        // movzx/movsx dst, word [arr + idx*2 + 16]      0F B7/BF + SIB (scale 2)
+        private void emit_load_sib_word (Reg dst, Reg arr_r, Reg idx_r, int8 disp, bool signed_b) {
+            uint8 rex = (uint8) (0x48
+                | (Reg.is_extended (dst) ? 4 : 0)
+                | (Reg.is_extended (idx_r) ? 2 : 0)
+                | (Reg.is_extended (arr_r) ? 1 : 0));
+            code.u8 (rex);
+            code.u8 (0x0F);
+            code.u8 (signed_b ? 0xBF : 0xB7);
+            code.u8 ((uint8) (0x44 | (((int) dst & 7) << 3)));
+            code.u8 ((uint8) (0x40 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
+            code.u8 ((uint8) disp);
+        }
+
+        private void emit_store_sib_byte (Reg arr_r, Reg idx_r, int8 disp, Reg src) {
+            uint8 rex = (uint8) ((Reg.is_extended (src) ? 4 : 0)
+                | (Reg.is_extended (idx_r) ? 2 : 0)
+                | (Reg.is_extended (arr_r) ? 1 : 0));
+            if (rex != 0) code.u8 ((uint8) (rex | 0x40));
+            code.u8 (0x88);
+            code.u8 ((uint8) (0x44 | (((int) src & 7) << 3)));
+            code.u8 ((uint8) (0x00 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
+            code.u8 ((uint8) disp);
+        }
+
+        private void emit_store_sib_word (Reg arr_r, Reg idx_r, int8 disp, Reg src) {
+            code.u8 (0x66);
+            uint8 rex = (uint8) ((Reg.is_extended (src) ? 4 : 0)
+                | (Reg.is_extended (idx_r) ? 2 : 0)
+                | (Reg.is_extended (arr_r) ? 1 : 0));
+            if (rex != 0) code.u8 ((uint8) (rex | 0x40));
+            code.u8 (0x89);
+            code.u8 ((uint8) (0x44 | (((int) src & 7) << 3)));
+            code.u8 ((uint8) (0x40 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
             code.u8 ((uint8) disp);
         }
 
@@ -2710,7 +2850,11 @@ namespace Planc {
                             emit_mov_rr (Reg.RDI, lv);
                             emitter.push_reg (Reg.RDI);
                             emitter.sub_rsp (8);
-                            emit_shift_ri (4, Reg.RDI, 3);
+                            int new_stride = arr_stride_of (vreg_elem_kind[ins.dst]);
+                            if (new_stride == 2)
+                                emit_shift_ri (4, Reg.RDI, 1);
+                            else if (new_stride == 8)
+                                emit_shift_ri (4, Reg.RDI, 3);
                             code.u8 (0x31); code.u8 (0xF6); // xor esi, esi
                             emitter.call_rel32 ("__planc_alloc");
                             emitter.add_rsp (8);
@@ -2835,7 +2979,13 @@ namespace Planc {
                                 emitter.branch (BranchKind.JAE, bounds_panic_label);
                             }
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
-                            emit_load_sib8 (d, av, iv, 16);
+                            int ld_kind = vreg_elem_kind[ins.lhs];
+                            if (ld_kind == PK_U8 || ld_kind == PK_I8)
+                                emit_load_sib_byte (d, av, iv, 16, ld_kind == PK_I8);
+                            else if (ld_kind == PK_U16 || ld_kind == PK_I16)
+                                emit_load_sib_word (d, av, iv, 16, ld_kind == PK_I16);
+                            else
+                                emit_load_sib8 (d, av, iv, 16);
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
                             break;
                         }
@@ -2847,12 +2997,15 @@ namespace Planc {
                                 used_bounds_panic = true;
                                 emitter.branch (BranchKind.JAE, bounds_panic_label);
                             }
+                            int st_kind = vreg_elem_kind[ins.dst];
                             if (ins.sop == "=") {
                                 Reg vv = read_vreg (ins.rhs, Reg.RAX);
-                                if (vv == Reg.RAX && (vreg_phys[ins.dst] < 0 || vreg_phys[ins.lhs] < 0)) {
-                                    // R10/R11 are already av/iv, vv is in RAX (safe!)
-                                }
-                                emit_store_sib8 (av, iv, 16, vv);
+                                if (st_kind == PK_U8 || st_kind == PK_I8)
+                                    emit_store_sib_byte (av, iv, 16, vv);
+                                else if (st_kind == PK_U16 || st_kind == PK_I16)
+                                    emit_store_sib_word (av, iv, 16, vv);
+                                else
+                                    emit_store_sib8 (av, iv, 16, vv);
                             } else {
                                 // +=, -=, *= : load current into RAX, op, store back!
                                 // Note: if rhs was in RAX, move to R10? No, R10 is av!
@@ -3144,6 +3297,8 @@ namespace Planc {
                 var p = f.params[i];
                 int v = ra.new_vreg (p.param_type == ValaType.ARRAY, is_unsigned_name (p.type_name));
                 ra.var_vregs[i] = v;
+                if (p.param_type == ValaType.ARRAY)
+                    ra.set_elem_kind (v, arr_kind_of (p.type_name));
             }
             bool has_assoc_tre = false;
             if (f.return_type == ValaType.INT) {
@@ -3167,6 +3322,8 @@ namespace Planc {
             if (!ra.bb_ends_with_term (ra.cur_bb))
                 ra.emit_ir (new IRInst () { op = IROp.RET_VOID });
 
+            if (ra.unsupported_layout)
+                return false;
             ra.promote_stack_arrays (f.params.length);
             ra.solve_puzzles (f.params.length);
             ra.emit_machine_code (f, symbols);

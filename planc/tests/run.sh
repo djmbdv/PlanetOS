@@ -1178,6 +1178,22 @@ for name in array_return array_alias_local; do
     done
 done
 
+# Packed element widths (1 and 2 bytes) and loop bounds checks must agree with
+# the -O0 output at every level, including the register-allocated backend.
+for name in packed_arrays bce_loops; do
+    for lv in 1 2; do
+        if ! "$PLANC" $TARGET_FLAGS "-O$lv" "$HERE/valid/$name.vala" -o "$WORK/${name}_o${lv}${BIN_EXT}" 2>"$WORK/${name}_o$lv.err"; then
+            ko "${name}_o$lv" "compile failed: $(cat "$WORK/${name}_o$lv.err")"
+        elif ! run_bin "$WORK/${name}_o${lv}${BIN_EXT}" >"$WORK/${name}_o$lv.stdout" 2>&1; then
+            ko "${name}_o$lv" "non-zero exit"
+        elif ! files_equal "$WORK/${name}_o$lv.stdout" "$HERE/valid/$name.out"; then
+            ko "${name}_o$lv" "stdout differs"
+        else
+            ok "${name}_o$lv"
+        fi
+    done
+done
+
 # A long operator chain must not exhaust the compiler stack either.
 if ! "$PLANC" $TARGET_FLAGS -O2 "$HERE/valid/deep_expr_chain.vala" -o "$WORK/deep_o2${BIN_EXT}" 2>"$WORK/deep_o2.err"; then
     ko "deep_expr_chain_o2" "compile failed: $(cat "$WORK/deep_o2.err")"

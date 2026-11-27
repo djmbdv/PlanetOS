@@ -23,6 +23,7 @@ las divergencias deliberadas están listadas en la sección 5.
 | `struct` | `8 * slots` bytes, campos en orden de declaración |
 | `sizeof (T)` / `sizeof (expr)` | devuelve el tamaño **en este ABI** (`sizeof (int)` = 8, no 4) |
 | `uint8`/`int8` | arrays *byte-view*: 1 byte por elemento |
+| `uint16`/`int16` | arrays empaquetados: 2 bytes por elemento |
 
 Por eso `sizeof` de `planc` no sirve para calcular buffers de C: para datos
 binarios hay que usar los arrays `uint8[]` y las vistas de bytes (sección 6).
@@ -65,7 +66,7 @@ El detalle completo, con las reglas de `unowned`/`weak`, los estados envenenado 
 | `string?` + *narrowing* | `!= null` estrecha el tipo | `nullable_narrowing` |
 | Asignación a índice de string | **no** (inmutable) | `invalid/string_index_assign` |
 | Arrays 1D `T[]` | `new T[n]`, `.length`, indexación con *bounds check*, literales | `array_int`, `array_string`, `slice_*` |
-| Arrays byte `uint8[]` | 1 B/elemento, base de los datos binarios | `byte_arrays_and_stdlib` |
+| Arrays `uint8[]`/`int8[]`/`uint16[]`/`int16[]` | 1 o 2 B por elemento, base de los datos binarios | `packed_arrays`, `bce_loops`, `byte_arrays_and_stdlib` |
 | `in (array)` y `in (string)` | evaluación única, `NaN` nunca coincide | `in_operator` |
 | `arr.resize (n)`, `arr.move (src, dst, len)` | guards de signo/overflow, receptor *lvalue*, no sobre `[Compact]` ni structs | `array_resize_move` |
 | Arrays 2D `T[,]` / `new T[r,c]` / `a[i,j]` / `a.length[d]` | **jagged** (`T[][]`): filas independientes, bounds por dimensión | `multidim_2d` |
@@ -147,28 +148,39 @@ direccionarse ni escapar de su ámbito.
 * Un struct **POD** puede copiarse en crudo; uno con campos `string`/array
   necesita las rutinas de ref/unref (las tiene en asignación, no en `memcpy`).
 
-### Arrays de bytes empaquetados
+### Arrays empaquetados (1 y 2 bytes por elemento)
 
-`uint8[]` e `int8[]` guardan **1 byte por elemento** (el resto de los arrays usa
-un slot de 8 B, y un array de structs `8 * slots`). Medido con `--trace-alloc`:
-`new uint8[1000000]` reserva 1 000 000 B, `new int[1000000]` reserva 8 000 000 B,
-y lo mismo vale para los literales (`new uint8[] { … }`) y para `string.data`.
+`uint8[]`, `int8[]`, `char[]` y `uchar[]` guardan **1 byte por elemento**;
+`uint16[]`, `int16[]`, `ushort[]` y `short[]` guardan **2 bytes** (el resto de
+los arrays usa un slot de 8 B, y un array de structs `8 * slots`). Medido con
+`--trace-alloc`: `new uint8[1000000]` reserva 1 000 000 B, `new int16[1000000]`
+reserva 2 000 000 B, `new int[1000000]` reserva 8 000 000 B, y lo mismo vale para
+los literales (`new uint8[] { … }`) y para `string.data`.
 
 Las reglas que hacen segura esa representación:
 
 * `.length` y el *bounds check* cuentan **elementos**, no bytes; la dirección del
-  elemento es `data + i` (escala 1) y la lectura es `movzx` (o `movsx` para
-  `int8`);
+  elemento es `data + i * stride` (escala 1 para 1 B, escala 2 para 2 B) y la
+  lectura es `movzx`/`movsx` de 8 o 16 bits según el tipo (con signo para
+  `int8`/`int16`), la escritura es un `mov` de 8 o 16 bits;
+* el ancho sale del **tipo declarado** en todos los sitios que pueden nombrar un
+  array: parámetros, locales, `new T[n]`, resultado de una llamada, filas de un
+  array 2D y los literales; un array empaquetado no puede pasarse a un parámetro
+  `T[]` de otro ancho sin conversión explícita;
 * no se puede tomar dirección de un elemento (`&a[i]` es error duro, y `ref`/`out`
-  de un elemento de byte array también): un puntero a un byte no puede
-  representarse como un array de 8 B por elemento;
-* `resize`/`move`/`in` funcionan sobre arrays de bytes porque son escalares;
-* un array de structs **no** puede contener campos byte-array inline (no hay
-  campos array de tamaño fijo), así que no hay mezcla de strides.
+  de un elemento empaquetado también, igual que `a[i] += v` sobre elemento
+  empaquetado en `-O2`): un puntero a 1 o 2 bytes no puede representarse como un
+  array de 8 B por elemento;
+* `resize`/`move`/`in`/`foreach`/`++` funcionan sobre arrays empaquetados porque
+  son escalares;
+* un array de structs **no** puede contener campos array empaquetados inline (no
+  hay campos array de tamaño fijo), así que no hay mezcla de strides.
 
-El backend de `-O2` (asignador de registros) sólo acepta arrays de elementos
-`int`/`int64`/`long`; cualquier función que toque un `uint8[]` se compila con el
-backend de AST, que es el que implementa el empaquetado.
+El backend de `-O2` (asignador de registros) soporta elementos de 1 y 2 bytes en
+las cargas/almacenes indexados (`a[i]`, `a[i] = v`, `a[i]++`) y en `new T[n]`;
+cualquier otra forma (un array empaquetado con `resize`, `move`, `foreach`, o un
+layout que el asignador no sabe deducir) hace que la función caiga al backend de
+AST, que implementa el empaquetado completo.
 
 ---
 
@@ -235,13 +247,24 @@ planc <fuentes.vala>… -o <salida> [flags]
 | `--error-limit=N`, `--no-error-recovery` | control de la recuperación de errores |
 
 Los niveles `-O0`, `-O1` y `-O2` comparten semántica. `-O1` optimiza el AST y
-`-O2` añade el asignador de registros (`puzzle_ra.vala`) y la eliminación de
-*bounds checks*; cuando el asignador no soporta una función (arrays de bytes,
-métodos, `ref`/`out`, `throws`, `async`, funciones que **devuelven un array**,
-locales de array que aliasan otro array, asignación entre arrays) esa función se
-compila con el backend de AST, que es el que implementa el empaquetado de bytes
-y la transferencia de propiedad al `return`. Las dos suites comprueban el mismo
-`.out` en los tres niveles (`array_return_o1/o2`, `array_alias_local_o1/o2`).
+la eliminación de *bounds checks* de bucles `for`/`while` canónicos (`for (int i
+= 0; i < a.length; i++)` y la forma con asignación en el `init`, siempre que el
+cuerpo no modifique el array, ni con una llamada a un método sobre él); `-O2`
+añade el asignador de registros (`puzzle_ra.vala`). Cuando el asignador no
+soporta una función (métodos, `ref`/`out`, `throws`, `async`, funciones que
+**devuelven un array**, locales de array que aliasan otro array, asignación entre
+arrays, `resize`/`move` sobre un array local, `a[i] += v` sobre un elemento
+empaquetado, o un layout de elementos que no sabe deducir) esa función se compila
+con el backend de AST, que es el que implementa el empaquetado completo y la
+transferencia de propiedad al `return`. Las dos suites comprueban el mismo `.out`
+en los tres niveles (`array_return_o1/o2`, `array_alias_local_o1/o2`,
+`packed_arrays_o1/o2`, `bce_loops_o1/o2`).
+
+Límite conocido: `a.resize (n)` sobre un array **local** dentro de un bucle no
+está soportado en `-O2` (el asignador puede quedarse con la longitud o la copia
+vieja del array en un registro). El patrón correcto es construir el array de
+tamaño final (`new T[cantidad]`) o hacer el `resize` en una función aparte que se
+compile en el backend de AST.
 
 ### Diagnósticos de runtime
 
@@ -264,13 +287,13 @@ y la transferencia de propiedad al `return`. Las dos suites comprueban el mismo
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **314 casos, 313 pasan**. El único fallo es
+Estado actual: **320 casos, 319 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
 | Sección | Qué prueba | Casos |
 |---|---|---|
-| `valid/` | compila, ejecuta y compara stdout/exit | 122 |
+| `valid/` | compila, ejecuta y compara stdout/exit | 124 |
 | `invalid/` | rechazo con diagnóstico posicionado | 80 |
 | `bounds/` | panics de rango, tamaños negativos y overflow de `n*stride` | 15 |
 | `visibility/` | `--strict-visibility` / `--enforce-visibility` | 5 |

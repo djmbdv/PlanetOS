@@ -98,13 +98,20 @@ that matter for correctness:
 
 ## Performance notes
 
-The port is built with `-O2` (register allocator plus bounds-check elimination),
-which roughly doubles the frame rate over `-O1`: about 150 frames per 35 s of a
-headless QEMU run instead of 75, at ~2.5 ms per DOOM tic.
+The port is built with `-O2`: the register allocator plus the bounds-check
+elimination that planc now also runs at `-O1`. In a headless QEMU run of the
+same wall-clock window this gives about **225 frames / 168 game tics** at `-O2`
+against **150 frames / 147 tics** at `-O1`, i.e. the renderer keeps up with the
+35 Hz game clock at `-O2` (~4 ms per frame) and drops frames at `-O1`. Before
+packed 16-bit arrays and the `-O1` bounds-check work, `-O1` managed 75 frames per
+35 s.
 
-`uint8[]` is already packed at one byte per element, so a 320x200 screen is
-64 KB plus a 16-byte header. The renderer is bound by the software rasteriser,
-by planc's per-access bounds checks in the byte loops (eliminated where the loop
-shape proves the index in range) and by QEMU's TCG, which emulates every
-instruction. Sound, music and wipes are not implemented, and the attract-mode
-demo takes a long time to appear at these frame rates.
+Element packing is what makes the buffers cheap: `uint8[]` is one byte per
+element and `int16[]` two, so a 320x200 screen is 64 KB plus a 16-byte header and
+DOOM's `int16` tables are a quarter of the 8-byte slot size. Both widths are
+indexed directly by the register allocator (`movzx`/`movsx` loads and 8/16-bit
+stores), and the bounds checks are hoisted out of the canonical `for` loops, so
+the byte loops in the rasteriser no longer pay a check per pixel. What remains is
+the software rasteriser itself and QEMU's TCG, which emulates every instruction.
+Sound, music and wipes are not implemented, and the attract-mode demo takes a
+long time to appear at these frame rates.

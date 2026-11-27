@@ -3036,6 +3036,11 @@ namespace Planc {
             }
             if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
+                // A method on the array itself can resize it (`resize`, `move`),
+                // which changes `.length` behind the loop's back, so treat any
+                // call whose receiver is the tracked name as a modification.
+                if (mc.target is VarRef && ((VarRef) mc.target).name == vname)
+                    return true;
                 if (cg_expr_modifies (mc.target, vname)) return true;
                 for (int i = 0; i < mc.args.length; i++) {
                     if (cg_expr_modifies (mc.args[i], vname)) return true;
@@ -3089,12 +3094,24 @@ namespace Planc {
         }
 
         private bool cg_bce_try_push_for (ForStatement fs) {
-            if (opt_level < 2 || !(fs.init is VarDeclStatement) || !(fs.condition is BinaryExpr))
+            if (opt_level < 1 || !(fs.condition is BinaryExpr))
                 return false;
-            var vd = (VarDeclStatement) fs.init;
-            if (vd.init == null || !(vd.init is IntLiteral) || ((IntLiteral) vd.init).value < 0)
+            // The induction variable starts at 0: either declared by the loop or
+            // reset by it, so `0 <= i` holds at the first condition test.
+            string idx_name = "";
+            if (fs.init is VarDeclStatement) {
+                var vd = (VarDeclStatement) fs.init;
+                if (vd.init == null || !(vd.init is IntLiteral) || ((IntLiteral) vd.init).value < 0)
+                    return false;
+                idx_name = vd.name;
+            } else if (fs.init is AssignStatement) {
+                var ia0 = (AssignStatement) fs.init;
+                if (!(ia0.value is IntLiteral) || ((IntLiteral) ia0.value).value < 0)
+                    return false;
+                idx_name = ia0.name;
+            } else {
                 return false;
-            string idx_name = vd.name;
+            }
             var cb = (BinaryExpr) fs.condition;
             if (cb.op != "<" || !(cb.left is VarRef) || ((VarRef) cb.left).name != idx_name)
                 return false;
@@ -6450,6 +6467,13 @@ namespace Planc {
             return false;
         }
 
+        private bool is_local_array_var (Expr? e) {
+            if (!(e is VarRef))
+                return false;
+            int idx = lookup (((VarRef) e).name);
+            return idx >= 0 && local_types[idx] == ValaType.ARRAY;
+        }
+
         private bool expr_uses_addr_or_lambda (Expr? e) {
             if (e == null) return false;
             if (e is ArrayNew2Expr) {
@@ -6539,6 +6563,24 @@ namespace Planc {
                 return expr_uses_addr_or_lambda (ce.left) || expr_uses_addr_or_lambda (ce.right);
             }
             if (e is TypeCheckExpr) return expr_uses_addr_or_lambda (((TypeCheckExpr) e).operand);
+            if (e is MethodCallExpr) {
+                // `a.resize ()` and `a.move ()` operate on the address of the
+                // local, so the local must live in its frame slot rather than in
+                // a register (a register copy would go stale).
+                var mc0 = (MethodCallExpr) e;
+                // `resize`/`move` rewrite the receiver's slot in place, so they
+                // need the local to live in its frame slot, never in a register.
+                if (mc0.method_name == "resize" || mc0.method_name == "move")
+                    return true;
+                if (is_local_array_var (mc0.target))
+                    return true;
+                if (expr_uses_addr_or_lambda (mc0.target))
+                    return true;
+                for (int i = 0; i < mc0.args.length; i++) {
+                    if (expr_uses_addr_or_lambda (mc0.args[i])) return true;
+                }
+                return false;
+            }
             if (e is DerefExpr) return expr_uses_addr_or_lambda (((DerefExpr) e).target);
             if (e is SliceExpr) {
                 var se = (SliceExpr) e;
@@ -7212,6 +7254,58 @@ namespace Planc {
             return b == "uint8" || b == "int8";
         }
 
+        // Packed array elements: 0 keeps the 8-byte slot layout, the rest are
+        // stored inline at their own width.
+        private const int PK_SLOT = 0;
+        private const int PK_U8 = 1;
+        private const int PK_I8 = 2;
+        private const int PK_U16 = 3;
+        private const int PK_I16 = 4;
+
+        // Kinds that are stored narrower than a slot.
+        private static int packed_kind (string arr_tname) {
+            var b = strip_null (arr_tname);
+            if (b == "uint8" || b == "uchar" || b == "char") return PK_U8;
+            if (b == "int8") return PK_I8;
+            if (b == "uint16" || b == "ushort") return PK_U16;
+            if (b == "int16" || b == "short") return PK_I16;
+            return PK_SLOT;
+        }
+
+        private static int packed_stride (int kind) {
+            if (kind == PK_SLOT) return 8;
+            if (kind == PK_U8 || kind == PK_I8) return 1;
+            return 2;
+        }
+
+        private static bool packed_is_signed (int kind) {
+            return kind == PK_I8 || kind == PK_I16;
+        }
+
+        // Element `rax + rcx * stride` of a packed array into rax, zero or sign
+        // extended to 64 bits. The index is already bounds-checked.
+        private void emit_packed_load (int kind) {
+            switch (kind) {
+                case PK_U8:
+                    emitter.load_byte_rax_rcx_16 ();
+                    break;
+                case PK_I8:
+                    emitter.load_byte_rax_rcx_16 ();
+                    emitter.sign_extend_rax (8);
+                    break;
+                case PK_U16:
+                    emitter.load_word_rax_rcx_16 ();
+                    break;
+                case PK_I16:
+                    emitter.load_word_rax_rcx_16 ();
+                    emitter.sign_extend_rax (16);
+                    break;
+                default:
+                    emitter.load_qword_rax_rcx_16 ();
+                    break;
+            }
+        }
+
         private void coerce_byte_array_literal (Expr? e, ValaType expected_t, string expected_tname) {
             if (e == null || !(e is ArrayLiteralExpr) || expected_t != ValaType.ARRAY)
                 return;
@@ -7761,8 +7855,9 @@ namespace Planc {
         // A struct name that is not a struct declaration (a delegate) keeps the
         // old one-slot layout.
         private int elem_stride_bytes (ValaType et, string et_name) {
-            if (et == ValaType.INT && (et_name == "uint8" || et_name == "int8"))
-                return 1;
+            int kind = packed_kind (et_name);
+            if (et == ValaType.INT && kind != PK_SLOT)
+                return packed_stride (kind);
             if (et == ValaType.STRUCT) {
                 unowned var sd = program.find_struct (strip_null (et_name));
                 if (sd != null)
@@ -9883,10 +9978,9 @@ namespace Planc {
                     if (tt != ValaType.ARRAY)
                         throw new SemanticError.TYPE_MISMATCH (
                             @"indexed address-of requires an array at $(ao.line):$(ao.column)");
-                    bool is_sb = false;
-                    if (is_byte_array_type (tt_name, out is_sb))
+                    if (packed_kind (tt_name) != PK_SLOT)
                         throw new SemanticError.TYPE_MISMATCH (
-                            @"cannot take address of packed byte array element at $(ao.line):$(ao.column)");
+                            @"cannot take address of a packed array element ($(strip_null (tt_name)) uses $(packed_stride (packed_kind (tt_name))) byte(s) per element) at $(ao.line):$(ao.column)");
                     ValaType et;
                     string et_name;
                     parse_array_elem (tt_name, out et, out et_name);
@@ -10841,10 +10935,9 @@ namespace Planc {
                 emitter.pop_rax ();
                 push_depth--;
                 if (is_ga) {
-                    bool ga_signed_b = false;
-                    if (ga_et == ValaType.INT && is_byte_array_type (ga_etn, out ga_signed_b))
+                    if (ga_et == ValaType.INT && packed_kind (ga_etn) != PK_SLOT)
                         throw new SemanticError.TYPE_MISMATCH (
-                            @"cannot pass packed byte array element by ref or out at $(e.line):$(e.column)");
+                            @"cannot pass a packed array element ($(strip_null (ga_etn))) by ref or out at $(e.line):$(e.column)");
                     if (bounds_check) {
                         need_bounds_panic = true;
                         emitter.push_rax ();
@@ -10864,10 +10957,9 @@ namespace Planc {
                 ValaType la_et = ValaType.INT;
                 string la_etn = "";
                 parse_array_elem (tt_name, out la_et, out la_etn);
-                bool la_signed_b = false;
-                if (is_byte_array_type (tt_name, out la_signed_b))
+                if (packed_kind (tt_name) != PK_SLOT)
                     throw new SemanticError.TYPE_MISMATCH (
-                        @"cannot pass packed byte array element by ref or out at $(e.line):$(e.column)");
+                        @"cannot pass a packed array element ($(strip_null (tt_name))) by ref or out at $(e.line):$(e.column)");
                 if (bounds_check) {
                     need_bounds_panic = true;
                     emitter.cmp_rcx_rax_len ();
@@ -11142,27 +11234,47 @@ namespace Planc {
             }
         }
 
-        private void emit_byte_elem_store (bool is_signed, string op, Expr val)
+        // `arr[i]` address in rax (already bounds-checked), `val` in rax: store it
+        // at the element's own width. Compound forms read back with the same
+        // width so the arithmetic keeps the element's range.
+        private void emit_packed_elem_store (int kind, string op, Expr val)
                 throws SemanticError {
             emitter.push_rax ();
             push_depth++;
             gen_expr (val);
+            if (kind != PK_SLOT)
+                emit_int_narrow (kind == PK_I8 || kind == PK_U8 ? "int8" : "int16");
             if (op == "=") {
                 emitter.pop_rcx ();
                 push_depth--;
-                emitter.store_rcx_disp_byte_al (0);
+                if (kind == PK_U8 || kind == PK_I8)
+                    emitter.store_rcx_disp_byte_al (0);
+                else
+                    emitter.store_rcx_disp_word_ax (0);
             } else {
+                bool is_signed = packed_is_signed (kind);
                 emitter.mov_rcx_rax ();
                 emitter.load_rsp (0);
                 emitter.mov_rdx_rax ();
-                emitter.load_rdx_byte_to_zx_rax ();
+                if (kind == PK_U8 || kind == PK_I8)
+                    emitter.load_rdx_byte_to_zx_rax ();
+                else
+                    emitter.load_rdx_word_to_zx_rax ();
                 if (is_signed)
-                    emitter.sign_extend_rax (8);
+                    emitter.sign_extend_rax (kind == PK_I8 ? 8 : 16);
                 emit_compound_alu (op, !is_signed);
                 emitter.pop_rcx ();
                 push_depth--;
-                emitter.store_rcx_disp_byte_al (0);
+                if (kind == PK_U8 || kind == PK_I8)
+                    emitter.store_rcx_disp_byte_al (0);
+                else
+                    emitter.store_rcx_disp_word_ax (0);
             }
+        }
+
+        private void emit_byte_elem_store (bool is_signed, string op, Expr val)
+                throws SemanticError {
+            emit_packed_elem_store (is_signed ? PK_I8 : PK_U8, op, val);
         }
 
         private void gen_statement (Statement s) throws SemanticError {
@@ -11998,10 +12110,9 @@ namespace Planc {
 
                 if (!is_ga)
                     parse_array_elem (tt_name, out et, out et_name);
-                bool is_signed_b = false;
-                bool is_byte_arr = is_ga
-                    ? (et == ValaType.INT && is_byte_array_type (et_name, out is_signed_b))
-                    : ((tt == ValaType.ARRAY) && is_byte_array_type (tt_name, out is_signed_b));
+                int elem_kind = is_ga
+                    ? ((et == ValaType.INT) ? packed_kind (et_name) : PK_SLOT)
+                    : ((tt == ValaType.ARRAY && et == ValaType.INT) ? packed_kind (tt_name) : PK_SLOT);
                 string vt_name = "";
                 if (ia.op == "=")
                     coerce_byte_array_literal (ia.value, et, et_name);
@@ -12045,9 +12156,9 @@ namespace Planc {
                     emitter.cmp_rcx_rax_len ();
                     emitter.branch (BranchKind.JAE, bounds_panic_label);
                 }
-                if (is_byte_arr) {
-                    emitter.lea_rax_rax_rcx_1_16 ();
-                    emit_byte_elem_store (is_signed_b, ia.op, ia.value);
+                if (elem_kind != PK_SLOT) {
+                    emit_index_elem_addr (packed_stride (elem_kind));
+                    emit_packed_elem_store (elem_kind, ia.op, ia.value);
                 } else {
                     emit_index_elem_addr (is_struct_elem (et, et_name)
                         ? elem_stride_bytes (et, et_name) : 8);
@@ -12389,14 +12500,14 @@ namespace Planc {
                         emitter.lea_rcx_rbp_disp (struct_base_disp (eslot, fe_nslots));
                         copy_struct_rax_to_rcx (fe_nslots);
                     } else {
-                        bool fe_signed_b = false;
-                        bool fe_byte = is_ga_fast
-                            ? (et == ValaType.INT && is_byte_array_type (et_name, out fe_signed_b))
-                            : (ct == ValaType.ARRAY && is_byte_array_type (ct_name, out fe_signed_b));
-                        if (fe_byte) {
-                            emitter.load_byte_rax_rcx_16 ();
-                            if (fe_signed_b)
-                                emitter.sign_extend_rax (8);
+                        int fe_kind = et == ValaType.INT
+                            ? packed_kind (is_ga_fast ? et_name : ct_name) : PK_SLOT;
+                        if (!is_ga_fast && ct != ValaType.ARRAY)
+                            fe_kind = PK_SLOT;
+                        if (fe_kind != PK_SLOT) {
+                            emit_packed_load (fe_kind);
+                            if (et == ValaType.INT)
+                                emit_int_narrow (et_name);
                         } else {
                             emitter.load_qword_rax_rcx_16 ();
                             if (et == ValaType.INT)
@@ -13899,8 +14010,8 @@ namespace Planc {
                     emitter.store_local (e.ref_temp_slot);
             } else if (e is ArrayNew2Expr) {
                 var an2 = (ArrayNew2Expr) e;
-                bool byte_arr = (an2.elem_type == ValaType.INT)
-                    && (an2.elem_type_name == "uint8" || an2.elem_type_name == "int8");
+                int row_kind = (an2.elem_type == ValaType.INT) ? packed_kind (an2.elem_type_name) : PK_SLOT;
+                int row_stride = packed_stride (row_kind);
                 bool elem_ref = is_ref_type (an2.elem_type);
                 string d0n = "";
                 expr_type_full (an2.dim0, out d0n);
@@ -13920,7 +14031,7 @@ namespace Planc {
                 emitter.test_rax_rax ();
                 emitter.branch (BranchKind.JL, bounds_panic_label);
                 emitter.store_local (an2.slot_dim1);
-                emit_array_len_max_check (an2.slot_dim1, byte_arr ? (int64.MAX - 16) : ((int64.MAX - 16) / 8));
+                emit_array_len_max_check (an2.slot_dim1, (int64.MAX - 16) / row_stride);
                 // outer array of row references
                 emitter.load_local (an2.slot_dim0);
                 emitter.mov_rdi_rax ();
@@ -13942,8 +14053,10 @@ namespace Planc {
                 emitter.branch (BranchKind.JAE, l_rows_done);
                 emitter.load_local (an2.slot_dim1);
                 emitter.mov_rdi_rax ();
-                if (!byte_arr)
+                if (row_stride == 8)
                     emitter.shl_rdi_3 ();
+                else if (row_stride == 2)
+                    emitter.shl_rdi_1 ();
                 emitter.mov_esi_imm (elem_ref ? 1 : 0);
                 call_aligned ("__planc_alloc");
                 emitter.store_local (an2.slot_inner);
@@ -13955,7 +14068,7 @@ namespace Planc {
                     emitter.load_local_to_rcx (an2.slot_dim1);
                     emitter.emit_fill_empty_strings (emitter.add_string (""));
                 }
-                emit_arr_elem_store (an2.slot_outer, an2.slot_idx, false, an2.slot_inner);
+                emit_arr_elem_store (an2.slot_outer, an2.slot_idx, PK_SLOT, an2.slot_inner);
                 emitter.load_local (an2.slot_idx);
                 emitter.add_rax_imm (1);
                 emitter.store_local (an2.slot_idx);
@@ -14007,9 +14120,9 @@ namespace Planc {
                 var arr = (ArrayLiteralExpr) e;
                 var n = arr.elements.length;
                 bool elem_ref = is_ref_type (arr.elem_type);
-                bool byte_arr = (arr.elem_type == ValaType.INT)
-                    && (arr.elem_type_name == "uint8" || arr.elem_type_name == "int8");
-                emitter.mov_rdi_imm (byte_arr ? (int64) n : (int64) n * 8);
+                int lit_kind = (arr.elem_type == ValaType.INT) ? packed_kind (arr.elem_type_name) : PK_SLOT;
+                int lit_stride = packed_stride (lit_kind);
+                emitter.mov_rdi_imm ((int64) n * lit_stride);
                 emitter.mov_esi_imm (elem_ref ? 1 : 0);
                 call_aligned ("__planc_alloc");
                 emitter.mov_rcx_rax ();
@@ -14028,7 +14141,7 @@ namespace Planc {
                             emitter.movq_rax_xmm (0);
                     } else if (elem_ref) {
                         consume_ref_expr (arr.elements[i]);
-                    } else if (!byte_arr && arr.elem_type == ValaType.INT) {
+                    } else if (lit_kind == PK_SLOT && arr.elem_type == ValaType.INT) {
                         emit_int_narrow (arr.elem_type_name);
                     }
                     emitter.mov_rcx_rax ();
@@ -14036,8 +14149,10 @@ namespace Planc {
                     emitter.push_rax ();
                     emitter.mov_rax_rcx ();
                     emitter.pop_reg (Reg.RCX);
-                    if (byte_arr)
+                    if (lit_kind == PK_U8 || lit_kind == PK_I8)
                         emitter.store_rcx_disp_byte_al (16 + i);
+                    else if (lit_kind != PK_SLOT)
+                        emitter.store_rcx_disp_word_ax (16 + 2 * i);
                     else
                         emitter.store_rcx_disp_rax (16 + 8 * i);
                 }
@@ -14317,11 +14432,9 @@ namespace Planc {
                         push_depth--;
                     }
                     emitter.load_rax_disp (16);
-                    bool ga_signed_b = false;
-                    if (ga_et == ValaType.INT && is_byte_array_type (ga_etn, out ga_signed_b)) {
-                        emitter.load_byte_rax_rcx_16 ();
-                        if (ga_signed_b)
-                            emitter.sign_extend_rax (8);
+                    int ga_kind = (ga_et == ValaType.INT) ? packed_kind (ga_etn) : PK_SLOT;
+                    if (ga_kind != PK_SLOT) {
+                        emit_packed_load (ga_kind);
                     } else {
                         emitter.load_qword_rax_rcx_16 ();
                         if (is_fp_type (ga_et))
@@ -14353,11 +14466,12 @@ namespace Planc {
                             copy_struct_rax_to_rcx (nsl);
                             emitter.lea_rax_rbp_disp (struct_base_disp (ix.temp_slot, nsl));
                         } else {
-                            bool is_signed_b = false;
-                            if (is_byte_array_type (tt_name, out is_signed_b)) {
-                                emitter.load_byte_rax_rcx_16 ();
-                                if (is_signed_b)
-                                    emitter.sign_extend_rax (8);
+                            int arr_kind = (tt == ValaType.ARRAY && arr_et == ValaType.INT)
+                                ? packed_kind (tt_name) : PK_SLOT;
+                            if (arr_kind != PK_SLOT) {
+                                emit_packed_load (arr_kind);
+                                if (arr_et == ValaType.INT)
+                                    emit_int_narrow (arr_etn);
                             } else {
                                 emitter.load_qword_rax_rcx_16 ();
                                 if (is_fp_type (arr_et))
@@ -14966,8 +15080,9 @@ namespace Planc {
                     var ix = (IndexExpr) inc.target;
                     string tt_name = "";
                     var tt = expr_type_full (ix.target, out tt_name);
-                    bool is_signed_b = false;
-                    if (tt == ValaType.ARRAY && is_byte_array_type (tt_name, out is_signed_b)) {
+                    int inc_kind = (tt == ValaType.ARRAY) ? packed_kind (tt_name) : PK_SLOT;
+                    if (inc_kind != PK_SLOT) {
+                        bool is_signed_b = packed_is_signed (inc_kind);
                         gen_expr (ix.target);
                         emit_null_check_if_nullable (tt, tt_name);
                         emitter.push_rax ();
@@ -14981,25 +15096,35 @@ namespace Planc {
                             emitter.cmp_rcx_rax_len ();
                             emitter.branch (BranchKind.JAE, bounds_panic_label);
                         }
-                        emitter.lea_rax_rax_rcx_1_16 ();
+                        bool wide = (inc_kind == PK_U16 || inc_kind == PK_I16);
+                        emit_index_elem_addr (packed_stride (inc_kind));
                         emitter.mov_rdx_rax ();
-                        emitter.load_rdx_byte_to_zx_rax ();
+                        if (wide)
+                            emitter.load_rdx_word_to_zx_rax ();
+                        else
+                            emitter.load_rdx_byte_to_zx_rax ();
                         if (is_signed_b)
-                            emitter.sign_extend_rax (8);
+                            emitter.sign_extend_rax (wide ? 16 : 8);
                         if (!inc.is_prefix) {
                             emitter.push_rax ();
                             push_depth++;
                         }
                         emitter.add_rax_imm (delta);
                         emitter.mov_rcx_rdx ();
-                        emitter.store_rcx_disp_byte_al (0);
+                        if (wide)
+                            emitter.store_rcx_disp_word_ax (0);
+                        else
+                            emitter.store_rcx_disp_byte_al (0);
                         if (!inc.is_prefix) {
                             emitter.pop_rax ();
                             push_depth--;
                         } else {
-                            emitter.load_rdx_byte_to_zx_rax ();
+                            if (wide)
+                                emitter.load_rdx_word_to_zx_rax ();
+                            else
+                                emitter.load_rdx_byte_to_zx_rax ();
                             if (is_signed_b)
-                                emitter.sign_extend_rax (8);
+                                emitter.sign_extend_rax (wide ? 16 : 8);
                         }
                         return;
                     }
@@ -15236,11 +15361,11 @@ namespace Planc {
             emitter.load_local (b.in_idx_slot);
             emitter.mov_rcx_rax ();
             emitter.load_local (b.in_arr_slot);
-            bool signed_b = false;
-            if (is_byte_array_type (rt_name, out signed_b)) {
-                emitter.load_byte_rax_rcx_16 ();
-                if (signed_b)
-                    emitter.sign_extend_rax (8);
+            int in_kind = (et == ValaType.INT) ? packed_kind (rt_name) : PK_SLOT;
+            if (in_kind != PK_SLOT) {
+                emit_packed_load (in_kind);
+                if (et == ValaType.INT)
+                    emit_int_narrow (etn);
             } else {
                 emitter.load_qword_rax_rcx_16 ();
                 if (is_fp_type (et))
@@ -15398,17 +15523,17 @@ namespace Planc {
             emitter.bind (l_done);
         }
 
-        private void emit_arr_elem_load (int base_slot, int idx_slot, bool byte_arr, int value_slot) {
+        private void emit_arr_elem_load (int base_slot, int idx_slot, int kind, int value_slot) {
             emitter.load_local_to_rcx (idx_slot);
             emitter.load_local (base_slot);
-            if (byte_arr)
-                emitter.load_byte_rax_rcx_16 ();
+            if (kind != PK_SLOT)
+                emit_packed_load (kind);
             else
                 emitter.load_qword_rax_rcx_16 ();
             emitter.store_local (value_slot);
         }
 
-        private void emit_arr_elem_store (int base_slot, int idx_slot, bool byte_arr, int value_slot) {
+        private void emit_arr_elem_store (int base_slot, int idx_slot, int kind, int value_slot) {
             emitter.load_local (base_slot);
             emitter.push_reg (Reg.RAX);
             push_depth++;
@@ -15417,8 +15542,10 @@ namespace Planc {
             emitter.mov_rdx_rax ();
             emitter.pop_reg (Reg.RAX);
             push_depth--;
-            if (byte_arr)
+            if (kind == PK_U8 || kind == PK_I8)
                 emitter.store_byte_rax_rcx_16_dl ();
+            else if (kind != PK_SLOT)
+                emitter.store_word_rax_rcx_16_dx ();
             else
                 emitter.store_qword_rax_rcx_16_rdx ();
         }
@@ -15450,8 +15577,8 @@ namespace Planc {
             emitter.load_local (mc.bi_slot1);
             emitter.load_rax_disp (0);
             emitter.store_local (mc.bi_slot2); // old
-            bool signed_b = false;
-            bool byte_arr = is_byte_array_type (lt_name, out signed_b);
+            int elem_kind = packed_kind (lt_name);
+            int elem_stride = packed_stride (elem_kind);
             ValaType et = ValaType.INT;
             string etn = "";
             parse_array_elem (lt_name, out et, out etn);
@@ -15459,17 +15586,17 @@ namespace Planc {
                 throw new SemanticError.TYPE_MISMATCH (
                     @"resize is not supported on arrays of struct '$(etn)': the elements live inline in the slab at $(mc.line):$(mc.column)");
             bool elem_ref = is_ref_type (et);
-            int64 max_n = int64.MAX - 16;
-            if (!byte_arr)
-                max_n /= 8;
+            int64 max_n = (int64.MAX - 16) / elem_stride;
             emitter.load_local_to_rcx (mc.bi_slot3);
             emitter.mov_rax_imm (max_n);
             emitter.cmp_rax_rcx ();
             emitter.branch (BranchKind.JB, bounds_panic_label);
             emitter.load_local (mc.bi_slot3);
             emitter.mov_rdi_rax ();
-            if (!byte_arr)
+            if (elem_stride == 8)
                 emitter.shl_rdi_3 ();
+            else if (elem_stride == 2)
+                emitter.shl_rdi_1 ();
             emitter.mov_esi_imm (elem_ref ? 1 : 0);
             call_aligned ("__planc_alloc");
             emitter.store_local (mc.bi_slot4); // new
@@ -15510,8 +15637,8 @@ namespace Planc {
             emitter.load_local (mc.bi_slot6);
             emitter.cmp_rax_rcx ();
             emitter.branch (BranchKind.JAE, l_copy_done);
-            emit_arr_elem_load (mc.bi_slot2, mc.bi_slot6, byte_arr, mc.bi_slot7);
-            emit_arr_elem_store (mc.bi_slot4, mc.bi_slot6, byte_arr, mc.bi_slot7);
+            emit_arr_elem_load (mc.bi_slot2, mc.bi_slot6, elem_kind, mc.bi_slot7);
+            emit_arr_elem_store (mc.bi_slot4, mc.bi_slot6, elem_kind, mc.bi_slot7);
             if (elem_ref) {
                 var l_null = emitter.new_label ();
                 emitter.load_local (mc.bi_slot7);
@@ -15545,8 +15672,7 @@ namespace Planc {
             gen_expr ((!) mc.target);
             emit_null_check_if_nullable (tt, ttn);
             emitter.store_local (mc.bi_slot1);
-            bool signed_b = false;
-            bool byte_arr = is_byte_array_type (ttn, out signed_b);
+            int elem_kind = packed_kind (ttn);
             ValaType et = ValaType.INT;
             string etn = "";
             parse_array_elem (ttn, out et, out etn);
@@ -15613,8 +15739,8 @@ namespace Planc {
             emitter.load_local_to_rcx (mc.bi_slot5);
             emitter.add_rax_rcx ();
             emitter.store_local (mc.bi_slot9);
-            emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, byte_arr, mc.bi_slot6);
-            emit_arr_elem_store (mc.bi_slot1, mc.bi_slot9, byte_arr, mc.bi_slot6);
+            emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, elem_kind, mc.bi_slot6);
+            emit_arr_elem_store (mc.bi_slot1, mc.bi_slot9, elem_kind, mc.bi_slot6);
             emitter.load_local (mc.bi_slot5);
             emitter.add_rax_imm (1);
             emitter.store_local (mc.bi_slot5);
@@ -15641,8 +15767,8 @@ namespace Planc {
             emitter.load_local_to_rcx (mc.bi_slot5);
             emitter.add_rax_rcx ();
             emitter.store_local (mc.bi_slot9);
-            emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, byte_arr, mc.bi_slot6);
-            emit_arr_elem_store (mc.bi_slot1, mc.bi_slot9, byte_arr, mc.bi_slot6);
+            emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, elem_kind, mc.bi_slot6);
+            emit_arr_elem_store (mc.bi_slot1, mc.bi_slot9, elem_kind, mc.bi_slot6);
             emitter.branch (BranchKind.JMP, l_bwd);
             emitter.bind (l_bwd_done);
             emitter.bind (l_done);
@@ -15707,7 +15833,7 @@ namespace Planc {
                 emitter.load_local_to_rcx (mc.bi_slot5);
                 emitter.add_rax_rcx ();
                 emitter.store_local (mc.bi_slot8);
-                emit_arr_elem_store (mc.bi_slot1, mc.bi_slot8, byte_arr, mc.bi_slot7);
+                emit_arr_elem_store (mc.bi_slot1, mc.bi_slot8, elem_kind, mc.bi_slot7);
                 emitter.load_local (mc.bi_slot5);
                 emitter.add_rax_imm (1);
                 emitter.store_local (mc.bi_slot5);

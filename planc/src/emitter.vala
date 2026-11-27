@@ -878,6 +878,27 @@ namespace Planc {
             emit_modrm_disp (0, 1, disp);
         }
 
+        // movzx eax, word ptr [rax + rcx*2 + 16]    0F B7 44 48 10
+        public void load_word_rax_rcx_16 () {
+            code.u8 (0x0F); code.u8 (0xB7); code.u8 (0x44); code.u8 (0x48); code.u8 (0x10);
+        }
+
+        // mov word ptr [rax + rcx*2 + 16], dx       66 89 54 48 10
+        public void store_word_rax_rcx_16_dx () {
+            code.u8 (0x66); code.u8 (0x89); code.u8 (0x54); code.u8 (0x48); code.u8 (0x10);
+        }
+
+        // mov word ptr [rcx + disp], ax      66 89 41 d8 | 66 89 81 d32
+        public void store_rcx_disp_word_ax (int disp) {
+            code.u8 (0x66); code.u8 (0x89);
+            emit_modrm_disp (0, 1, disp);
+        }
+
+        // movzx eax, word ptr [rdx]          0F B7 02
+        public void load_rdx_word_to_zx_rax () {
+            code.u8 (0x0F); code.u8 (0xB7); code.u8 (0x02);
+        }
+
         // movzx eax, byte ptr [rdx]          0F B6 02
         public void load_rdx_byte_to_zx_rax () {
             code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x02);
@@ -901,6 +922,11 @@ namespace Planc {
         // shl rdi, 3                         48 C1 E7 03
         public void shl_rdi_3 () {
             code.u8 (0x48); code.u8 (0xC1); code.u8 (0xE7); code.u8 (0x03);
+        }
+
+        // shl rdi, 1                         48 D1 E7
+        public void shl_rdi_1 () {
+            code.u8 (0x48); code.u8 (0xD1); code.u8 (0xE7);
         }
 
         // imul rdi, rdi, imm32               48 69 FF imm32
@@ -1087,10 +1113,25 @@ namespace Planc {
                 code.u32le ((uint32) (80 + slot * 8));
                 return;
             }
-            if (get_slot_reg (slot) >= 0) {
-                Host.eprintln (@"planc: internal error: lea_local on register-allocated slot $slot");
+            int held = get_slot_reg (slot);
+            if (held >= 0) {
+                // The address of this local is escaping (`resize`, `move`,
+                // `length =`). Copy the register back into the slot and stop
+                // using the register for it, so the two can never diverge; the
+                // caller then computes the address from the slot.
+                move_reg_to_rax ((Reg) held);
+                store_rbp_disp (slot_offset (slot));
+                slot_reg_map[slot] = -1;
             }
+            // The caller may write through the address it gets, so a pending
+            // "the slot still holds rax" peephole no longer describes it.
+            last_store_local_slot = -1;
             lea_rax_rbp_disp (slot_offset (slot));
+        }
+
+        private void move_reg_to_rax (Reg r) {
+            if (r != Reg.RAX)
+                mov_reg_reg (Reg.RAX, r);
         }
 
         // mov [rbp - d], reg: stores an incoming argument register into its
