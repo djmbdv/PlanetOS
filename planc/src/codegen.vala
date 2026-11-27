@@ -473,6 +473,9 @@ namespace Planc {
             register_globals ();
             program.sync_indexes ();
             emitter.opt_level = opt_level;
+            // Set before the function bodies: helpers emitted mid-body dispatch
+            // on it to choose the target's syscall/exit sequence.
+            emitter.target_windows = target_windows;
             int n_orig = program.functions.length;
             int ncpus = Host.cpu_count ();
             if (n_orig >= 8 && ncpus > 1) {
@@ -622,6 +625,10 @@ namespace Planc {
         private CgFuncResult compile_one_mt (int fi, Function fn) {
             emitter = new Emitter ();
             emitter.opt_level = opt_level;
+            // Runtime helpers emitted while compiling a function (the located
+            // null panic, for one) dispatch on this to pick the target's exit
+            // sequence, so it has to be set before any body is generated.
+            emitter.target_windows = target_windows;
             emitter.rodata_bias = mt_cg_rodata_end;
             symbols = new GenericArray<Symbol> ();
             debug_lines = new GenericArray<DebugLineEntry> ();

@@ -552,7 +552,7 @@ else
     code=$?
     if [ "$code" != "134" ]; then
         ko "null_deref_panic" "exit $code, expected 134"
-    elif ! grep -q '^planc: panic: null pointer dereference$' "$WORK/null_deref.runerr"; then
+    elif ! grep -q '^planc: panic: null pointer dereference' "$WORK/null_deref.runerr"; then
         ko "null_deref_panic" "missing panic diagnostic: $(cat "$WORK/null_deref.runerr")"
     else
         ok "null_deref_panic"
