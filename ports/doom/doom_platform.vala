@@ -139,6 +139,18 @@ public int main (string[] args) {
         myargv = args;
     }
     myargc = myargv.length;
+    // A mistyped IWAD name used to end inside the WAD lookup, which faults the
+    // machine; answer before the engine starts instead.
+    string iwad = "/freedoom1.wad";
+    for (int i = 1; i + 1 < myargv.length; i++) {
+        if (myargv[i] == "-iwad")
+            iwad = myargv[i + 1];
+    }
+    if (FileStream.open (iwad, "rb") == null) {
+        print (@"[doom] cannot open IWAD '$iwad'\n");
+        print ("[doom] usage: doom.elf -iwad /freedoom1.wad\n");
+        return 1;
+    }
     print ("[doom] init\n");
     M_FindResponseFile ();
     DG_ScreenBuffer = new uint32[640 * 400];
