@@ -1445,6 +1445,8 @@ namespace C2Vala {
         }
 
         private GenericArray<GlobalVarDef> runtime_globals = new GenericArray<GlobalVarDef> ();
+        private GenericArray<GlobalVarDef> hoisted_statics = new GenericArray<GlobalVarDef> ();
+        private int static_seq = 0;
 
         private static bool is_static_literal_init (CExpr? init) {
             return init is ExprInt || init is ExprFloat || init is ExprChar || init is ExprStr
@@ -1515,6 +1517,14 @@ namespace C2Vala {
             cur_sig = null;
             cur_gotos = new GenericArray<GotoPlan> ();
             cur_locals = new GenericArray<LocalInfo> ();
+            for (int hi = 0; hi < hoisted_statics.length; hi++) {
+                var hg = hoisted_statics[hi];
+                string hvt = vala_type (hg.ctype, true);
+                sb.append (@"public $hvt $(hg.name);\n");
+                runtime_globals.add (hg);
+            }
+            if (hoisted_statics.length > 0)
+                sb.append ("\n");
             for (int gi = 0; gi < tu.globals.length; gi++) {
                 var g = tu.globals[gi];
                 var li = new LocalInfo (g.name, g.ctype, true);
@@ -2777,6 +2787,18 @@ namespace C2Vala {
                 sb.append ("int main (string[] args) {\n");
                 if (tu.globals.length > 0)
                     sb.append ("    c2vala_init_globals ();\n");
+                if (fn.params.length >= 1) {
+                    var p0 = fn.params[0];
+                    sb.append (@"    int $(esc_ident (p0.name)) = args.length;\n");
+                    cur_locals.add (new LocalInfo (p0.name, p0.ctype, true));
+                }
+                if (fn.params.length >= 2) {
+                    var p1 = fn.params[1];
+                    sb.append (@"    string[] $(esc_ident (p1.name)) = args;\n");
+                    var li1 = new LocalInfo (p1.name, p1.ctype, true);
+                    li1.is_array = true;
+                    cur_locals.add (li1);
+                }
             } else {
                 var prescan_p = fn_locals[func_idx];
                 string ret_t = vala_type (fn.ret_type, sig.ret_is_array);
@@ -4387,6 +4409,16 @@ namespace C2Vala {
             else if (cur_ptr_analysis != null && cur_ptr_analysis.is_field_ref (d.name))
                 li.is_field_ref = true;
             cur_locals.add (li);
+            if (d.is_static && d.ctype.kind == CTypeKind.ARRAY && d.ctype.array_len != null
+                && d.ctype.inner != null && d.ctype.inner.kind != CTypeKind.ARRAY
+                && d.init == null && !li.has_addr_taken && !li.has_ptr_arith
+                && !li.is_field_ref && !li.is_native_ptr) {
+                string sname = @"_c2v_s_$(static_seq++)_$(d.name)";
+                li.static_global_name = sname;
+                var hg = new GlobalVarDef (sname, d.ctype, null, d.file, d.line);
+                hoisted_statics.add (hg);
+                return;
+            }
             string dname = esc_ident (d.name);
 
             if (li.is_native_ptr && d.ctype.kind == CTypeKind.PTR && d.ctype.inner != null) {
@@ -5845,6 +5877,8 @@ namespace C2Vala {
                 string nm = ((ExprIdent) e).name;
                 var li = find_local (cur_locals, nm);
                 if (li != null) {
+                    if (li.static_global_name != null)
+                        return li.static_global_name;
                     if (li.has_addr_taken) {
                         if (li.ctype.kind == CTypeKind.PTR && vala_type (li.ctype, false).has_suffix ("[]"))
                             return @"$(esc_ident (nm)).val";

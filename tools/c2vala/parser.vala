@@ -830,10 +830,12 @@ namespace C2Vala {
         private void parse_local_decls (GenericArray<CStmt> out_stmts) throws RefuseError {
             var start_tok = cur ();
             bool local_extern = false;
+            bool local_static = false;
             while (at (TokKind.IDENT)) {
                 string kw = cur ().text;
                 if (kw == "extern") { local_extern = true; advance (); }
-                else if (kw == "static" || kw == "register" || kw == "auto"
+                else if (kw == "static") { local_static = true; advance (); }
+                else if (kw == "register" || kw == "auto"
                          || kw == "const" || kw == "volatile") { advance (); }
                 else break;
             }
@@ -858,6 +860,7 @@ namespace C2Vala {
                     d.ctype = dt;
                     d.init = init_e;
                     d.is_extern = local_extern;
+                    d.is_static = local_static;
                     out_stmts.add (d);
                 }
 

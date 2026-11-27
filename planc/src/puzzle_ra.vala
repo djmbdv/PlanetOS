@@ -248,6 +248,57 @@ namespace Planc {
             return tn == "uint" || tn == "uint64" || tn == "ulong" || tn == "uint32";
         }
 
+        private static bool eval_const_int (Expr? e, out int64 val) {
+            val = 0;
+            if (e == null) return false;
+            if (e is IntLiteral) {
+                val = ((IntLiteral) e).value;
+                return true;
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                if (tc.op != "cast" || tc.target_type != ValaType.INT)
+                    return false;
+                int64 v = 0;
+                if (!eval_const_int (tc.operand, out v))
+                    return false;
+                string tn = tc.target_type_name;
+                if (tn == "uint8" || tn == "uchar") val = (int64) ((uint8) v);
+                else if (tn == "int8" || tn == "char") val = (int64) ((int8) v);
+                else if (tn == "uint16" || tn == "ushort") val = (int64) ((uint16) v);
+                else if (tn == "int16" || tn == "short") val = (int64) ((int16) v);
+                else if (tn == "uint32" || tn == "uint") val = (int64) ((uint32) v);
+                else if (tn == "int32") val = (int64) ((int32) v);
+                else val = v;
+                return true;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                int64 v = 0;
+                if (!eval_const_int (u.operand, out v)) return false;
+                if (u.op == "-") { val = -v; return true; }
+                if (u.op == "+") { val = v; return true; }
+                if (u.op == "~") { val = ~v; return true; }
+                return false;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                int64 lv = 0, rv = 0;
+                if (!eval_const_int (b.left, out lv) || !eval_const_int (b.right, out rv))
+                    return false;
+                if (b.op == "+") { val = lv + rv; return true; }
+                if (b.op == "-") { val = lv - rv; return true; }
+                if (b.op == "*") { val = lv * rv; return true; }
+                if (b.op == "&") { val = lv & rv; return true; }
+                if (b.op == "|") { val = lv | rv; return true; }
+                if (b.op == "^") { val = lv ^ rv; return true; }
+                if (b.op == "<<" && rv >= 0 && rv < 64) { val = lv << rv; return true; }
+                if (b.op == ">>" && rv >= 0 && rv < 64) { val = lv >> rv; return true; }
+                return false;
+            }
+            return false;
+        }
+
         private static int pow2_exponent (int64 v) {
             if (v <= 0) return -1;
             int k = 0;
@@ -473,6 +524,12 @@ namespace Planc {
             }
             if (e is TypeCheckExpr) {
                 var tc = (TypeCheckExpr) e;
+                int64 cval = 0;
+                if (tc.op == "cast" && tc.target_type == ValaType.INT && eval_const_int (tc, out cval)) {
+                    int d = new_vreg (false, is_unsigned_name (tc.target_type_name));
+                    emit_ir (new IRInst () { op = IROp.MOV_IMM, dst = d, imm = cval });
+                    return d;
+                }
                 int s = lower_expr (tc.operand);
                 if (tc.target_type == ValaType.BOOL) {
                     int d = new_vreg ();
@@ -480,12 +537,22 @@ namespace Planc {
                     return d;
                 }
                 if (tc.target_type_name == "uint32" || tc.target_type_name == "uint") {
+                    if (tc.operand is VarRef) {
+                        int vi = lookup_var (((VarRef) tc.operand).name);
+                        if (vi >= 0 && (var_tnames[vi] == "uint32" || var_tnames[vi] == "uint"))
+                            return s;
+                    }
                     int d = new_vreg ();
                     vreg_is_unsigned[d] = true;
                     emit_ir (new IRInst () { op = IROp.UNARY, dst = d, sop = "zext32", lhs = s });
                     return d;
                 }
                 if (tc.target_type_name == "int32") {
+                    if (tc.operand is VarRef) {
+                        int vi = lookup_var (((VarRef) tc.operand).name);
+                        if (vi >= 0 && var_tnames[vi] == "int32")
+                            return s;
+                    }
                     int d = new_vreg ();
                     emit_ir (new IRInst () { op = IROp.UNARY, dst = d, sop = "sext32", lhs = s });
                     return d;
@@ -669,8 +736,8 @@ namespace Planc {
                         return rm;
                     }
                 }
-                if (b.right is IntLiteral && b.op != "/" && b.op != "%") {
-                    int64 imm = ((IntLiteral) b.right).value;
+                int64 imm = 0;
+                if (b.op != "/" && b.op != "%" && eval_const_int (b.right, out imm)) {
                     bool shift_ok = (b.op != "<<" && b.op != ">>") || (imm >= 0 && imm < 64);
                     if (shift_ok && imm >= int32.MIN && imm <= int32.MAX) {
                         int d = new_vreg ();
@@ -1310,7 +1377,12 @@ namespace Planc {
                     set_elem_kind (v, arr_kind_of_init (d.decl_type_name, d.init));
                 if (d.init != null) {
                     int iv = lower_expr (d.init);
-                    emit_ir (new IRInst () { op = IROp.MOV, dst = v, lhs = iv });
+                    if (!is_arr && (d.decl_type_name == "uint32" || d.decl_type_name == "uint"))
+                        emit_ir (new IRInst () { op = IROp.UNARY, dst = v, sop = "zext32", lhs = iv });
+                    else if (!is_arr && d.decl_type_name == "int32")
+                        emit_ir (new IRInst () { op = IROp.UNARY, dst = v, sop = "sext32", lhs = iv });
+                    else
+                        emit_ir (new IRInst () { op = IROp.MOV, dst = v, lhs = iv });
                 } else {
                     emit_ir (new IRInst () { op = IROp.MOV_IMM, dst = v, imm = 0 });
                 }
@@ -1348,9 +1420,16 @@ namespace Planc {
             }
             if (s is AssignStatement) {
                 var a = (AssignStatement) s;
-                int v = var_vregs[lookup_var (a.name)];
+                int vi = lookup_var (a.name);
+                int v = var_vregs[vi];
                 int rv = lower_expr (a.value);
-                emit_ir (new IRInst () { op = IROp.MOV, dst = v, lhs = rv });
+                string tname = var_tnames[vi];
+                if (tname == "uint32" || tname == "uint")
+                    emit_ir (new IRInst () { op = IROp.UNARY, dst = v, sop = "zext32", lhs = rv });
+                else if (tname == "int32")
+                    emit_ir (new IRInst () { op = IROp.UNARY, dst = v, sop = "sext32", lhs = rv });
+                else
+                    emit_ir (new IRInst () { op = IROp.MOV, dst = v, lhs = rv });
                 bce_invalidate_var (v);
                 bool keep_nonneg = false;
                 if (a.value is IntLiteral && ((IntLiteral) a.value).value >= 0) {

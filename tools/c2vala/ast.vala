@@ -299,6 +299,7 @@ namespace C2Vala {
         // `extern int x;` inside a function refers to a global; it must not
         // create a local, or the name would shadow the global with a zero.
         public bool is_extern = false;
+        public bool is_static = false;
     }
 
     public class StmtIf : CStmt {

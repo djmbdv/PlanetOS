@@ -4851,15 +4851,59 @@ namespace Planc {
             return false;
         }
 
+        private static bool eval_const_int_expr (Expr? e, out int64 val) {
+            val = 0;
+            if (e == null) return false;
+            if (e is IntLiteral) {
+                val = ((IntLiteral) e).value;
+                return true;
+            }
+            if (e is UnaryExpr) {
+                var u = (UnaryExpr) e;
+                int64 v = 0;
+                if (!eval_const_int_expr (u.operand, out v)) return false;
+                if (u.op == "-") { val = -v; return true; }
+                if (u.op == "+") { val = v; return true; }
+                if (u.op == "~") { val = ~v; return true; }
+                return false;
+            }
+            if (e is BinaryExpr) {
+                var b = (BinaryExpr) e;
+                int64 lv = 0, rv = 0;
+                if (!eval_const_int_expr (b.left, out lv) || !eval_const_int_expr (b.right, out rv))
+                    return false;
+                if (b.op == "+") { val = lv + rv; return true; }
+                if (b.op == "-") { val = lv - rv; return true; }
+                if (b.op == "*") { val = lv * rv; return true; }
+                if (b.op == "/" && rv != 0) { val = lv / rv; return true; }
+                if (b.op == "%" && rv != 0) { val = lv % rv; return true; }
+                if (b.op == "<<" && rv >= 0 && rv < 64) { val = lv << rv; return true; }
+                if (b.op == ">>" && rv >= 0 && rv < 64) { val = lv >> rv; return true; }
+                if (b.op == "&") { val = lv & rv; return true; }
+                if (b.op == "|") { val = lv | rv; return true; }
+                if (b.op == "^") { val = lv ^ rv; return true; }
+                return false;
+            }
+            return false;
+        }
+
+        private static int stack_array_slots (ArrayNewExpr an, int64 len) {
+            bool byte_arr = (an.elem_type == ValaType.INT)
+                && (an.elem_type_name == "uint8" || an.elem_type_name == "int8");
+            return 2 + (byte_arr ? (((int) len + 7) / 8) : (int) len);
+        }
+
         private bool can_stack_alloc_var (Function f, VarDeclStatement d) {
             if (opt_level < 2 || f.is_async || f.from_lambda != null || d.is_weak || d.is_unowned)
                 return false;
             if (d.init is ArrayNewExpr) {
                 var an = (ArrayNewExpr) d.init;
-                if (!(an.length_expr is IntLiteral))
+                int64 len = 0;
+                if (!eval_const_int_expr (an.length_expr, out len))
                     return false;
-                int64 len = ((IntLiteral) an.length_expr).value;
-                if (len < 0 || len > 64)
+                if (len < 0 || len > 4096)
+                    return false;
+                if (stack_array_slots (an, len) > 512)
                     return false;
                 if (is_ref_type (an.elem_type))
                     return false;
@@ -5093,10 +5137,9 @@ namespace Planc {
                         next_var_slot += 2 + class_total_field_slots (scd);
                 } else if (d.stack_alloc && d.init is ArrayNewExpr) {
                     var an_p = (ArrayNewExpr) d.init;
-                    int len_p = (int) ((IntLiteral) an_p.length_expr).value;
-                    bool byte_arr_p = (an_p.elem_type == ValaType.INT)
-                        && (an_p.elem_type_name == "uint8" || an_p.elem_type_name == "int8");
-                    next_var_slot += 2 + (byte_arr_p ? ((len_p + 7) / 8) : len_p);
+                    int64 len_p = 0;
+                    eval_const_int_expr (an_p.length_expr, out len_p);
+                    next_var_slot += stack_array_slots (an_p, len_p);
                 }
                 push_local (d.name, vt, vtname, slot, false, false, d.is_weak);
                 int uidx = locals.length - 1;
@@ -11813,10 +11856,9 @@ namespace Planc {
                     push_local (d.name, vtype, vtname, slot, true, false, d.is_weak);
                 } else if (d.stack_alloc && d.init is ArrayNewExpr) {
                     var an_s = (ArrayNewExpr) d.init;
-                    int len_s = (int) ((IntLiteral) an_s.length_expr).value;
-                    bool byte_arr_s = (an_s.elem_type == ValaType.INT)
-                        && (an_s.elem_type_name == "uint8" || an_s.elem_type_name == "int8");
-                    int arr_slots = 2 + (byte_arr_s ? ((len_s + 7) / 8) : len_s);
+                    int64 len_s = 0;
+                    eval_const_int_expr (an_s.length_expr, out len_s);
+                    int arr_slots = stack_array_slots (an_s, len_s);
                     var arr_slot = next_var_slot;
                     next_var_slot += arr_slots;
                     int base_disp = struct_base_disp (arr_slot, arr_slots);

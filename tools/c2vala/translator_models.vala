@@ -34,6 +34,7 @@ namespace C2Vala {
         public bool has_addr_taken = false;
         public bool is_field_ref = false;
         public bool is_native_ptr = false;
+        public string? static_global_name = null;
 
         public LocalInfo (string name, CType ctype, bool is_param = false) {
             this.name = name;
