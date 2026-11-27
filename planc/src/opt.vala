@@ -102,6 +102,7 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 return count_var_uses (ix.target, name) + count_var_uses (ix.index, name);
             }
+            if (e is TypeCheckExpr) return count_var_uses (((TypeCheckExpr) e).operand, name);
             if (e is TernaryExpr) {
                 var te = (TernaryExpr) e;
                 return count_var_uses (te.condition, name)
@@ -173,6 +174,14 @@ namespace Planc {
                     c.args[i] = subst_inline_expr (prog, c.args[i], pnames, pargs, cd, this_var);
                 return c;
             }
+            // A cast is transparent for substitution: the parameters live in its
+            // operand, and leaving them there makes the inlined body reference
+            // the callee's parameter names in the caller's scope.
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                tc.operand = subst_inline_expr (prog, tc.operand, pnames, pargs, cd, this_var);
+                return tc;
+            }
             return e;
         }
 
@@ -198,6 +207,7 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 return expr_only_uses_scope (ix.target, fn, cd) && expr_only_uses_scope (ix.index, fn, cd);
             }
+            if (e is TypeCheckExpr) return expr_only_uses_scope (((TypeCheckExpr) e).operand, fn, cd);
             if (e is TernaryExpr) {
                 var te = (TernaryExpr) e;
                 return expr_only_uses_scope (te.condition, fn, cd)
@@ -310,6 +320,11 @@ namespace Planc {
                 ix.index = inline_expr (prog, ix.index, vnames, vclasses);
                 return ix;
             }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                tc.operand = inline_expr (prog, tc.operand, vnames, vclasses);
+                return tc;
+            }
             if (e is TernaryExpr) {
                 var te = (TernaryExpr) e;
                 te.condition = inline_expr (prog, te.condition, vnames, vclasses);
@@ -392,6 +407,7 @@ namespace Planc {
                 return expr_only_uses_multi_scope (prog, ix.target, fn, cd, lnames)
                     && expr_only_uses_multi_scope (prog, ix.index, fn, cd, lnames);
             }
+            if (e is TypeCheckExpr) return expr_only_uses_multi_scope (prog, ((TypeCheckExpr) e).operand, fn, cd, lnames);
             if (e is TernaryExpr) {
                 var te = (TernaryExpr) e;
                 return expr_only_uses_multi_scope (prog, te.condition, fn, cd, lnames)
@@ -619,6 +635,14 @@ namespace Planc {
                 for (int i = 0; i < mc.args.length; i++)
                     mc.args[i] = subst_multi_expr (prog, mc.args[i], old_n, new_n, cd, obj_var);
                 return mc;
+            }
+            // A cast is transparent for renaming: the inlined parameter lives in
+            // its operand, and leaving it named after the callee makes the block
+            // reference a variable the caller does not have.
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                tc.operand = subst_multi_expr (prog, tc.operand, old_n, new_n, cd, obj_var);
+                return tc;
             }
             return e;
         }
