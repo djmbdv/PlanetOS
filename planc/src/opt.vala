@@ -2041,6 +2041,11 @@ namespace Planc {
             }
             if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
+                // `resize`/`move` rebind the receiver's slot: the collector sees
+                // the target only as a read, but the loop body does change the
+                // array the invariant analysis would hoist.
+                if ((mc.method_name == "resize" || mc.method_name == "move") && mc.target is VarRef)
+                    add_unique_str (mod, ((VarRef) mc.target).name);
                 if (!collect_mod_expr (mc.target, mod)) return false;
                 for (int i = 0; i < mc.args.length; i++) {
                     if (mc.args[i] is VarRef) add_unique_str (mod, ((VarRef) mc.args[i]).name);

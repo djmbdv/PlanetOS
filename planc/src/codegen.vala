@@ -6467,13 +6467,6 @@ namespace Planc {
             return false;
         }
 
-        private bool is_local_array_var (Expr? e) {
-            if (!(e is VarRef))
-                return false;
-            int idx = lookup (((VarRef) e).name);
-            return idx >= 0 && local_types[idx] == ValaType.ARRAY;
-        }
-
         private bool expr_uses_addr_or_lambda (Expr? e) {
             if (e == null) return false;
             if (e is ArrayNew2Expr) {
@@ -6504,6 +6497,12 @@ namespace Planc {
             }
             if (e is MethodCallExpr) {
                 var mc = (MethodCallExpr) e;
+                // `resize`/`move` rewrite the receiver's slot in place, so the
+                // local must live in its frame slot: a register copy would go
+                // stale as soon as the array is reallocated. Every other method
+                // leaves the receiver bound (they read the block, not the slot).
+                if (mc.method_name == "resize" || mc.method_name == "move")
+                    return true;
                 if (callable_name_has_ref_or_out (mc.method_name)) return true;
                 if (expr_uses_addr_or_lambda (mc.target)) return true;
                 for (int i = 0; i < mc.args.length; i++) {
@@ -6563,24 +6562,6 @@ namespace Planc {
                 return expr_uses_addr_or_lambda (ce.left) || expr_uses_addr_or_lambda (ce.right);
             }
             if (e is TypeCheckExpr) return expr_uses_addr_or_lambda (((TypeCheckExpr) e).operand);
-            if (e is MethodCallExpr) {
-                // `a.resize ()` and `a.move ()` operate on the address of the
-                // local, so the local must live in its frame slot rather than in
-                // a register (a register copy would go stale).
-                var mc0 = (MethodCallExpr) e;
-                // `resize`/`move` rewrite the receiver's slot in place, so they
-                // need the local to live in its frame slot, never in a register.
-                if (mc0.method_name == "resize" || mc0.method_name == "move")
-                    return true;
-                if (is_local_array_var (mc0.target))
-                    return true;
-                if (expr_uses_addr_or_lambda (mc0.target))
-                    return true;
-                for (int i = 0; i < mc0.args.length; i++) {
-                    if (expr_uses_addr_or_lambda (mc0.args[i])) return true;
-                }
-                return false;
-            }
             if (e is DerefExpr) return expr_uses_addr_or_lambda (((DerefExpr) e).target);
             if (e is SliceExpr) {
                 var se = (SliceExpr) e;

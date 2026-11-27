@@ -1180,7 +1180,7 @@ done
 
 # Packed element widths (1 and 2 bytes) and loop bounds checks must agree with
 # the -O0 output at every level, including the register-allocated backend.
-for name in packed_arrays bce_loops; do
+for name in packed_arrays bce_loops resize_in_loop; do
     for lv in 1 2; do
         if ! "$PLANC" $TARGET_FLAGS "-O$lv" "$HERE/valid/$name.vala" -o "$WORK/${name}_o${lv}${BIN_EXT}" 2>"$WORK/${name}_o$lv.err"; then
             ko "${name}_o$lv" "compile failed: $(cat "$WORK/${name}_o$lv.err")"

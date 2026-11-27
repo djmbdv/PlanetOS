@@ -99,12 +99,16 @@ that matter for correctness:
 ## Performance notes
 
 The port is built with `-O2`: the register allocator plus the bounds-check
-elimination that planc now also runs at `-O1`. In a headless QEMU run of the
-same wall-clock window this gives about **225 frames / 168 game tics** at `-O2`
-against **150 frames / 147 tics** at `-O1`, i.e. the renderer keeps up with the
-35 Hz game clock at `-O2` (~4 ms per frame) and drops frames at `-O1`. Before
-packed 16-bit arrays and the `-O1` bounds-check work, `-O1` managed 75 frames per
-35 s.
+elimination that planc now also runs at `-O1`. In a headless QEMU run of the same
+wall-clock window this gives **175-200 frames / ~165 game tics** at `-O2` against
+`~150 frames / 147 tics` at `-O1` (the renderer keeps up with the 35 Hz game
+clock at `-O2` and drops frames at `-O1`). Before packed 16-bit arrays and the
+`-O1` bounds-check work, `-O1` managed 75 frames in the same window.
+
+The port never calls `resize`: c2vala turns `malloc`/`realloc` into `new T[n]`,
+which is the cheapest growth pattern (one allocation, no copies). A `resize` per
+frame would cost ~157 µs for a 64 KB buffer, because `resize` always allocates a
+new block and copies every element.
 
 Element packing is what makes the buffers cheap: `uint8[]` is one byte per
 element and `int16[]` two, so a 320x200 screen is 64 KB plus a 16-byte header and

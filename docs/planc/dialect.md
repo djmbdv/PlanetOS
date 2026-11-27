@@ -258,13 +258,27 @@ empaquetado, o un layout de elementos que no sabe deducir) esa función se compi
 con el backend de AST, que es el que implementa el empaquetado completo y la
 transferencia de propiedad al `return`. Las dos suites comprueban el mismo `.out`
 en los tres niveles (`array_return_o1/o2`, `array_alias_local_o1/o2`,
-`packed_arrays_o1/o2`, `bce_loops_o1/o2`).
+`packed_arrays_o1/o2`, `bce_loops_o1/o2`, `resize_in_loop_o1/o2`).
 
-Límite conocido: `a.resize (n)` sobre un array **local** dentro de un bucle no
-está soportado en `-O2` (el asignador puede quedarse con la longitud o la copia
-vieja del array en un registro). El patrón correcto es construir el array de
-tamaño final (`new T[cantidad]`) o hacer el `resize` en una función aparte que se
-compile en el backend de AST.
+### `resize` y los patrones de crecimiento
+
+`a.resize (n)` **no reutiliza capacidad**: reserva un bloque nuevo, copia
+`min (longitud anterior, n)` elementos y libera el viejo, siempre. Eso fija el
+coste de cada llamada (~2,4 ns por elemento copiado en `-O2`) y hace que crecer
+dentro de un bucle sea cuadrático si se pide el tamaño justo en cada vuelta.
+Medido con `--target=windows`, por elemento escrito:
+
+| Patrón | `int[]` (n = 3 000) | `uint8[]` (n = 4 000) |
+|---|---|---|
+| `new T[n]` de una vez | 14,9 ns | 9,7 ns |
+| `resize` con capacidad duplicada (`cap *= 2`) | 29,3 ns | 14,3 ns |
+| `resize (i + 1)` en cada vuelta | 14 215 ns | 4 014 ns |
+| `resize` en una función auxiliar por vuelta | 13 794 ns | — |
+
+Y una llamada de `resize` al **mismo** tamaño sobre un búfer de 64 KB cuesta
+~157 µs (una reserva y una copia completa): nunca va en un camino caliente.
+Orden de preferencia: dimensionar una vez (`new T[n]`), luego duplicar capacidad,
+y evitar el crecimiento lineal.
 
 ### Diagnósticos de runtime
 
@@ -287,13 +301,13 @@ compile en el backend de AST.
 planc/tests/run.sh          # suite completa (work dir temporal; KEEP=1 lo conserva)
 ```
 
-Estado actual: **320 casos, 319 pasan**. El único fallo es
+Estado actual: **323 casos, 322 pasan**. El único fallo es
 `valid/struct_union_delegate_arrays` (arrays de delegates dentro de `union`).
 Secciones:
 
 | Sección | Qué prueba | Casos |
 |---|---|---|
-| `valid/` | compila, ejecuta y compara stdout/exit | 124 |
+| `valid/` | compila, ejecuta y compara stdout/exit | 125 |
 | `invalid/` | rechazo con diagnóstico posicionado | 80 |
 | `bounds/` | panics de rango, tamaños negativos y overflow de `n*stride` | 15 |
 | `visibility/` | `--strict-visibility` / `--enforce-visibility` | 5 |
