@@ -85,6 +85,7 @@ namespace Planc {
                     && expr_is_inline_leaf (te.then_expr)
                     && expr_is_inline_leaf (te.else_expr);
             }
+            if (e is TypeCheckExpr) return expr_is_inline_leaf (((TypeCheckExpr) e).operand);
             return false;
         }
 
@@ -2407,6 +2408,11 @@ namespace Planc {
                 var ma = (MemberAccessExpr) e;
                 ma.target = unroll_subst_iv (ma.target, iv, off);
                 return ma;
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                tc.operand = unroll_subst_iv (tc.operand, iv, off);
+                return tc;
             }
             return e;
         }

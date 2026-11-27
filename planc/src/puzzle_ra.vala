@@ -325,6 +325,13 @@ namespace Planc {
                 var an = (ArrayNewExpr) e;
                 return an.elem_type == ValaType.INT && check_expr_supported (an.length_expr);
             }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                return tc.op == "cast"
+                    && (tc.target_type == ValaType.INT || tc.target_type == ValaType.BOOL)
+                    && is_supported_type (tc.target_type, tc.target_type_name)
+                    && check_expr_supported (tc.operand);
+            }
             return false;
         }
 
@@ -461,6 +468,33 @@ namespace Planc {
                 int s = lower_expr (u.operand);
                 int d = new_vreg ();
                 emit_ir (new IRInst () { op = IROp.UNARY, dst = d, sop = u.op, lhs = s });
+                return d;
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                int s = lower_expr (tc.operand);
+                if (tc.target_type == ValaType.BOOL) {
+                    int d = new_vreg ();
+                    emit_ir (new IRInst () { op = IROp.BIN_IMM, sop = "!=", dst = d, lhs = s, imm = 0 });
+                    return d;
+                }
+                if (tc.target_type_name == "uint32" || tc.target_type_name == "uint") {
+                    int d = new_vreg ();
+                    vreg_is_unsigned[d] = true;
+                    emit_ir (new IRInst () { op = IROp.UNARY, dst = d, sop = "zext32", lhs = s });
+                    return d;
+                }
+                if (tc.target_type_name == "int32") {
+                    int d = new_vreg ();
+                    emit_ir (new IRInst () { op = IROp.UNARY, dst = d, sop = "sext32", lhs = s });
+                    return d;
+                }
+                bool uns = is_unsigned_name (tc.target_type_name);
+                if (vreg_is_unsigned[s] == uns)
+                    return s;
+                int d = new_vreg ();
+                vreg_is_unsigned[d] = uns;
+                emit_ir (new IRInst () { op = IROp.MOV, dst = d, lhs = s });
                 return d;
             }
             if (e is BinaryExpr) {
@@ -2568,7 +2602,21 @@ namespace Planc {
                                                        || (program_uses_heap && arr_locals.length > 0)))
                                     ? emitter.new_label () : null;
 
+            var is_loop_header = new bool[blocks.length];
             for (int b = 0; b < blocks.length; b++) {
+                var succs = blocks[b].succs;
+                for (int si = 0; si < succs.length; si++) {
+                    int tgt = succs[si];
+                    if (tgt >= 0 && tgt <= b)
+                        is_loop_header[tgt] = true;
+                }
+            }
+
+            for (int b = 0; b < blocks.length; b++) {
+                if (is_loop_header[b]) {
+                    while ((code.length & 15) != 0)
+                        code.u8 (0x90);
+                }
                 emitter.bind ((Label) blocks[b].label);
                 var insts = blocks[b].insts;
                 for (int ii = 0; ii < insts.length; ii++) {
@@ -2588,16 +2636,26 @@ namespace Planc {
                         case IROp.UNARY: {
                             Reg s = read_vreg (ins.lhs, Reg.R10);
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
-                            emit_mov_rr (d, s);
-                            if (ins.sop == "-") {
-                                emit_rex (true, Reg.RAX, d);
-                                code.u8 (0xF7); code.u8 ((uint8) (0xD8 | ((int) d & 7)));
-                            } else if (ins.sop == "~") {
-                                emit_rex (true, Reg.RAX, d);
-                                code.u8 (0xF7); code.u8 ((uint8) (0xD0 | ((int) d & 7)));
-                            } else if (ins.sop == "!") {
-                                emit_test_rr (d, d);
-                                emit_setcc (d, 0x94);
+                            if (ins.sop == "zext32") {
+                                // mov r32d, r32s (zero-extends 32 -> 64 bits)
+                                emit_rex (false, s, d);
+                                code.u8 (0x89); code.u8 ((uint8) (0xC0 | (((int) s & 7) << 3) | ((int) d & 7)));
+                            } else if (ins.sop == "sext32") {
+                                // movsxd r64d, r32s
+                                emit_rex (true, d, s);
+                                code.u8 (0x63); code.u8 ((uint8) (0xC0 | (((int) d & 7) << 3) | ((int) s & 7)));
+                            } else {
+                                emit_mov_rr (d, s);
+                                if (ins.sop == "-") {
+                                    emit_rex (true, Reg.RAX, d);
+                                    code.u8 (0xF7); code.u8 ((uint8) (0xD8 | ((int) d & 7)));
+                                } else if (ins.sop == "~") {
+                                    emit_rex (true, Reg.RAX, d);
+                                    code.u8 (0xF7); code.u8 ((uint8) (0xD0 | ((int) d & 7)));
+                                } else if (ins.sop == "!") {
+                                    emit_test_rr (d, d);
+                                    emit_setcc (d, 0x94);
+                                }
                             }
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
                             break;
