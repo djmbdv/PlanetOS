@@ -25,6 +25,9 @@ namespace GLib {
          * Finds the position of the first bit set in mask, searching from nth_bit + 1 upward.
          * Pass nth_bit = -1 to start from bit 0. Returns -1 if no matching bit is set.
          */
+        [NoAlloc]
+        [AlwaysInline]
+        [Wrap]
         public static int nth_lsf (ulong mask, int nth_bit) {
             if (mask == 0 || nth_bit >= 63)
                 return -1;
@@ -43,6 +46,9 @@ namespace GLib {
          * Finds the position of the highest bit set in mask below nth_bit.
          * Pass nth_bit = -1 to search all 64 bits. Returns -1 if no matching bit is set.
          */
+        [NoAlloc]
+        [AlwaysInline]
+        [Wrap]
         public static int nth_msf (ulong mask, int nth_bit) {
             if (mask == 0 || nth_bit == 0)
                 return -1;
@@ -59,6 +65,8 @@ namespace GLib {
         /**
          * Returns the number of bits required to store number (1 when number == 0).
          */
+        [NoAlloc]
+        [AlwaysInline]
         public static uint storage (ulong number) {
             if (number == 0)
                 return 1;

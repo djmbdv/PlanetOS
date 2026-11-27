@@ -1035,8 +1035,10 @@ namespace Planc {
             if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
                 if (b.op == "+" && may_be_string (b.left)
-                    && !(noalloc_scan_fn != null && is_known_non_string_in_fn (noalloc_scan_fn, b.left)
-                         && is_known_non_string_in_fn (noalloc_scan_fn, b.right)))
+                    && !(noalloc_scan_fn != null
+                         && (b.left is IntLiteral || b.right is IntLiteral
+                             || (is_known_non_string_in_fn (noalloc_scan_fn, b.left)
+                                 && is_known_non_string_in_fn (noalloc_scan_fn, b.right)))))
                     return true;
                 return scan_expr_heap (b.left) || scan_expr_heap (b.right);
             }
@@ -1143,12 +1145,65 @@ namespace Planc {
             }
         }
 
-        private static bool is_known_non_string_in_fn (Function? f, Expr e) {
+        private int find_var_non_string_in_stmt (Statement? s, string vn) {
+            if (s == null) return -1;
+            if (s is VarDeclStatement) {
+                var vd = (VarDeclStatement) s;
+                if (vd.name == vn)
+                    return (!vd.infer_type && vd.decl_type != ValaType.STRING) ? 1 : 0;
+                return -1;
+            }
+            if (s is BlockStatement)
+                return find_var_non_string_in_stmts (((BlockStatement) s).statements, vn);
+            if (s is IfStatement) {
+                var i = (IfStatement) s;
+                int r = find_var_non_string_in_stmt (i.then_body, vn);
+                if (r >= 0) return r;
+                return find_var_non_string_in_stmt (i.else_body, vn);
+            }
+            if (s is WhileStatement)
+                return find_var_non_string_in_stmt (((WhileStatement) s).body, vn);
+            if (s is DoWhileStatement)
+                return find_var_non_string_in_stmt (((DoWhileStatement) s).body, vn);
+            if (s is ForStatement) {
+                var fs = (ForStatement) s;
+                int r = find_var_non_string_in_stmt (fs.init, vn);
+                if (r >= 0) return r;
+                return find_var_non_string_in_stmt (fs.body, vn);
+            }
+            if (s is ForeachStatement)
+                return find_var_non_string_in_stmt (((ForeachStatement) s).body, vn);
+            return -1;
+        }
+
+        private int find_var_non_string_in_stmts (GenericArray<Statement> stmts, string vn) {
+            for (int i = 0; i < stmts.length; i++) {
+                int r = find_var_non_string_in_stmt (stmts[i], vn);
+                if (r >= 0) return r;
+            }
+            return -1;
+        }
+
+        private bool is_known_non_string_in_fn (Function? f, Expr e) {
             if (e is IntLiteral || e is FloatLiteral || e is BoolLiteral) return true;
             if (e is UnaryExpr) return is_known_non_string_in_fn (f, ((UnaryExpr) e).operand);
+            if (e is TypeCheckExpr) return ((TypeCheckExpr) e).target_type != ValaType.STRING;
             if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
                 return is_known_non_string_in_fn (f, b.left) && is_known_non_string_in_fn (f, b.right);
+            }
+            if (e is CallExpr) {
+                string cname = ((CallExpr) e).callee;
+                unowned var fn = program.find (cname);
+                if (fn == null) {
+                    unowned ClassDecl? cls = (f != null && f.owner_class != "")
+                        ? program.find_class (f.owner_class)
+                        : current_class;
+                    if (cls != null)
+                        fn = find_class_method (cls, cname);
+                }
+                if (fn != null && fn.return_type != ValaType.STRING)
+                    return true;
             }
             if (e is VarRef && f != null) {
                 string vn = ((VarRef) e).name;
@@ -1156,6 +1211,8 @@ namespace Planc {
                     if (f.params[i].name == vn)
                         return f.params[i].param_type != ValaType.STRING;
                 }
+                if (find_var_non_string_in_stmts (f.body, vn) == 1)
+                    return true;
             }
             return false;
         }

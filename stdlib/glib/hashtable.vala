@@ -54,6 +54,7 @@ namespace GLib {
         }
     }
 
+    [Wrap]
     public uint str_hash (string s) {
         uint32 h = 2166136261u;
         for (int i = 0; i < s.length; i++) {
@@ -63,6 +64,8 @@ namespace GLib {
         return (uint) h;
     }
 
+    [NoAlloc]
+    [AlwaysInline]
     public bool str_equal (string a, string b) {
         if (a.length != b.length)
             return false;
@@ -73,10 +76,14 @@ namespace GLib {
         return true;
     }
 
+    [NoAlloc]
+    [AlwaysInline]
     public uint int_hash (int v) {
         return (uint) v;
     }
 
+    [NoAlloc]
+    [AlwaysInline]
     public bool int_equal (int a, int b) {
         return a == b;
     }
