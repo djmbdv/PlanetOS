@@ -20,6 +20,8 @@ namespace Planet.Kernel {
         // +240: indirect2 (8B, 512 x 4K pages)
         // +248: parent slot (8B, -1 = root)
 
+        [NoAlloc]
+        [AlwaysInline]
         private static int read_u8 (int addr) {
             int w = mmio_read32 (addr & ~3);
             return (w >> ((addr & 3) * 8)) & 0xFF;
@@ -31,12 +33,16 @@ namespace Planet.Kernel {
             }
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public static int kind_of (int s) {
             if (s < 0 || s >= MAX_FILES)
                 return 0;
             return mmio_read64 (KernelLayout.RAMFS_TABLE + s * SLOT_SIZE);
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public static int parent_of (int s) {
             if (s < 0 || s >= MAX_FILES)
                 return -1;
@@ -72,8 +78,7 @@ namespace Planet.Kernel {
             int pa = Pmm.alloc_frame ();
             if (pa == 0)
                 return 0;
-            for (int i = 0; i < 4096; i += 8)
-                mmio_write64 (pa + i, 0);
+            zero_page_4k (pa);
             return pa;
         }
 

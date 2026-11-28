@@ -62,12 +62,11 @@ namespace Planet.Kernel {
             return true;
         }
 
-        // The virtual /dev namespace. Returns KIND_NONE for any other path so
-        // the caller falls back to RAMFS and XFS.
-        private static int resolve_dev (int ptr, int len, out int id) {
-            id = -1;
+        // The virtual /dev namespace. Returns (kind, id) or throws -1 for any other
+        // path so the caller falls back to RAMFS and XFS.
+        private static (int, int) resolve_dev! (int ptr, int len) {
             if (ptr == 0 || len <= 0)
-                return KIND_NONE;
+                throws -1;
             int i = 0;
             while (i < len && byte_at (ptr + i) == '/')
                 i = i + 1;
@@ -75,13 +74,11 @@ namespace Planet.Kernel {
             while (i < len && byte_at (ptr + i) != '/')
                 i = i + 1;
             if (!name_is (ptr + start, i - start, "dev"))
-                return KIND_NONE;
+                throws -1;
             while (i < len && byte_at (ptr + i) == '/')
                 i = i + 1;
-            if (i >= len) {
-                id = DEV_DIR;
-                return KIND_DIR;
-            }
+            if (i >= len)
+                return (KIND_DIR, DEV_DIR);
             int ns = i;
             while (i < len && byte_at (ptr + i) != '/')
                 i = i + 1;
@@ -89,28 +86,25 @@ namespace Planet.Kernel {
             while (i < len && byte_at (ptr + i) == '/')
                 i = i + 1;
             if (i < len)
-                return KIND_NONE;
-            if (name_is (ptr + ns, nl, "console") || name_is (ptr + ns, nl, "tty")) {
-                id = DEV_CONSOLE;
-                return KIND_DEV;
-            }
-            if (name_is (ptr + ns, nl, "serial0") || name_is (ptr + ns, nl, "ttyS0")) {
-                id = DEV_SERIAL;
-                return KIND_DEV;
-            }
-            if (name_is (ptr + ns, nl, "null")) {
-                id = DEV_NULL;
-                return KIND_DEV;
-            }
-            return KIND_NONE;
+                throws -1;
+            if (name_is (ptr + ns, nl, "console") || name_is (ptr + ns, nl, "tty"))
+                return (KIND_DEV, DEV_CONSOLE);
+            if (name_is (ptr + ns, nl, "serial0") || name_is (ptr + ns, nl, "ttyS0"))
+                return (KIND_DEV, DEV_SERIAL);
+            if (name_is (ptr + ns, nl, "null"))
+                return (KIND_DEV, DEV_NULL);
+            throws -1;
         }
 
         // Resolves an existing path. `id` receives the XFS inode (KIND_XFS) or
         // the RAMFS slot (KIND_FILE/KIND_DIR; -1 for the root directory).
         public static int resolve (int path_ptr, int path_len, out int id) {
-            int dev = resolve_dev (path_ptr, path_len, out id);
-            if (dev != KIND_NONE)
-                return dev;
+            try {
+                var (dev_kind, dev_id) = resolve_dev! (path_ptr, path_len);
+                id = dev_id;
+                return dev_kind;
+            } catch {
+            }
             id = -1;
             if (path_len <= 0)
                 return KIND_DIR;

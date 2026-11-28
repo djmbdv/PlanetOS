@@ -3235,6 +3235,18 @@ namespace Planc {
             if (e is TypeCheckExpr) {
                 var tc = (TypeCheckExpr) e;
                 tc.operand = opt_expr (tc.operand);
+                if (tc.op == "cast" && tc.target_type == ValaType.INT && tc.operand is IntLiteral) {
+                    int64 v = ((IntLiteral) tc.operand).value;
+                    string tn = tc.target_type_name;
+                    if (tn == "uint64" || tn == "ulong" || tn == "size_t")
+                        return new IntLiteral () { value = v, is_unsigned = true, is_long = true, line = tc.line, column = tc.column };
+                    if (tn == "uint32" || tn == "uint")
+                        return new IntLiteral () { value = (int64) ((uint64) v & (uint64) 0xFFFFFFFFu), is_unsigned = true, is_long = false, line = tc.line, column = tc.column };
+                    if (tn == "int64" || tn == "long" || tn == "ssize_t")
+                        return new IntLiteral () { value = v, is_unsigned = false, is_long = true, line = tc.line, column = tc.column };
+                    if (tn == "" || tn == "int")
+                        return new IntLiteral () { value = v, is_unsigned = false, is_long = false, line = tc.line, column = tc.column };
+                }
                 return tc;
             }
 

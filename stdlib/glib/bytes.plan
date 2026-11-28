@@ -1,4 +1,4 @@
-// Pure-Vala GLib.Bytes immutable zero-copy byte slice for PlanetOS.
+// GLib.Bytes immutable zero-copy byte slice for PlanetOS.
 using Planet;
 
 namespace GLib {
@@ -49,10 +49,13 @@ namespace GLib {
             return new Bytes.slice_raw (buf, off + offset, n);
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public size_t get_size () {
             return len;
         }
 
+        [AlwaysInline]
         public uint8 get_byte (size_t index) {
             if (index >= len)
                 return 0;
@@ -72,7 +75,7 @@ namespace GLib {
             return out_arr;
         }
 
-        public int compare (Bytes other) {
+        public int compare (in Bytes other) {
             size_t min_len = (len < other.len) ? len : other.len;
             if (min_len > 0) {
                 int c = Memory.cmp (Sys.byte_arr_addr (buf) + (int) off,
@@ -85,12 +88,15 @@ namespace GLib {
             return (len < other.len) ? -1 : 1;
         }
 
-        public bool equal (Bytes other) {
+        [NoAlloc]
+        [AlwaysInline]
+        public bool equal (in Bytes other) {
             if (len != other.len)
                 return false;
             return compare (other) == 0;
         }
 
+        [Wrap]
         public uint hash () {
             uint h = 2166136261u;
             for (size_t i = 0; i < len; i++) {
@@ -274,11 +280,17 @@ namespace GLib {
             length = (len < 0 || len > avail) ? avail : len;
         }
 
-        public T get_item (int index) {
+        [AlwaysInline]
+        public T get_item (int index)
+            requires (index >= 0 && index < length)
+        {
             return buf[off + index];
         }
 
-        public void set_item (int index, T value) {
+        [AlwaysInline]
+        public void set_item (int index, T value)
+            requires (index >= 0 && index < length)
+        {
             buf[off + index] = value;
         }
 

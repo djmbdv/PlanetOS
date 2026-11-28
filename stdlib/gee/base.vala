@@ -103,11 +103,11 @@ namespace Gee {
     public int hash_mix (int h, int seed = 0) {
         uint32 x = (uint32) h ^ (uint32) seed;
         x ^= x >> 16;
-        x *= (uint32) 0x85EBCA6B;
+        x *= 0x85EBCA6Bu;
         x ^= x >> 13;
-        x *= (uint32) 0xC2B2AE35;
+        x *= 0xC2B2AE35u;
         x ^= x >> 16;
-        return (int) (x & (uint32) 0x7FFFFFFF);
+        return (int) (x & 0x7FFFFFFFu);
     }
 
     public int str_cmp (string a, string b) {

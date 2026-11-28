@@ -1,4 +1,4 @@
-// Pure-Vala Gee ArrayList<G> and LinkedList<G>.
+// Gee ArrayList<G> and LinkedList<G>.
 namespace Gee {
 
     internal class ArrayListIterator<G> : Object, Iterator<G> {
@@ -51,12 +51,14 @@ namespace Gee {
             return true;
         }
 
+        [AlwaysInline]
         public G get (int index) {
             if (index < 0 || index >= inner.length)
                 return zero_val;
             return inner[index];
         }
 
+        [AlwaysInline]
         public void set (int index, G item) {
             if (index < 0 || index >= inner.length)
                 return;
@@ -111,12 +113,14 @@ namespace Gee {
             return true;
         }
 
+        [AlwaysInline]
         public G first () {
             if (inner.length == 0)
                 return zero_val;
             return inner[0];
         }
 
+        [AlwaysInline]
         public G last () {
             if (inner.length == 0)
                 return zero_val;

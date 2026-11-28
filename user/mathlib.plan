@@ -16,28 +16,39 @@ public double dlib_vec4_len (int a) {
     return dlib_sqrt (dlib_vec4_dot (a, a));
 }
 
-// --- Scalar math (generated from math_core.c via c2vala) ----------------
+// --- Scalar math (Plan [NoAlloc] / [Wrap]) ----------------
 
+[NoAlloc]
+[Wrap]
 public int dlib_add (int a, int b) {
     return (a + b);
 }
 
+[NoAlloc]
+[Wrap]
 public int dlib_mul (int a, int b) {
     return (a * b);
 }
 
+[NoAlloc]
+[Wrap]
 public int dlib_mix (int a, int b) {
     return ((a * 3) + (b * 2));
 }
 
+[NoAlloc]
+[AlwaysInline]
 public int dlib_abs (int a) {
     return ((a < 0) ? -a : a);
 }
 
+[NoAlloc]
+[AlwaysInline]
 public int dlib_clamp_i (int v, int lo, int hi) {
     return ((v < lo) ? lo : ((v > hi) ? hi : v));
 }
 
+[NoAlloc]
 public int dlib_gcd (int a, int b) {
     int x = ((a < 0) ? -a : a);
     int y = ((b < 0) ? -b : b);
@@ -49,14 +60,19 @@ public int dlib_gcd (int a, int b) {
     return x;
 }
 
+[NoAlloc]
+[AlwaysInline]
 public double dlib_fabs (double x) {
     return ((x < 0.0) ? -x : x);
 }
 
+[NoAlloc]
+[AlwaysInline]
 public double dlib_lerp (double a, double b, double t) {
     return (a + ((b - a) * t));
 }
 
+[NoAlloc]
 public double dlib_sin (double x) {
     double pi = 3.14159265358979323846;
     double twopi = 6.28318530717958647692;
@@ -71,15 +87,18 @@ public double dlib_sin (double x) {
     return (x * (1.0 - (x2 * (0.16666666666666632 - (x2 * (0.00833333333330950 - (x2 * (0.0001984126943568 - (x2 * 0.0000027557313707)))))))));
 }
 
+[NoAlloc]
 public double dlib_cos (double x) {
     return dlib_sin (x + 1.57079632679489661923);
 }
 
+[NoAlloc]
 public double dlib_tan (double x) {
     double c = dlib_cos (x);
     return (dlib_fabs (c) < 1.0e-12) ? 0.0 : (dlib_sin (x) / c);
 }
 
+[NoAlloc]
 public double dlib_exp (double x) {
     if (x > 709.0) return 1.0e308;
     if (x < -709.0) return 0.0;
@@ -92,6 +111,7 @@ public double dlib_exp (double x) {
     return p;
 }
 
+[NoAlloc]
 public double dlib_log (double x) {
     if (x <= 0.0) return -1.0e308;
     double ln2 = 0.69314718055994530942;
@@ -104,6 +124,7 @@ public double dlib_log (double x) {
     return (s + (((double) k) * ln2));
 }
 
+[NoAlloc]
 public double dlib_pow (double base_v, double exp_v) {
     if (exp_v == 0.0) return 1.0;
     if (base_v == 0.0) return 0.0;
@@ -122,6 +143,7 @@ public double dlib_pow (double base_v, double exp_v) {
     return dlib_exp (exp_v * dlib_log (base_v));
 }
 
+[NoAlloc]
 public double dlib_atan (double x) {
     int sign = 1;
     if (x < 0.0) { x = -x; sign = -1; }
@@ -133,6 +155,7 @@ public double dlib_atan (double x) {
     return ((sign < 0) ? -r : r);
 }
 
+[NoAlloc]
 public double dlib_atan2 (double y, double x) {
     double pi = 3.14159265358979323846;
     double halfpi = 1.57079632679489661923;

@@ -1,4 +1,4 @@
-// Pure-Vala Gio InputStream/OutputStream hierarchy.
+// Gio InputStream/OutputStream hierarchy.
 using GLib;
 using Planet;
 
@@ -29,10 +29,7 @@ namespace Gio {
                 return new uint8[0];
             if (got == count)
                 return buf;
-            var trimmed = new uint8[got];
-            for (int i = 0; i < got; i++)
-                trimmed[i] = buf[i];
-            return trimmed;
+            return buf[0:got];
         }
 
         public virtual bool read_all (uint8[] buffer, out int bytes_read, Cancellable? cancellable = null) throws IOError {
@@ -91,10 +88,14 @@ namespace Gio {
             return true;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public bool is_closed () {
             return closed;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public bool has_pending () {
             return pending;
         }
@@ -106,6 +107,8 @@ namespace Gio {
             return true;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public void clear_pending () {
             pending = false;
         }

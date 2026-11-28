@@ -7,12 +7,14 @@
 namespace Simd {
 
     // 64-bit population count (POPCNT).
+    [NoAlloc]
+    [AlwaysInline]
     public int popcount (uint64 v) {
         return __popcnt64 (v);
     }
 
     // Sum of every byte in `a`, 16 bytes at a time.
-    public int sum_u8 (uint8[] a) {
+    public int sum_u8 (in uint8[] a) {
         int n = a.length;
         int total = 0;
         int i = 0;
@@ -28,7 +30,7 @@ namespace Simd {
     }
 
     // Average of the bytes, rounded down. Bound-checked; 0 for an empty array.
-    public int avg_u8 (uint8[] a) {
+    public int avg_u8 (in uint8[] a) {
         if (a.length == 0)
             return 0;
         return sum_u8 (a) / a.length;

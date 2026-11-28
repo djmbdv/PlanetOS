@@ -640,7 +640,7 @@ namespace GLib {
             return era * 146097 + doe - 719468;
         }
 
-        private static void civil_from_days (int64 days, out int y, out int m, out int d) {
+        private static (int, int, int) civil_from_days (int64 days) {
             int64 z = days + 719468;
             int64 era = (z >= 0 ? z : z - 146096) / 146097;
             int64 doe = z - era * 146097;
@@ -648,11 +648,13 @@ namespace GLib {
             int64 yr = yoe + era * 400;
             int64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
             int64 mp = (5 * doy + 2) / 153;
-            d = (int) (doy - (153 * mp + 2) / 5 + 1);
-            m = (int) (mp + (mp < 10 ? 3 : -9));
-            y = (int) (yr + (m <= 2 ? 1 : 0));
+            int d = (int) (doy - (153 * mp + 2) / 5 + 1);
+            int m = (int) (mp + (mp < 10 ? 3 : -9));
+            int y = (int) (yr + (m <= 2 ? 1 : 0));
+            return (y, m, d);
         }
 
+        [NoAlloc]
         public static bool is_leap (int full_year) {
             if (full_year % 4 != 0)
                 return false;
@@ -661,6 +663,7 @@ namespace GLib {
             return (full_year % 400 == 0);
         }
 
+        [NoAlloc]
         public static int days_in_month (int full_year, int mon) {
             switch (mon) {
                 case 1: return 31;
@@ -695,10 +698,7 @@ namespace GLib {
         }
 
         public static Date from_days (int64 days) {
-            int y;
-            int m;
-            int d;
-            civil_from_days (days, out y, out m, out d);
+            var (y, m, d) = civil_from_days (days);
             return dmy (d, m, y);
         }
 
@@ -859,13 +859,12 @@ namespace GLib {
             return new TimeZone.full (name, seconds, 0, name, name, false);
         }
 
-        private static bool parse_offset (string text, out int32 seconds) {
-            seconds = 0;
+        private static int32 parse_offset! (in string text) {
             if (text.length < 3)
-                return false;
+                throws -1;
             char sign = text[0];
             if (sign != '+' && sign != '-')
-                return false;
+                throws -1;
             int hh = 0;
             int mm = 0;
             int i = 1;
@@ -876,7 +875,7 @@ namespace GLib {
                 digits++;
             }
             if (digits != 2)
-                return false;
+                throws -1;
             if (i < text.length && text[i] == ':')
                 i++;
             digits = 0;
@@ -886,10 +885,9 @@ namespace GLib {
                 digits++;
             }
             if (i != text.length || hh > 14 || mm > 59)
-                return false;
+                throws -1;
             int32 total = (int32) (hh * 3600 + mm * 60);
-            seconds = (sign == '-') ? -total : total;
-            return true;
+            return (int32) ((sign == '-') ? -total : total);
         }
 
         public static TimeZone? new_identifier (string? identifier) {
@@ -901,9 +899,11 @@ namespace GLib {
             if (key == "UTC" || key == "Etc/UTC" || key == "GMT" || key == "Etc/GMT"
                     || key == "UCT" || key == "Universal" || key == "Z")
                 return utc ();
-            int32 off = 0;
-            if (parse_offset (key, out off))
+            try {
+                int32 off = parse_offset! (key);
                 return new_offset (off);
+            } catch {
+            }
             if (key == "America/Caracas")
                 return new TimeZone.full (key, -4 * 3600, 0, "-04", "-04", false);
             if (key == "America/Sao_Paulo")

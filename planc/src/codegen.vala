@@ -253,6 +253,7 @@ namespace Planc {
         private GenericArray<string> active_catch_domains;
         private GenericArray<Label> unwind_labels;
         private GenericArray<int> unwind_marks;
+        private GenericArray<int> unwind_defer_marks = new GenericArray<int> ();
         private GenericArray<Label> finally_labels;
         private GenericArray<int> finally_mode_slots;
         private GenericArray<int> finally_ret_slots;
@@ -265,6 +266,8 @@ namespace Planc {
         private GenericArray<Label> continue_labels;
         private GenericArray<int> break_scope_marks;
         private GenericArray<int> continue_scope_marks;
+        private GenericArray<int> break_defer_marks = new GenericArray<int> ();
+        private GenericArray<int> continue_defer_marks = new GenericArray<int> ();
 
         // Globals.
         private GenericArray<string> global_names;
@@ -4328,9 +4331,12 @@ namespace Planc {
             }
 
             if (defer_bodies.length > 0) {
-                try {
-                    emit_defers_down_to (0, true);
-                } catch (SemanticError e) {
+                int dmark = (unwind_defer_marks.length > 0) ? unwind_defer_marks[unwind_defer_marks.length - 1] : 0;
+                if (defer_bodies.length > dmark) {
+                    try {
+                        emit_defers_down_to (dmark, true);
+                    } catch (SemanticError e) {
+                    }
                 }
             }
 
@@ -6448,6 +6454,7 @@ namespace Planc {
             need_func_throw = false;
             unwind_labels = new GenericArray<Label> ();
             unwind_marks = new GenericArray<int> ();
+            unwind_defer_marks = new GenericArray<int> ();
             defer_bodies = new GenericArray<Statement> ();
             defer_is_err = new GenericArray<bool> ();
             finally_labels = new GenericArray<Label> ();
@@ -6464,6 +6471,8 @@ namespace Planc {
             continue_labels = new GenericArray<Label> ();
             break_scope_marks = new GenericArray<int> ();
             continue_scope_marks = new GenericArray<int> ();
+            break_defer_marks = new GenericArray<int> ();
+            continue_defer_marks = new GenericArray<int> ();
 
             // 1. Emit __async_resume_<f.name>(AsyncTask* rdi)
             var resume_name = @"__async_resume_$(f.name)";
@@ -7136,6 +7145,7 @@ namespace Planc {
             need_func_throw = false;
             unwind_labels = new GenericArray<Label> ();
             unwind_marks = new GenericArray<int> ();
+            unwind_defer_marks = new GenericArray<int> ();
             defer_bodies = new GenericArray<Statement> ();
             defer_is_err = new GenericArray<bool> ();
             finally_labels = new GenericArray<Label> ();
@@ -7152,6 +7162,8 @@ namespace Planc {
             continue_labels = new GenericArray<Label> ();
             break_scope_marks = new GenericArray<int> ();
             continue_scope_marks = new GenericArray<int> ();
+            break_defer_marks = new GenericArray<int> ();
+            continue_defer_marks = new GenericArray<int> ();
 
             var start = emitter.here ();
 
@@ -7349,7 +7361,9 @@ namespace Planc {
             cg_bce_arrs.length = req_bce_mark;
             cg_bce_idxs.length = req_bce_mark;
 
-            // Falling off the end: unref locals, then return deterministic default.
+            // Falling off the end: run defers, unref locals, then return deterministic default.
+            if (defer_bodies.length > 0)
+                emit_defers_down_to (0, false);
             if (program_uses_heap)
                 unref_locals_from (0);
             if (f.return_type == ValaType.STRING) {
@@ -7637,6 +7651,23 @@ namespace Planc {
             if (is_unsigned_32 (l) || is_unsigned_32 (r))
                 return "uint32";
             return "";
+        }
+
+        private static bool try_const_int_operand (Expr e, out int64 val) {
+            if (e is IntLiteral) {
+                val = ((IntLiteral) e).value;
+                return true;
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)
+                    && tc.operand is IntLiteral) {
+                    val = narrow_const_int (tc.target_type_name, ((IntLiteral) tc.operand).value);
+                    return true;
+                }
+            }
+            val = 0;
+            return false;
         }
 
         private static int64 narrow_const_int (string tname, int64 v) {
@@ -11004,6 +11035,29 @@ namespace Planc {
             emitter.code.u8 (0xF3); emitter.code.u8 (0xA4);
             emitter.pop_rax ();
             push_depth--;
+            if (program_uses_heap && is_ref_type (et)) {
+                var l_ref_loop = emitter.new_label ();
+                var l_ref_done = emitter.new_label ();
+                emitter.push_rax ();
+                push_depth++;
+                emitter.code.u8 (0x4C); emitter.code.u8 (0x8B); emitter.code.u8 (0x60); emitter.code.u8 (0x08); // mov r12, [rax + 8]
+                emitter.code.u8 (0x4C); emitter.code.u8 (0x8D); emitter.code.u8 (0x68); emitter.code.u8 (0x10); // lea r13, [rax + 16]
+                emitter.bind (l_ref_loop);
+                emitter.code.u8 (0x4D); emitter.code.u8 (0x85); emitter.code.u8 (0xE4); // test r12, r12
+                emitter.branch (BranchKind.JE, l_ref_done);
+                emitter.code.u8 (0x49); emitter.code.u8 (0x8B); emitter.code.u8 (0x7D); emitter.code.u8 (0x00); // mov rdi, [r13]
+                emitter.code.u8 (0x48); emitter.code.u8 (0x85); emitter.code.u8 (0xFF); // test rdi, rdi
+                var l_ref_skip = emitter.new_label ();
+                emitter.branch (BranchKind.JE, l_ref_skip);
+                call_aligned ("__planc_ref");
+                emitter.bind (l_ref_skip);
+                emitter.code.u8 (0x49); emitter.code.u8 (0x83); emitter.code.u8 (0xC5); emitter.code.u8 (0x08); // add r13, 8
+                emitter.code.u8 (0x49); emitter.code.u8 (0xFF); emitter.code.u8 (0xCC); // dec r12
+                emitter.branch (BranchKind.JMP, l_ref_loop);
+                emitter.bind (l_ref_done);
+                emitter.pop_rax ();
+                push_depth--;
+            }
         }
 
         private void emit_bounds_branch_at (BranchKind ok_kind, int line, int column) {
@@ -13797,8 +13851,8 @@ namespace Planc {
                         string res_tn = promote_int_type (lt_name, rt_name);
                         bool is_u = is_unsigned_int_type (res_tn);
                         BranchKind br = on_true ? direct_branch (b.op, is_u) : inverted_branch (b.op, is_u);
-                        if (b.right is IntLiteral) {
-                            int64 imm = ((IntLiteral) b.right).value;
+                        int64 imm = 0;
+                        if (try_const_int_operand (b.right, out imm)) {
                             if (imm >= int32.MIN && imm <= int32.MAX) {
                                 gen_expr (b.left);
                                 if (imm == 0)
@@ -14071,19 +14125,20 @@ namespace Planc {
             // Division by a constant that is neither a power of two nor
             // foldable: mulhi + shift with a reciprocal whose exactness was
             // verified when it was built, instead of the idiv sequence.
+            int64 div_imm = 0;
             if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
-                && (b.op == "/" || b.op == "%") && b.right is IntLiteral) {
-                var rec = DivReciprocal.get (((IntLiteral) b.right).value);
+                && (b.op == "/" || b.op == "%") && try_const_int_operand (b.right, out div_imm)) {
+                var rec = DivReciprocal.get (div_imm);
                 if (rec != null) {
                     emit_reciprocal_divmod (b.op == "%", lt_name, rt_name,
                                             rec.multiplier, rec.shift,
-                                            ((IntLiteral) b.right).value, b.left);
+                                            div_imm, b.left);
                     return;
                 }
             }
+            int64 imm = 0;
             if (opt_level >= 1 && !is_str_cmp && lt != ValaType.POINTER && rt != ValaType.POINTER
-                && b.op != "/" && b.op != "%" && b.right is IntLiteral) {
-                int64 imm = ((IntLiteral) b.right).value;
+                && b.op != "/" && b.op != "%" && try_const_int_operand (b.right, out imm)) {
                 bool shift_ok = (b.op != "<<" && b.op != ">>") || (imm >= 0 && imm < 64);
                 if (shift_ok && imm >= int32.MIN && imm <= int32.MAX) {
                     gen_expr (b.left);
@@ -14410,6 +14465,10 @@ namespace Planc {
                     return;
                 }
                 if (tc.op == "cast" && (tc.target_type == ValaType.INT || tc.target_type == ValaType.ENUM)) {
+                    if (tc.operand is IntLiteral) {
+                        emitter.mov_rax_imm (narrow_const_int (tc.target_type_name, ((IntLiteral) tc.operand).value));
+                        return;
+                    }
                     var ot = expr_type (tc.operand);
                     gen_expr (tc.operand);
                     if (ot == ValaType.FLOAT)

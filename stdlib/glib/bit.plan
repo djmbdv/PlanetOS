@@ -1,4 +1,4 @@
-// Pure-Vala GLib.Bit bit-scan utilities (bsf/bsr) for PlanetOS.
+// GLib.Bit bit-scan utilities (bsf/bsr) for PlanetOS.
 
 namespace GLib {
 

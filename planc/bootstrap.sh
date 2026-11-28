@@ -24,11 +24,11 @@ $HERE/src/ast.vala
 $HERE/src/parser.vala
 $HERE/src/emitter.vala
 $HERE/src/asm.vala
-$HERE/src/dwarf.vala
+$HERE/src/dwarf.plan
 $HERE/src/elf.vala
 $HERE/src/spirv.vala
 $HERE/src/opt.vala
-$HERE/src/elem_layout.vala $HERE/src/effects.vala $HERE/src/puzzle_ra.vala
+$HERE/src/elem_layout.plan $HERE/src/effects.plan $HERE/src/puzzle_ra.vala
 $HERE/src/codegen.vala
 $HERE/src/main.vala
 $HERE/src/host_native.vala

@@ -646,7 +646,7 @@ namespace PlanetShell {
         if (cmd == "cat") {
             if (args.length < 2) {
                 var one = new uint8[1];
-                while (true) {
+                loop {
                     int ch = Sys.read_key ();
                     if (ch == -2) break;
                     if (ch < 0) { Sys.yield_cpu (); continue; }
@@ -717,7 +717,7 @@ namespace PlanetShell {
                 }
             } else {
                 var sb = new StringBuilder ();
-                while (true) {
+                loop {
                     int ch = Sys.read_key ();
                     if (ch == -2) break;
                     if (ch < 0) { Sys.yield_cpu (); continue; }
@@ -1282,12 +1282,12 @@ namespace PlanetShell {
         int hist_idx = -1;
         string draft_line = "";
 
-        while (true) {
+        loop {
             print (get_var ("PS1"));
             int len = 0;
             hist_idx = -1;
             draft_line = "";
-            while (true) {
+            loop {
                 int ch = Sys.read_key ();
                 if (ch < 0) {
                     Sys.yield_cpu ();

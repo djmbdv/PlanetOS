@@ -1,4 +1,4 @@
-// Pure-Vala GLib.Slice lock-free slab/freelist allocator (16..256B) for PlanetOS.
+// GLib.Slice lock-free slab/freelist allocator (16..256B) for PlanetOS.
 using Planet;
 
 namespace GLib {
@@ -23,6 +23,8 @@ namespace GLib {
             return fl;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         private static int size_to_class (size_t sz) {
             if (sz == 0 || sz > (size_t) MAX_SLAB_SZ)
                 return -1;
@@ -40,7 +42,7 @@ namespace GLib {
                 return Memory.malloc (block_size);
             var fl = ensure_freelists ();
             int slot_addr = Sys.byte_arr_addr (fl) + cls * 8;
-            while (true) {
+            loop {
                 int head = AtomicPointer.get (slot_addr);
                 if (head == 0) {
                     int page = Sys.alloc_pages (1);
@@ -56,7 +58,7 @@ namespace GLib {
                     int tail = page + (count - 1) * stride;
                     int first_next = __mem_peek64 (page);
                     if (first_next != 0) {
-                        while (true) {
+                        loop {
                             int old_head = AtomicPointer.get (slot_addr);
                             __mem_poke64 (tail, old_head);
                             if (AtomicPointer.compare_and_exchange (slot_addr, old_head, first_next))
@@ -90,7 +92,7 @@ namespace GLib {
                 return;
             var fl = ensure_freelists ();
             int slot_addr = Sys.byte_arr_addr (fl) + cls * 8;
-            while (true) {
+            loop {
                 int head = AtomicPointer.get (slot_addr);
                 if (head == mem_block)
                     return; // Guard against immediate double-free.

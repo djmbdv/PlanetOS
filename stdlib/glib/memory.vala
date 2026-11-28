@@ -162,12 +162,18 @@ namespace GLib {
         // 32 bytes keeps every returned block aligned for AVX2 loads.
         private const int HDR_BYTES = 32;
 
+#if PLANC
+        [NoAlloc]
+#endif
         public static void copy (int dest, int src, size_t n) {
             if (dest == 0 || src == 0 || n == 0 || dest == src)
                 return;
             __mem_copy_avx2 (dest, src, n);
         }
 
+#if PLANC
+        [NoAlloc]
+#endif
         public static void move (int dest, int src, size_t n) {
             if (dest == 0 || src == 0 || n == 0 || dest == src)
                 return;
@@ -178,20 +184,34 @@ namespace GLib {
         }
 
         // Raw 64-bit helpers used by Aligned and other allocators.
+#if PLANC
+        [NoAlloc]
+        [AlwaysInline]
+#endif
         public static void poke64 (int addr, int val) {
             __mem_poke64 (addr, val);
         }
 
+#if PLANC
+        [NoAlloc]
+        [AlwaysInline]
+#endif
         public static int peek64 (int addr) {
             return __mem_peek64 (addr);
         }
 
+#if PLANC
+        [NoAlloc]
+#endif
         public static void set (int dest, int val, size_t n) {
             if (dest == 0 || n == 0)
                 return;
             __mem_set_avx2 (dest, val, n);
         }
 
+#if PLANC
+        [NoAlloc]
+#endif
         public static int cmp (int s1, int s2, size_t n) {
             if (n == 0 || s1 == s2)
                 return 0;

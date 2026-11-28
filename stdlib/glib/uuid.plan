@@ -1,4 +1,4 @@
-// Pure-Vala GLib.Uuid (RFC 4122 v4) using WyRand + AVX2 hex formatting for PlanetOS.
+// GLib.Uuid (RFC 4122 v4) using WyRand + AVX2 hex formatting for PlanetOS.
 using Planet;
 
 namespace GLib {
@@ -84,6 +84,8 @@ namespace GLib {
             return lut;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         private static bool is_hex_byte (uint8 c) {
             return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
         }
@@ -125,7 +127,8 @@ namespace GLib {
         /**
          * Checks whether str is a valid 36-character UUID string.
          */
-        public static bool string_is_valid (string str) {
+        [NoAlloc]
+        public static bool string_is_valid (in string str) {
             if (str.length != 36)
                 return false;
             for (int i = 0; i < 36; i++) {

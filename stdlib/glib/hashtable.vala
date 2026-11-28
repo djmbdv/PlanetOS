@@ -54,6 +54,9 @@ namespace GLib {
         }
     }
 
+#if PLANC
+    [NoAlloc]
+#endif
     [Wrap]
     public uint str_hash (string s) {
         uint32 h = 2166136261u;
@@ -94,7 +97,7 @@ namespace GLib {
     public class HashTable<K, V> : Object {
         private K[] keys;
         private V[] vals;
-        private int[] hashes; // -1 = empty
+        private int32[] hashes; // -1 = empty
         private int _size = 0;
         private int _cap = 16;
         private HashFunc<K> _hash_fn;
@@ -122,12 +125,15 @@ namespace GLib {
             _cap = cap;
             keys = new K[cap];
             vals = new V[cap];
-            hashes = new int[cap];
+            hashes = new int32[cap];
             for (int i = 0; i < cap; i++)
                 hashes[i] = -1;
             _size = 0;
         }
 
+#if PLANC
+        [Wrap]
+#endif
         private int hash_key (K key) {
             uint32 x = has_hash ? (uint32) _hash_fn (key) : (uint32) __planc_hash (key);
             x ^= x >> 16;
@@ -147,13 +153,13 @@ namespace GLib {
         private void rehash (int new_cap) {
             K[] ok = keys;
             V[] ov = vals;
-            int[] oh = hashes;
+            int32[] oh = hashes;
             int old_cap = _cap;
             init_table (new_cap);
             int mask = new_cap - 1;
             for (int i = 0; i < old_cap; i++) {
                 if (oh[i] >= 0)
-                    insert_new (ok[i], ov[i], oh[i], mask);
+                    insert_new (ok[i], ov[i], (int) oh[i], mask);
             }
         }
 
@@ -162,9 +168,9 @@ namespace GLib {
             int dist = 0;
             K ck = key;
             V cv = val;
-            int ch = h;
+            int32 ch = (int32) h;
             while (true) {
-                int sh = hashes[idx];
+                int32 sh = hashes[idx];
                 if (sh < 0) {
                     hashes[idx] = ch;
                     keys[idx] = ck;
@@ -172,7 +178,7 @@ namespace GLib {
                     _size++;
                     return;
                 }
-                int sdist = (idx - (sh & mask)) & mask;
+                int sdist = (idx - ((int) sh & mask)) & mask;
                 if (dist > sdist) {
                     hashes[idx] = ch;
                     K tk = keys[idx]; keys[idx] = ck; ck = tk;
@@ -190,13 +196,13 @@ namespace GLib {
             int idx = h & mask;
             int dist = 0;
             while (true) {
-                int sh = hashes[idx];
+                int32 sh = hashes[idx];
                 if (sh < 0)
                     return -1;
-                int sdist = (idx - (sh & mask)) & mask;
+                int sdist = (idx - ((int) sh & mask)) & mask;
                 if (dist > sdist)
                     return -1;
-                if (sh == h && eq_key (keys[idx], key))
+                if ((int) sh == h && eq_key (keys[idx], key))
                     return idx;
                 idx = (idx + 1) & mask;
                 dist++;

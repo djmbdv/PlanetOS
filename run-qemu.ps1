@@ -323,32 +323,32 @@ if (-not $NoBuild) {
         (Join-Path $StdDir 'glib\mainloop.vala'),
         (Join-Path $StdDir 'glib\regex.vala'),
         (Join-Path $StdDir 'glib\variant.vala'),
-        (Join-Path $StdDir 'glib\time.vala'),
+        (Join-Path $StdDir 'glib\time.plan'),
         (Join-Path $StdDir 'glib\thread.vala'),
-        (Join-Path $StdDir 'glib\uuid.vala'),
-        (Join-Path $StdDir 'glib\bit.vala'),
+        (Join-Path $StdDir 'glib\uuid.plan'),
+        (Join-Path $StdDir 'glib\bit.plan'),
         (Join-Path $StdDir 'glib\memory.vala'),
-        (Join-Path $StdDir 'glib\slice.vala'),
+        (Join-Path $StdDir 'glib\slice.plan'),
         (Join-Path $StdDir 'glib\atomic.vala'),
-        (Join-Path $StdDir 'glib\bytes.vala'),
+        (Join-Path $StdDir 'glib\bytes.plan'),
         (Join-Path $StdDir 'glib\codec.vala'),
         (Join-Path $StdDir 'glib\hashtable.vala'),
-        (Join-Path $StdDir 'glib\queue.vala'),
-        (Join-Path $StdDir 'glib\uri.vala'),
+        (Join-Path $StdDir 'glib\queue.plan'),
+        (Join-Path $StdDir 'glib\uri.plan'),
         (Join-Path $StdDir 'glib\bookmark.vala'),
-        (Join-Path $StdDir 'glib\arena.vala'),
-        (Join-Path $StdDir 'glib\simd.vala')
+        (Join-Path $StdDir 'glib\arena.plan'),
+        (Join-Path $StdDir 'glib\simd.plan')
     )
     $GeeSrcs = @(
         (Join-Path $StdDir 'gee\base.vala'),
-        (Join-Path $StdDir 'gee\lists.vala'),
+        (Join-Path $StdDir 'gee\lists.plan'),
         (Join-Path $StdDir 'gee\maps.vala'),
         (Join-Path $StdDir 'gee\queues.vala'),
         (Join-Path $StdDir 'gee\trees.vala')
     )
     $GioSrcs = @(
         (Join-Path $StdDir 'gio\types.vala'),
-        (Join-Path $StdDir 'gio\streams.vala'),
+        (Join-Path $StdDir 'gio\streams.plan'),
         (Join-Path $StdDir 'gio\converter.vala'),
         (Join-Path $StdDir 'gio\file.vala'),
         (Join-Path $StdDir 'gio\models.vala'),
@@ -403,18 +403,25 @@ if (-not $NoBuild) {
     function Lib-Hlib([string]$Pkg) { return (Join-Path (Join-Path $LibDir $Pkg) ($Pkg + '.hlib')) }
 
     Invoke-Planc (@('--target=planetos', $Opt, '--nostdlib', '--format=dlib', '--image-base=0x1800000', $PlanetSys) + $GlibSrcs + @('-o', (Lib-Dlib 'glib')))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1A80000', (Join-Path $StdDir 'planet_unsafe.vala'), '-o', (Lib-Dlib 'unsafe'))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1880000') + $GeeSrcs + @('-o', (Lib-Dlib 'gee')))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', '--image-base=0x1AA0000') + $GioSrcs + @('-o', (Lib-Dlib 'gio')))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x18E0000') + $CairoSrcs + @('-o', (Lib-Dlib 'cairo')))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=cairo', '--format=dlib', '--image-base=0x1900000') + $GdkSrcs + @('-o', (Lib-Dlib 'gdk')))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--format=dlib', '--image-base=0x1920000', (Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), '-o', (Lib-Dlib 'pango'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1950000', (Join-Path $StdDir 'spirv_compat.vala'), '-o', (Lib-Dlib 'spirv'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1970000', (Join-Path $StdDir 'venus_compat.vala'), '-o', (Lib-Dlib 'venus'))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=spirv', '--import-lib=venus', '--format=dlib', '--image-base=0x1990000') + $GskSrcs + @('-o', (Lib-Dlib 'gsk')))
-    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=spirv', '--import-lib=venus', '--format=dlib', '--image-base=0x19C0000') + $GtkSrcs + @('-o', (Lib-Dlib 'gtk')))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1A40000', (Join-Path $StdDir 'gobject_compat.vala'), '-o', (Lib-Dlib 'gobject'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', '--image-base=0x1A60000', (Join-Path $StdDir 'gmodule_compat.vala'), '-o', (Lib-Dlib 'gmodule'))
+    $DlibBases = @{}
+    foreach ($line in (& python (Join-Path $Root 'tools/dlib_layout.py') plan $LibDir --ps1)) {
+        $kv = $line -split '=', 2
+        if ($kv.Count -eq 2) { $DlibBases[$kv[0]] = $kv[1] }
+    }
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', "--image-base=$($DlibBases['unsafe'])", (Join-Path $StdDir 'planet_unsafe.vala'), '-o', (Lib-Dlib 'unsafe'))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--format=dlib', "--image-base=$($DlibBases['gee'])") + $GeeSrcs + @('-o', (Lib-Dlib 'gee')))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', "--image-base=$($DlibBases['gio'])") + $GioSrcs + @('-o', (Lib-Dlib 'gio')))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--format=dlib', "--image-base=$($DlibBases['cairo'])") + $CairoSrcs + @('-o', (Lib-Dlib 'cairo')))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=cairo', '--format=dlib', "--image-base=$($DlibBases['gdk'])") + $GdkSrcs + @('-o', (Lib-Dlib 'gdk')))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--format=dlib', "--image-base=$($DlibBases['pango'])", (Join-Path $StdDir 'schrift.vala'), (Join-Path $StdDir 'pango_compat.vala'), '-o', (Lib-Dlib 'pango'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', "--image-base=$($DlibBases['spirv'])", (Join-Path $StdDir 'spirv_compat.vala'), '-o', (Lib-Dlib 'spirv'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', "--image-base=$($DlibBases['venus'])", (Join-Path $StdDir 'venus_compat.vala'), '-o', (Lib-Dlib 'venus'))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=spirv', '--import-lib=venus', '--format=dlib', "--image-base=$($DlibBases['gsk'])") + $GskSrcs + @('-o', (Lib-Dlib 'gsk')))
+    Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=spirv', '--import-lib=venus', '--format=dlib', "--image-base=$($DlibBases['gtk'])") + $GtkSrcs + @('-o', (Lib-Dlib 'gtk')))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', "--image-base=$($DlibBases['gobject'])", (Join-Path $StdDir 'gobject_compat.vala'), '-o', (Lib-Dlib 'gobject'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', "--image-base=$($DlibBases['gmodule'])", (Join-Path $StdDir 'gmodule_compat.vala'), '-o', (Lib-Dlib 'gmodule'))
+    & python (Join-Path $Root 'tools/dlib_layout.py') verify $LibDir
+    if ($LASTEXITCODE -ne 0) { throw "dlib_layout verify failed" }
 
     # In-guest compiles need the GLib declarations (c2plan_sdk.plan),
     # packed into one file because the guest shell line buffer is only 480 bytes.
@@ -426,12 +433,12 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $UserDir 'init.vala'), '-o', (Out-Path 'init.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0x900000', (Join-Path $UserDir 'worker.vala'), '-o', (Out-Path 'worker.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'banner.vala'), '-o', (Out-Path 'banner.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', (Join-Path $UserDir 'wc.vala'), '-o', (Out-Path 'wc.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', (Join-Path $UserDir 'wc.plan'), '-o', (Out-Path 'wc.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'gio_demo.vala'), '-o', (Out-Path 'gio_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', '--import-lib=gio', (Join-Path $UserDir 'curl.vala'), '-o', (Out-Path 'curl.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gobject', (Join-Path $UserDir 'gobject_demo.vala'), '-o', (Out-Path 'gobject_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gmodule', (Join-Path $UserDir 'gmodule_demo.vala'), '-o', (Out-Path 'gmodule_demo.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $StdDir 'planet_math_kernels.vala'), (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
+    Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $StdDir 'planet_math_kernels.vala'), (Join-Path $UserDir 'mathlib.plan'), '-o', (Out-Path 'mathlib.dlib'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gmodule', (Join-Path $UserDir 'plan_demo.plan'), '-o', (Out-Path 'plan_demo.plan'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--import-lib=gdk', (Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf'))
@@ -441,9 +448,9 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', (Join-Path $UserDir 'vk_demo.vala'), '-o', (Out-Path 'vk_demo.elf'))
     Invoke-Planc (@('--target=planetos', $Opt, $LibFlags, '--image-base=0xE00000', '--import-lib=unsafe', '--import-lib=gio', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=pango', '--import-lib=spirv', '--import-lib=venus', '--import-lib=gsk', '--import-lib=gtk') + $CompositorSrcs + @('-o', (Out-Path 'compositor.elf')))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--import-lib=pango', (Join-Path $UserDir 'pango_demo.vala'), '-o', (Out-Path 'pango_demo.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', '--import-lib=gio', '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=gtk', (Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', '--import-lib=gio', '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=gtk', (Join-Path $UserDir 'pcm4.plan'), '-o', (Out-Path 'pcm4.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'pluto.vala'), '-o', (Out-Path 'pluto.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gee', '--import-lib=gio', '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=gtk', (Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gee', '--import-lib=gio', '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=gtk', (Join-Path $UserDir 'saturn.plan'), '-o', (Out-Path 'saturn.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2plan_rt.plan'), '-o', (Out-Path 'jsmn_demo.elf'))
     # sys_demo carries the `system` case checks (handles, grants, rings, blk):
     # without this line the suite runs whatever stale binary the image had.
@@ -466,8 +473,8 @@ if (-not $NoBuild) {
         '-o', (Out-Path 'c2plan.elf')
     ))
 
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xA00000', '--import-lib=gee', (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xB00000', '--import-lib=gee', (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'vte_sh.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xA00000', '--import-lib=gee', (Join-Path $UserDir 'shell.plan'), '-o', (Out-Path 'shell.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xB00000', '--import-lib=gee', (Join-Path $UserDir 'shell.plan'), '-o', (Out-Path 'vte_sh.elf'))
 
     Invoke-Planc @(
         '--target=planetos', $Opt, $LibFlags, '--image-base=0xC00000',
@@ -481,12 +488,12 @@ if (-not $NoBuild) {
         (Join-Path $SrcDir 'asm.vala'),
         (Join-Path $SrcDir 'emitter.vala'),
         (Join-Path $SrcDir 'elf.vala'),
-        (Join-Path $SrcDir 'dwarf.vala'),
+        (Join-Path $SrcDir 'dwarf.plan'),
         (Join-Path $SrcDir 'spirv.vala'),
         (Join-Path $SrcDir 'opt.vala'),
-        (Join-Path $SrcDir 'pe.vala'),
-        (Join-Path $SrcDir 'elem_layout.vala'),
-        (Join-Path $SrcDir 'effects.vala'),
+        (Join-Path $SrcDir 'pe.plan'),
+        (Join-Path $SrcDir 'elem_layout.plan'),
+        (Join-Path $SrcDir 'effects.plan'),
         (Join-Path $SrcDir 'puzzle_ra.vala'),
         (Join-Path $SrcDir 'codegen.vala'),
         (Join-Path $SrcDir 'main.vala'),
@@ -509,13 +516,13 @@ if (-not $NoBuild) {
         (Join-Path $KernelDir 'virtio_blk.vala'),
         (Join-Path $KernelDir 'virtio_net.vala'),
         (Join-Path $KernelDir 'env.vala'),
-        (Join-Path $KernelDir 'ramfs.vala'),
+        (Join-Path $KernelDir 'ramfs.plan'),
         (Join-Path $KernelDir 'keyboard.vala'),
         (Join-Path $KernelDir 'rtc.vala'),
         (Join-Path $KernelDir 'mouse.vala'),
         (Join-Path $KernelDir 'ata.vala'),
         (Join-Path $KernelDir 'xfs.vala'),
-        (Join-Path $KernelDir 'vfs.vala'),
+        (Join-Path $KernelDir 'vfs.plan'),
         (Join-Path $KernelDir 'syscall.vala'),
         (Join-Path $KernelDir 'elf_loader.vala'),
         (Join-Path $KernelDir 'sched.vala'),

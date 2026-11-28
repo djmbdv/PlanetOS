@@ -6,7 +6,7 @@ using Gtk;
 
 namespace Pcmanfm {
 
-    public string join_child_path (string dir, string name) {
+    public string join_child_path (in string dir, in string name) {
         if (dir == "/" || dir.length == 0)
             return "/" + name;
         if (dir.has_suffix ("/"))
@@ -14,7 +14,7 @@ namespace Pcmanfm {
         return dir + "/" + name;
     }
 
-    public string basename_for_path (string path) {
+    public string basename_for_path (in string path) {
         if (path == "/" || path.length == 0)
             return "/";
         var f = File.new_for_path (path);
@@ -251,7 +251,7 @@ namespace Pcmanfm {
             try {
                 var dir_file = File.new_for_path (target);
                 var en = dir_file.enumerate_children ();
-                while (true) {
+                loop {
                     var info = en.next_file ();
                     if (info == null)
                         break;
@@ -991,7 +991,7 @@ namespace Pcmanfm {
                 if (!dst.query_exists ())
                     dst.make_directory ();
                 var en = src.enumerate_children ();
-                while (true) {
+                loop {
                     var child = en.next_file ();
                     if (child == null) break;
                     string nm = child.get_name ();
@@ -1007,7 +1007,7 @@ namespace Pcmanfm {
             var info = target.query_info ();
             if (info.get_file_type () == FileType.DIRECTORY) {
                 var en = target.enumerate_children ();
-                while (true) {
+                loop {
                     var child = en.next_file ();
                     if (child == null) break;
                     delete_recursive (target.get_child (child.get_name ()));

@@ -1258,7 +1258,7 @@ namespace Planc {
             for (int i = 0; i < chunk.enums.length; i++) {
                 var e = chunk.enums[i];
                 unowned var ex = find_enum (e.name);
-                if (ex != null && !ex.is_defined) {
+                if (ex != null && ex != e && !ex.is_defined) {
                     ex.file = file_path;
                     ex.is_defined = e.is_defined;
                     ex.line = e.line;
@@ -1273,7 +1273,7 @@ namespace Planc {
             for (int i = 0; i < chunk.structs.length; i++) {
                 var s = chunk.structs[i];
                 unowned var ex = find_struct (s.name);
-                if (ex != null && !ex.is_defined) {
+                if (ex != null && ex != s && !ex.is_defined) {
                     ex.file = file_path;
                     ex.is_defined = s.is_defined;
                     ex.is_union = s.is_union;
@@ -1295,7 +1295,7 @@ namespace Planc {
             for (int i = 0; i < chunk.classes.length; i++) {
                 var c = chunk.classes[i];
                 unowned var ex = find_class (c.name);
-                if (ex != null && !ex.is_defined) {
+                if (ex != null && ex != c && !ex.is_defined) {
                     ex.file = file_path;
                     ex.base_name = c.base_name;
                     ex.is_abstract = c.is_abstract;
@@ -1325,7 +1325,7 @@ namespace Planc {
             for (int i = 0; i < chunk.interfaces.length; i++) {
                 var it = chunk.interfaces[i];
                 unowned var ex = find_interface (it.name);
-                if (ex != null && !ex.is_defined) {
+                if (ex != null && ex != it && !ex.is_defined) {
                     ex.is_defined = it.is_defined;
                     ex.is_generic_template = it.is_generic_template;
                     ex.line = it.line;
@@ -1344,7 +1344,7 @@ namespace Planc {
             for (int i = 0; i < chunk.delegates.length; i++) {
                 var d = chunk.delegates[i];
                 unowned var ex = find_delegate (d.name);
-                if (ex != null && !ex.is_defined) {
+                if (ex != null && ex != d && !ex.is_defined) {
                     ex.is_defined = d.is_defined;
                     ex.is_generic_template = d.is_generic_template;
                     ex.return_type = d.return_type;
@@ -1363,7 +1363,7 @@ namespace Planc {
             for (int i = 0; i < chunk.error_domains.length; i++) {
                 var ed = chunk.error_domains[i];
                 unowned var ex = find_error_domain (ed.name);
-                if (ex != null && !ex.is_defined) {
+                if (ex != null && ex != ed && !ex.is_defined) {
                     ex.is_defined = ed.is_defined;
                     ex.line = ed.line;
                     ex.column = ed.column;
@@ -2021,11 +2021,20 @@ namespace Planc {
                     n.default_body.add (clone_stmt (ds, tparams, targs, targ_names));
                 return n;
             }
+            if (s is DeferStatement) {
+                var o = (DeferStatement) s;
+                return new DeferStatement () {
+                    is_errdefer = o.is_errdefer,
+                    body = clone_stmt (o.body, tparams, targs, targ_names),
+                    line = o.line, column = o.column
+                };
+            }
             if (s is ThrowStatement) {
                 var o = (ThrowStatement) s;
                 return new ThrowStatement () {
                     domain_name = o.domain_name,
                     code_name = o.code_name,
+                    is_light_code = o.is_light_code,
                     message = clone_expr (o.message, tparams, targs, targ_names),
                     line = o.line, column = o.column
                 };
@@ -2082,6 +2091,13 @@ namespace Planc {
                 asm_body = f.asm_body,
                 asm_line = f.asm_line,
                 asm_column = f.asm_column,
+                is_noalloc = f.is_noalloc,
+                is_always_inline = f.is_always_inline,
+                is_arena = f.is_arena,
+                is_checked_overflow = f.is_checked_overflow,
+                is_wrap = f.is_wrap,
+                is_bang_err = f.is_bang_err,
+                return_unowned = f.return_unowned,
                 line = f.line, column = f.column
             };
             foreach (var p in f.params) {
@@ -2093,6 +2109,7 @@ namespace Planc {
                     type_name = pn,
                     name = p.name,
                     unmanaged = p.unmanaged,
+                    is_unowned = p.is_unowned,
                     is_ref = p.is_ref,
                     is_out = p.is_out,
                     default_value = (p.default_value != null) ? clone_expr (p.default_value, tparams, targs, targ_names) : null,
@@ -2101,6 +2118,10 @@ namespace Planc {
             }
             foreach (var td in f.throws_domains)
                 nf.throws_domains.add (td);
+            foreach (var rq in f.requires_exprs)
+                nf.requires_exprs.add (clone_expr (rq, tparams, targs, targ_names));
+            foreach (var en in f.ensures_exprs)
+                nf.ensures_exprs.add (clone_expr (en, tparams, targs, targ_names));
             foreach (var ba in f.base_args)
                 nf.base_args.add (clone_expr (ba, tparams, targs, targ_names));
             foreach (var st in f.body)

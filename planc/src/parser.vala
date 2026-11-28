@@ -930,8 +930,8 @@ namespace Planc {
             }
             expect (TokenKind.RPAREN, "')'");
             string tname = sb.str;
-            if (types_prog.find_struct (tname) == null) {
-                var sd = new StructDecl () { name = tname, line = l, column = c };
+            if (types_prog.find_struct (tname) == null && program.find_struct (tname) == null) {
+                var sd = new StructDecl () { name = tname, is_defined = true, line = l, column = c };
                 for (int fi = 0; fi < ftypes.length; fi++) {
                     sd.fields.add (new StructField () {
                         field_type = ftypes[fi],
@@ -941,7 +941,6 @@ namespace Planc {
                         column = c
                     });
                 }
-                types_prog.structs.add (sd);
                 program.structs.add (sd);
             }
             return tname;
@@ -3189,7 +3188,7 @@ namespace Planc {
                     continue;
                 }
 
-                if (current.kind != TokenKind.IDENTIFIER)
+                if (current.kind != TokenKind.IDENTIFIER && current.kind != TokenKind.LPAREN)
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"expected member declaration in class '$(cd.name)' at $(current.line):$(current.column)");
 
@@ -3287,6 +3286,10 @@ namespace Planc {
                     }
                     ft = ValaType.CLASS;
                     ft_name = cd.name;
+                    parse_type_suffix (ref ft, ref ft_name);
+                } else if (current.kind == TokenKind.LPAREN) {
+                    ft = ValaType.STRUCT;
+                    ft_name = parse_tuple_type ();
                     parse_type_suffix (ref ft, ref ft_name);
                 } else {
                     // `T name<T> (...)` needs its type parameters before the
@@ -3408,10 +3411,13 @@ namespace Planc {
                     consume_gt ();
                 }
 
+                bool m_is_bang = false;
                 if (current.kind == TokenKind.NOT) {
                     var look = lexer.clone_state ();
-                    if (look.next ().kind == TokenKind.LPAREN)
+                    if (look.next ().kind == TokenKind.LPAREN) {
+                        m_is_bang = true;
                         advance ();
+                    }
                 }
                 if (current.kind == TokenKind.LPAREN) {
                     if (is_abstract_m && !cd.is_abstract)
@@ -3429,6 +3435,7 @@ namespace Planc {
                         return_type = ft,
                         return_type_name = ft_name,
                         return_unowned = mem_is_unowned,
+                        is_bang_err = m_is_bang,
                         is_virtual = is_virtual,
                         is_override = is_override,
                         is_abstract = is_abstract_m,

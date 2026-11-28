@@ -129,10 +129,18 @@ namespace GLib {
             sha_h[6] = 0x1f83d9abu; sha_h[7] = 0x5be0cd19u;
         }
 
+#if PLANC
+        [NoAlloc]
+        [AlwaysInline]
+        [Wrap]
+#endif
         private static uint32 rotr32 (uint32 v, int n) {
             return (v >> n) | (v << (32 - n));
         }
 
+#if PLANC
+        [Wrap]
+#endif
         private void sha_compress () {
             var k = ensure_sha_k ();
             var w = sha_w;

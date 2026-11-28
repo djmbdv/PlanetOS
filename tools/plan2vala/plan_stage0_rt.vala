@@ -2,6 +2,11 @@
 // Provides PlanetOS stdlib extensions (array slicing, ByteSlice, PlanMem)
 // on top of standard GLib so `valac` can compile `.plan` code on the host.
 
+public errordomain _P2VLightError {
+    CODE
+}
+public int _p2v_err_code = 0;
+
 public int[] _plan_slice_int (int[] arr, int start, int end) {
     if (start < 0) start = 0;
     if (end > arr.length) end = arr.length;

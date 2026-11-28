@@ -42,20 +42,20 @@ namespace Planet.Kernel {
     ")]
     public extern int bga_read (int reg);
 
-    [AsmBody(@"
-        # Invalida la TLB recargando CR3 tras actualizar las entradas de pagina del LFB
-        mov %cr3, %rax
-        mov %rax, %cr3
-        ret
-    ")]
-    public extern void tlb_flush ();
+#if PLANC
+    [NoAlloc]
+    [AlwaysInline]
+#endif
+    public void tlb_flush () {
+        vmm_write_cr3 (vmm_read_cr3 ());
+    }
 
     [AsmBody(@"
         # fb_copy_dwords(dst in rdi, src in rsi, count in rdx)
         # Copia 'count' pixeles de 32 bits (ARGB) usando SSE2 (16B/iter) + cola de 4B
         mov %rdx, %rcx
         test %rcx, %rcx
-        jz _fb_cp_done
+        jle _fb_cp_done
     _fb_cp_sse:
         cmp $4, %rcx
         jb _fb_cp_loop
@@ -84,7 +84,7 @@ namespace Planet.Kernel {
         # Copia 'count' pixeles de 32 bits (ARGB) usando AVX2 (32B/iter) + cola de 4B
         mov %rdx, %rcx
         test %rcx, %rcx
-        jz _fb_avx_done
+        jle _fb_avx_done
     _fb_avx_loop:
         cmp $8, %rcx
         jb _fb_avx_tail
@@ -109,23 +109,21 @@ namespace Planet.Kernel {
     ")]
     public extern void fb_copy_dwords_avx2 (int dst, int src, int count);
 
-    [AsmBody(@"
-        # vga_inb(port in rdi) -> lee 1 byte desde un puerto I/O VGA
-        mov %di, %dx
-        xor %eax, %eax
-        in %dx, %al
-        ret
-    ")]
-    public extern int vga_inb (int port);
+#if PLANC
+    [NoAlloc]
+    [AlwaysInline]
+#endif
+    public int vga_inb (int port) {
+        return port_in8 (port);
+    }
 
-    [AsmBody(@"
-        # vga_outb(port in rdi, val in rsi) -> escribe 1 byte en un puerto I/O VGA
-        mov %di, %dx
-        mov %sil, %al
-        out %al, %dx
-        ret
-    ")]
-    public extern void vga_outb (int port, int val);
+#if PLANC
+    [NoAlloc]
+    [AlwaysInline]
+#endif
+    public void vga_outb (int port, int val) {
+        port_out8 (port, val);
+    }
 
     public interface DisplayBackend : Object {
         public abstract int init_mode (int w, int h);

@@ -1205,13 +1205,13 @@ namespace Gee {
         }
 
         private static int str_fnv1a (string key) {
-            uint32 h = (uint32) 2166136261;
+            uint32 h = 2166136261u;
             int len = key.length;
             for (int i = 0; i < len; i++) {
                 h = h ^ (uint32) (key[i] & 0xFF);
-                h = h * (uint32) 16777619;
+                h = h * 16777619u;
             }
-            return (int) (h & (uint32) 0x7FFFFFFF);
+            return (int) (h & 0x7FFFFFFFu);
         }
 
         private static int fingerprint (int h) {

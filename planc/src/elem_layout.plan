@@ -17,14 +17,12 @@ namespace Planc {
 
         // Type names reach the backends either as the element name ("uint8") or
         // with the nullable marker ("uint8?"); both forms name the same layout.
-        public static string base_name (string tname) {
+        public static string base_name (in string tname) {
             return tname.has_suffix ("?") ? tname.substring (0, tname.length - 1) : tname;
         }
 
-#if PLANC
         [AlwaysInline]
-#endif
-        public static int kind (string tname) {
+        public static int kind (in string tname) {
             var b = base_name (tname);
             if (b == "uint8" || b == "uchar" || b == "char") return U8;
             if (b == "int8") return I8;
@@ -35,10 +33,8 @@ namespace Planc {
             return SLOT;
         }
 
-#if PLANC
         [NoAlloc]
         [AlwaysInline]
-#endif
         public static int stride (int kind) {
             if (kind == U8 || kind == I8) return 1;
             if (kind == U16 || kind == I16) return 2;
@@ -46,26 +42,31 @@ namespace Planc {
             return 8;
         }
 
-#if PLANC
         [NoAlloc]
         [AlwaysInline]
-#endif
         public static bool is_signed (int kind) {
             return kind == I8 || kind == I16 || kind == I32;
         }
 
-#if PLANC
         [AlwaysInline]
-#endif
-        public static bool is_packed (string tname) {
+        public static bool is_packed (in string tname) {
             return kind (tname) != SLOT;
         }
 
-#if PLANC
         [AlwaysInline]
-#endif
-        public static int stride_of (string tname) {
+        public static int stride_of (in string tname) {
             return stride (kind (tname));
+        }
+
+        // True when an array of `tname` holds unmanaged scalar values (no refcounting).
+        public static bool is_scalar_unmanaged (in string tname) {
+            if (kind (tname) != SLOT) return true;
+            var b = base_name (tname);
+            return b == "" || b == "int" || b == "int64" || b == "uint64"
+                || b == "long" || b == "ulong" || b == "size_t" || b == "ssize_t"
+                || b == "bool" || b == "double" || b == "float"
+                || b == "int[]" || b == "int64[]" || b == "uint64[]"
+                || b == "double[]" || b == "bool[]";
         }
     }
 }

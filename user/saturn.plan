@@ -1,4 +1,4 @@
-// Saturn: Geany-inspired GTK IDE & text editor for PlanetOS (100% pure Vala).
+// Saturn: Geany-inspired GTK IDE & text editor for PlanetOS.
 
 using GLib;
 using Gee;
@@ -61,12 +61,12 @@ namespace SaturnIDE {
             dmg_count = lines.length;
         }
 
-        private static string sanitize_line (string s) {
+        private static string sanitize_line (in string s) {
             string clean = Str.replace (s, "\r", "");
             return Str.replace (clean, "\t", "    ");
         }
 
-        public bool load_file (string path) {
+        public bool load_file (in string path) {
             filename = path;
             string raw = "";
             bool ok = FileUtils.get_contents (path, out raw);
@@ -103,7 +103,7 @@ namespace SaturnIDE {
             return true;
         }
 
-        public int save_file (string path) {
+        public int save_file (in string path) {
             filename = path;
             string payload = Str.joinv ("\n", lines);
             if (!FileUtils.set_contents (path, payload))
@@ -139,7 +139,9 @@ namespace SaturnIDE {
             if (min_h < 200) min_h = 200;
         }
 
-        private static bool is_comment_line (string s) {
+        [NoAlloc]
+        [AlwaysInline]
+        private static bool is_comment_line (in string s) {
             int i = 0;
             while (i < s.length && s[i] == ' ') i++;
             return (i + 1 < s.length && s[i] == '/' && s[i + 1] == '/');
@@ -147,7 +149,8 @@ namespace SaturnIDE {
 
         // Prefix compare at an offset: no substring, so classifying a line for
         // colouring allocates nothing.
-        private static bool at_prefix (string s, int start, string p) {
+        [AlwaysInline]
+        private static bool at_prefix (in string s, int start, in string p) {
             if (start < 0 || start + p.length > s.length)
                 return false;
             for (int k = 0; k < p.length; k++) {
@@ -157,7 +160,7 @@ namespace SaturnIDE {
             return true;
         }
 
-        private static bool has_keyword_prefix (string s) {
+        private static bool has_keyword_prefix (in string s) {
             int i = 0;
             while (i < s.length && s[i] == ' ') i++;
             return at_prefix (s, i, "using ") || at_prefix (s, i, "namespace ")
@@ -327,7 +330,7 @@ namespace SaturnIDE {
             return base.take_damage (out dx, out dy, out dw, out dh);
         }
 
-        private void insert_line_at (int idx, string text) {
+        private void insert_line_at (int idx, in string text) {
             if (idx < 0) idx = 0;
             if (idx > lines.length) idx = lines.length;
             lines.add ("");
@@ -336,7 +339,7 @@ namespace SaturnIDE {
             lines[idx] = text;
         }
 
-        public bool find_next (string query) {
+        public bool find_next (in string query) {
             if (query.length == 0 || lines.length == 0)
                 return false;
             int start = cx + 1;
@@ -361,6 +364,8 @@ namespace SaturnIDE {
             return false;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         private int page_lines () {
             return 20;
         }
@@ -514,11 +519,11 @@ namespace SaturnIDE {
             string ln = st.editor.lines[i];
             int k = 0;
             while (k < ln.length && ln[k] == ' ') k++;
-            string t = ln.substring (k);
-            if (t.has_prefix ("public class ") || t.has_prefix ("private class ")
-                || t.has_prefix ("class ") || t.has_prefix ("int main")
-                || t.has_prefix ("public void ") || t.has_prefix ("private void ")
-                || t.has_prefix ("public bool ") || t.has_prefix ("private static ")) {
+            if (CodeView.at_prefix (ln, k, "public class ") || CodeView.at_prefix (ln, k, "private class ")
+                || CodeView.at_prefix (ln, k, "class ") || CodeView.at_prefix (ln, k, "int main")
+                || CodeView.at_prefix (ln, k, "public void ") || CodeView.at_prefix (ln, k, "private void ")
+                || CodeView.at_prefix (ln, k, "public bool ") || CodeView.at_prefix (ln, k, "private static ")) {
+                string t = ln.substring (k);
                 int paren = t.index_of ("{");
                 string label = (paren > 0) ? t.substring (0, paren) : t;
                 syms.add (label);
@@ -529,7 +534,7 @@ namespace SaturnIDE {
         st.symbols_lv.set_items (syms, icons);
     }
 
-    private static void load_file_list (SaturnState st, string dir_path) {
+    private static void load_file_list (SaturnState st, in string dir_path) {
         var items = new GenericArray<string> ();
         var icons = new GenericArray<string> ();
         st.file_names = new GenericArray<string> ();
@@ -537,7 +542,7 @@ namespace SaturnIDE {
             var dir = File.new_for_path (dir_path);
             var en = dir.enumerate_children ();
             if (en != null) {
-                while (true) {
+                loop {
                     var info = en.next_file ();
                     if (info == null) break;
                     string nm = info.get_name ();
@@ -684,6 +689,11 @@ namespace SaturnIDE {
         int pages = SharedSurface.pages_for (w, h);
         int shm = Sys.alloc_pages (pages);
         if (shm > 0) {
+            defer {
+                Sys.unsetenv ("PLANET_WIN_SHM");
+                for (int p = 0; p < pages; p++)
+                    Sys.free_page (shm + p * 4096);
+            }
             Unsafe.poke32 (shm + SharedSurface.OFF_MAGIC, SharedSurface.MAGIC);
             Unsafe.poke32 (shm + SharedSurface.OFF_WIDTH, w);
             Unsafe.poke32 (shm + SharedSurface.OFF_HEIGHT, h);
@@ -714,10 +724,6 @@ namespace SaturnIDE {
             int px = Unsafe.peek32 (shm + SharedSurface.pixel_offset () + (2 * w + 2) * 4);
             if (((px >> 24) & 0xFF) != 255)
                 fails++;
-
-            Sys.unsetenv ("PLANET_WIN_SHM");
-            for (int p = 0; p < pages; p++)
-                Sys.free_page (shm + p * 4096);
         } else {
             checks++;
             fails++;
@@ -863,7 +869,7 @@ namespace SaturnIDE {
             string target = path_entry.get_text ();
             if (target.length == 0) target = editor.filename;
             editor.save_file (target);
-            if (target.has_suffix (".vala")) {
+            if (target.has_suffix (".vala") || target.has_suffix (".plan")) {
                 string out_elf = "_saturn_out.elf";
                 try {
                     string so = "";

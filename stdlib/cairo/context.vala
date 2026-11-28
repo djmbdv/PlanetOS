@@ -8,7 +8,7 @@ namespace Cairo {
         # Fills 'count' 32-bit ARGB pixels using AVX2 (32B/iter) + 4B tail
         mov %rdx, %rcx
         test %rcx, %rcx
-        jz _cf_done
+        jle _cf_done
         mov %esi, %eax
         cmp $8, %rcx
         jb _cf_loop
@@ -66,27 +66,26 @@ namespace Cairo {
     ")]
     private extern void __c_blit32 (int dst, int src, int count);
 
+        // Writes one 32-bit ARGB pixel at 'addr'
     [AsmBody(@"
-        # Writes one 32-bit ARGB pixel at 'addr' (rdi)
-        mov %esi, (%rdi)
+        # __c_poke32(addr in rdi, val in esi)
+        movl %esi, (%rdi)
         ret
     ")]
     private extern void __c_poke32 (int addr, int val);
 
+        // Reads one 32-bit ARGB pixel from 'addr'
     [AsmBody(@"
-        # Reads one 32-bit ARGB pixel from 'addr' (rdi)
-        mov (%rdi), %eax
+        # __c_peek32(addr in rdi) -> eax
+        movl (%rdi), %eax
         ret
     ")]
     private extern int __c_peek32 (int addr);
 
-    [AsmBody(@"
-        # Data pointer of a uint8[] (header is 16 bytes)
-        add $16, %rdi
-        mov %rdi, %rax
-        ret
-    ")]
-    private extern int __c_arr_data (uint8[] a);
+        // Data pointer of a uint8[]
+        private static int __c_arr_data (uint8[] a) {
+            return Sys.byte_arr_addr (a);
+        }
 
     [AsmBody(@"
         # __c_blend_mask_rect(dst in rdi, mask in rsi, span in rdx, rows in rcx,

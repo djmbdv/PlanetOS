@@ -36,6 +36,9 @@ namespace Planet.Kernel {
         private const uint64 PTE_USER_RW   = PTE_PRESENT | PTE_WRITABLE | PTE_USER;
         private const uint64 PTE_ADDR_MASK = ~0xFFF;
 
+#if PLANC
+        [NoAlloc]
+#endif
         private static bool ensure_pt_in_pd (int pd_base, int addr, bool user_dir, out int pt_base) {
             pt_base = 0;
             if (addr < 0 || addr >= MAX_SPLIT_ADDR)

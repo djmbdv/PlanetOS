@@ -50,6 +50,7 @@ namespace GLib {
             get { return failures; }
         }
 
+        [NoAlloc]
         public void reset () {
             cursor = 0;
             gen++;
@@ -71,6 +72,8 @@ namespace GLib {
             return h;
         }
 
+        [NoAlloc]
+        [AlwaysInline]
         public bool valid (ArenaHandle h) {
             if (h.generation != gen)
                 return false;
@@ -81,6 +84,7 @@ namespace GLib {
             return true;
         }
 
+        [AlwaysInline]
         public uint8 get (ArenaHandle h, int i) {
             if (!valid (h) || i < 0 || i >= h.length) {
                 failures++;
@@ -89,6 +93,7 @@ namespace GLib {
             return store[h.offset + i];
         }
 
+        [AlwaysInline]
         public void set (ArenaHandle h, int i, uint8 v) {
             if (!valid (h) || i < 0 || i >= h.length) {
                 failures++;
@@ -98,11 +103,11 @@ namespace GLib {
         }
 
         public int get_int (ArenaHandle h, int index) {
-            int pos = index * 4;
-            if (!valid (h) || pos < 0 || pos + 4 > h.length) {
+            if (!valid (h) || index < 0 || h.length < 4 || index > ((h.length - 4) >> 2)) {
                 failures++;
                 return 0;
             }
+            int pos = index * 4;
             uint32 v = 0;
             for (int k = 0; k < 4; k++)
                 v |= ((uint32) store[h.offset + pos + k]) << (8 * k);
@@ -110,11 +115,11 @@ namespace GLib {
         }
 
         public void set_int (ArenaHandle h, int index, int value) {
-            int pos = index * 4;
-            if (!valid (h) || pos < 0 || pos + 4 > h.length) {
+            if (!valid (h) || index < 0 || h.length < 4 || index > ((h.length - 4) >> 2)) {
                 failures++;
                 return;
             }
+            int pos = index * 4;
             uint32 v = (uint32) value;
             for (int k = 0; k < 4; k++)
                 store[h.offset + pos + k] = (uint8) ((v >> (8 * k)) & 0xFF);

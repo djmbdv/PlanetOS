@@ -1305,7 +1305,9 @@ namespace Planc {
                         int si2 = lookup_var (((VarRef) ix.target).name);
                         if (si2 >= 0 && var_types[si2] == ValaType.ARRAY) {
                             int src_stride = ElemLayout.stride (ElemLayout.kind (var_tnames[si2]));
-                            if (src_stride == arr_stride) {
+                            if (src_stride == arr_stride
+                                && ElemLayout.is_scalar_unmanaged (var_tnames[si2])
+                                && (arr_v >= 0 && ElemLayout.is_scalar_unmanaged (arr_name != "" ? var_tnames[lookup_var (arr_name)] : ""))) {
                                 emit_ir (new IRInst () {
                                     op = IROp.SIMD_ARR_COPY,
                                     dst = -1,
@@ -1317,7 +1319,7 @@ namespace Planc {
                             }
                         }
                     }
-                } else if (arr_stride == 4 || arr_stride == 8) {
+                } else if (arr_stride == 1 || arr_stride == 2 || arr_stride == 4 || arr_stride == 8) {
                     int val_v = -1;
                     if (ia.value is IntLiteral) {
                         val_v = lower_expr (ia.value);
@@ -1326,7 +1328,7 @@ namespace Planc {
                         if (vi2 >= 0 && var_types[vi2] == ValaType.INT)
                             val_v = var_vregs[vi2];
                     }
-                    if (val_v >= 0) {
+                    if (val_v >= 0 && ElemLayout.is_scalar_unmanaged (var_tnames[lookup_var (arr_name)])) {
                         emit_ir (new IRInst () {
                             op = IROp.SIMD_ARR_FILL,
                             dst = -1,
@@ -3080,9 +3082,16 @@ namespace Planc {
                         }
                         case IROp.SIMD_ARR_COPY: {
                             Reg dv = read_vreg (ins.lhs, Reg.R10);
-                            if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
                             Reg sv = read_vreg (ins.rhs, Reg.R11);
-                            if (sv != Reg.R11) emit_mov_rr (Reg.R11, sv);
+                            if (dv == Reg.R11 && sv == Reg.R10) {
+                                code.u8 (0x49); code.u8 (0x87); code.u8 (0xD3); // xchg r10, r11
+                            } else if (sv == Reg.R10) {
+                                emit_mov_rr (Reg.R11, sv);
+                                if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
+                            } else {
+                                if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
+                                if (sv != Reg.R11) emit_mov_rr (Reg.R11, sv);
+                            }
                             // Check src.length >= dst.length
                             emit_load_disp8 (Reg.RAX, Reg.R10, 8); // dst.len
                             emit_load_disp8 (Reg.RCX, Reg.R11, 8); // src.len
@@ -3125,14 +3134,36 @@ namespace Planc {
                         }
                         case IROp.SIMD_ARR_FILL: {
                             Reg dv = read_vreg (ins.lhs, Reg.R10);
-                            if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
                             Reg vv = read_vreg (ins.rhs, Reg.RAX);
-                            if (vv != Reg.RAX) emit_mov_rr (Reg.RAX, vv);
+                            if (dv == Reg.RAX && vv == Reg.R10) {
+                                code.u8 (0x49); code.u8 (0x92); // xchg rax, r10
+                            } else if (vv == Reg.R10) {
+                                emit_mov_rr (Reg.RAX, vv);
+                                if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
+                            } else {
+                                if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
+                                if (vv != Reg.RAX) emit_mov_rr (Reg.RAX, vv);
+                            }
                             emit_load_disp8 (Reg.RCX, Reg.R10, 8); // dst.len
-                            if (ins.imm == 4) emit_shift_ri (4, Reg.RCX, 2);
+                            if (ins.imm == 2) emit_shift_ri (4, Reg.RCX, 1);
+                            else if (ins.imm == 4) emit_shift_ri (4, Reg.RCX, 2);
                             else if (ins.imm == 8) emit_shift_ri (4, Reg.RCX, 3);
                             emit_alu_ri (0, Reg.R10, 16); // dst ptr
-                            if (ins.imm == 4) {
+                            if (ins.imm == 1) {
+                                // and eax, 0xff; imul eax, eax, 0x01010101; movd xmm0, eax; pshufd xmm0, xmm0, 0
+                                code.u8 (0x25); code.u32le (0xFF);
+                                code.u8 (0x69); code.u8 (0xC0); code.u32le (0x01010101);
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC0);
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x70); code.u8 (0xC0); code.u8 (0x00);
+                            } else if (ins.imm == 2) {
+                                // and eax, 0xffff; mov edx, eax; shl edx, 16; or eax, edx; movd xmm0, eax; pshufd xmm0, xmm0, 0
+                                code.u8 (0x25); code.u32le (0xFFFF);
+                                code.u8 (0x89); code.u8 (0xC2);
+                                code.u8 (0xC1); code.u8 (0xE2); code.u8 (0x10);
+                                code.u8 (0x09); code.u8 (0xD0);
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC0);
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x70); code.u8 (0xC0); code.u8 (0x00);
+                            } else if (ins.imm == 4) {
                                 // movd xmm0, eax; pshufd xmm0, xmm0, 0
                                 code.u8 (0x66); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC0);
                                 code.u8 (0x66); code.u8 (0x0F); code.u8 (0x70); code.u8 (0xC0); code.u8 (0x00);
@@ -3155,7 +3186,13 @@ namespace Planc {
                             emitter.bind (l_tail);
                             emit_alu_ri (7, Reg.RCX, (int32) ins.imm);
                             emitter.branch (BranchKind.JB, l_done);
-                            if (ins.imm == 4) {
+                            if (ins.imm == 1) {
+                                // mov [r10], al
+                                code.u8 (0x41); code.u8 (0x88); code.u8 (0x02);
+                            } else if (ins.imm == 2) {
+                                // mov [r10], ax
+                                code.u8 (0x66); code.u8 (0x41); code.u8 (0x89); code.u8 (0x02);
+                            } else if (ins.imm == 4) {
                                 // mov [r10], eax
                                 code.u8 (0x41); code.u8 (0x89); code.u8 (0x02);
                             } else {

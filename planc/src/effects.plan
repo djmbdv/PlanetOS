@@ -90,6 +90,51 @@ namespace Planc {
                 }
                 return true;
             }
+            if (e is StructLiteral) {
+                var sl = (StructLiteral) e;
+                for (int i = 0; i < sl.field_values.length; i++) {
+                    if (!collect_expr (sl.field_values[i], mod, ref_out_writes)) return false;
+                }
+                return true;
+            }
+            if (e is ArrayLiteralExpr) {
+                var al = (ArrayLiteralExpr) e;
+                for (int i = 0; i < al.elements.length; i++) {
+                    if (!collect_expr (al.elements[i], mod, ref_out_writes)) return false;
+                }
+                return true;
+            }
+            if (e is TupleExpr) {
+                var tp = (TupleExpr) e;
+                for (int i = 0; i < tp.elements.length; i++) {
+                    if (!collect_expr (tp.elements[i], mod, ref_out_writes)) return false;
+                }
+                return true;
+            }
+            if (e is TemplateExpr) {
+                var te = (TemplateExpr) e;
+                for (int i = 0; i < te.parts.length; i++) {
+                    if (!collect_expr (te.parts[i], mod, ref_out_writes)) return false;
+                }
+                return true;
+            }
+            if (e is ArrayNewExpr) {
+                return collect_expr (((ArrayNewExpr) e).length_expr, mod, ref_out_writes);
+            }
+            if (e is ClassNewExpr) {
+                var cn = (ClassNewExpr) e;
+                for (int i = 0; i < cn.args.length; i++) {
+                    if (ref_out_writes && cn.args[i] is VarRef)
+                        add (mod, ((VarRef) cn.args[i]).name);
+                    if (!collect_expr (cn.args[i], mod, ref_out_writes)) return false;
+                }
+                return true;
+            }
+            if (e is TypeCheckExpr) {
+                var tc = (TypeCheckExpr) e;
+                if (tc.bind_name != "") add (mod, tc.bind_name);
+                return collect_expr (tc.operand, mod, ref_out_writes);
+            }
             return true;
         }
 
@@ -144,6 +189,16 @@ namespace Planc {
                 return collect_stmt (dw.body, mod, ref_out_writes)
                     && collect_expr (dw.condition, mod, ref_out_writes);
             }
+            if (s is DerefAssignStatement) return false;
+            if (s is DeferStatement) {
+                return collect_stmt (((DeferStatement) s).body, mod, ref_out_writes);
+            }
+            if (s is LockStatement) {
+                return collect_stmt (((LockStatement) s).body, mod, ref_out_writes);
+            }
+            if (s is ThrowStatement) {
+                return collect_expr (((ThrowStatement) s).message, mod, ref_out_writes);
+            }
             if (s is ForStatement) {
                 var fs = (ForStatement) s;
                 return collect_stmt (fs.init, mod, ref_out_writes)
@@ -156,7 +211,7 @@ namespace Planc {
 
         // True when `e` may write `vname`. Anything the traversal cannot analyse
         // counts as a write.
-        public static bool modifies_expr (Expr? e, string vname, bool ref_out_writes) {
+        public static bool modifies_expr (Expr? e, in string vname, bool ref_out_writes) {
             var mod = new GenericArray<string> ();
             if (!collect_expr (e, mod, ref_out_writes)) return true;
             return holds (mod, vname);
@@ -164,20 +219,21 @@ namespace Planc {
 
         // True when `s` may write `vname`. Anything the traversal cannot analyse
         // counts as a write.
-        public static bool modifies_stmt (Statement? s, string vname, bool ref_out_writes) {
+        public static bool modifies_stmt (Statement? s, in string vname, bool ref_out_writes) {
             var mod = new GenericArray<string> ();
             if (!collect_stmt (s, mod, ref_out_writes)) return true;
             return holds (mod, vname);
         }
 
-        private static void add (GenericArray<string> mod, string name) {
+        private static void add (GenericArray<string> mod, in string name) {
             for (int i = 0; i < mod.length; i++) {
                 if (mod[i] == name) return;
             }
             mod.add (name);
         }
 
-        public static bool holds (GenericArray<string> mod, string name) {
+        [NoAlloc]
+        public static bool holds (GenericArray<string> mod, in string name) {
             for (int i = 0; i < mod.length; i++) {
                 if (mod[i] == name) return true;
             }
