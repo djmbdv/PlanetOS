@@ -5473,6 +5473,7 @@ public uint32 skymap;
 public drawseg_s[] drawsegs;
 
 public drawseg_s[] ds_p = new drawseg_s[0];
+public int numdrawsegs = 0;
 
 public _c2v_abox_uint8? hscalelight;
 
@@ -5566,6 +5567,7 @@ public int iquetail;
 public intercept_t[] intercepts;
 
 public intercept_t[] intercept_p = new intercept_t[0];
+public int numintercepts = 0;
 
 public int opentop;
 
@@ -7770,7 +7772,7 @@ void D_Display () {
         HU_Drawer ();
     }
     if (((int) gamestate != _d_oldgamestate) && (gamestate != gamestate_t.GS_LEVEL)) {
-        I_SetPalette (W_CacheLumpName (c_str_to_bytes ("PLAYPAL"), (int) __anon_enum_1.PU_CACHE));
+        I_SetPalette (W_CacheLumpNameStr ("PLAYPAL", (int) __anon_enum_1.PU_CACHE));
     }
     if ((gamestate == gamestate_t.GS_LEVEL) && (_d_oldgamestate != (int) gamestate_t.GS_LEVEL)) 
     {
@@ -7805,7 +7807,7 @@ void D_Display () {
         else {
             y = (viewwindowy + 4);
         }
-        V_DrawPatchDirect ((viewwindowx + ((scaledviewwidth - 68) / 2)), y, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_PAUSE"), (int) __anon_enum_1.PU_CACHE), 0));
+        V_DrawPatchDirect ((viewwindowx + ((scaledviewwidth - 68) / 2)), y, new patch_t.at (W_CacheLumpNameStr ("M_PAUSE", (int) __anon_enum_1.PU_CACHE), 0));
     }
     M_Drawer ();
     NetUpdate ();
@@ -7893,7 +7895,7 @@ void D_PageTicker () {
 }
 
 void D_PageDrawer () {
-    V_DrawPatch (0, 0, new patch_t.at (W_CacheLumpName (c_str_to_bytes (pagename), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatch (0, 0, new patch_t.at (W_CacheLumpNameStr (pagename, (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 void D_AdvanceDemo () {
@@ -7966,7 +7968,7 @@ void D_DoAdvanceDemo () {
             G_DeferedPlayDemo (c_str_to_bytes ("demo4"));
             break;
     }
-    if (((bfgedition != 0) && (!(GLib.ascii_strcasecmp (pagename, "TITLEPIC") != 0))) && (W_CheckNumForName (c_str_to_bytes ("titlepic")) < 0)) 
+    if (((bfgedition != 0) && (!(GLib.ascii_strcasecmp (pagename, "TITLEPIC") != 0))) && (W_CheckNumForNameStr ("titlepic") < 0)) 
     {
         pagename = "INTERPIC";
     }
@@ -8057,12 +8059,12 @@ void D_IdentifyVersion () {
     }
     if (((gamemission == GameMission_t.pack_chex) ? GameMission_t.doom : ((gamemission == GameMission_t.pack_hacx) ? GameMission_t.doom2 : gamemission)) == ((int) GameMission_t.doom)) 
     {
-        if (W_CheckNumForName (c_str_to_bytes ("E4M1")) > 0) 
+        if (W_CheckNumForNameStr ("E4M1") > 0) 
         {
             gamemode = GameMode_t.retail;
         }
         else 
-        if (W_CheckNumForName (c_str_to_bytes ("E3M1")) > 0) 
+        if (W_CheckNumForNameStr ("E3M1") > 0) 
         {
             gamemode = GameMode_t.registered;
         }
@@ -8084,8 +8086,8 @@ void D_IdentifyVersion () {
 }
 
 void D_SetGameDescription () {
-    uint32 is_freedoom = (uint32) (((W_CheckNumForName (c_str_to_bytes ("FREEDOOM")) >= 0)) ? 1 : 0);
-    uint32 is_freedm = (uint32) (((W_CheckNumForName (c_str_to_bytes ("FREEDM")) >= 0)) ? 1 : 0);
+    uint32 is_freedoom = (uint32) (((W_CheckNumForNameStr ("FREEDOOM") >= 0)) ? 1 : 0);
+    uint32 is_freedm = (uint32) (((W_CheckNumForNameStr ("FREEDM") >= 0)) ? 1 : 0);
     gamedescription = "Unknown";
     if (((gamemission == GameMission_t.pack_chex) ? GameMission_t.doom : ((gamemission == GameMission_t.pack_hacx) ? GameMission_t.doom2 : gamemission)) == ((int) GameMission_t.doom)) 
     {
@@ -8259,7 +8261,7 @@ void D_Endoom () {
     {
         return;
     }
-    endoom = W_CacheLumpName (c_str_to_bytes ("ENDOOM"), (int) __anon_enum_1.PU_STATIC);
+    endoom = W_CacheLumpNameStr ("ENDOOM", (int) __anon_enum_1.PU_STATIC);
     I_Endoom (endoom);
     Process.exit (0);
 }
@@ -8272,7 +8274,6 @@ void D_DoomMain () {
     I_AtExit (D_Endoom, (uint32) 0);
     I_PrintBanner (c_str_to_bytes ("Doom Generic 0.1"));
     print (@"Z_Init: Init zone memory allocation daemon. \n");
-    Z_Init ();
     nomonsters = (uint32) (M_CheckParm (c_str_to_bytes ("-nomonsters")));
     respawnparm = (uint32) (M_CheckParm (c_str_to_bytes ("-respawn")));
     fastparm = (uint32) (M_CheckParm (c_str_to_bytes ("-fast")));
@@ -8332,7 +8333,7 @@ void D_DoomMain () {
     print ("[doom] IdentifyVersion ok\n");
     InitGameVersion ();
     print ("[doom] InitGameVersion ok\n");
-    if (W_CheckNumForName (c_str_to_bytes ("dmenupic")) >= 0) 
+    if (W_CheckNumForNameStr ("dmenupic") >= 0) 
     {
         print (@"BFG Edition: Using workarounds as needed.\n");
         bfgedition = (uint32) 1;
@@ -8408,14 +8409,14 @@ void D_DoomMain () {
             }
         }
     }
-    if ((W_CheckNumForName (c_str_to_bytes ("SS_START")) >= 0) || (W_CheckNumForName (c_str_to_bytes ("FF_END")) >= 0)) 
+    if ((W_CheckNumForNameStr ("SS_START") >= 0) || (W_CheckNumForNameStr ("FF_END") >= 0)) 
     {
         I_PrintDivider ();
         print (@" WARNING: The loaded WAD file contains modified sprites or\n floor textures.  You may want to use the '-merge' command\n line option instead of '-file'.\n");
     }
     I_PrintStartupBanner (c_str_to_bytes (gamedescription));
     PrintDehackedBanners ();
-    if ((W_CheckNumForName (c_str_to_bytes ("FREEDOOM")) >= 0) && (W_CheckNumForName (c_str_to_bytes ("FREEDM")) < 0)) 
+    if ((W_CheckNumForNameStr ("FREEDOOM") >= 0) && (W_CheckNumForNameStr ("FREEDM") < 0)) 
     {
         print (@" WARNING: You are playing using one of the Freedoom IWAD\n files, which might not work in this port. See this page\n for more information on how to play using Freedoom:\n   http://www.chocolate-doom.org/wiki/index.php/Freedoom\n");
         I_PrintDivider ();
@@ -8513,7 +8514,7 @@ void D_DoomMain () {
     print (@"ST_Init: Init status bar.\n");
     ST_Init ();
     print ("[doom] ST_Init ok\n");
-    if ((gamemode == GameMode_t.commercial) && (W_CheckNumForName (c_str_to_bytes ("map01")) < 0)) {
+    if ((gamemode == GameMode_t.commercial) && (W_CheckNumForNameStr ("map01") < 0)) {
         storedemo = (uint32) 1;
     }
     if (M_CheckParmWithArgs (c_str_to_bytes ("-statdump"), 1) != 0) 
@@ -8764,7 +8765,7 @@ void InitConnectData (net_connect_data_t? connect_data) {
     connect_data.gamemission = (int) gamemission;
     connect_data.lowres_turn = (int) ((((M_CheckParm (c_str_to_bytes ("-record")) > 0) && (M_CheckParm (c_str_to_bytes ("-longtics")) == 0))) ? 1 : 0);
     W_Checksum (connect_data.wad_sha1sum);
-    connect_data.is_freedoom = (int) (((W_CheckNumForName (c_str_to_bytes ("FREEDOOM")) >= 0)) ? 1 : 0);
+    connect_data.is_freedoom = (int) (((W_CheckNumForNameStr ("FREEDOOM") >= 0)) ? 1 : 0);
 }
 
 void D_ConnectNetGame () {
@@ -8921,7 +8922,7 @@ void F_TextWrite () {
     int c = 0;
     int cx = 0;
     int cy = 0;
-    src = W_CacheLumpName (c_str_to_bytes (finaleflat), (int) __anon_enum_1.PU_CACHE);
+    src = W_CacheLumpNameStr (finaleflat, (int) __anon_enum_1.PU_CACHE);
     _off_src = 0;
     dest = I_VideoBuffer;
     _off_dest = 0;
@@ -9215,7 +9216,7 @@ void F_CastDrawer () {
     int lump = 0;
     uint32 flip = 0;
     patch_t? patch = null;
-    V_DrawPatch (0, 0, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("BOSSBACK"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatch (0, 0, new patch_t.at (W_CacheLumpNameStr ("BOSSBACK", (int) __anon_enum_1.PU_CACHE), 0));
     F_CastPrint (c_str_to_bytes (castorder[(int) (castnum)].name));
     sprdef = sprites[(int) (caststate.sprite)];
     sprframe = sprdef.spriteframes[(int) ((caststate.frame & 0x7fff))];
@@ -9268,8 +9269,8 @@ void F_BunnyScroll () {
     uint8[] name = new uint8[10];
     int stage = 0;
     int laststage = 0;
-    p1 = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("PFUB2"), (int) __anon_enum_1.PU_LEVEL), 0);
-    p2 = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("PFUB1"), (int) __anon_enum_1.PU_LEVEL), 0);
+    p1 = new patch_t.at (W_CacheLumpNameStr ("PFUB2", (int) __anon_enum_1.PU_LEVEL), 0);
+    p2 = new patch_t.at (W_CacheLumpNameStr ("PFUB1", (int) __anon_enum_1.PU_LEVEL), 0);
     V_MarkRect (0, 0, 320, 200);
     scrolled = (320 - ((((int) finalecount) - 230) / 2));
     if (scrolled > 320) {
@@ -9292,7 +9293,7 @@ void F_BunnyScroll () {
     }
     if (finalecount < ((uint32) 1180)) 
     {
-        V_DrawPatch (((320 - (13 * 8)) / 2), ((200 - (8 * 8)) / 2), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("END0"), (int) __anon_enum_1.PU_CACHE), 0));
+        V_DrawPatch (((320 - (13 * 8)) / 2), ((200 - (8 * 8)) / 2), new patch_t.at (W_CacheLumpNameStr ("END0", (int) __anon_enum_1.PU_CACHE), 0));
         laststage = 0;
         return;
     }
@@ -9764,7 +9765,6 @@ void G_DoLoadLevel () {
     P_SetupLevel (gameepisode, gamemap, 0, gameskill);
     displayplayer = consoleplayer;
     gameaction = gameaction_t.ga_nothing;
-    Z_CheckHeap ();
     for (int _c2v_mi = 0; _c2v_mi < (((int) (((int) (256) * (int) (4)))) / (int) (4)) && _c2v_mi < gamekeydown.length; _c2v_mi++) { gamekeydown[_c2v_mi] = 0; }
     joystrafemove = 0;
     joyymove = joystrafemove;
@@ -10271,7 +10271,7 @@ void G_ExitLevel () {
 }
 
 void G_SecretExitLevel () {
-    if ((gamemode == GameMode_t.commercial) && (W_CheckNumForName (c_str_to_bytes ("map31")) < 0)) {
+    if ((gamemode == GameMode_t.commercial) && (W_CheckNumForNameStr ("map31") < 0)) {
         secretexit = (uint32) 0;
     }
     else {
@@ -10710,7 +10710,7 @@ void IncreaseDemoBuffer () {
     new_demop = new_demobuffer;
     _off_new_demop = _off_new_demobuffer + (int) ((0 - 0));
     c_memcpy_off (new_demobuffer, _off_new_demobuffer, demobuffer, 0, (size_t) (current_length));
-    Z_Free (demobuffer);
+    demobuffer = new uint8[0];
     demobuffer = new_demobuffer;
     demo_p = new_demop;
     demoend = _c2v_slice_uint8 (demobuffer, (int) (new_length));
@@ -10793,36 +10793,27 @@ void G_BeginRecording () {
     longtics = (uint32) (((M_CheckParm (c_str_to_bytes ("-longtics")) != 0)) ? 1 : 0);
     lowres_turn = (uint32) (((!(longtics != 0))) ? 1 : 0);
     demo_p = demobuffer;
+    int _off = 0;
     if (longtics != 0) 
     {
-        demo_p[0] = (uint8) (111);
-        demo_p = c_bytes_add (demo_p, 1);
+        demo_p[_off++] = (uint8) (111);
     }
     else 
     {
-        demo_p[0] = (uint8) (G_VanillaVersionCode ());
-        demo_p = c_bytes_add (demo_p, 1);
+        demo_p[_off++] = (uint8) (G_VanillaVersionCode ());
     }
-    demo_p[0] = (uint8) (gameskill);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (gameepisode);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (gamemap);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (deathmatch);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (respawnparm);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (fastparm);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (nomonsters);
-    demo_p = c_bytes_add (demo_p, 1);
-    demo_p[0] = (uint8) (consoleplayer);
-    demo_p = c_bytes_add (demo_p, 1);
+    demo_p[_off++] = (uint8) (gameskill);
+    demo_p[_off++] = (uint8) (gameepisode);
+    demo_p[_off++] = (uint8) (gamemap);
+    demo_p[_off++] = (uint8) (deathmatch);
+    demo_p[_off++] = (uint8) (respawnparm);
+    demo_p[_off++] = (uint8) (fastparm);
+    demo_p[_off++] = (uint8) (nomonsters);
+    demo_p[_off++] = (uint8) (consoleplayer);
     for (i = 0; i < 4; i++) {
-        demo_p[0] = (uint8) (playeringame[(int) (i)]);
-        demo_p = c_bytes_add (demo_p, 1);
+        demo_p[_off++] = (uint8) (playeringame[(int) (i)]);
     }
+    demo_p = c_bytes_add (demo_p, _off);
 }
 
 public string defdemoname;
@@ -10871,7 +10862,7 @@ void G_DoPlayDemo () {
     int demoversion = 0;
 
     gameaction = gameaction_t.ga_nothing;
-    demobuffer = W_CacheLumpName (c_str_to_bytes (defdemoname), (int) __anon_enum_1.PU_STATIC);
+    demobuffer = W_CacheLumpNameStr (defdemoname, (int) __anon_enum_1.PU_STATIC);
     demo_p = demobuffer;
     _off_demo_p = 0;
 
@@ -10939,7 +10930,7 @@ uint32 G_CheckDemoStatus () {
     }
     if (demoplayback != 0) 
     {
-        W_ReleaseLumpName (c_str_to_bytes (defdemoname));
+        W_ReleaseLumpNameStr (defdemoname);
         demoplayback = (uint32) 0;
         netdemo = (uint32) 0;
         netgame = (uint32) 0;
@@ -10964,7 +10955,7 @@ uint32 G_CheckDemoStatus () {
         demo_p[0] = (uint8) (0x80);
         demo_p = c_bytes_add (demo_p, 1);
         M_WriteFile (c_str_to_bytes (demoname), demobuffer, (int) ((0 - 0)));
-        Z_Free (demobuffer);
+        demobuffer = new uint8[0];
         demorecording = (uint32) 0;
         I_Error (c_str_to_bytes ("Demo %s recorded"), demoname);
     }
@@ -11651,11 +11642,11 @@ void UpdateShiftStatus (int pressed, uchar key) {
 }
 
 void I_GetEvent () {
-    event_t event = new event_t ();
     int[] pressed = new int[1];
     uchar[] key = new uchar[1];
     while (DG_GetKey (pressed, key) != 0) 
     {
+        event_t event = new event_t ();
         UpdateShiftStatus (pressed[0], key[0]);
         if (pressed[0] != 0) 
         {
@@ -11676,8 +11667,18 @@ void I_GetEvent () {
             {
                 D_PostEvent (_c2v_box_event_t_arr (event));
             }
-            break;
         }
+    }
+    int[] mbtn = new int[1];
+    int[] mdx = new int[1];
+    int[] mdy = new int[1];
+    if (DG_GetMouse (mbtn, mdx, mdy) != 0) {
+        event_t mev = new event_t ();
+        mev.type = evtype_t.ev_mouse;
+        mev.data1 = mbtn[0];
+        mev.data2 = mdx[0];
+        mev.data3 = mdy[0];
+        D_PostEvent (_c2v_box_event_t_arr (mev));
     }
 }
 
@@ -11769,6 +11770,7 @@ void I_Quit () {
         ((!) entry.func) ();
         entry = entry.next;
     }
+    DG_Shutdown ();
     GLib.Process.exit (0);
 }
 
@@ -12089,10 +12091,11 @@ void I_InitGraphics () {
     I_VideoBuffer = new uint8[(320 * 200)];
     screenvisible = (uint32) 1;
     I_InitInput ();
+    DG_Init ();
 }
 
 void I_ShutdownGraphics () {
-    Z_Free (I_VideoBuffer);
+    I_VideoBuffer = new uint8[0];
 }
 
 void I_StartFrame () {
@@ -12115,8 +12118,7 @@ void I_ReadScreen (uint8[] scr) {
 }
 
 // c2vala-ptrs: palette_buf[ARITH]=>uint8[](ro)
-void I_SetPalette (uint8[] palette) {
-    int _off_palette = 0;
+void I_SetPalette (uint8[] palette, int _off_palette = 0) {
     int i = 0;
     for (i = 0; i < 256; ++i) 
     {
@@ -12612,7 +12614,7 @@ public uint32 messageIsQuit = 0;
 
 public int messageTag = 0;
 
-public uint8[][] gammamsg;
+public string[] gammamsg;
 
 public int saveStringEnter;
 
@@ -12711,7 +12713,7 @@ void M_ReadSaveStrings () {
 
 void M_DrawLoad () {
     int i = 0;
-    V_DrawPatchDirect (72, 28, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_LOADG"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (72, 28, new patch_t.at (W_CacheLumpNameStr ("M_LOADG", (int) __anon_enum_1.PU_CACHE), 0));
     for (i = 0; i < ((int) __anon_enum_128.load_end); i++) 
     {
         M_DrawSaveLoadBorder ((int) LoadDef.x, (((int) LoadDef.y) + (16 * i)));
@@ -12721,13 +12723,13 @@ void M_DrawLoad () {
 
 void M_DrawSaveLoadBorder (int x, int y) {
     int i = 0;
-    V_DrawPatchDirect ((x - 8), (y + 7), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_LSLEFT"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect ((x - 8), (y + 7), new patch_t.at (W_CacheLumpNameStr ("M_LSLEFT", (int) __anon_enum_1.PU_CACHE), 0));
     for (i = 0; i < 24; i++) 
     {
-        V_DrawPatchDirect (x, (y + 7), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_LSCNTR"), (int) __anon_enum_1.PU_CACHE), 0));
+        V_DrawPatchDirect (x, (y + 7), new patch_t.at (W_CacheLumpNameStr ("M_LSCNTR", (int) __anon_enum_1.PU_CACHE), 0));
         x += 8;
     }
-    V_DrawPatchDirect (x, (y + 7), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_LSRGHT"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (x, (y + 7), new patch_t.at (W_CacheLumpNameStr ("M_LSRGHT", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 // c2vala-ptrs: name_buf[PLAIN]=>uint8[](ro)
@@ -12750,7 +12752,7 @@ void M_LoadGame (int choice) {
 
 void M_DrawSave () {
     int i = 0;
-    V_DrawPatchDirect (72, 28, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_SAVEG"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (72, 28, new patch_t.at (W_CacheLumpNameStr ("M_SAVEG", (int) __anon_enum_1.PU_CACHE), 0));
     for (i = 0; i < ((int) __anon_enum_128.load_end); i++) 
     {
         M_DrawSaveLoadBorder ((int) LoadDef.x, (((int) LoadDef.y) + (16 * i)));
@@ -12895,11 +12897,11 @@ void M_DrawReadThis1 () {
 
 void M_DrawReadThis2 () {
     inhelpscreens = (uint32) 1;
-    V_DrawPatchDirect (0, 0, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("HELP1"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (0, 0, new patch_t.at (W_CacheLumpNameStr ("HELP1", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 void M_DrawSound () {
-    V_DrawPatchDirect (60, 38, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_SVOL"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (60, 38, new patch_t.at (W_CacheLumpNameStr ("M_SVOL", (int) __anon_enum_1.PU_CACHE), 0));
     M_DrawThermo ((int) SoundDef.x, (((int) SoundDef.y) + (16 * ((int) (((int) __anon_enum_127.sfx_vol) + 1)))), 16, sfxVolume);
     M_DrawThermo ((int) SoundDef.x, (((int) SoundDef.y) + (16 * ((int) (((int) __anon_enum_127.music_vol) + 1)))), 16, musicVolume);
 }
@@ -12941,12 +12943,12 @@ void M_MusicVol (int choice) {
 }
 
 void M_DrawMainMenu () {
-    V_DrawPatchDirect (94, 2, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_DOOM"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (94, 2, new patch_t.at (W_CacheLumpNameStr ("M_DOOM", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 void M_DrawNewGame () {
-    V_DrawPatchDirect (96, 14, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_NEWG"), (int) __anon_enum_1.PU_CACHE), 0));
-    V_DrawPatchDirect (54, 38, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_SKILL"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (96, 14, new patch_t.at (W_CacheLumpNameStr ("M_NEWG", (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (54, 38, new patch_t.at (W_CacheLumpNameStr ("M_SKILL", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 void M_NewGame (int choice) {
@@ -12966,7 +12968,7 @@ void M_NewGame (int choice) {
 public int epi;
 
 void M_DrawEpisode () {
-    V_DrawPatchDirect (54, 38, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_EPISOD"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (54, 38, new patch_t.at (W_CacheLumpNameStr ("M_EPISOD", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 void M_VerifyNightmare (int key) {
@@ -13009,7 +13011,7 @@ public string[] detailNames;
 public string[] msgNames;
 
 void M_DrawOptions () {
-    V_DrawPatchDirect (108, 15, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_OPTTTL"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (108, 15, new patch_t.at (W_CacheLumpNameStr ("M_OPTTTL", (int) __anon_enum_1.PU_CACHE), 0));
     V_DrawPatchDirect ((((int) OptionsDef.x) + 175), (((int) OptionsDef.y) + (16 * ((int) __anon_enum_124.detail))), new patch_t.at (W_CacheLumpName (c_str_to_bytes (detailNames[(int) (detailLevel)]), (int) __anon_enum_1.PU_CACHE), 0));
     V_DrawPatchDirect ((((int) OptionsDef.x) + 120), (((int) OptionsDef.y) + (16 * ((int) __anon_enum_124.messages))), new patch_t.at (W_CacheLumpName (c_str_to_bytes (msgNames[(int) (showMessages)]), (int) __anon_enum_1.PU_CACHE), 0));
     M_DrawThermo ((int) OptionsDef.x, (((int) OptionsDef.y) + (16 * ((int) (((int) __anon_enum_124.mousesens) + 1)))), 10, mouseSensitivity);
@@ -13171,25 +13173,25 @@ void M_DrawThermo (int x, int y, int thermWidth, int thermDot) {
     int xx = 0;
     int i = 0;
     xx = x;
-    V_DrawPatchDirect (xx, y, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_THERML"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (xx, y, new patch_t.at (W_CacheLumpNameStr ("M_THERML", (int) __anon_enum_1.PU_CACHE), 0));
     xx += 8;
     for (i = 0; i < thermWidth; i++) 
     {
-        V_DrawPatchDirect (xx, y, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_THERMM"), (int) __anon_enum_1.PU_CACHE), 0));
+        V_DrawPatchDirect (xx, y, new patch_t.at (W_CacheLumpNameStr ("M_THERMM", (int) __anon_enum_1.PU_CACHE), 0));
         xx += 8;
     }
-    V_DrawPatchDirect (xx, y, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_THERMR"), (int) __anon_enum_1.PU_CACHE), 0));
-    V_DrawPatchDirect (((x + 8) + (thermDot * 8)), y, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_THERMO"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (xx, y, new patch_t.at (W_CacheLumpNameStr ("M_THERMR", (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect (((x + 8) + (thermDot * 8)), y, new patch_t.at (W_CacheLumpNameStr ("M_THERMO", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 // c2vala-ptrs: menu_obj[DEREF|ARROW]=>T?
 void M_DrawEmptyCell (menu_s? menu, int item) {
-    V_DrawPatchDirect ((((int) menu.x) - 10), ((((int) menu.y) + (item * 16)) - 1), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_CELL1"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect ((((int) menu.x) - 10), ((((int) menu.y) + (item * 16)) - 1), new patch_t.at (W_CacheLumpNameStr ("M_CELL1", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 // c2vala-ptrs: menu_obj[DEREF|ARROW]=>T?
 void M_DrawSelCell (menu_s? menu, int item) {
-    V_DrawPatchDirect ((((int) menu.x) - 10), ((((int) menu.y) + (item * 16)) - 1), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("M_CELL2"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatchDirect ((((int) menu.x) - 10), ((((int) menu.y) + (item * 16)) - 1), new patch_t.at (W_CacheLumpNameStr ("M_CELL2", (int) __anon_enum_1.PU_CACHE), 0));
 }
 
 // c2vala-ptrs: string_obj[PLAIN]=>T? routine_ptr[PLAIN]=>C2VPtr
@@ -13600,8 +13602,8 @@ uint32 M_Responder (event_t? ev) {
             if (usegamma > 4) {
                 usegamma = 0;
             }
-            players[(int) (consoleplayer)].message = (string) gammamsg[(int) (usegamma)];
-            I_SetPalette (W_CacheLumpName (c_str_to_bytes ("PLAYPAL"), (int) __anon_enum_1.PU_CACHE));
+            players[(int) (consoleplayer)].message = gammamsg[(int) (usegamma)];
+            I_SetPalette (W_CacheLumpNameStr ("PLAYPAL", (int) __anon_enum_1.PU_CACHE));
             return (uint32) 1;
         }
     }
@@ -14240,7 +14242,7 @@ size_t mem_fwrite (uint8[] ptr, size_t size, size_t nmemb, _MEMFILE? stream) {
         uchar[] newbuf = new uchar[0];
         newbuf = new uint8[((int) ((stream.alloced * ((size_t) 2)))) > 0 ? ((int) ((stream.alloced * ((size_t) 2)))) : 1];
         c_memcpy (newbuf, stream.buf, stream.alloced);
-        Z_Free (stream.buf);
+        stream.buf = new uint8[0];
         stream.buf = newbuf;
         stream.alloced *= (size_t) 2;
     }
@@ -14262,7 +14264,7 @@ void mem_get_buf (_MEMFILE? stream, _c2v_abox_uint8? buf, size_t[] buflen) {
 void mem_fclose (_MEMFILE[] stream) {
     if (stream[0].mode == memfile_mode_t.MODE_WRITE) 
     {
-        Z_Free (stream[0].buf);
+        stream[0].buf = new uint8[0];
     }
     // Z_Free (stream);
 }
@@ -19003,11 +19005,12 @@ uint32 PIT_AddLineIntercepts (line_s[] ld) {
     {
         return (uint32) 0;
     }
-    intercept_p[0].frac = frac;
-    intercept_p[0].isaline = (uint32) 1;
-    intercept_p[0].d.line = _c2v_box_line_s_obj (ld);
-    InterceptsOverrun ((int) ((0 - 0)), intercept_p[0]);
-    intercept_p = _c2v_slice_intercept_t (intercept_p, 1);
+    if (numintercepts >= intercepts.length) return (uint32) 1;
+    intercepts[numintercepts].frac = frac;
+    intercepts[numintercepts].isaline = (uint32) 1;
+    intercepts[numintercepts].d.line = _c2v_box_line_s_obj (ld);
+    InterceptsOverrun (numintercepts, intercepts[numintercepts]);
+    numintercepts++;
     return (uint32) 1;
 }
 
@@ -19050,11 +19053,12 @@ uint32 PIT_AddThingIntercepts (mobj_s? thing) {
     if (frac < 0) {
         return (uint32) 1;
     }
-    intercept_p[0].frac = frac;
-    intercept_p[0].isaline = (uint32) 0;
-    intercept_p[0].d.thing = thing;
-    InterceptsOverrun ((int) ((0 - 0)), intercept_p[0]);
-    intercept_p = _c2v_slice_intercept_t (intercept_p, 1);
+    if (numintercepts >= intercepts.length) return (uint32) 1;
+    intercepts[numintercepts].frac = frac;
+    intercepts[numintercepts].isaline = (uint32) 0;
+    intercepts[numintercepts].d.thing = thing;
+    InterceptsOverrun (numintercepts, intercepts[numintercepts]);
+    numintercepts++;
     return (uint32) 1;
 }
 
@@ -19065,30 +19069,24 @@ uint32 P_TraverseIntercepts (_c2v_del_trav_e553e969? func, int maxfrac) {
     intercept_t[] scan = new intercept_t[0];
     int _off_scan = 0;
     intercept_t? @in = null;
-    count = (int) ((0 - 0));
+    count = numintercepts;
     @in = null;
     while (count-- != 0) 
     {
         dist = 2147483647;
-        {
-            scan = intercepts;
-            _off_scan = 0;
-            for (; (scan[0] == intercept_p[0]) ? (_off_scan < 0) : (uintptr.from_pointer ((void*) (scan)) < uintptr.from_pointer ((void*) (intercept_p))); _off_scan++) 
-            {
-                if (scan[_off_scan].frac < dist) 
-                {
-                    dist = scan[_off_scan].frac;
-                    @in = _c2v_box_intercept_t_obj (scan);
-                }
+        for (int _si = 0; _si < numintercepts; _si++) {
+            if (intercepts[_si].frac < dist) {
+                dist = intercepts[_si].frac;
+                @in = intercepts[_si];
             }
         }
-        if (dist > maxfrac) {
+        if (dist > maxfrac || @in == null) {
             return (uint32) 1;
         }
         if (!(((!) func) (@in) != 0)) {
             return (uint32) 0;
         }
-        @in.frac = 2147483647;
+        ((!) @in).frac = 2147483647;
     }
     return (uint32) 1;
 }
@@ -19162,6 +19160,7 @@ uint32 P_PathTraverse (int x1, int y1, int x2, int y2, int flags, _c2v_del_trav_
     earlyout = (uint32) ((flags & 4));
     validcount++;
     intercept_p = intercepts;
+    numintercepts = 0;
     if (((x1 - bmaporgx) & ((128 * (1 << 16)) - 1)) == 0) {
         x1 += (1 << 16);
     }
@@ -22331,7 +22330,6 @@ void P_SetupLevel (int episode, int map, int playermask, skill_t skill) {
         players[(int) (i)].killcount = players[(int) (i)].secretcount;
     }
     players[(int) (consoleplayer)].viewz = 1;
-    Z_FreeTags ((int) __anon_enum_1.PU_LEVEL, (int) ((((int) __anon_enum_1.PU_PURGELEVEL) - 1)));
     P_CleanupLevel ();
     P_InitThinkers ();
     if (gamemode == GameMode_t.commercial) 
@@ -22648,36 +22646,34 @@ public line_s?[] linespeciallist;
 // c2vala-ptrs: startname_obj[PLAIN]=>T? endname_obj[PLAIN]=>T?
 void P_InitPicAnims () {
     int i = 0;
-    lastanim = anims;
-    for (i = 0; animdefs[(int) (i)].istexture != -1; i++) 
+    int numanims = 0;
+    for (i = 0; animdefs[(int) (i)].istexture != -1 && numanims < anims.length; i++) 
     {
-        uint8[] startname = new uint8[0];
-        uint8[] endname = new uint8[0];
-        startname = animdefs[(int) (i)].startname;
-        endname = animdefs[(int) (i)].endname;
+        uint8[] startname = animdefs[(int) (i)].startname;
+        uint8[] endname = animdefs[(int) (i)].endname;
         if (animdefs[(int) (i)].istexture != 0) 
         {
             if (R_CheckTextureNumForName (startname) == -1) {
                 continue;
             }
-            lastanim[0].picnum = R_TextureNumForName (endname);
-            lastanim[0].basepic = R_TextureNumForName (startname);
+            anims[numanims].picnum = R_TextureNumForName (endname);
+            anims[numanims].basepic = R_TextureNumForName (startname);
         }
         else 
         {
             if (W_CheckNumForName (startname) == -1) {
                 continue;
             }
-            lastanim[0].picnum = R_FlatNumForName (endname);
-            lastanim[0].basepic = R_FlatNumForName (startname);
+            anims[numanims].picnum = R_FlatNumForName (endname);
+            anims[numanims].basepic = R_FlatNumForName (startname);
         }
-        lastanim[0].istexture = (uint32) (animdefs[(int) (i)].istexture);
-        lastanim[0].numpics = ((lastanim[0].picnum - lastanim[0].basepic) + 1);
-        if (lastanim[0].numpics < 2) {
+        anims[numanims].istexture = (uint32) (animdefs[(int) (i)].istexture);
+        anims[numanims].numpics = ((anims[numanims].picnum - anims[numanims].basepic) + 1);
+        if (anims[numanims].numpics < 2) {
             I_Error (c_str_to_bytes ("P_InitPicAnims: bad cycle from %s to %s"), startname, endname);
         }
-        lastanim[0].speed = animdefs[(int) (i)].speed;
-        lastanim = _c2v_slice_anim_t (lastanim, 1);
+        anims[numanims].speed = animdefs[(int) (i)].speed;
+        numanims++;
     }
 }
 
@@ -24326,6 +24322,7 @@ void P_PlayerThink (player_s? player) {
 
 void R_ClearDrawSegs () {
     ds_p = drawsegs;
+    numdrawsegs = 0;
 }
 
 public cliprange_t[] newend = new cliprange_t[0];
@@ -24697,8 +24694,7 @@ public uint16[][] texturecolumnofs;
 public uint8[][] texturecomposite;
 
 // c2vala-ptrs: patch_ptr[ARITH|DEREF|CAST|ARROW->post_t]=>post_t.at cache_buf[ARITH|WR]=>uint8[] source_obj[PLAIN]=>T?
-void R_DrawColumnInCache (post_t? patch, uint8[] cache, int originy, int cacheheight) {
-    int _off_cache = 0;
+void R_DrawColumnInCache (post_t? patch, uint8[] cache, int _off_cache, int originy, int cacheheight) {
     int count = 0;
     int position = 0;
     uint8[] source = new uint8[0];
@@ -24770,14 +24766,14 @@ void R_GenerateComposite (int texnum) {
                         continue;
                     }
                     patchcol = new post_t.at (((!) realpatch._c2v_data), realpatch._off + (int) (realpatch.columnofs_at ((int) ((x - x1)))));
-                    R_DrawColumnInCache (patchcol, _c2v_slice_uint8 (block, _off_block + (int) (colofs[(int) (x)])), (int) (patch[_off_patch].originy), (int) texture.height);
+                    R_DrawColumnInCache (patchcol, block, _off_block + (int) (colofs[(int) (x)]), (int) (patch[_off_patch].originy), (int) texture.height);
                 }
             }
             i++;
             _off_patch++;
         }
     }
-    Z_ChangeTag2 (_c2v_slice_uint8 (block, _off_block), (int) __anon_enum_1.PU_CACHE, c_str_to_bytes ("r_data.c"), 286);
+    texturecomposite[(int) (texnum)] = block;
 }
 
 // c2vala-ptrs: texture_obj[DEREF|ARROW]=>T? patchcount_buf[IDX|ARITH|ADDR|WR|NULL]=>uint8[] patch_arr[ARITH|DEREF|ARROW]=>T[] realpatch_obj[DEREF|ARROW]=>T? collump_arr[IDX|WR]=>T[] colofs_arr[IDX|WR]=>T[]
@@ -24850,16 +24846,18 @@ void R_GenerateLookup (int texnum) {
             texturecompositesize[(int) (texnum)] += (int) texture.height;
         }
     }
-    Z_Free (patchcount.val);
 }
 
 public int _off_rget = 0;
 public uint8[] _rc_tmp;
+public int dc_colheight = 128;
+public int _off_dc_translation = 0;
 
 uint8[] R_GetColumn (int tex, int col) {
     int lump = 0;
     int ofs = 0;
     col &= texturewidthmask[(int) (tex)];
+    dc_colheight = (int) textures[(int) (tex)].height;
     lump = (int) (texturecolumnlump[(int) (tex)][(int) (col)]);
     ofs = (int) (texturecolumnofs[(int) (tex)][(int) (col)]);
     if (lump > 0) {
@@ -24867,7 +24865,7 @@ uint8[] R_GetColumn (int tex, int col) {
         _off_rget = (int) (ofs);
         return _lump;
     }
-    if (!(texturecomposite[(int) (tex)] != null)) {
+    if (texturecomposite[(int) (tex)] == null || texturecomposite[(int) (tex)].length == 0) {
         R_GenerateComposite (tex);
     }
     _off_rget = (int) (ofs);
@@ -24929,7 +24927,7 @@ void R_InitTextures () {
     int temp3 = 0;
     name[8] = (uint8) 0;
     print ("[tex] calling PNAMES\n");
-    names = W_CacheLumpName (c_str_to_bytes ("PNAMES"), (int) __anon_enum_1.PU_STATIC);
+    names = W_CacheLumpNameStr ("PNAMES", (int) __anon_enum_1.PU_STATIC);
     _off_names = 0;
     nummappatches = (int) ((uint32) names[0] | ((uint32) names[1] << 8) | ((uint32) names[2] << 16) | ((uint32) names[3] << 24));
     name_p = names;
@@ -24941,25 +24939,21 @@ void R_InitTextures () {
         M_StringCopy (name, c_bytes_add (name_p, _off_name_p + (int) ((i * 8))), ((int) (9) * (int) (1)));
         patchlookup[(int) (i)] = W_CheckNumForName (name);
     }
-    W_ReleaseLumpName (c_str_to_bytes ("PNAMES"));
-    maptex1 = _bytes_to_int_arr (W_CacheLumpName (c_str_to_bytes ("TEXTURE1"), (int) __anon_enum_1.PU_STATIC));
-    uint8[] _maptexb = _int_arr_to_bytes (maptex1);
+    W_ReleaseLumpNameStr ("PNAMES");
+    uint8[] _maptex1b = W_CacheLumpNameStr ("TEXTURE1", (int) __anon_enum_1.PU_STATIC);
+    uint8[] _maptexb = _maptex1b;
     uint8[] _maptex2b = new uint8[0];
-    maptex = maptex1;
-    numtextures1 = maptex[_off_maptex];
-    maxoff = W_LumpLength ((uint32) (W_GetNumForName (c_str_to_bytes ("TEXTURE1"))));
-    directory = maptex;
-    _off_directory = _off_maptex + (int) (1);
-    if (W_CheckNumForName (c_str_to_bytes ("TEXTURE2")) != -1) 
+    numtextures1 = (int) read_le32 (_maptex1b, 0);
+    maxoff = W_LumpLength ((uint32) (W_GetNumForNameStr ("TEXTURE1")));
+    _off_directory = 4;
+    if (W_CheckNumForNameStr ("TEXTURE2") != -1) 
     {
-        maptex2 = _bytes_to_int_arr (W_CacheLumpName (c_str_to_bytes ("TEXTURE2"), (int) __anon_enum_1.PU_STATIC));
-        _maptex2b = _int_arr_to_bytes (maptex2);
-        numtextures2 = maptex2[0];
-        maxoff2 = W_LumpLength ((uint32) (W_GetNumForName (c_str_to_bytes ("TEXTURE2"))));
+        _maptex2b = W_CacheLumpNameStr ("TEXTURE2", (int) __anon_enum_1.PU_STATIC);
+        numtextures2 = (int) read_le32 (_maptex2b, 0);
+        maxoff2 = W_LumpLength ((uint32) (W_GetNumForNameStr ("TEXTURE2")));
     }
     else 
     {
-        maptex2 = new int[0];
         numtextures2 = 0;
         maxoff2 = 0;
     }
@@ -24973,8 +24967,8 @@ void R_InitTextures () {
     texturewidthmask = new int[numtextures];
     textureheight = new int[numtextures];
     totalwidth = 0;
-    temp1 = W_GetNumForName (c_str_to_bytes ("S_START"));
-    temp2 = (W_GetNumForName (c_str_to_bytes ("S_END")) - 1);
+    temp1 = W_GetNumForNameStr ("S_START");
+    temp2 = (W_GetNumForNameStr ("S_END") - 1);
     temp3 = ((((temp2 - temp1) + 63) / 64) + ((numtextures + 63) / 64));
     if (I_ConsoleStdout () != 0) 
     {
@@ -24994,14 +24988,11 @@ void R_InitTextures () {
             }
             if (i == numtextures1) 
             {
-                maptex = maptex2;
-                _off_maptex = 0;
                 maxoff = maxoff2;
-                directory = maptex;
-                _off_directory = _off_maptex + (int) (1);
+                _off_directory = 4;
                 _maptexb = _maptex2b;
             }
-            offset = directory[_off_directory];
+            offset = (int) read_le32 (_maptexb, _off_directory);
             if (offset > maxoff) {
                 I_Error (c_str_to_bytes ("R_InitTextures: bad texture directory"));
             }
@@ -25036,12 +25027,12 @@ void R_InitTextures () {
             totalwidth += (int) texture.width;
         }
         i++;
-        _off_directory++;
+        _off_directory += 4;
     }
     // Z_Free (patchlookup);
-    W_ReleaseLumpName (c_str_to_bytes ("TEXTURE1"));
-    if (maptex2 != null) {
-        W_ReleaseLumpName (c_str_to_bytes ("TEXTURE2"));
+    W_ReleaseLumpNameStr ("TEXTURE1");
+    if (_maptex2b.length > 0) {
+        W_ReleaseLumpNameStr ("TEXTURE2");
     }
     for (i = 0; i < numtextures; i++) {
         R_GenerateLookup (i);
@@ -25055,8 +25046,8 @@ void R_InitTextures () {
 
 void R_InitFlats () {
     int i = 0;
-    firstflat = (W_GetNumForName (c_str_to_bytes ("F_START")) + 1);
-    lastflat = (W_GetNumForName (c_str_to_bytes ("F_END")) - 1);
+    firstflat = (W_GetNumForNameStr ("F_START") + 1);
+    lastflat = (W_GetNumForNameStr ("F_END") - 1);
     numflats = ((lastflat - firstflat) + 1);
     flattranslation = new int[numflats + 1];
     for (i = 0; i < numflats; i++) {
@@ -25068,8 +25059,8 @@ void R_InitFlats () {
 void R_InitSpriteLumps () {
     int i = 0;
     patch_t? patch = null;
-    firstspritelump = (W_GetNumForName (c_str_to_bytes ("S_START")) + 1);
-    lastspritelump = (W_GetNumForName (c_str_to_bytes ("S_END")) - 1);
+    firstspritelump = (W_GetNumForNameStr ("S_START") + 1);
+    lastspritelump = (W_GetNumForNameStr ("S_END") - 1);
     numspritelumps = ((lastspritelump - firstspritelump) + 1);
     spritewidth = new int[numspritelumps];
     spriteoffset = new int[numspritelumps];
@@ -25088,7 +25079,7 @@ void R_InitSpriteLumps () {
 
 void R_InitColormaps () {
     int lump = 0;
-    lump = W_GetNumForName (c_str_to_bytes ("COLORMAP"));
+    lump = W_GetNumForNameStr ("COLORMAP");
     colormaps = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
 }
 
@@ -25184,7 +25175,6 @@ void R_PrecacheLevel () {
             W_CacheLumpNum (lump, (int) __anon_enum_1.PU_CACHE);
         }
     }
-    Z_Free (flatpresent);
     texturepresent = new uint8[(numtextures) > 0 ? (numtextures) : 1];
     c_memset (texturepresent, 0, numtextures);
     for (i = 0; i < numsides; i++) 
@@ -25208,7 +25198,6 @@ void R_PrecacheLevel () {
             W_CacheLumpNum (lump, (int) __anon_enum_1.PU_CACHE);
         }
     }
-    Z_Free (texturepresent);
     spritepresent = new uint8[(numsprites) > 0 ? (numsprites) : 1];
     c_memset (spritepresent, 0, numsprites);
     for (th = thinkercap.next; th != thinkercap; th = th.next) 
@@ -25234,7 +25223,6 @@ void R_PrecacheLevel () {
             }
         }
     }
-    Z_Free (spritepresent);
 }
 
 public uint8[] viewimage;
@@ -25269,13 +25257,26 @@ void R_DrawColumn () {
     fracstep = dc_iscale;
     frac = (dc_texturemid + ((dc_yl - centery) * fracstep));
     int slen = dc_source.length;
-    do {
-        int sidx = _off_dc_source + (int) (((frac >> 16) & 127));
-        if (sidx >= slen) sidx = slen - 1;
-        dest[_off_dest] = dc_colormap[(int) (dc_source[sidx])];
-        _off_dest += (int) (320);
-        frac += fracstep;
-    } while (count-- != 0);
+    int ch = dc_colheight;
+    if (ch == 128) {
+        do {
+            int sidx = _off_dc_source + ((frac >> 16) & 127);
+            if (sidx >= slen) sidx = slen - 1;
+            dest[_off_dest] = dc_colormap[dc_source[sidx]];
+            _off_dest += 320;
+            frac += fracstep;
+        } while (count-- != 0);
+    } else if (ch > 0) {
+        do {
+            int row = (frac >> 16) % ch;
+            if (row < 0) row += ch;
+            int sidx = _off_dc_source + row;
+            if (sidx >= slen) sidx = slen - 1;
+            dest[_off_dest] = dc_colormap[dc_source[sidx]];
+            _off_dest += 320;
+            frac += fracstep;
+        } while (count-- != 0);
+    }
 }
 
 // c2vala-ptrs: dest_buf[ARITH|DEREF|WR]=>uint8[] dest2_buf[ARITH|DEREF|WR]=>uint8[]
@@ -25296,6 +25297,7 @@ void R_DrawColumnLow () {
     {
         I_Error (c_str_to_bytes ("R_DrawColumn: %i to %i at %i"), dc_yl, dc_yh, dc_x);
     }
+    if (dc_source.length == 0 || dc_colormap.length == 0) return;
     x = (dc_x << 1);
     dest = I_VideoBuffer;
     _off_dest = ylookup_off[(int) (dc_yl)] + (int) (columnofs[(int) (x)]);
@@ -25303,11 +25305,18 @@ void R_DrawColumnLow () {
     _off_dest2 = ylookup_off[(int) (dc_yl)] + (int) (columnofs[(int) ((x + 1))]);
     fracstep = dc_iscale;
     frac = (dc_texturemid + ((dc_yl - centery) * fracstep));
+    int slen = dc_source.length;
+    int ch = dc_colheight;
     do {
-        dest[_off_dest] = dc_colormap[(int) (dc_source[_off_dc_source + (int) (((frac >> 16) & 127))])];
-        dest2[_off_dest2] = dest[_off_dest];
-        _off_dest += (int) (320);
-        _off_dest2 += (int) (320);
+        int row = (ch == 128 || ch <= 0) ? ((frac >> 16) & 127) : ((frac >> 16) % ch);
+        if (row < 0) row += ch;
+        int sidx = _off_dc_source + row;
+        if (sidx >= slen) sidx = slen - 1;
+        uint8 px = dc_colormap[dc_source[sidx]];
+        dest[_off_dest] = px;
+        dest2[_off_dest2] = px;
+        _off_dest += 320;
+        _off_dest2 += 320;
         frac += fracstep;
     } while (count-- != 0);
 }
@@ -25414,7 +25423,7 @@ void R_DrawTranslatedColumn () {
     fracstep = dc_iscale;
     frac = (dc_texturemid + ((dc_yl - centery) * fracstep));
     do {
-        dest[_off_dest] = dc_colormap[(int) (dc_translation[(int) (dc_source[_off_dc_source + (int) ((frac >> 16))])])];
+        dest[_off_dest] = dc_colormap[(int) (dc_translation[_off_dc_translation + (int) (dc_source[_off_dc_source + (int) ((frac >> 16))])])];
         _off_dest += (int) (320);
         frac += fracstep;
     } while (count-- != 0);
@@ -25446,8 +25455,8 @@ void R_DrawTranslatedColumnLow () {
     fracstep = dc_iscale;
     frac = (dc_texturemid + ((dc_yl - centery) * fracstep));
     do {
-        dest[_off_dest] = dc_colormap[(int) (dc_translation[(int) (dc_source[_off_dc_source + (int) ((frac >> 16))])])];
-        dest2[_off_dest2] = dc_colormap[(int) (dc_translation[(int) (dc_source[_off_dc_source + (int) ((frac >> 16))])])];
+        dest[_off_dest] = dc_colormap[(int) (dc_translation[_off_dc_translation + (int) (dc_source[_off_dc_source + (int) ((frac >> 16))])])];
+        dest2[_off_dest2] = dc_colormap[(int) (dc_translation[_off_dc_translation + (int) (dc_source[_off_dc_source + (int) ((frac >> 16))])])];
         _off_dest += (int) (320);
         _off_dest2 += (int) (320);
         frac += fracstep;
@@ -25567,7 +25576,6 @@ void R_FillBackScreen () {
     {
         if (background_buffer != null) 
         {
-            Z_Free (background_buffer);
             background_buffer = new uint8[0];
         }
         return;
@@ -25600,26 +25608,26 @@ void R_FillBackScreen () {
         }
     }
     V_UseBuffer (background_buffer);
-    patch = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_t"), (int) __anon_enum_1.PU_CACHE), 0);
+    patch = new patch_t.at (W_CacheLumpNameStr ("brdr_t", (int) __anon_enum_1.PU_CACHE), 0);
     for (x = 0; x < scaledviewwidth; x += 8) {
         V_DrawPatch ((viewwindowx + x), (viewwindowy - 8), patch);
     }
-    patch = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_b"), (int) __anon_enum_1.PU_CACHE), 0);
+    patch = new patch_t.at (W_CacheLumpNameStr ("brdr_b", (int) __anon_enum_1.PU_CACHE), 0);
     for (x = 0; x < scaledviewwidth; x += 8) {
         V_DrawPatch ((viewwindowx + x), (viewwindowy + viewheight), patch);
     }
-    patch = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_l"), (int) __anon_enum_1.PU_CACHE), 0);
+    patch = new patch_t.at (W_CacheLumpNameStr ("brdr_l", (int) __anon_enum_1.PU_CACHE), 0);
     for (y = 0; y < viewheight; y += 8) {
         V_DrawPatch ((viewwindowx - 8), (viewwindowy + y), patch);
     }
-    patch = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_r"), (int) __anon_enum_1.PU_CACHE), 0);
+    patch = new patch_t.at (W_CacheLumpNameStr ("brdr_r", (int) __anon_enum_1.PU_CACHE), 0);
     for (y = 0; y < viewheight; y += 8) {
         V_DrawPatch ((viewwindowx + scaledviewwidth), (viewwindowy + y), patch);
     }
-    V_DrawPatch ((viewwindowx - 8), (viewwindowy - 8), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_tl"), (int) __anon_enum_1.PU_CACHE), 0));
-    V_DrawPatch ((viewwindowx + scaledviewwidth), (viewwindowy - 8), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_tr"), (int) __anon_enum_1.PU_CACHE), 0));
-    V_DrawPatch ((viewwindowx - 8), (viewwindowy + viewheight), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_bl"), (int) __anon_enum_1.PU_CACHE), 0));
-    V_DrawPatch ((viewwindowx + scaledviewwidth), (viewwindowy + viewheight), new patch_t.at (W_CacheLumpName (c_str_to_bytes ("brdr_br"), (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatch ((viewwindowx - 8), (viewwindowy - 8), new patch_t.at (W_CacheLumpNameStr ("brdr_tl", (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatch ((viewwindowx + scaledviewwidth), (viewwindowy - 8), new patch_t.at (W_CacheLumpNameStr ("brdr_tr", (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatch ((viewwindowx - 8), (viewwindowy + viewheight), new patch_t.at (W_CacheLumpNameStr ("brdr_bl", (int) __anon_enum_1.PU_CACHE), 0));
+    V_DrawPatch ((viewwindowx + scaledviewwidth), (viewwindowy + viewheight), new patch_t.at (W_CacheLumpNameStr ("brdr_br", (int) __anon_enum_1.PU_CACHE), 0));
     V_RestoreBuffer ();
 }
 
@@ -26672,9 +26680,10 @@ void R_StoreWallRange (int start, int stop) {
     uint32 offsetangle = 0;
     int vtop = 0;
     int lightnum = 0;
-    if (ds_p.length == 0) {
+    if (numdrawsegs >= drawsegs.length) {
         return;
     }
+    drawseg_s _cur_ds = drawsegs[numdrawsegs];
     if ((start >= viewwidth) || (start > stop)) {
         I_Error (c_str_to_bytes ("Bad R_RenderWallRange: %i to %i"), start, stop);
     }
@@ -26691,21 +26700,21 @@ void R_StoreWallRange (int start, int stop) {
     sineval = finesine[(int) ((distangle >> ((uint32) 19)))];
     rw_distance = FixedMul (hyp, sineval);
     rw_x = start;
-    ds_p[0].x1 = rw_x;
-    ds_p[0].x2 = stop;
-    ds_p[0].curline = curline;
+    _cur_ds.x1 = rw_x;
+    _cur_ds.x2 = stop;
+    _cur_ds.curline = curline;
     rw_stopx = (stop + 1);
     rw_scale = R_ScaleFromGlobalAngle ((viewangle + xtoviewangle[(int) (start)]));
-    ds_p[0].scale1 = rw_scale;
+    _cur_ds.scale1 = rw_scale;
     if (stop > start) 
     {
-        ds_p[0].scale2 = R_ScaleFromGlobalAngle ((viewangle + xtoviewangle[(int) (stop)]));
-        rw_scalestep = ((ds_p[0].scale2 - rw_scale) / (stop - start));
-        ds_p[0].scalestep = rw_scalestep;
+        _cur_ds.scale2 = R_ScaleFromGlobalAngle ((viewangle + xtoviewangle[(int) (stop)]));
+        rw_scalestep = ((_cur_ds.scale2 - rw_scale) / (stop - start));
+        _cur_ds.scalestep = rw_scalestep;
     }
     else 
     {
-        ds_p[0].scale2 = ds_p[0].scale1;
+        _cur_ds.scale2 = _cur_ds.scale1;
     }
     worldtop = (frontsector.ceilingheight - viewz);
     worldbottom = (frontsector.floorheight - viewz);
@@ -26713,7 +26722,7 @@ void R_StoreWallRange (int start, int stop) {
     bottomtexture = maskedtexture;
     toptexture = bottomtexture;
     midtexture = toptexture;
-    ds_p[0].maskedtexturecol = new int16[0];
+    _cur_ds.maskedtexturecol = new int16[0];
     if (!(backsector != null)) 
     {
         midtexture = texturetranslation[(int) (sidedef.midtexture)];
@@ -26729,50 +26738,50 @@ void R_StoreWallRange (int start, int stop) {
             rw_midtexturemid = worldtop;
         }
         rw_midtexturemid += sidedef.rowoffset;
-        ds_p[0].silhouette = 3;
-        ds_p[0].sprtopclip = screenheightarray;
-        ds_p[0].sprbottomclip = negonearray;
-        ds_p[0].bsilheight = 2147483647;
-        ds_p[0].tsilheight = (-2147483647 - 1);
+        _cur_ds.silhouette = 3;
+        _cur_ds.sprtopclip = screenheightarray;
+        _cur_ds.sprbottomclip = negonearray;
+        _cur_ds.bsilheight = 2147483647;
+        _cur_ds.tsilheight = (-2147483647 - 1);
     }
     else 
     {
-        ds_p[0].sprbottomclip = new int16[0];
-        ds_p[0].sprtopclip = ds_p[0].sprbottomclip;
-        ds_p[0].silhouette = 0;
+        _cur_ds.sprbottomclip = new int16[0];
+        _cur_ds.sprtopclip = _cur_ds.sprbottomclip;
+        _cur_ds.silhouette = 0;
         if (frontsector.floorheight > backsector.floorheight) 
         {
-            ds_p[0].silhouette = 1;
-            ds_p[0].bsilheight = frontsector.floorheight;
+            _cur_ds.silhouette = 1;
+            _cur_ds.bsilheight = frontsector.floorheight;
         }
         else 
         if (backsector.floorheight > viewz) 
         {
-            ds_p[0].silhouette = 1;
-            ds_p[0].bsilheight = 2147483647;
+            _cur_ds.silhouette = 1;
+            _cur_ds.bsilheight = 2147483647;
         }
         if (frontsector.ceilingheight < backsector.ceilingheight) 
         {
-            ds_p[0].silhouette |= 2;
-            ds_p[0].tsilheight = frontsector.ceilingheight;
+            _cur_ds.silhouette |= 2;
+            _cur_ds.tsilheight = frontsector.ceilingheight;
         }
         else 
         if (backsector.ceilingheight < viewz) 
         {
-            ds_p[0].silhouette |= 2;
-            ds_p[0].tsilheight = (-2147483647 - 1);
+            _cur_ds.silhouette |= 2;
+            _cur_ds.tsilheight = (-2147483647 - 1);
         }
         if (backsector.ceilingheight <= frontsector.floorheight) 
         {
-            ds_p[0].sprbottomclip = negonearray;
-            ds_p[0].bsilheight = 2147483647;
-            ds_p[0].silhouette |= 1;
+            _cur_ds.sprbottomclip = negonearray;
+            _cur_ds.bsilheight = 2147483647;
+            _cur_ds.silhouette |= 1;
         }
         if (backsector.floorheight >= frontsector.ceilingheight) 
         {
-            ds_p[0].sprtopclip = screenheightarray;
-            ds_p[0].tsilheight = (-2147483647 - 1);
-            ds_p[0].silhouette |= 2;
+            _cur_ds.sprtopclip = screenheightarray;
+            _cur_ds.tsilheight = (-2147483647 - 1);
+            _cur_ds.silhouette |= 2;
         }
         worldhigh = (backsector.ceilingheight - viewz);
         worldlow = (backsector.floorheight - viewz);
@@ -26831,7 +26840,7 @@ void R_StoreWallRange (int start, int stop) {
         {
             maskedtexture = (uint32) 1;
             maskedtexturecol = new int16[320];
-            ds_p[0].maskedtexturecol = maskedtexturecol;
+            _cur_ds.maskedtexturecol = maskedtexturecol;
         }
     }
     segtextured = (((uint32) ((midtexture | toptexture) | bottomtexture)) | maskedtexture);
@@ -26909,33 +26918,33 @@ void R_StoreWallRange (int start, int stop) {
         floorplane = R_CheckPlane (floorplane, rw_x, (rw_stopx - 1));
     }
     R_RenderSegLoop ();
-    if ((((ds_p[0].silhouette & 2) != 0) || (maskedtexture != 0)) && (ds_p[0].sprtopclip.length == 0)) 
+    if ((((_cur_ds.silhouette & 2) != 0) || (maskedtexture != 0)) && (_cur_ds.sprtopclip.length == 0)) 
     {
         var clip = new int16[320];
         for (int ci = start; ci < rw_stopx; ci++) {
             clip[ci] = ceilingclip[ci];
         }
-        ds_p[0].sprtopclip = clip;
+        _cur_ds.sprtopclip = clip;
     }
-    if ((((ds_p[0].silhouette & 1) != 0) || (maskedtexture != 0)) && (ds_p[0].sprbottomclip.length == 0)) 
+    if ((((_cur_ds.silhouette & 1) != 0) || (maskedtexture != 0)) && (_cur_ds.sprbottomclip.length == 0)) 
     {
         var clip = new int16[320];
         for (int ci = start; ci < rw_stopx; ci++) {
             clip[ci] = floorclip[ci];
         }
-        ds_p[0].sprbottomclip = clip;
+        _cur_ds.sprbottomclip = clip;
     }
-    if ((maskedtexture != 0) && (!((ds_p[0].silhouette & 2) != 0))) 
+    if ((maskedtexture != 0) && (!((_cur_ds.silhouette & 2) != 0))) 
     {
-        ds_p[0].silhouette |= 2;
-        ds_p[0].tsilheight = (-2147483647 - 1);
+        _cur_ds.silhouette |= 2;
+        _cur_ds.tsilheight = (-2147483647 - 1);
     }
-    if ((maskedtexture != 0) && (!((ds_p[0].silhouette & 1) != 0))) 
+    if ((maskedtexture != 0) && (!((_cur_ds.silhouette & 1) != 0))) 
     {
-        ds_p[0].silhouette |= 1;
-        ds_p[0].bsilheight = 2147483647;
+        _cur_ds.silhouette |= 1;
+        _cur_ds.bsilheight = 2147483647;
     }
-    ds_p = _c2v_slice_drawseg_s (ds_p, 1);
+    numdrawsegs++;
 }
 
 void R_InitSkyMap () {
@@ -27096,34 +27105,37 @@ vissprite_s? R_NewVisSprite () {
     return vissprites[idx];
 }
 
-// c2vala-ptrs: column_ptr[ARITH|DEREF|CAST|ARROW->post_t]=>post_t.at
-void R_DrawMaskedColumn (post_t? column) {
-    int topscreen = 0;
-    int bottomscreen = 0;
-    int basetexturemid = 0;
-    basetexturemid = dc_texturemid;
-    for (; ((int) column.topdelta) != 0xff; ) 
-    {
-        topscreen = (sprtopscreen + (spryscale * ((int) column.topdelta)));
-        bottomscreen = (topscreen + (spryscale * ((int) column.length)));
-        dc_yl = (((topscreen + (1 << 16)) - 1) >> 16);
-        dc_yh = ((bottomscreen - 1) >> 16);
-        if (dc_yh >= ((int) mfloorclip[(int) (dc_x)])) {
-            dc_yh = (((int) mfloorclip[(int) (dc_x)]) - 1);
+void R_DrawMaskedPostData (uint8[] pdata, int coff) {
+    int basetexturemid = dc_texturemid;
+    dc_colheight = 128;
+    while (coff >= 0 && coff + 2 < pdata.length && pdata[coff] != 0xff) {
+        int topdelta = (int) pdata[coff];
+        int plen = (int) pdata[coff + 1];
+        int topscreen = sprtopscreen + (spryscale * topdelta);
+        int bottomscreen = topscreen + (spryscale * plen);
+        dc_yl = ((topscreen + (1 << 16)) - 1) >> 16;
+        dc_yh = (bottomscreen - 1) >> 16;
+        if (dc_yh >= (int) mfloorclip[dc_x]) {
+            dc_yh = ((int) mfloorclip[dc_x]) - 1;
         }
-        if (dc_yl <= ((int) mceilingclip[(int) (dc_x)])) {
-            dc_yl = (((int) mceilingclip[(int) (dc_x)]) + 1);
+        if (dc_yl <= (int) mceilingclip[dc_x]) {
+            dc_yl = ((int) mceilingclip[dc_x]) + 1;
         }
-        if (dc_yl <= dc_yh) 
-        {
-            dc_source = ((!) column._c2v_data);
-            _off_dc_source = column._off + (int) (3);
-            dc_texturemid = (basetexturemid - (((int) column.topdelta) << 16));
+        if (dc_yl <= dc_yh) {
+            dc_source = pdata;
+            _off_dc_source = coff + 3;
+            dc_texturemid = basetexturemid - (topdelta << 16);
             ((!) colfunc) ();
         }
-        column = new post_t.at (((!) column._c2v_data), column._off + (int) (column.length) + (int) (4));
+        coff += plen + 4;
     }
     dc_texturemid = basetexturemid;
+}
+
+// c2vala-ptrs: column_ptr[ARITH|DEREF|CAST|ARROW->post_t]=>post_t.at
+void R_DrawMaskedColumn (post_t? column) {
+    if (column == null || column._c2v_data == null) return;
+    R_DrawMaskedPostData ((!) column._c2v_data, column._off);
 }
 
 // c2vala-ptrs: vis_obj[DEREF|ARROW]=>T? column_obj[PLAIN]=>T? patch_ptr[ARITH|DEREF|CAST|ARROW->post_t]=>post_t.at
@@ -27142,21 +27154,22 @@ void R_DrawVisSprite (vissprite_s? vis, int x1, int x2) {
     if ((vis.mobjflags & ((int) mobjflag_t.MF_TRANSLATION)) != 0) 
     {
         colfunc = transcolfunc;
-        dc_translation = _c2v_slice_uint8 (translationtables, (-256) + (int) (((vis.mobjflags & ((int) mobjflag_t.MF_TRANSLATION)) >> ((int) (((int) mobjflag_t.MF_TRANSSHIFT) - 8)))));
+        dc_translation = translationtables;
+        _off_dc_translation = ((vis.mobjflags & ((int) mobjflag_t.MF_TRANSLATION)) >> ((int) (((int) mobjflag_t.MF_TRANSSHIFT) - 8))) - 256;
     }
     dc_iscale = (int.abs ((int) (vis.xiscale)) >> detailshift);
     dc_texturemid = vis.texturemid;
     frac = vis.startfrac;
     spryscale = vis.scale;
     sprtopscreen = (centeryfrac - FixedMul (dc_texturemid, spryscale));
+    uint8[] pdata = (!) patch._c2v_data;
     for (dc_x = vis.x1; dc_x <= vis.x2; ) {
         {
             texturecolumn = (frac >> 16);
             if ((texturecolumn < 0) || (texturecolumn >= ((int) patch.width))) {
                 I_Error (c_str_to_bytes ("R_DrawSpriteRange: bad texturecolumn"));
             }
-            column = new post_t.at (((!) patch._c2v_data), patch._off + (int) (patch.columnofs_at ((int) (texturecolumn))));
-            R_DrawMaskedColumn (column);
+            R_DrawMaskedPostData (pdata, patch._off + (int) (patch.columnofs_at ((int) (texturecolumn))));
         }
         dc_x++;
         frac += vis.xiscale;
@@ -27303,7 +27316,7 @@ void R_AddSprites (sector_t? sec) {
 }
 
 // c2vala-ptrs: psp_obj[DEREF|ARROW]=>T? sprdef_obj[DEREF|ARROW]=>T? sprframe_obj[DEREF|ARROW]=>T? vis_obj[DEREF|WR|ARROW]=>T?
-void R_DrawPSprite (pspdef_t[] psp) {
+void R_DrawPSprite (pspdef_t psp) {
     int tx = 0;
     int x1 = 0;
     int x2 = 0;
@@ -27313,17 +27326,17 @@ void R_DrawPSprite (pspdef_t[] psp) {
     uint32 flip = 0;
     vissprite_s? vis = null;
     vissprite_s avis = new vissprite_s ();
-    if (((uint32) (psp[0].state.sprite)) >= ((uint32) numsprites)) {
-        I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite number %i "), psp[0].state.sprite);
+    if (((uint32) (psp.state.sprite)) >= ((uint32) numsprites)) {
+        I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite number %i "), psp.state.sprite);
     }
-    sprdef = sprites[(int) (psp[0].state.sprite)];
-    if ((psp[0].state.frame & 0x7fff) >= sprdef.numframes) {
-        I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite frame %i : %i "), psp[0].state.sprite, psp[0].state.frame);
+    sprdef = sprites[(int) (psp.state.sprite)];
+    if ((psp.state.frame & 0x7fff) >= sprdef.numframes) {
+        I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite frame %i : %i "), psp.state.sprite, psp.state.frame);
     }
-    sprframe = sprdef.spriteframes[(int) ((psp[0].state.frame & 0x7fff))];
+    sprframe = sprdef.spriteframes[(int) ((psp.state.frame & 0x7fff))];
     lump = (int) (sprframe.lump[0]);
     flip = ((uint32) (sprframe.flip[0]));
-    tx = (psp[0].sx - (160 * (1 << 16)));
+    tx = (psp.sx - (160 * (1 << 16)));
     tx -= spriteoffset[(int) (lump)];
     x1 = ((centerxfrac + FixedMul (tx, pspritescale)) >> 16);
     if (x1 > viewwidth) {
@@ -27336,7 +27349,7 @@ void R_DrawPSprite (pspdef_t[] psp) {
     }
     vis = avis;
     vis.mobjflags = 0;
-    vis.texturemid = (((100 << 16) + ((1 << 16) / 2)) - (psp[0].sy - spritetopoffset[(int) (lump)]));
+    vis.texturemid = (((100 << 16) + ((1 << 16) / 2)) - (psp.sy - spritetopoffset[(int) (lump)]));
     vis.x1 = ((x1 < 0) ? 0 : x1);
     vis.x2 = ((x2 >= viewwidth) ? (viewwidth - 1) : x2);
     vis.scale = (pspritescale << detailshift);
@@ -27364,7 +27377,7 @@ void R_DrawPSprite (pspdef_t[] psp) {
         vis.colormap = fixedcolormap;
     }
     else 
-    if ((psp[0].state.frame & 0x8000) != 0) 
+    if ((psp.state.frame & 0x8000) != 0) 
     {
         vis.colormap = colormaps;
     }
@@ -27401,7 +27414,7 @@ void R_DrawPlayerSprites () {
         for (; i < ((int) psprnum_t.NUMPSPRITES); ) {
             {
                 if (psp[_off_psp].state != null) {
-                    R_DrawPSprite (_c2v_slice_pspdef_t (psp, _off_psp));
+                    R_DrawPSprite (psp[_off_psp]);
                 }
             }
             i++;
@@ -27480,11 +27493,11 @@ void R_DrawSprite (vissprite_s? spr) {
         clipbot[(int) (x)] = cliptop[(int) (x)];
     }
     {
-        ds = ds_p;
-        _off_ds = 0 - (int) (1);
+        ds = drawsegs;
+        _off_ds = numdrawsegs - 1;
         for (; _off_ds >= 0; _off_ds--) 
         {
-            if (((ds[_off_ds].x1 > spr.x2) || (ds[_off_ds].x2 < spr.x1)) || ((!(ds[_off_ds].silhouette != 0)) && (!(ds[_off_ds].maskedtexturecol != null)))) 
+            if (((ds[_off_ds].x1 > spr.x2) || (ds[_off_ds].x2 < spr.x1)) || ((!(ds[_off_ds].silhouette != 0)) && (ds[_off_ds].maskedtexturecol.length == 0))) 
             {
                 continue;
             }
@@ -27502,8 +27515,8 @@ void R_DrawSprite (vissprite_s? spr) {
             }
             if ((scale < spr.scale) || ((lowscale < spr.scale) && (!(R_PointOnSegSide (spr.gx, spr.gy, ds[_off_ds].curline) != 0)))) 
             {
-                if (ds[_off_ds].maskedtexturecol != null) {
-                    R_RenderMaskedSegRange (_c2v_slice_drawseg_s (ds, _off_ds), r1, r2);
+                if (ds[_off_ds].maskedtexturecol.length > 0) {
+                    R_RenderMaskedSegRange (_c2v_box_drawseg_s_arr (ds[_off_ds]), r1, r2);
                 }
                 continue;
             }
@@ -27566,7 +27579,7 @@ void R_DrawMasked () {
     drawseg_s[] ds = new drawseg_s[0];
     int _off_ds = 0;
     R_SortVisSprites ();
-    if (uintptr.from_pointer ((void*) (vissprite_p)) > uintptr.from_pointer ((void*) (vissprites))) 
+    if (numvissprites > 0) 
     {
         for (spr = vsprsortedhead.next; spr != null && spr != vsprsortedhead; spr = spr.next) 
         {
@@ -27574,11 +27587,11 @@ void R_DrawMasked () {
         }
     }
     {
-        ds = ds_p;
-        _off_ds = 0 - (int) (1);
+        ds = drawsegs;
+        _off_ds = numdrawsegs - 1;
         for (; _off_ds >= 0; _off_ds--) {
-            if (ds[_off_ds].maskedtexturecol != null) {
-                R_RenderMaskedSegRange (_c2v_slice_drawseg_s (ds, _off_ds), ds[_off_ds].x1, ds[_off_ds].x2);
+            if (ds[_off_ds].maskedtexturecol.length > 0) {
+                R_RenderMaskedSegRange (_c2v_box_drawseg_s_arr (ds[_off_ds]), ds[_off_ds].x1, ds[_off_ds].x2);
             }
         }
     }
@@ -28081,7 +28094,7 @@ void SHA1_UpdateString (sha1_context_s? context, uint8[] str) {
 public patch_t? sttminus;
 
 void STlib_init () {
-    sttminus = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("STTMINUS"), (int) __anon_enum_1.PU_STATIC), 0);
+    sttminus = new patch_t.at (W_CacheLumpNameStr ("STTMINUS", (int) __anon_enum_1.PU_STATIC), 0);
 }
 
 // c2vala-ptrs: n_obj[DEREF|WR|ARROW]=>T? pl_pp[PLAIN]=>C2VBox<T[]> num_obj[PLAIN]=>T? on_obj[PLAIN]=>T?
@@ -28744,8 +28757,7 @@ void ST_doPaletteStuff () {
     if (palette != st_palette) 
     {
         st_palette = palette;
-        pal = c_bytes_add (W_CacheLumpNum (lu_palette, (int) __anon_enum_1.PU_CACHE), (int) ((palette * 768)) * 1);
-        I_SetPalette (pal);
+        I_SetPalette (W_CacheLumpNum (lu_palette, (int) __anon_enum_1.PU_CACHE), palette * 768);
     }
 }
 
@@ -28872,7 +28884,7 @@ void ST_loadGraphics () {
 }
 
 void ST_loadData () {
-    lu_palette = W_GetNumForName (c_str_to_bytes ("PLAYPAL"));
+    lu_palette = W_GetNumForNameStr ("PLAYPAL");
     ST_loadGraphics ();
 }
 
@@ -29121,23 +29133,20 @@ void V_DrawPatch (int x, int y, patch_t? patch) {
     desttop = dest_screen;
     _off_desttop = (int) ((y * 320)) + (int) (x);
     w = (int) patch.width;
+    uint8[] pdata = (!) patch._c2v_data;
+    int poff = patch._off;
     for (; col < w; ) {
-        {
-            column = new post_t.at (((!) patch._c2v_data), patch._off + (int) (patch.columnofs_at ((int) (col))));
-            while (((int) column.topdelta) != 0xff) 
-            {
-                source = ((!) column._c2v_data);
-                _off_source = column._off + (int) (3);
-                dest = desttop;
-                _off_dest = _off_desttop + (int) ((((int) column.topdelta) * 320));
-                count = (int) column.length;
-                while (count-- != 0) 
-                {
-                    dest[_off_dest] = source[_off_source++];
-                    _off_dest += (int) (320);
-                }
-                column = new post_t.at (((!) column._c2v_data), column._off + (int) (column.length) + (int) (4));
+        int coff = poff + patch.columnofs_at (col);
+        while (coff < pdata.length && pdata[coff] != 0xff) {
+            int topdelta = (int) pdata[coff];
+            count = (int) pdata[coff + 1];
+            _off_source = coff + 3;
+            _off_dest = _off_desttop + (topdelta * 320);
+            while (count-- != 0) {
+                desttop[_off_dest] = pdata[_off_source++];
+                _off_dest += 320;
             }
+            coff += ((int) pdata[coff + 1]) + 4;
         }
         x++;
         col++;
@@ -29175,23 +29184,20 @@ void V_DrawPatchFlipped (int x, int y, patch_t? patch) {
     desttop = dest_screen;
     _off_desttop = (int) ((y * 320)) + (int) (x);
     w = (int) patch.width;
+    uint8[] pdata = (!) patch._c2v_data;
+    int poff = patch._off;
     for (; col < w; ) {
-        {
-            column = new post_t.at (((!) patch._c2v_data), patch._off + (int) (patch.columnofs_at ((int) (((w - 1) - col)))));
-            while (((int) column.topdelta) != 0xff) 
-            {
-                source = ((!) column._c2v_data);
-                _off_source = column._off + (int) (3);
-                dest = desttop;
-                _off_dest = _off_desttop + (int) ((((int) column.topdelta) * 320));
-                count = (int) column.length;
-                while (count-- != 0) 
-                {
-                    dest[_off_dest] = source[_off_source++];
-                    _off_dest += (int) (320);
-                }
-                column = new post_t.at (((!) column._c2v_data), column._off + (int) (column.length) + (int) (4));
+        int coff = poff + patch.columnofs_at ((w - 1) - col);
+        while (coff < pdata.length && pdata[coff] != 0xff) {
+            int topdelta = (int) pdata[coff];
+            count = (int) pdata[coff + 1];
+            _off_source = coff + 3;
+            _off_dest = _off_desttop + (topdelta * 320);
+            while (count-- != 0) {
+                desttop[_off_dest] = pdata[_off_source++];
+                _off_dest += 320;
             }
+            coff += ((int) pdata[coff + 1]) + 4;
         }
         x++;
         col++;
@@ -29407,11 +29413,11 @@ void V_DrawShadowedPatch (int x, int y, patch_t? patch) {
 }
 
 void V_LoadTintTable () {
-    tinttable = W_CacheLumpName (c_str_to_bytes ("TINTTAB"), (int) __anon_enum_1.PU_STATIC);
+    tinttable = W_CacheLumpNameStr ("TINTTAB", (int) __anon_enum_1.PU_STATIC);
 }
 
 void V_LoadXlaTable () {
-    xlatab = W_CacheLumpName (c_str_to_bytes ("XLATAB"), (int) __anon_enum_1.PU_STATIC);
+    xlatab = W_CacheLumpNameStr ("XLATAB", (int) __anon_enum_1.PU_STATIC);
 }
 
 // c2vala-ptrs: src_buf[ARITH]=>uint8[](ro) dest_buf[ARITH|WR]=>uint8[]
@@ -29568,7 +29574,7 @@ void V_ScreenShot (uint8[] format) {
         I_Error (c_str_to_bytes ("V_ScreenShot: Couldn't create a PCX"));
     }
     {
-        WritePCXfile (lbmname, I_VideoBuffer, 320, 200, W_CacheLumpName (c_str_to_bytes ("PLAYPAL"), (int) __anon_enum_1.PU_CACHE));
+        WritePCXfile (lbmname, I_VideoBuffer, 320, 200, W_CacheLumpNameStr ("PLAYPAL", (int) __anon_enum_1.PU_CACHE));
     }
 }
 
@@ -29730,6 +29736,17 @@ uint32 W_LumpNameHash (uint8[] s) {
     return result;
 }
 
+uint32 W_LumpNameHashStr (string s) {
+    uint32 result = (uint32) 5381;
+    int lim = (s.length < 8) ? s.length : 8;
+    for (int i = 0; i < lim && s[i] != '\0'; i++) {
+        int c = (int) s[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        result = ((result << 5) ^ result) ^ (uint32) c;
+    }
+    return result;
+}
+
 public lumpinfo_s[] lumpinfo_pool;
 
 void ExtendLumpInfo (int newnumlumps) {
@@ -29809,7 +29826,7 @@ _wad_file_s? W_AddFile (uint8[] filename) {
             lumpinfo[(int) i].cache = new uint8[0];
             GLib.Memory.copy_bytes (lumpinfo[(int) i].name, 0, rawinfo, roff + 8, 8);
         }
-        Z_Free (rawinfo);
+        rawinfo = new uint8[0];
         if (lumphash != null) 
         {
             lumphash = null;
@@ -29901,7 +29918,6 @@ uint8[] W_CacheLumpNum (int lumpnum, int tag) {
     lump = lumpinfo[(int) (lumpnum)];
     if (lump.cache.length > 0) 
     {
-        Z_ChangeTag2 (lump.cache, tag, c_str_to_bytes ("w_wad.c"), 378);
         return lump.cache;
     }
     if (lump.wad_file.mapped.length > 0) 
@@ -29919,6 +29935,37 @@ uint8[] W_CacheLumpName (uint8[] name, int tag) {
     return W_CacheLumpNum (W_GetNumForName (name), tag);
 }
 
+int W_CheckNumForNameStr (string name) {
+    if (_lump_hash_head != null && _lump_hash_next != null && numlumps > 0 && _lump_hash_head.length == (int) numlumps) {
+        int h = (int) (W_LumpNameHashStr (name) % numlumps);
+        for (int idx = _lump_hash_head[h]; idx >= 0; idx = _lump_hash_next[idx]) {
+            if (c_lump_eq_str (lumpinfo[idx].name, name) != 0)
+                return idx;
+        }
+        return -1;
+    }
+    for (int i = (int) (numlumps - 1); i >= 0; --i) {
+        if (c_lump_eq_str (lumpinfo[i].name, name) != 0)
+            return i;
+    }
+    return -1;
+}
+
+int W_GetNumForNameStr (string name) {
+    int i = W_CheckNumForNameStr (name);
+    if (i < 0)
+        I_Error (c_str_to_bytes ("W_GetNumForName: %s not found!"), name);
+    return i;
+}
+
+uint8[] W_CacheLumpNameStr (string name, int tag) {
+    return W_CacheLumpNum (W_GetNumForNameStr (name), tag);
+}
+
+void W_ReleaseLumpNameStr (string name) {
+    W_ReleaseLumpNum (W_GetNumForNameStr (name));
+}
+
 // c2vala-ptrs: lump_obj[DEREF|ARROW]=>T?
 void W_ReleaseLumpNum (int lumpnum) {
     lumpinfo_s? lump = null;
@@ -29932,7 +29979,6 @@ void W_ReleaseLumpNum (int lumpnum) {
     }
     else 
     {
-        Z_ChangeTag2 (lump.cache, (int) __anon_enum_1.PU_CACHE, c_str_to_bytes ("w_wad.c"), 429);
     }
 }
 
@@ -31056,7 +31102,7 @@ void WI_loadUnloadData (_c2v_del_load_callback_t_dd780739? callback) {
     patch_t?[] _c2v_ref_6 = { sp_secret };
     ((!) callback) (c_str_to_bytes ("WISCRT2"), _c2v_ref_6);
     sp_secret = _c2v_ref_6[0];
-    if (W_CheckNumForName (c_str_to_bytes ("WIOBJ")) >= 0) 
+    if (W_CheckNumForNameStr ("WIOBJ") >= 0) 
     {
         if ((netgame != 0) && (!(deathmatch != 0))) {
             patch_t?[] _c2v_ref_7 = { items };
@@ -31140,8 +31186,8 @@ void WI_loadData () {
         lnames = new patch_t?[9];
     }
     WI_loadUnloadData (WI_loadCallback);
-    star = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("STFST01"), (int) __anon_enum_1.PU_STATIC), 0);
-    bstar = new patch_t.at (W_CacheLumpName (c_str_to_bytes ("STFDEAD0"), (int) __anon_enum_1.PU_STATIC), 0);
+    star = new patch_t.at (W_CacheLumpNameStr ("STFST01", (int) __anon_enum_1.PU_STATIC), 0);
+    bstar = new patch_t.at (W_CacheLumpNameStr ("STFDEAD0", (int) __anon_enum_1.PU_STATIC), 0);
 }
 
 // c2vala-ptrs: name_obj[PLAIN]=>T? variable_pp[DEREF|WR]=>C2VBox<T[]>
@@ -34519,15 +34565,12 @@ public void c2vala_init_globals () {
         0xaf, (0x80 + 0x51), (0x80 + 0x52), (0x80 + 0x53), 0, 0, 0, (0x80 + 0x57), (0x80 + 0x58), 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (0x80 + 0x59), 0 };
-    gammamsg = new uint8[][5];
-    for (int _c2v_ai121 = 0; _c2v_ai121 < gammamsg.length[0]; _c2v_ai121++) {
-        gammamsg[_c2v_ai121] = new uint8[26];
-    }
-    gammamsg[0] = c_str_to_bytes ("Gamma correction OFF");
-    gammamsg[1] = c_str_to_bytes ("Gamma correction level 1");
-    gammamsg[2] = c_str_to_bytes ("Gamma correction level 2");
-    gammamsg[3] = c_str_to_bytes ("Gamma correction level 3");
-    gammamsg[4] = c_str_to_bytes ("Gamma correction level 4");
+    gammamsg = new string[5];
+    gammamsg[0] = "Gamma correction OFF";
+    gammamsg[1] = "Gamma correction level 1";
+    gammamsg[2] = "Gamma correction level 2";
+    gammamsg[3] = "Gamma correction level 3";
+    gammamsg[4] = "Gamma correction level 4";
     saveOldString = new uint8[24];
     savegamestrings = new uint8[][10];
     for (int _c2v_ai124 = 0; _c2v_ai124 < savegamestrings.length[0]; _c2v_ai124++) {
@@ -35277,44 +35320,6 @@ public uint32 _w_PIT_CheckLine (line_s? l) { return PIT_CheckLine (_c2v_box_line
 public uint32 _w_PIT_AddLineIntercepts (line_s? l) { return PIT_AddLineIntercepts (_c2v_box_line_s_arr (l)); }
 
 private static wi_anim_t _wi_get_anim (int ep, int i) { if (ep == 0) return epsd0animinfo[i]; if (ep == 1) return epsd1animinfo[i]; return epsd2animinfo[i]; }
-
-private static intercept_t[] _c2v_slice_intercept_t (intercept_t[] arr, int off) {
-    if (off <= 0) return arr;
-    if (off >= arr.length) return new intercept_t[0];
-    int n = arr.length - off;
-    intercept_t[] res = new intercept_t[n];
-    for (int i = 0; i < n; i++) res[i] = arr[off + i];
-    return res;
-}
-private static anim_t[] _c2v_slice_anim_t (anim_t[] arr, int off) {
-    if (off <= 0) return arr;
-    if (off >= arr.length) return new anim_t[0];
-    int n = arr.length - off;
-    anim_t[] res = new anim_t[n];
-    for (int i = 0; i < n; i++) res[i] = arr[off + i];
-    return res;
-}
-
-private static uint8[] _int_arr_to_bytes (int[] a) {
-    uint8[] b = new uint8[a.length * 4];
-    for (int i = 0; i < a.length; i++) {
-        uint32 v = (uint32) a[i];
-        b[i * 4 + 0] = (uint8) (v & 0xFF);
-        b[i * 4 + 1] = (uint8) ((v >> 8) & 0xFF);
-        b[i * 4 + 2] = (uint8) ((v >> 16) & 0xFF);
-        b[i * 4 + 3] = (uint8) ((v >> 24) & 0xFF);
-    }
-    return b;
-}
-private static int[] _bytes_to_int_arr (uint8[] b) {
-    int n = b.length / 4;
-    int[] a = new int[n];
-    for (int i = 0; i < n; i++) {
-        a[i] = (int) ((uint32) b[i*4] | ((uint32) b[i*4+1] << 8) | ((uint32) b[i*4+2] << 16) | ((uint32) b[i*4+3] << 24));
-    }
-    return a;
-}
-
 
 public int c_remove (string path) { return 0; }
 public int c_rename (string oldp, string newp) { return 0; }
