@@ -7608,7 +7608,7 @@ void TryRunTics () {
             if ((gametic / ticdup) > lowtic) {
                 I_Error (c_str_to_bytes ("gametic>lowtic"));
             }
-            c_memcpy_u32 (local_playeringame, @set.ingame, ((int) (8) * (int) (4)));
+            for (int _ci = 0; _ci < 8; _ci++) local_playeringame[_ci] = @set.ingame[_ci];
             ((!) loop_interface.RunTic) (_c2v_box_ticcmd_t_obj (@set.cmds), @set.ingame);
             gametic++;
             TicdupSquash (@set);
@@ -7993,7 +7993,7 @@ uint8[] GetGameName (uint8[] gamename) {
             size_t gamename_size = 0;
             int version = 0;
             gamename_size = (size_t) ((c_strlen ((string) deh_sub) + 10));
-            gamename = Z_Malloc ((int) gamename_size, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+            gamename = new uint8[((int) gamename_size) > 0 ? ((int) gamename_size) : 1];
             _off_gamename = 0;
             version = G_VanillaVersionCode ();
             M_snprintf (c_bytes_add (gamename, _off_gamename), gamename_size, deh_sub, (version / 100), (version % 100));
@@ -10072,7 +10072,7 @@ void G_PlayerReborn (int player) {
     int killcount = 0;
     int itemcount = 0;
     int secretcount = 0;
-    c_memcpy_i32 (frags, players[(int) (player)].frags, ((int) (4) * (int) (4)));
+    for (int _ci = 0; _ci < 4; _ci++) frags[_ci] = players[(int) (player)].frags[_ci];
     killcount = players[(int) (player)].killcount;
     itemcount = players[(int) (player)].itemcount;
     secretcount = players[(int) (player)].secretcount;
@@ -10113,7 +10113,7 @@ void G_PlayerReborn (int player) {
     p[0].psprites = new pspdef_t[(int) psprnum_t.NUMPSPRITES];
     for (int _pi = 0; _pi < p[0].psprites.length; _pi++) p[0].psprites[_pi] = new pspdef_t ();
     p[0].didsecret = 0;
-    c_memcpy_i32 (players[(int) (player)].frags, frags, ((int) (4) * (int) (4)));
+    for (int _ci = 0; _ci < 4; _ci++) players[(int) (player)].frags[_ci] = frags[_ci];
     players[(int) (player)].killcount = killcount;
     players[(int) (player)].itemcount = itemcount;
     players[(int) (player)].secretcount = secretcount;
@@ -10402,7 +10402,7 @@ void G_DoCompleted () {
         wminfo.plyr[(int) (i)].sitems = players[(int) (i)].itemcount;
         wminfo.plyr[(int) (i)].ssecret = players[(int) (i)].secretcount;
         wminfo.plyr[(int) (i)].stime = leveltime;
-        c_memcpy_i32 (wminfo.plyr[(int) (i)].frags, players[(int) (i)].frags, ((int) (4) * (int) (4)));
+        for (int _ci = 0; _ci < 4; _ci++) wminfo.plyr[(int) (i)].frags[_ci] = players[(int) (i)].frags[_ci];
     }
     gamestate = gamestate_t.GS_INTERMISSION;
     viewactive = (uint32) 0;
@@ -10705,7 +10705,7 @@ void IncreaseDemoBuffer () {
     int new_length = 0;
     current_length = (int) ((0 - 0));
     new_length = (current_length * 2);
-    new_demobuffer = Z_Malloc (new_length, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    new_demobuffer = new uint8[(new_length) > 0 ? (new_length) : 1];
     _off_new_demobuffer = 0;
     new_demop = new_demobuffer;
     _off_new_demop = _off_new_demobuffer + (int) ((0 - 0));
@@ -10749,14 +10749,14 @@ void G_RecordDemo (uint8[] name) {
     int maxsize = 0;
     usergame = (uint32) 0;
     demoname_size = (size_t) ((c_strlen ((string) name) + 5));
-    demoname = (string) Z_Malloc ((int) demoname_size, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    demoname = (string) new uint8[((int) demoname_size) > 0 ? ((int) demoname_size) : 1];
     M_snprintf (c_str_to_bytes (demoname), demoname_size, c_str_to_bytes ("%s.lmp"), name);
     maxsize = 0x20000;
     i = M_CheckParmWithArgs (c_str_to_bytes ("-maxdemo"), 1);
     if (i != 0) {
         maxsize = (c_atoi (myargv[(int) ((i + 1))]) * 1024);
     }
-    demobuffer = Z_Malloc (maxsize, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    demobuffer = new uint8[(maxsize) > 0 ? (maxsize) : 1];
     demoend = _c2v_slice_uint8 (demobuffer, (int) (maxsize));
     demorecording = (uint32) 1;
 }
@@ -12086,7 +12086,7 @@ void I_InitGraphics () {
         }
         print (@"I_InitGraphics: Auto-scaling factor: $(fb_scaling)\n");
     }
-    I_VideoBuffer = Z_Malloc ((320 * 200), (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    I_VideoBuffer = new uint8[(320 * 200)];
     screenvisible = (uint32) 1;
     I_InitInput ();
 }
@@ -13905,7 +13905,7 @@ int M_ReadFile (uint8[] name, _c2v_abox_uint8? buffer) {
         I_Error (c_str_to_bytes ("Couldn't read file %s"), name);
     }
     length = (int) (M_FileLength (handle));
-    buf = Z_Malloc (length, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    buf = new uint8[(length) > 0 ? (length) : 1];
     count = (int) (c_fread (buf, (size_t) (1), (size_t) (length), handle));
     handle = null;
     if (count < length) {
@@ -14220,7 +14220,7 @@ _MEMFILE? mem_fopen_write () {
     _MEMFILE? file = null;
     file = new _MEMFILE ();
     file.alloced = (size_t) 1024;
-    file.buf = Z_Malloc ((int) file.alloced, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    file.buf = new uint8[((int) file.alloced) > 0 ? ((int) file.alloced) : 1];
     file.buflen = (size_t) 0;
     file.position = (uint32) 0;
     file.mode = memfile_mode_t.MODE_WRITE;
@@ -14238,7 +14238,7 @@ size_t mem_fwrite (uint8[] ptr, size_t size, size_t nmemb, _MEMFILE? stream) {
     while (bytes > (stream.alloced - ((size_t) stream.position))) 
     {
         uchar[] newbuf = new uchar[0];
-        newbuf = Z_Malloc ((int) ((stream.alloced * ((size_t) 2))), (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+        newbuf = new uint8[((int) ((stream.alloced * ((size_t) 2)))) > 0 ? ((int) ((stream.alloced * ((size_t) 2)))) : 1];
         c_memcpy (newbuf, stream.buf, stream.alloced);
         Z_Free (stream.buf);
         stream.buf = newbuf;
@@ -14431,7 +14431,7 @@ int EV_DoCeiling (line_s[] line, ceiling_e type) {
             continue;
         }
         rtn = 1;
-        ceiling = new ceiling_t.at (Z_Malloc ((int) 88, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+        ceiling = new ceiling_t.at (new uint8[((int) 88) > 0 ? ((int) 88) : 1], 0);
         P_AddThinker (ceiling.thinker);
         sec[0].specialdata = ceiling;
         ceiling.thinker.tag = 2;
@@ -14704,7 +14704,7 @@ int EV_DoDoor (line_s[] line, vldoor_e type) {
             continue;
         }
         rtn = 1;
-        door = new vldoor_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+        door = new vldoor_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
         P_AddThinker (door.thinker);
         sec[0].specialdata = door;
         door.thinker.tag = 3;
@@ -14855,7 +14855,7 @@ void EV_VerticalDoor (line_s[] line, mobj_s[] thing) {
             0;
             break;
     }
-    door = new vldoor_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+    door = new vldoor_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
     P_AddThinker (door.thinker);
     sec[0].specialdata = door;
     door.thinker.tag = 3;
@@ -14895,7 +14895,7 @@ void EV_VerticalDoor (line_s[] line, mobj_s[] thing) {
 // c2vala-ptrs: sec_obj[DEREF|WR|ARROW]=>T? door_obj[DEREF|WR|ARROW]=>T?
 void P_SpawnDoorCloseIn30 (sector_t[] sec) {
     vldoor_t? door = null;
-    door = new vldoor_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+    door = new vldoor_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
     P_AddThinker (door.thinker);
     sec[0].specialdata = door;
     sec[0].special = (int16) 0;
@@ -14911,7 +14911,7 @@ void P_SpawnDoorCloseIn30 (sector_t[] sec) {
 // c2vala-ptrs: sec_obj[DEREF|WR|ARROW]=>T? door_obj[DEREF|WR|ARROW]=>T?
 void P_SpawnDoorRaiseIn5Mins (sector_t[] sec, int secnum) {
     vldoor_t? door = null;
-    door = new vldoor_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+    door = new vldoor_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
     P_AddThinker (door.thinker);
     sec[0].specialdata = door;
     sec[0].special = (int16) 0;
@@ -16561,7 +16561,7 @@ int EV_DoFloor (line_s[] line, floor_e floortype) {
             continue;
         }
         rtn = 1;
-        floor = new floormove_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+        floor = new floormove_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
         P_AddThinker (floor.thinker);
         sec[0].specialdata = floor;
         floor.thinker.tag = 4;
@@ -16753,7 +16753,7 @@ int EV_BuildStairs (line_s[] line, stair_e type) {
             continue;
         }
         rtn = 1;
-        floor = new floormove_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+        floor = new floormove_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
         P_AddThinker (floor.thinker);
         sec.specialdata = floor;
         floor.thinker.tag = 4;
@@ -16799,7 +16799,7 @@ int EV_BuildStairs (line_s[] line, stair_e type) {
                 }
                 sec = _c2v_box_sector_t_obj (tsec);
                 secnum = newsecnum;
-                floor = new floormove_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+                floor = new floormove_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
                 P_AddThinker (floor.thinker);
                 sec.specialdata = floor;
                 floor.thinker.tag = 4;
@@ -17568,7 +17568,7 @@ void T_LightFlash (lightflash_t? flash) {
 void P_SpawnLightFlash (sector_t[] sector) {
     lightflash_t? flash = null;
     sector[0].special = (int16) 0;
-    flash = new lightflash_t.at (Z_Malloc ((int) 72, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+    flash = new lightflash_t.at (new uint8[((int) 72) > 0 ? ((int) 72) : 1], 0);
     P_AddThinker (flash.thinker);
     flash.thinker.tag = 6;
     flash.thinker.owner = flash;
@@ -17600,7 +17600,7 @@ void T_StrobeFlash (strobe_t? flash) {
 // c2vala-ptrs: sector_obj[DEREF|WR|ARROW]=>T? flash_obj[DEREF|WR|ARROW]=>T?
 void P_SpawnStrobeFlash (sector_t[] sector, int fastOrSlow, int inSync) {
     strobe_t? flash = null;
-    flash = new strobe_t.at (Z_Malloc ((int) 72, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+    flash = new strobe_t.at (new uint8[((int) 72) > 0 ? ((int) 72) : 1], 0);
     P_AddThinker (flash.thinker);
     flash.sector = _c2v_box_sector_t_obj (sector);
     flash.darktime = fastOrSlow;
@@ -17732,7 +17732,7 @@ void T_Glow (glow_t? g) {
 // c2vala-ptrs: sector_obj[DEREF|WR|ARROW]=>T? g_obj[DEREF|WR|ARROW]=>T?
 void P_SpawnGlowingLight (sector_t[] sector) {
     glow_t? g = null;
-    g = new glow_t.at (Z_Malloc ((int) 64, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+    g = new glow_t.at (new uint8[((int) 64) > 0 ? ((int) 64) : 1], 0);
     P_AddThinker (g.thinker);
     g.sector = _c2v_box_sector_t_obj (sector);
     g.minlight = P_FindMinSurroundingLight (sector, (int) (sector[0].lightlevel));
@@ -18676,6 +18676,8 @@ void SpechitOverrun (line_s[] ld) {
     }
 }
 
+[NoAlloc]
+[AlwaysInline]
 int P_AproxDistance (int dx, int dy) {
     dx = int.abs ((int) (dx));
     dy = int.abs ((int) (dy));
@@ -20070,7 +20072,7 @@ int EV_DoPlat (line_s[] line, plattype_e type, int amount) {
             continue;
         }
         rtn = 1;
-        plat = new plat_t.at (Z_Malloc ((int) 88, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+        plat = new plat_t.at (new uint8[((int) 88) > 0 ? ((int) 88) : 1], 0);
         P_AddThinker (plat.thinker);
         plat.type = type;
         plat.sector = _c2v_box_sector_t_obj (sec);
@@ -21657,7 +21659,7 @@ void P_UnArchiveSpecials () {
                 return;
             case __anon_enum_134.tc_ceiling:
                 saveg_read_pad ();
-                ceiling = new ceiling_t.at (Z_Malloc ((int) 88, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                ceiling = new ceiling_t.at (new uint8[((int) 88) > 0 ? ((int) 88) : 1], 0);
                 saveg_read_ceiling_t (ceiling);
                 ceiling.sector.specialdata = ceiling;
                 if (ceiling.thinker.function.acp1 != null) {
@@ -21669,7 +21671,7 @@ void P_UnArchiveSpecials () {
                 break;
             case __anon_enum_134.tc_door:
                 saveg_read_pad ();
-                door = new vldoor_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                door = new vldoor_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
                 saveg_read_vldoor_t (door);
                 door.sector.specialdata = door;
                 door.thinker.tag = 3;
@@ -21678,7 +21680,7 @@ void P_UnArchiveSpecials () {
                 break;
             case __anon_enum_134.tc_floor:
                 saveg_read_pad ();
-                floor = new floormove_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                floor = new floormove_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
                 saveg_read_floormove_t (floor);
                 floor.sector.specialdata = floor;
                 floor.thinker.tag = 4;
@@ -21687,7 +21689,7 @@ void P_UnArchiveSpecials () {
                 break;
             case __anon_enum_134.tc_plat:
                 saveg_read_pad ();
-                plat = new plat_t.at (Z_Malloc ((int) 88, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                plat = new plat_t.at (new uint8[((int) 88) > 0 ? ((int) 88) : 1], 0);
                 saveg_read_plat_t (plat);
                 plat.sector.specialdata = plat;
                 if (plat.thinker.function.acp1 != null) {
@@ -21699,7 +21701,7 @@ void P_UnArchiveSpecials () {
                 break;
             case __anon_enum_134.tc_flash:
                 saveg_read_pad ();
-                flash = new lightflash_t.at (Z_Malloc ((int) 72, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                flash = new lightflash_t.at (new uint8[((int) 72) > 0 ? ((int) 72) : 1], 0);
                 saveg_read_lightflash_t (flash);
                 flash.thinker.tag = 6;
                 flash.thinker.owner = flash;
@@ -21707,7 +21709,7 @@ void P_UnArchiveSpecials () {
                 break;
             case __anon_enum_134.tc_strobe:
                 saveg_read_pad ();
-                strobe = new strobe_t.at (Z_Malloc ((int) 72, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                strobe = new strobe_t.at (new uint8[((int) 72) > 0 ? ((int) 72) : 1], 0);
                 saveg_read_strobe_t (strobe);
                 strobe.thinker.tag = 7;
                 strobe.thinker.owner = strobe;
@@ -21715,7 +21717,7 @@ void P_UnArchiveSpecials () {
                 break;
             case __anon_enum_134.tc_glow:
                 saveg_read_pad ();
-                glow = new glow_t.at (Z_Malloc ((int) 64, (int) __anon_enum_1.PU_LEVEL, new uint8[0]), 0);
+                glow = new glow_t.at (new uint8[((int) 64) > 0 ? ((int) 64) : 1], 0);
                 saveg_read_glow_t (glow);
                 glow.thinker.tag = 8;
                 glow.thinker.owner = glow;
@@ -22090,7 +22092,7 @@ void P_LoadBlockMap (int lump) {
     uint8[] rawbm = new uint8[0];
     lumplen = W_LumpLength ((uint32) lump);
     count = (lumplen / 2);
-    rawbm = Z_Malloc (lumplen, (int) __anon_enum_1.PU_LEVEL, new uint8[0]);
+    rawbm = new uint8[(lumplen) > 0 ? (lumplen) : 1];
     W_ReadLump ((uint32) lump, rawbm);
     blockmaplump = new int16[count];
     for (i = 0; i < count; i++) 
@@ -22250,7 +22252,7 @@ void P_LoadReject (int lumpnum) {
     }
     else 
     {
-        rejectmatrix = Z_Malloc (minlength, (int) __anon_enum_1.PU_LEVEL, new uint8[0]);
+        rejectmatrix = new uint8[(minlength) > 0 ? (minlength) : 1];
         W_ReadLump ((uint32) lumpnum, rejectmatrix);
         PadRejectArray (_c2v_slice_uint8 (rejectmatrix, (int) (lumplen)), (uint32) ((minlength - lumplen)));
     }
@@ -23382,7 +23384,7 @@ int EV_DoDonut (line_s[] line) {
                 s3_floorheight[0] = s3.floorheight;
                 s3_floorpic[0] = s3.floorpic;
             }
-            floor = new floormove_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+            floor = new floormove_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
             P_AddThinker (floor.thinker);
             s2.specialdata = floor;
             floor.thinker.tag = 4;
@@ -23395,7 +23397,7 @@ int EV_DoDonut (line_s[] line) {
             floor.texture = s3_floorpic[0];
             floor.newspecial = 0;
             floor.floordestheight = s3_floorheight[0];
-            floor = new floormove_t.at (Z_Malloc ((int) 80, (int) __anon_enum_1.PU_LEVSPEC, new uint8[0]), 0);
+            floor = new floormove_t.at (new uint8[((int) 80) > 0 ? ((int) 80) : 1], 0);
             P_AddThinker (floor.thinker);
             s1[0].specialdata = floor;
             floor.thinker.tag = 4;
@@ -24738,7 +24740,7 @@ void R_GenerateComposite (int texnum) {
     int16[] collump = new int16[0];
     uint16[] colofs = new uint16[0];
     texture = textures[(int) (texnum)];
-    block = Z_Malloc (texturecompositesize[(int) (texnum)], (int) __anon_enum_1.PU_STATIC, null);
+    block = new uint8[(texturecompositesize[(int) (texnum)]) > 0 ? (texturecompositesize[(int) (texnum)]) : 1];
     _off_block = 0;
     collump = texturecolumnlump[(int) (texnum)];
     colofs = texturecolumnofs[(int) (texnum)];
@@ -24796,7 +24798,7 @@ void R_GenerateLookup (int texnum) {
     texturecompositesize[(int) (texnum)] = 0;
     collump = texturecolumnlump[(int) (texnum)];
     colofs = texturecolumnofs[(int) (texnum)];
-    patchcount.val = Z_Malloc ((int) texture.width, (int) __anon_enum_1.PU_STATIC, null);
+    patchcount.val = new uint8[((int) texture.width) > 0 ? ((int) texture.width) : 1];
     c_memset (patchcount.val, 0, texture.width);
     patch = texture.patches;
     _off_patch = 0;
@@ -25165,7 +25167,7 @@ void R_PrecacheLevel () {
     if (demoplayback != 0) {
         return;
     }
-    flatpresent = Z_Malloc (numflats, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    flatpresent = new uint8[(numflats) > 0 ? (numflats) : 1];
     c_memset (flatpresent, 0, numflats);
     for (i = 0; i < numsectors; i++) 
     {
@@ -25183,7 +25185,7 @@ void R_PrecacheLevel () {
         }
     }
     Z_Free (flatpresent);
-    texturepresent = Z_Malloc (numtextures, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    texturepresent = new uint8[(numtextures) > 0 ? (numtextures) : 1];
     c_memset (texturepresent, 0, numtextures);
     for (i = 0; i < numsides; i++) 
     {
@@ -25207,7 +25209,7 @@ void R_PrecacheLevel () {
         }
     }
     Z_Free (texturepresent);
-    spritepresent = Z_Malloc (numsprites, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    spritepresent = new uint8[(numsprites) > 0 ? (numsprites) : 1];
     c_memset (spritepresent, 0, numsprites);
     for (th = thinkercap.next; th != thinkercap; th = th.next) 
     {
@@ -25454,7 +25456,7 @@ void R_DrawTranslatedColumnLow () {
 
 void R_InitTranslationTables () {
     int i = 0;
-    translationtables = Z_Malloc ((256 * 3), (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    translationtables = new uint8[(256 * 3)];
     for (i = 0; i < 256; i++) 
     {
         if ((i >= 0x70) && (i <= 0x7f)) 
@@ -25572,7 +25574,7 @@ void R_FillBackScreen () {
     }
     if (background_buffer == null) 
     {
-        background_buffer = Z_Malloc ((320 * (200 - 32)), (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+        background_buffer = new uint8[(320 * (200 - 32))];
     }
     if (gamemode == GameMode_t.commercial) {
         name = c_str_to_bytes (name2);
@@ -29004,7 +29006,7 @@ void ST_Stop () {
 
 void ST_Init () {
     ST_loadData ();
-    st_backing_screen = Z_Malloc ((320 * 32), (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+    st_backing_screen = new uint8[(320 * 32)];
 }
 
 public int[] doom1_par_times;
@@ -29791,7 +29793,7 @@ _wad_file_s? W_AddFile (uint8[] filename) {
         h_numlumps = read_le32 (hdrbuf, 4);
         h_infotableofs = read_le32 (hdrbuf, 8);
         length = h_numlumps * 16;
-        rawinfo = Z_Malloc (length, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
+        rawinfo = new uint8[(length) > 0 ? (length) : 1];
         print (@"[wad] numlumps=$(h_numlumps) ofs=$(h_infotableofs) len=$(length)\n");
         W_Read (wad_file, (uint32) h_infotableofs, rawinfo, (size_t) length);
         print ("[wad] dir read ok\n");
@@ -29907,7 +29909,7 @@ uint8[] W_CacheLumpNum (int lumpnum, int tag) {
         lump.cache = _c2v_slice_uint8_n (lump.wad_file.mapped, (int) (lump.position), (int) W_LumpLength ((uint32) lumpnum));
         return lump.cache;
     }
-    lump.cache = Z_Malloc (W_LumpLength ((uint32) lumpnum), tag, new uint8[0]);
+    lump.cache = new uint8[(W_LumpLength ((uint32) lumpnum)) > 0 ? (W_LumpLength ((uint32) lumpnum)) : 1];
     W_ReadLump ((uint32) lumpnum, lump.cache);
     return lump.cache;
 }

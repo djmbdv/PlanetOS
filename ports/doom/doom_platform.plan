@@ -212,25 +212,13 @@ public int c_lump_eq (uint8[] a, uint8[] b) {
     return 1;
 }
 
-// The zone allocator becomes plain planc arrays: Z_Free is a no-op because the
-// runtime frees by refcount, and W_CacheLumpNum keeps its own cache.
+// Runtime memory helper
 [NoAlloc]
 [AlwaysInline]
 public int mem_free () { return Sys.free_pages (); }
 public void Z_Init () {}
 [NoAlloc]
 public void Z_Free (uint8[]? ptr) {}
-public int z_total = 0;
-public int z_mb = 0;
-public uint8[] Z_Malloc (int size, int tag, uint8[]? user) {
-    int n = size > 0 ? size : 1;
-    z_total += n;
-    if (z_total / 1048576 != z_mb) {
-        z_mb = z_total / 1048576;
-        print (@"[doom] zone $z_mb MB\n");
-    }
-    return new uint8[n];
-}
 public void Z_FreeTags (int lowtag, int hightag) {}
 public void Z_DumpHeap (int lowtag, int hightag) {}
 public void Z_FileDumpHeap (FileStream? f) {}
@@ -245,15 +233,6 @@ public int wipe_StartScreen (int x, int y, int w, int h) { return 0; }
 public int wipe_EndScreen (int x, int y, int w, int h) { return 0; }
 [NoAlloc]
 public int wipe_ScreenWipe (int wipeno, int x, int y, int w, int h, int ticks) { return 1; }
-
-public void c_memcpy_i32 (int[] dst, int[] src, size_t n) {
-    int cnt = (int) n / 4;
-    for (int i = 0; i < cnt && i < dst.length && i < src.length; i++) dst[i] = src[i];
-}
-public void c_memcpy_u32 (uint32[] dst, uint32[] src, size_t n) {
-    int cnt = (int) n / 4;
-    for (int i = 0; i < cnt && i < dst.length && i < src.length; i++) dst[i] = src[i];
-}
 
 public int main (string[] args) {
     c2vala_init_globals ();

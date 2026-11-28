@@ -11,7 +11,7 @@ set -euo pipefail
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$PORT/../.." && pwd)"
 UPSTREAM="$PORT/upstream"
-COMBINED="$PORT/doom_combined2.vala"
+COMBINED="$PORT/doom.plan"
 GLUE="$PORT/doom_platform.plan"
 RUNTIME="$ROOT/tools/c2plan_rt.plan"
 PLANC="$ROOT/planc/build/planc"
