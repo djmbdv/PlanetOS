@@ -230,12 +230,12 @@ namespace Planet.Kernel {
     ")]
     public extern int addr_isr_irq0 ();
 
-    // Exception entry stubs (vectors 0, 6, 13, 14). Vectors 13 (#GP) and 14 (#PF)
-    // have a hardware error code at (%rsp) and faulting RIP at 8(%rsp); vectors
-    // 0 (#DE) and 6 (#UD) have RIP directly at (%rsp). All align RSP to 16 bytes
-    // before calling fault_dispatch(vec, err, rip, cr2), and halt if it returns.
+    // Exception entry stubs. Vectors 8 (#DF), 10 (#TS), 11 (#NP), 12 (#SS),
+    // 13 (#GP), 14 (#PF), and 17 (#AC) have a hardware error code at (%rsp) and
+    // faulting RIP at 8(%rsp); all others have RIP directly at (%rsp). All align
+    // RSP to 16 bytes before calling fault_dispatch(vec, err, rip, cr2), and
+    // halt if it returns.
     [AsmBody(@"
-        # #DE (vector 0, no error code)
         mov $0, %edi
         xor %esi, %esi
         mov (%rsp), %rdx
@@ -248,7 +248,66 @@ namespace Planet.Kernel {
     public extern void isr_de ();
 
     [AsmBody(@"
-        # #UD (vector 6, no error code)
+        mov $1, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_db ();
+
+    [AsmBody(@"
+        mov $2, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_nmi ();
+
+    [AsmBody(@"
+        mov $3, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_bp ();
+
+    [AsmBody(@"
+        mov $4, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_of ();
+
+    [AsmBody(@"
+        mov $5, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_br ();
+
+    [AsmBody(@"
         mov $6, %edi
         xor %esi, %esi
         mov (%rsp), %rdx
@@ -261,7 +320,66 @@ namespace Planet.Kernel {
     public extern void isr_ud ();
 
     [AsmBody(@"
-        # #GP (vector 13, error code at [rsp])
+        mov $7, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_nm ();
+
+    [AsmBody(@"
+        mov $8, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_df ();
+
+    [AsmBody(@"
+        mov $10, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_ts ();
+
+    [AsmBody(@"
+        mov $11, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_np ();
+
+    [AsmBody(@"
+        mov $12, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_ss ();
+
+    [AsmBody(@"
         mov $13, %edi
         mov (%rsp), %rsi
         mov 8(%rsp), %rdx
@@ -274,7 +392,6 @@ namespace Planet.Kernel {
     public extern void isr_gp ();
 
     [AsmBody(@"
-        # #PF (vector 14, error code at [rsp], faulting address in CR2)
         mov $14, %edi
         mov (%rsp), %rsi
         mov 8(%rsp), %rdx
@@ -287,16 +404,124 @@ namespace Planet.Kernel {
     public extern void isr_pf ();
 
     [AsmBody(@"
+        mov $16, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_mf ();
+
+    [AsmBody(@"
+        mov $17, %edi
+        mov (%rsp), %rsi
+        mov 8(%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_ac ();
+
+    [AsmBody(@"
+        mov $18, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_mc ();
+
+    [AsmBody(@"
+        mov $19, %edi
+        xor %esi, %esi
+        mov (%rsp), %rdx
+        xor %ecx, %ecx
+        and $-16, %rsp
+        call fault_dispatch
+        cli
+        hlt
+    ")]
+    public extern void isr_xm ();
+
+    [AsmBody(@"
         lea isr_de(%rip), %rax
         ret
     ")]
     public extern int addr_isr_de ();
 
     [AsmBody(@"
+        lea isr_db(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_db ();
+
+    [AsmBody(@"
+        lea isr_nmi(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_nmi ();
+
+    [AsmBody(@"
+        lea isr_bp(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_bp ();
+
+    [AsmBody(@"
+        lea isr_of(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_of ();
+
+    [AsmBody(@"
+        lea isr_br(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_br ();
+
+    [AsmBody(@"
         lea isr_ud(%rip), %rax
         ret
     ")]
     public extern int addr_isr_ud ();
+
+    [AsmBody(@"
+        lea isr_nm(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_nm ();
+
+    [AsmBody(@"
+        lea isr_df(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_df ();
+
+    [AsmBody(@"
+        lea isr_ts(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_ts ();
+
+    [AsmBody(@"
+        lea isr_np(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_np ();
+
+    [AsmBody(@"
+        lea isr_ss(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_ss ();
 
     [AsmBody(@"
         lea isr_gp(%rip), %rax
@@ -309,6 +534,30 @@ namespace Planet.Kernel {
         ret
     ")]
     public extern int addr_isr_pf ();
+
+    [AsmBody(@"
+        lea isr_mf(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_mf ();
+
+    [AsmBody(@"
+        lea isr_ac(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_ac ();
+
+    [AsmBody(@"
+        lea isr_mc(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_mc ();
+
+    [AsmBody(@"
+        lea isr_xm(%rip), %rax
+        ret
+    ")]
+    public extern int addr_isr_xm ();
 
     [AsmBody(@"
         lea isr_default(%rip), %rax
@@ -475,9 +724,23 @@ namespace Planet.Kernel {
                 set_idt_gate (v, def_addr);
             }
             set_idt_gate (0, addr_isr_de ());
+            set_idt_gate (1, addr_isr_db ());
+            set_idt_gate (2, addr_isr_nmi ());
+            set_idt_gate (3, addr_isr_bp ());
+            set_idt_gate (4, addr_isr_of ());
+            set_idt_gate (5, addr_isr_br ());
             set_idt_gate (6, addr_isr_ud ());
+            set_idt_gate (7, addr_isr_nm ());
+            set_idt_gate (8, addr_isr_df ());
+            set_idt_gate (10, addr_isr_ts ());
+            set_idt_gate (11, addr_isr_np ());
+            set_idt_gate (12, addr_isr_ss ());
             set_idt_gate (13, addr_isr_gp ());
             set_idt_gate (14, addr_isr_pf ());
+            set_idt_gate (16, addr_isr_mf ());
+            set_idt_gate (17, addr_isr_ac ());
+            set_idt_gate (18, addr_isr_mc ());
+            set_idt_gate (19, addr_isr_xm ());
             set_idt_gate (32, addr_isr_irq0 ());
 
             // IDTR: limit = 4095 (256 * 16 - 1), base = KernelLayout.IDT

@@ -1231,6 +1231,62 @@ src = src.replace(
     "for (; _off_anim < anims.length && anim[_off_anim].numpics > 0; _off_anim++)",
     1)
 
+src = src.replace(
+    """void I_Quit () {
+    atexit_listentry_s? entry = null;
+    entry = exit_funcs;
+    while (entry != null) 
+    {
+        ((!) entry.func) ();
+        entry = entry.next;
+    }
+}""",
+    """void I_Quit () {
+    atexit_listentry_s? entry = null;
+    entry = exit_funcs;
+    while (entry != null) 
+    {
+        ((!) entry.func) ();
+        entry = entry.next;
+    }
+    GLib.Process.exit (0);
+}""",
+    1)
+
+# Avoid per-seg/per-subsector/per-node array-tail copies in BSP traversal.
+src = src.replace(
+    "void R_AddLine (seg_t[] line) {",
+    "void R_AddLine (seg_t line) {",
+    1)
+src = src.replace(
+    "        curline = _c2v_box_seg_t_obj (line);\n        angle1 = R_PointToAngle (line[0].v1.x, line[0].v1.y);\n        angle2 = R_PointToAngle (line[0].v2.x, line[0].v2.y);",
+    "        curline = line;\n        angle1 = R_PointToAngle (line.v1.x, line.v1.y);\n        angle2 = R_PointToAngle (line.v2.x, line.v2.y);",
+    1)
+src = src.replace(
+    "        backsector = line[0].backsector;",
+    "        backsector = line.backsector;",
+    1)
+src = src.replace(
+    "    sub = _c2v_box_subsector_s_obj (_c2v_slice_subsector_s (subsectors, (int) (num)));",
+    "    sub = subsectors[(int) (num)];",
+    1)
+src = src.replace(
+    "    seg_t[] line = new seg_t[0];\n    int _off_line = 0;",
+    "    int _off_line = 0;",
+    1)
+src = src.replace(
+    "    line = _c2v_slice_seg_t (segs, (int) (sub.firstline));\n    _off_line = 0;",
+    "    _off_line = (int) (sub.firstline);",
+    1)
+src = src.replace(
+    "        R_AddLine (_c2v_slice_seg_t (line, _off_line));",
+    "        R_AddLine (segs[_off_line]);",
+    1)
+src = src.replace(
+    "    bsp = _c2v_box_node_t_obj (_c2v_slice_node_t (nodes, (int) (bspnum)));",
+    "    bsp = nodes[(int) (bspnum)];",
+    1)
+
 with open(path, "w", encoding="utf-8") as f:
     f.write(src)
 print("Applied fix_doom_vala.py")

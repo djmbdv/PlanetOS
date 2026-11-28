@@ -8,30 +8,37 @@ using GLib;
 using Planet;
 using Gdk;
 
+private const int MAX_HELD_KEYS = 16;
+
 private Window? _doom_win = null;
 private int _doom_src_addr = 0;
 private uint32[]? _doom_pal = null;
 private int _doom_pal_addr = 0;
 private int _doom_t0 = 0;
 private int _last_present_tick = -10;
-private uint8 _held_key = 0;
-private int _held_deadline_ms = 0;
+private uint8[]? _held_keys = null;
+private int[]? _held_deadlines = null;
 
 public void DG_Init () {
     _doom_t0 = Sys.ticks () * 10;
+    _held_keys = new uint8[MAX_HELD_KEYS];
+    _held_deadlines = new int[MAX_HELD_KEYS];
     _doom_win = Display.open_window (640, 400);
     if (_doom_win == null) {
         print ("[doom] failed to open window\n");
+        GLib.Process.exit (1);
         return;
     }
     var win = (!) _doom_win;
     if (!win.is_valid () || win.surface.buf_addr == 0) {
         print ("[doom] invalid window surface\n");
         _doom_win = null;
+        GLib.Process.exit (1);
         return;
     }
     if (DG_ScreenBuffer == null || DG_ScreenBuffer.length < 640 * 400) {
         print ("[doom] invalid screen buffer\n");
+        GLib.Process.exit (1);
         return;
     }
     // planc arrays keep their elements at +16.
@@ -101,34 +108,79 @@ private uint8 map_doom_key (uint kv) {
     if (kv == 0xFF0D || kv == '\n' || kv == '\r') return 13; // Enter
     if (kv == 0xFF1B || kv == 27) return 27; // Esc
     if (kv == 0xFF09 || kv == '\t') return 9; // Tab
+    if (kv == 0xFF08 || kv == 8 || kv == 127) return 127; // BackSpace
+    if (kv == 0xFF13) return 0xff; // Pause
+    if (kv >= 0xFFBE && kv <= 0xFFC7) return (uint8) (0xbb + (kv - 0xFFBE)); // F1-F10
     if (kv == ' ') return 0xa2; // Use
     if (kv == 0xFFE3 || kv == 0xFFE4 || kv == 'f' || kv == 'F') return 0xa3; // Ctrl / F -> Fire
     if (kv == 0xFFE1 || kv == 0xFFE2) return 0xb6; // Shift -> Run
+    if (kv >= 'A' && kv <= 'Z') return (uint8) (kv + 32);
     return (uint8) (kv & 0xFF);
+}
+
+private void track_held_key (uint8 k, int deadline_ms) {
+    if (_held_keys == null || _held_deadlines == null || k == 0)
+        return;
+    var keys = (!) _held_keys;
+    var deadlines = (!) _held_deadlines;
+    int free_slot = -1;
+    for (int i = 0; i < MAX_HELD_KEYS; i++) {
+        if (keys[i] == k) {
+            deadlines[i] = deadline_ms;
+            return;
+        }
+        if (keys[i] == 0 && free_slot < 0)
+            free_slot = i;
+    }
+    if (free_slot >= 0) {
+        keys[free_slot] = k;
+        deadlines[free_slot] = deadline_ms;
+    }
 }
 
 public int DG_GetKey (int[] pressed, uint8[] key) {
     if (_doom_win == null)
         return 0;
     var win = (!) _doom_win;
+    if (win.closed) {
+        GLib.Process.exit (0);
+        return 0;
+    }
+    int now_ms = (int) DG_GetTicksMs ();
     while (true) {
         var ev = win.poll_event ();
         if (ev.type == EventType.NONE)
             break;
         if (ev.type == EventType.KEY_PRESS) {
-            uint8 k = map_doom_key (ev.keyval);
-            _held_key = k;
-            _held_deadline_ms = (int) DG_GetTicksMs () + 120;
+            uint8 k = map_doom_key ((uint) ev.keyval);
+            if (k != 0) {
+                track_held_key (k, now_ms + 140);
+                pressed[0] = 1;
+                key[0] = k;
+                return 1;
+            }
+        } else if (ev.type == EventType.BUTTON_PRESS && ev.button == 1) {
             pressed[0] = 1;
-            key[0] = k;
+            key[0] = 0xa3; // Fire
+            return 1;
+        } else if (ev.type == EventType.BUTTON_RELEASE && ev.button == 1) {
+            pressed[0] = 0;
+            key[0] = 0xa3;
             return 1;
         }
     }
-    if (_held_key != 0 && (int) DG_GetTicksMs () >= _held_deadline_ms) {
-        pressed[0] = 0;
-        key[0] = _held_key;
-        _held_key = 0;
-        return 1;
+    if (_held_keys != null && _held_deadlines != null) {
+        var keys = (!) _held_keys;
+        var deadlines = (!) _held_deadlines;
+        for (int i = 0; i < MAX_HELD_KEYS; i++) {
+            if (keys[i] != 0 && now_ms >= deadlines[i]) {
+                pressed[0] = 0;
+                key[0] = keys[i];
+                keys[i] = 0;
+                deadlines[i] = 0;
+                return 1;
+            }
+        }
     }
     return 0;
 }

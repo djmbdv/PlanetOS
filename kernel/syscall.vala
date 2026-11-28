@@ -1686,11 +1686,24 @@ namespace Planet.Kernel {
 
     private static string fault_name (int vec) {
         switch (vec) {
-            case 0: return "Divide Error";
-            case 6: return "Invalid Opcode";
-            case 8: return "Double Fault";
-            case 13: return "General Protection Fault";
-            case 14: return "Page Fault";
+            case 0: return "Divide Error (#DE)";
+            case 1: return "Debug (#DB)";
+            case 2: return "Non-Maskable Interrupt";
+            case 3: return "Breakpoint (#BP)";
+            case 4: return "Overflow (#OF)";
+            case 5: return "Bound Range Exceeded (#BR)";
+            case 6: return "Invalid Opcode (#UD)";
+            case 7: return "Device Not Available (#NM)";
+            case 8: return "Double Fault (#DF)";
+            case 10: return "Invalid TSS (#TS)";
+            case 11: return "Segment Not Present (#NP)";
+            case 12: return "Stack Segment Fault (#SS)";
+            case 13: return "General Protection Fault (#GP)";
+            case 14: return "Page Fault (#PF)";
+            case 16: return "x87 FPU Error (#MF)";
+            case 17: return "Alignment Check (#AC)";
+            case 18: return "Machine Check (#MC)";
+            case 19: return "SIMD FP Exception (#XM)";
             default: return "CPU Exception";
         }
     }
@@ -1709,11 +1722,20 @@ namespace Planet.Kernel {
         return out_s;
     }
 
+    private static int fault_depth = 0;
+
     public int fault_dispatch (int vec, int err, int rip, int cr2) {
         // A kernel-mode fault inside a guarded copy is recoverable: restore the
         // copy frame and let it return 1 to the syscall handler (KR-07).
         if (vec == 14 && (err & 4) == 0 && mmio_read64 (KernelLayout.COPY_VARS) == 1) {
             copy_recover ();
+        }
+        fault_depth = fault_depth + 1;
+        if (fault_depth > 1) {
+            print ("\n[fault] nested fault\n");
+            while (true) {
+                cpu_hlt ();
+            }
         }
         int cur_cr3 = Sched.current_cr3 ();
         int tid = Sched.current_tid ();
@@ -1732,6 +1754,7 @@ namespace Planet.Kernel {
         print (msg);
         for (int i = 0; i < msg.length; i++)
             Vga.write_byte ((int) msg[i]);
+        fault_depth = 0;
         if (Sched.current_tid () > 0) {
             cpu_sti ();
             Sched.exit_current (128 + vec);

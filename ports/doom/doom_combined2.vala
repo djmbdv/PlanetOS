@@ -11615,6 +11615,7 @@ void I_Quit () {
         ((!) entry.func) ();
         entry = entry.next;
     }
+    GLib.Process.exit (0);
 }
 
 int ZenityAvailable () {
@@ -24070,7 +24071,7 @@ void R_ClearClipSegs () {
 }
 
 // c2vala-ptrs: line_obj[DEREF|ARROW]=>T?
-void R_AddLine (seg_t[] line) {
+void R_AddLine (seg_t line) {
     bool c2v_goto_clipsolid = false;
     bool c2v_goto_clippass = false;
     int x1 = 0;
@@ -24080,9 +24081,9 @@ void R_AddLine (seg_t[] line) {
     uint32 span = 0;
     uint32 tspan = 0;
     do {
-        curline = _c2v_box_seg_t_obj (line);
-        angle1 = R_PointToAngle (line[0].v1.x, line[0].v1.y);
-        angle2 = R_PointToAngle (line[0].v2.x, line[0].v2.y);
+        curline = line;
+        angle1 = R_PointToAngle (line.v1.x, line.v1.y);
+        angle2 = R_PointToAngle (line.v2.x, line.v2.y);
         span = (angle1 - angle2) & ((uint32) 0xFFFFFFFF);
         if (span >= ((uint32) 0x80000000)) {
             return;
@@ -24121,7 +24122,7 @@ void R_AddLine (seg_t[] line) {
             return;
         }
         if (c2v_goto_clipsolid || c2v_goto_clippass) break;
-        backsector = line[0].backsector;
+        backsector = line.backsector;
         if (!(backsector != null)) {
             c2v_goto_clipsolid = true;
             break;
@@ -24250,18 +24251,16 @@ uint32 R_CheckBBox (int[] bspcoord) {
 // c2vala-ptrs: line_arr[ARITH]=>T[] sub_obj[DEREF|ARROW]=>T?
 void R_Subsector (int num) {
     int count = 0;
-    seg_t[] line = new seg_t[0];
     int _off_line = 0;
     subsector_s? sub = null;
     if (num >= numsubsectors) {
         I_Error (c_str_to_bytes ("R_Subsector: ss %i with numss = %i"), num, numsubsectors);
     }
     sscount++;
-    sub = _c2v_box_subsector_s_obj (_c2v_slice_subsector_s (subsectors, (int) (num)));
+    sub = subsectors[(int) (num)];
     frontsector = sub.sector;
     count = (int) sub.numlines;
-    line = _c2v_slice_seg_t (segs, (int) (sub.firstline));
-    _off_line = 0;
+    _off_line = (int) (sub.firstline);
     if (frontsector.floorheight < viewz) 
     {
         floorplane = _c2v_box_visplane_t_obj (R_FindPlane (frontsector.floorheight, (int) frontsector.floorpic, (int) frontsector.lightlevel));
@@ -24279,7 +24278,7 @@ void R_Subsector (int num) {
     R_AddSprites (frontsector);
     while (count-- != 0) 
     {
-        R_AddLine (_c2v_slice_seg_t (line, _off_line));
+        R_AddLine (segs[_off_line]);
         _off_line++;
     }
 }
@@ -24298,7 +24297,7 @@ void R_RenderBSPNode (int bspnum) {
         }
         return;
     }
-    bsp = _c2v_box_node_t_obj (_c2v_slice_node_t (nodes, (int) (bspnum)));
+    bsp = nodes[(int) (bspnum)];
     side = R_PointOnSide (viewx, viewy, bsp);
     R_RenderBSPNode ((int) (bsp.children[(int) (side)]));
     if (R_CheckBBox (bsp.bbox[(int) ((side ^ 1))]) != 0) {
