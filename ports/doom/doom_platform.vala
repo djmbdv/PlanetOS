@@ -105,7 +105,7 @@ private uint8 map_doom_key (uint kv) {
     if (kv == 0xFF51 || kv == 0x1B5B44 || kv == 0x83) return 0xac; // Left
     if (kv == 0xFF52 || kv == 0x1B5B41 || kv == 0x81) return 0xad; // Up
     if (kv == 0xFF54 || kv == 0x1B5B42 || kv == 0x82) return 0xaf; // Down
-    if (kv == 0xFF0D || kv == '\n' || kv == '\r') return 13; // Enter
+    if (kv == 0xFF0D || kv == 0xFF8D || kv == '\n' || kv == '\r') return 13; // Enter / KP_Enter
     if (kv == 0xFF1B || kv == 27) return 27; // Esc
     if (kv == 0xFF09 || kv == '\t') return 9; // Tab
     if (kv == 0xFF08 || kv == 8 || kv == 127) return 127; // BackSpace
@@ -114,6 +114,7 @@ private uint8 map_doom_key (uint kv) {
     if (kv == ' ') return 0xa2; // Use
     if (kv == 0xFFE3 || kv == 0xFFE4 || kv == 'f' || kv == 'F') return 0xa3; // Ctrl / F -> Fire
     if (kv == 0xFFE1 || kv == 0xFFE2) return 0xb6; // Shift -> Run
+    if (kv == 0xFFE9 || kv == 0xFFEA) return 0xb8; // Alt -> Strafe On
     if (kv >= 'A' && kv <= 'Z') return (uint8) (kv + 32);
     return (uint8) (kv & 0xFF);
 }
@@ -154,7 +155,7 @@ public int DG_GetKey (int[] pressed, uint8[] key) {
         if (ev.type == EventType.KEY_PRESS) {
             uint8 k = map_doom_key ((uint) ev.keyval);
             if (k != 0) {
-                track_held_key (k, now_ms + 140);
+                track_held_key (k, now_ms + 180);
                 pressed[0] = 1;
                 key[0] = k;
                 return 1;

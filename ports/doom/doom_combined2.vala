@@ -6581,10 +6581,95 @@ void AM_clearFB (int color) {
     c_memset (fb, color, (f_w * f_h));
 }
 
-// c2vala: UNTRANSLATED AM_clipMline (am_map.c:847) -- am_map.c:879: unknown identifier 'TOP'
-// TODO: port this function by hand.
 uint32 AM_clipMline (mline_t? ml, fline_t? fl) {
-    return 0;
+    if (ml == null || fl == null)
+        return 0;
+    int AM_LEFT = 1;
+    int AM_RIGHT = 2;
+    int AM_BOTTOM = 4;
+    int AM_TOP = 8;
+    int outcode1 = 0;
+    int outcode2 = 0;
+    if (ml.a.y > m_y2) outcode1 = AM_TOP;
+    else if (ml.a.y < m_y) outcode1 = AM_BOTTOM;
+    if (ml.b.y > m_y2) outcode2 = AM_TOP;
+    else if (ml.b.y < m_y) outcode2 = AM_BOTTOM;
+    if ((outcode1 & outcode2) != 0)
+        return 0;
+    if (ml.a.x < m_x) outcode1 |= AM_LEFT;
+    else if (ml.a.x > m_x2) outcode1 |= AM_RIGHT;
+    if (ml.b.x < m_x) outcode2 |= AM_LEFT;
+    else if (ml.b.x > m_x2) outcode2 |= AM_RIGHT;
+    if ((outcode1 & outcode2) != 0)
+        return 0;
+
+    fl.a.x = f_x + (FixedMul (ml.a.x - m_x, scale_mtof) >> 16);
+    fl.a.y = f_y + (f_h - (FixedMul (ml.a.y - m_y, scale_mtof) >> 16));
+    fl.b.x = f_x + (FixedMul (ml.b.x - m_x, scale_mtof) >> 16);
+    fl.b.y = f_y + (f_h - (FixedMul (ml.b.y - m_y, scale_mtof) >> 16));
+
+    outcode1 = 0;
+    if (fl.a.y < 0) outcode1 |= AM_TOP;
+    else if (fl.a.y >= f_h) outcode1 |= AM_BOTTOM;
+    if (fl.a.x < 0) outcode1 |= AM_LEFT;
+    else if (fl.a.x >= f_w) outcode1 |= AM_RIGHT;
+
+    outcode2 = 0;
+    if (fl.b.y < 0) outcode2 |= AM_TOP;
+    else if (fl.b.y >= f_h) outcode2 |= AM_BOTTOM;
+    if (fl.b.x < 0) outcode2 |= AM_LEFT;
+    else if (fl.b.x >= f_w) outcode2 |= AM_RIGHT;
+
+    if ((outcode1 & outcode2) != 0)
+        return 0;
+
+    int iters = 0;
+    while ((outcode1 | outcode2) != 0 && iters++ < 16) {
+        int outside = (outcode1 != 0) ? outcode1 : outcode2;
+        int tx = 0;
+        int ty = 0;
+        if ((outside & AM_TOP) != 0) {
+            int dy = fl.a.y - fl.b.y;
+            int dx = fl.b.x - fl.a.x;
+            tx = (dy != 0) ? (fl.a.x + (dx * fl.a.y) / dy) : fl.a.x;
+            ty = 0;
+        } else if ((outside & AM_BOTTOM) != 0) {
+            int dy = fl.a.y - fl.b.y;
+            int dx = fl.b.x - fl.a.x;
+            tx = (dy != 0) ? (fl.a.x + (dx * (fl.a.y - f_h)) / dy) : fl.a.x;
+            ty = f_h - 1;
+        } else if ((outside & AM_RIGHT) != 0) {
+            int dy = fl.b.y - fl.a.y;
+            int dx = fl.b.x - fl.a.x;
+            ty = (dx != 0) ? (fl.a.y + (dy * (f_w - 1 - fl.a.x)) / dx) : fl.a.y;
+            tx = f_w - 1;
+        } else if ((outside & AM_LEFT) != 0) {
+            int dy = fl.b.y - fl.a.y;
+            int dx = fl.b.x - fl.a.x;
+            ty = (dx != 0) ? (fl.a.y + (dy * (-fl.a.x)) / dx) : fl.a.y;
+            tx = 0;
+        }
+        if (outside == outcode1) {
+            fl.a.x = tx;
+            fl.a.y = ty;
+            outcode1 = 0;
+            if (fl.a.y < 0) outcode1 |= AM_TOP;
+            else if (fl.a.y >= f_h) outcode1 |= AM_BOTTOM;
+            if (fl.a.x < 0) outcode1 |= AM_LEFT;
+            else if (fl.a.x >= f_w) outcode1 |= AM_RIGHT;
+        } else {
+            fl.b.x = tx;
+            fl.b.y = ty;
+            outcode2 = 0;
+            if (fl.b.y < 0) outcode2 |= AM_TOP;
+            else if (fl.b.y >= f_h) outcode2 |= AM_BOTTOM;
+            if (fl.b.x < 0) outcode2 |= AM_LEFT;
+            else if (fl.b.x >= f_w) outcode2 |= AM_RIGHT;
+        }
+        if ((outcode1 & outcode2) != 0)
+            return 0;
+    }
+    return 1;
 }
 
 // c2vala-ptrs: fl_obj[DEREF|ARROW]=>T?
@@ -21834,7 +21919,7 @@ void P_GroupLines () {
     _off_ss = 0;
     for (i = 0; i < numsubsectors; ) {
         {
-            seg = _c2v_box_seg_t_obj (_c2v_slice_seg_t (segs, (int) (ss[_off_ss].firstline)));
+            seg = segs[(int) (ss[_off_ss].firstline)];
             ss[_off_ss].sector = seg.sidedef.sector;
         }
         i++;
@@ -22124,13 +22209,12 @@ uint32 P_CrossSubsector (int num) {
     if (num >= numsubsectors) {
         I_Error (c_str_to_bytes ("P_CrossSubsector: ss %i with numss = %i"), num, numsubsectors);
     }
-    sub = _c2v_box_subsector_s_obj (_c2v_slice_subsector_s (subsectors, (int) (num)));
+    sub = subsectors[(int) (num)];
     count = (int) sub.numlines;
-    seg = _c2v_slice_seg_t (segs, (int) (sub.firstline));
-    _off_seg = 0;
+    _off_seg = (int) (sub.firstline);
     for (; count != 0; ) {
         {
-            line = seg[_off_seg].linedef;
+            line = segs[_off_seg].linedef;
             if (line.validcount == validcount) {
                 {
                     _off_seg++;
@@ -22232,7 +22316,7 @@ uint32 P_CrossBSPNode (int bspnum) {
             return P_CrossSubsector ((bspnum & ~0x8000));
         }
     }
-    bsp = _c2v_box_node_t_obj (_c2v_slice_node_t (nodes, (int) (bspnum)));
+    bsp = nodes[(int) (bspnum)];
     side = P_DivlineSide (strace.x, strace.y, ((divline_t?) bsp));
     if (side == 2) {
         side = 0;
@@ -29659,9 +29743,16 @@ uint32 WI_Responder (event_t? ev) {
     return (uint32) 0;
 }
 
-// c2vala: UNTRANSLATED WI_drawLF (wi_stuff.c:416) -- wi_stuff.c:443: initializer lists are not supported
-// TODO: port this function by hand.
 void WI_drawLF () {
+    int y = 2;
+    if (gamemode != GameMode_t.commercial || wbs.last < 32) {
+        if (wbs.last >= 0 && wbs.last < lnames.length && lnames[(int) (wbs.last)] != null) {
+            V_DrawPatch (((320 - ((int) lnames[(int) (wbs.last)].width)) / 2), y, lnames[(int) (wbs.last)]);
+            y += ((5 * ((int) lnames[(int) (wbs.last)].height)) / 4);
+        }
+        if (finished != null)
+            V_DrawPatch (((320 - ((int) finished.width)) / 2), y, finished);
+    }
 }
 
 void WI_drawEL () {
