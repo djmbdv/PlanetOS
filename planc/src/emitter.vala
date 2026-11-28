@@ -904,6 +904,27 @@ namespace Planc {
             code.u8 (0x0F); code.u8 (0xB6); code.u8 (0x02);
         }
 
+        // mov eax, dword ptr [rax + rcx*4 + 16]     8B 44 88 10
+        public void load_dword_rax_rcx_16 () {
+            code.u8 (0x8B); code.u8 (0x44); code.u8 (0x88); code.u8 (0x10);
+        }
+
+        // mov dword ptr [rax + rcx*4 + 16], edx     89 54 88 10
+        public void store_dword_rax_rcx_16_edx () {
+            code.u8 (0x89); code.u8 (0x54); code.u8 (0x88); code.u8 (0x10);
+        }
+
+        // mov dword ptr [rcx + disp], eax    89 41 d8 | 89 81 d32
+        public void store_rcx_disp_dword_eax (int disp) {
+            code.u8 (0x89);
+            emit_modrm_disp (0, 1, disp);
+        }
+
+        // mov eax, dword ptr [rdx]           8B 02
+        public void load_rdx_dword_to_zx_rax () {
+            code.u8 (0x8B); code.u8 (0x02);
+        }
+
         // mov [rax + 8], rcx                 48 89 48 08
         public void store_rax_8_rcx () {
             code.u8 (0x48); code.u8 (0x89); code.u8 (0x48); code.u8 (0x08);

@@ -1,8 +1,8 @@
-// Data models for the c2vala translator.
+// Data models for the c2plan translator.
 
 using Planc;
 
-namespace C2Vala {
+namespace C2Plan {
 
     // Builder emitted for a C compound literal `(T){ .a = x }` (see
     // Translator.ensure_lit_helper).

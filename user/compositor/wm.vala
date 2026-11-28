@@ -1530,8 +1530,8 @@ namespace Wm {
                         string ex = fw.term.want_gui_exec;
                         string tt = fw.term.want_gui_title;
                         fw.term.want_gui_exec = "";
-                        int gw = (ex == "saturn.elf") ? 720 : 560;
-                        int gh = (ex == "saturn.elf") ? 460 : 380;
+                        int gw = (ex == "saturn.elf") ? 720 : ((ex == "doom.elf") ? 648 : 560);
+                        int gh = (ex == "saturn.elf") ? 460 : ((ex == "doom.elf") ? 432 : 380);
                         launch_gui_app (ex, tt, gw, gh);
                     }
                     damage_window (fw.id);

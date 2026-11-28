@@ -1,8 +1,8 @@
-// Recursive-descent C99 parser for c2vala.
+// Recursive-descent C99 parser for c2plan.
 
 using Planc;
 
-namespace C2Vala {
+namespace C2Plan {
 
     public class TypedefEntry : Object {
         public string name;

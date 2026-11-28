@@ -2194,6 +2194,8 @@ namespace Planc {
         }
 
         private Statement try_lower_foreach_arr (ForeachStatement fe) {
+            if (fe.is_reverse)
+                return fe;
             if (cur_func != null && (cur_func.is_async || cur_func.from_lambda != null))
                 return fe;
             if (!(fe.collection is VarRef))

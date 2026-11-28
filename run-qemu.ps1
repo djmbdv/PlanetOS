@@ -103,6 +103,7 @@ param(
     [switch]$VirtioGl,
     [switch]$Sdl,
     [switch]$Serial,
+    [switch]$Whpx,
     [switch]$DebugMemory,
     # Extra files to place in the image (a port's binary and its data files).
     [string[]]$Add = @(),
@@ -385,7 +386,7 @@ if (-not $NoBuild) {
         (Join-Path $StdDir 'gtk\window.vala')
     )
     $CompositorSrcs = @(
-        (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'),
+        (Join-Path (Join-Path $Root 'tools') 'c2plan_rt.plan'),
         (Join-Path $StdDir 'gdk\stb_image.vala'),
         (Join-Path $UserDir 'compositor\apps.vala'),
         (Join-Path $UserDir 'compositor\win.vala'),
@@ -415,9 +416,9 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--format=dlib', '--image-base=0x1A40000', (Join-Path $StdDir 'gobject_compat.vala'), '-o', (Lib-Dlib 'gobject'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--format=dlib', '--image-base=0x1A60000', (Join-Path $StdDir 'gmodule_compat.vala'), '-o', (Lib-Dlib 'gmodule'))
 
-    # In-guest compiles need the GLib declarations (c2vala_sdk.vala),
+    # In-guest compiles need the GLib declarations (c2plan_sdk.plan),
     # packed into one file because the guest shell line buffer is only 480 bytes.
-    & $Python (Join-Path $Root 'tools\make_sdk.py') (Out-Path 'c2vala_sdk.vala')
+    & $Python (Join-Path $Root 'tools\make_sdk.py') (Out-Path 'c2plan_sdk.plan')
     if ($LASTEXITCODE -ne 0) {
         Fail 'tools/make_sdk.py failed'
     }
@@ -431,7 +432,7 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gobject', (Join-Path $UserDir 'gobject_demo.vala'), '-o', (Out-Path 'gobject_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gmodule', (Join-Path $UserDir 'gmodule_demo.vala'), '-o', (Out-Path 'gmodule_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, '--nostdlib', (Join-Path $StdDir 'planet_math_kernels.vala'), (Join-Path $UserDir 'mathlib.vala'), '-o', (Out-Path 'mathlib.dlib'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gmodule', (Join-Path $UserDir 'plan_demo.vala'), '-o', (Out-Path 'plan_demo.plan'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gmodule', (Join-Path $UserDir 'plan_demo.plan'), '-o', (Out-Path 'plan_demo.plan'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'mainloop_demo.vala'), '-o', (Out-Path 'mainloop_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=cairo', '--import-lib=gdk', (Join-Path $UserDir 'cairo_demo.vala'), '-o', (Out-Path 'cairo_demo.elf'))
     Invoke-Planc @('--target=spirv', (Join-Path $UserDir 'frag_planet.vala'), '-o', (Out-Path 'frag.spv'))
@@ -443,26 +444,26 @@ if (-not $NoBuild) {
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gee', '--import-lib=gio', '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=gtk', (Join-Path $UserDir 'pcm4.vala'), '-o', (Out-Path 'pcm4.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'pluto.vala'), '-o', (Out-Path 'pluto.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', '--import-lib=gee', '--import-lib=gio', '--import-lib=spirv', '--import-lib=venus', '--import-lib=cairo', '--import-lib=gdk', '--import-lib=gsk', '--import-lib=pango', '--import-lib=gtk', (Join-Path $UserDir 'saturn.vala'), '-o', (Out-Path 'saturn.elf'))
-    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2vala_rt.vala'), '-o', (Out-Path 'jsmn_demo.elf'))
+    Invoke-Planc @('--target=planetos', $Opt, $LibFlags, (Join-Path $UserDir 'jsmn_demo.vala'), (Join-Path (Join-Path $Root 'tools') 'c2plan_rt.plan'), '-o', (Out-Path 'jsmn_demo.elf'))
     # sys_demo carries the `system` case checks (handles, grants, rings, blk):
     # without this line the suite runs whatever stale binary the image had.
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=unsafe', (Join-Path $UserDir 'sys_demo.vala'), '-o', (Out-Path 'sys_demo.elf'))
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--import-lib=gio', (Join-Path $UserDir 'mercury.vala'), '-o', (Out-Path 'mercury.elf'))
 
-    $C2valaDir = Join-Path $Root 'tools\c2vala'
+    $C2planDir = Join-Path $Root 'tools\c2plan'
     Invoke-Planc (@(
         '--target=planetos', $Opt, $LibFlags,
         (Join-Path $SrcDir 'buffer.vala'),
         (Join-Path $SrcDir 'host_planetos.vala'),
-        (Join-Path $C2valaDir 'ast.vala'),
-        (Join-Path $C2valaDir 'preproc.vala'),
-        (Join-Path $C2valaDir 'lexer.vala'),
-        (Join-Path $C2valaDir 'parser.vala'),
-        (Join-Path $C2valaDir 'ptr_analyzer.vala'),
-        (Join-Path $C2valaDir 'translator_models.vala'),
-        (Join-Path $C2valaDir 'translator.vala'),
-        (Join-Path $C2valaDir 'main.vala'),
-        '-o', (Out-Path 'c2vala.elf')
+        (Join-Path $C2planDir 'ast.vala'),
+        (Join-Path $C2planDir 'preproc.vala'),
+        (Join-Path $C2planDir 'lexer.vala'),
+        (Join-Path $C2planDir 'parser.vala'),
+        (Join-Path $C2planDir 'ptr_analyzer.vala'),
+        (Join-Path $C2planDir 'translator_models.vala'),
+        (Join-Path $C2planDir 'translator.vala'),
+        (Join-Path $C2planDir 'main.vala'),
+        '-o', (Out-Path 'c2plan.elf')
     ))
 
     Invoke-Planc @('--target=planetos', $Opt, $LibFlags, '--image-base=0xA00000', '--import-lib=gee', (Join-Path $UserDir 'shell.vala'), '-o', (Out-Path 'shell.elf'))
@@ -567,8 +568,8 @@ foreach ($addFile in $Add) {
         (Out-Path 'compositor.elf') `
         (Out-Path 'pango_demo.elf') `
         (Out-Path 'vk_demo.elf') `
-        (Out-Path 'c2vala.elf') `
-        (Join-Path $Root 'tools\c2vala_tests\cases\arith\main.c') `
+        (Out-Path 'c2plan.elf') `
+        (Join-Path $Root 'tools\c2plan_tests\cases\arith\main.c') `
         (Out-Path 'frag_pattern.spv') `
         (Join-Path $Root 'assets\Tahoma.ttf') `
         (Join-Path $Root 'assets\Consolas-Regular.ttf') `
@@ -580,7 +581,7 @@ foreach ($addFile in $Add) {
         (Out-Path 'pluto.elf') `
         (Out-Path 'saturn.elf') `
         (Out-Path 'jsmn_demo.elf') `
-        (Out-Path 'c2vala_sdk.vala') `
+        (Out-Path 'c2plan_sdk.plan') `
         (Out-Path 'sys_demo.elf') `
         (Out-Path 'mercury.elf') `
         (Out-Path 'curl.elf') `
@@ -704,7 +705,12 @@ if ($gpuLine -match 'virtio-gpu-gl' -and $dispLine -notmatch 'gl=on') {
 }
 Write-Host ('GPU: ' + $GpuMode + ' [' + $gpuLine + ']')
 
-$qemuArgs = @(
+$accelArgs = @()
+if ($Whpx) {
+    $accelArgs = @('-accel', 'whpx,kernel-irqchip=off')
+}
+
+$qemuArgs = $accelArgs + @(
     '-cpu', 'max',
     '-m', '1024M',
     '-kernel', (To-QemuPath $kernelPath),

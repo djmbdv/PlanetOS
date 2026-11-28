@@ -7678,7 +7678,7 @@ void D_Display () {
     }
     I_UpdateNoBlit ();
     if (((gamestate == gamestate_t.GS_LEVEL) && (!(automapactive != 0))) && (gametic != 0)) {
-        R_RenderPlayerView (_c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (displayplayer))));
+        R_RenderPlayerView (players[(int) (displayplayer)]);
     }
     if ((gamestate == gamestate_t.GS_LEVEL) && (gametic != 0)) {
         HU_Drawer ();
@@ -10025,6 +10025,7 @@ void G_PlayerReborn (int player) {
     p[0].fixedcolormap = 0;
     p[0].colormap = 0;
     p[0].psprites = new pspdef_t[(int) psprnum_t.NUMPSPRITES];
+    for (int _pi = 0; _pi < p[0].psprites.length; _pi++) p[0].psprites[_pi] = new pspdef_t ();
     p[0].didsecret = 0;
     c_memcpy_i32 (players[(int) (player)].frags, frags, ((int) (4) * (int) (4)));
     players[(int) (player)].killcount = killcount;
@@ -10956,13 +10957,15 @@ void HUlib_addMessageToSText (hu_stext_t? s, uint8[] prefix, uint8[] msg) {
     int _off_prefix = 0;
     int _off_msg = 0;
     HUlib_addLineToSText (s);
-    if (prefix != null) {
-        while (prefix[_off_prefix] != 0) {
+    if (prefix != null && prefix.length > 0) {
+        while (_off_prefix < prefix.length && prefix[_off_prefix] != 0) {
             HUlib_addCharToTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (s.cl))), prefix[_off_prefix++]);
         }
     }
-    while (msg[_off_msg] != 0) {
-        HUlib_addCharToTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (s.cl))), msg[_off_msg++]);
+    if (msg != null && msg.length > 0) {
+        while (_off_msg < msg.length && msg[_off_msg] != 0) {
+            HUlib_addCharToTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (s.cl))), msg[_off_msg++]);
+        }
     }
 }
 
@@ -11204,7 +11207,7 @@ void HU_Ticker () {
     }
     if ((showMessages != 0) || (message_dontfuckwithme != 0)) 
     {
-        if (((plr.message != null) && (!(message_nottobefuckedwith != 0))) || ((plr.message != null) && (message_dontfuckwithme != 0))) 
+        if (((plr.message != null && plr.message.length > 0) && (!(message_nottobefuckedwith != 0))) || ((plr.message != null && plr.message.length > 0) && (message_dontfuckwithme != 0))) 
         {
             HUlib_addMessageToSText (w_message, new uint8[0], c_str_to_bytes (plr.message));
             plr.message = "";
@@ -11948,23 +11951,7 @@ void I_UpdateNoBlit () {
 }
 
 void I_FinishUpdate () {
-    int x = 0;
-    int y = 0;
-    for (y = 0; y < 200; y++) 
-    {
-        for (x = 0; x < 320; x++) 
-        {
-            uint8 idx = I_VideoBuffer[(int) (((y * 320) + x))];
-            uint32 col = ((((((uint32) 0xFF) << ((uint32) 24)) | (colors[(int) (idx)].r << ((uint32) 16))) | (colors[(int) (idx)].g << ((uint32) 8))) | colors[(int) (idx)].b);
-            int dy = (y * 2);
-            int dx = (x * 2);
-            DG_ScreenBuffer[(int) (((dy * 640) + dx))] = col;
-            DG_ScreenBuffer[(int) ((((dy * 640) + dx) + 1))] = col;
-            DG_ScreenBuffer[(int) ((((dy + 1) * 640) + dx))] = col;
-            DG_ScreenBuffer[(int) (((((dy + 1) * 640) + dx) + 1))] = col;
-        }
-    }
-    DG_DrawFrame ();
+    DG_FinishUpdate ();
 }
 
 // c2vala-ptrs: scr_buf[WR]=>uint8[]
@@ -19633,7 +19620,7 @@ void P_SpawnMapThing (mapthing_t[] mthing) {
         }
     }
     if (i == ((int) mobjtype_t.NUMMOBJTYPES)) {
-        I_Error (c_str_to_bytes ("P_SpawnMapThing: Unknown type %i at (%i, %i)"), mthing[0].type, mthing[0].x, mthing[0].y);
+        return;
     }
     if ((deathmatch != 0) && ((mobjinfo[(int) (i)].flags & ((int) mobjflag_t.MF_NOTDMATCH)) != 0)) {
         return;
@@ -21461,7 +21448,7 @@ void P_LoadVertexes (int lump) {
     numvertexes = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 4));
     vertexes = new vertex_t[numvertexes]; for (int _zi = 0; _zi < numvertexes; _zi++) vertexes[_zi] = new vertex_t ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    ml = _c2v_box_mapvertex_t_arr (new mapvertex_t.at (data, 0));
+    ml = new mapvertex_t[numvertexes]; for (int _k = 0; _k < numvertexes; _k++) ml[_k] = new mapvertex_t.at (data, _k * 4);
     _off_ml = 0;
     li = vertexes;
     _off_li = 0;
@@ -21498,7 +21485,7 @@ void P_LoadSegs (int lump) {
     numsegs = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 12));
     segs = new seg_t[numsegs]; for (int _zi = 0; _zi < numsegs; _zi++) segs[_zi] = new seg_t ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    ml = _c2v_box_mapseg_t_arr (new mapseg_t.at (data, 0));
+    ml = new mapseg_t[numsegs]; for (int _k = 0; _k < numsegs; _k++) ml[_k] = new mapseg_t.at (data, _k * 12);
     _off_ml = 0;
     li = segs;
     _off_li = 0;
@@ -21549,7 +21536,7 @@ void P_LoadSubsectors (int lump) {
     numsubsectors = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 4));
     subsectors = new subsector_s[numsubsectors]; for (int _zi = 0; _zi < numsubsectors; _zi++) subsectors[_zi] = new subsector_s ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    ms = _c2v_box_mapsubsector_t_arr (new mapsubsector_t.at (data, 0));
+    ms = new mapsubsector_t[numsubsectors]; for (int _k = 0; _k < numsubsectors; _k++) ms[_k] = new mapsubsector_t.at (data, _k * 4);
     _off_ms = 0;
     ss = subsectors;
     _off_ss = 0;
@@ -21576,7 +21563,7 @@ void P_LoadSectors (int lump) {
     numsectors = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 26));
     sectors = new sector_t[numsectors]; for (int _zi = 0; _zi < numsectors; _zi++) sectors[_zi] = new sector_t ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    ms = _c2v_box_mapsector_t_arr (new mapsector_t.at (data, 0));
+    ms = new mapsector_t[numsectors]; for (int _k = 0; _k < numsectors; _k++) ms[_k] = new mapsector_t.at (data, _k * 26);
     _off_ms = 0;
     ss = sectors;
     _off_ss = 0;
@@ -21611,7 +21598,7 @@ void P_LoadNodes (int lump) {
     numnodes = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 28));
     nodes = new node_t[numnodes]; for (int _zi = 0; _zi < numnodes; _zi++) nodes[_zi] = new node_t ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    mn = _c2v_box_mapnode_t_arr (new mapnode_t.at (data, 0));
+    mn = new mapnode_t[numnodes]; for (int _k = 0; _k < numnodes; _k++) mn[_k] = new mapnode_t.at (data, _k * 28);
     _off_mn = 0;
     no = nodes;
     _off_no = 0;
@@ -21623,9 +21610,9 @@ void P_LoadNodes (int lump) {
             no[_off_no].dy = (((int) mn[_off_mn].dy) << 16);
             for (j = 0; j < 2; j++) 
             {
-                no[_off_no].children[(int) (j)] = (uint16) (((int16) (mn[_off_mn].children[(int) (j)])));
+                no[_off_no].children[(int) (j)] = c_u_get_u16_at (data, _off_mn * 28 + 24 + j * 2);
                 for (k = 0; k < 4; k++) {
-                    no[_off_no].bbox[(int) (j)][(int) (k)] = (((int) mn[_off_mn].bbox[(int) (j)][(int) (k)]) << 16);
+                    no[_off_no].bbox[(int) (j)][(int) (k)] = (((int) ((int16) c_u_get_u16_at (data, _off_mn * 28 + 8 + (j * 4 + k) * 2))) << 16);
                 }
             }
         }
@@ -21647,7 +21634,7 @@ void P_LoadThings (int lump) {
     uint32 spawn = 0;
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
     numthings = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 10));
-    mt = _c2v_box_mapthing_t_arr (new mapthing_t.at (data, 0));
+    mt = new mapthing_t[numthings]; for (int _k = 0; _k < numthings; _k++) mt[_k] = new mapthing_t.at (data, _k * 10);
     _off_mt = 0;
     for (i = 0; i < numthings; ) {
         {
@@ -21698,7 +21685,7 @@ void P_LoadLineDefs (int lump) {
     numlines = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 14));
     lines = new line_s[numlines]; for (int _zi = 0; _zi < numlines; _zi++) lines[_zi] = new line_s ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    mld = _c2v_box_maplinedef_t_arr (new maplinedef_t.at (data, 0));
+    mld = new maplinedef_t[numlines]; for (int _k = 0; _k < numlines; _k++) mld[_k] = new maplinedef_t.at (data, _k * 14);
     _off_mld = 0;
     ld = lines;
     _off_ld = 0;
@@ -21782,7 +21769,7 @@ void P_LoadSideDefs (int lump) {
     numsides = (int) ((((size_t) W_LumpLength ((uint32) lump)) / 30));
     sides = new side_t[numsides]; for (int _zi = 0; _zi < numsides; _zi++) sides[_zi] = new side_t ();
     data = W_CacheLumpNum (lump, (int) __anon_enum_1.PU_STATIC);
-    msd = _c2v_box_mapsidedef_t_arr (new mapsidedef_t.at (data, 0));
+    msd = new mapsidedef_t[numsides]; for (int _k = 0; _k < numsides; _k++) msd[_k] = new mapsidedef_t.at (data, _k * 30);
     _off_msd = 0;
     sd = sides;
     _off_sd = 0;
@@ -22925,16 +22912,18 @@ void P_UpdateSpecials () {
     {
         anim = anims;
         _off_anim = 0;
-        for (; (anim[0] == lastanim[0]) ? (_off_anim < 0) : (uintptr.from_pointer ((void*) (anim)) < uintptr.from_pointer ((void*) (lastanim))); _off_anim++) 
+        for (; _off_anim < anims.length && anim[_off_anim].numpics > 0; _off_anim++) 
         {
             for (i = anim[_off_anim].basepic; i < (anim[_off_anim].basepic + anim[_off_anim].numpics); i++) 
             {
                 pic = (anim[_off_anim].basepic + (((leveltime / anim[_off_anim].speed) + i) % anim[_off_anim].numpics));
                 if (anim[_off_anim].istexture != 0) {
-                    texturetranslation[(int) (i)] = pic;
+                    if (i >= 0 && i < texturetranslation.length)
+                        texturetranslation[(int) (i)] = pic;
                 }
                 else {
-                    flattranslation[(int) (i)] = pic;
+                    if (i >= 0 && i < flattranslation.length)
+                        flattranslation[(int) (i)] = pic;
                 }
             }
         }
@@ -23727,7 +23716,7 @@ void P_Ticker () {
     }
     for (i = 0; i < 4; i++) {
         if (playeringame[(int) (i)] != 0) {
-            P_PlayerThink (_c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (i))));
+            P_PlayerThink (players[(int) (i)]);
         }
     }
     P_RunThinkers ();
@@ -23974,79 +23963,70 @@ void R_ClearDrawSegs () {
 }
 
 public cliprange_t[] newend = new cliprange_t[0];
+public int newend_idx = 2;
 
 public cliprange_t[] solidsegs;
 
 // c2vala-ptrs: next_arr[ARITH|DEREF|WR|NULL|ARROW]=>T[] start_arr[ARITH|DEREF|WR|ARROW]=>T[]
 void R_ClipSolidWallSegment (int first, int last) {
-    bool c2v_goto_crunch = false;
-    cliprange_t[] next = new cliprange_t[0];
-    int _off_next = 0;
-    cliprange_t[] start = new cliprange_t[0];
-    int _off_start = 0;
-    do {
-        start = solidsegs;
-        _off_start = 0;
-        while (start[_off_start].last < (first - 1)) {
-            _off_start++;
-            if (c2v_goto_crunch) { break; }
-        }
-        if (c2v_goto_crunch) break;
-        if (first < start[_off_start].first) 
+    int s = 0;
+    int n = 0;
+    while (solidsegs[s].last < (first - 1)) {
+        s++;
+    }
+    if (first < solidsegs[s].first) 
+    {
+        if (last < (solidsegs[s].first - 1)) 
         {
-            if (last < (start[_off_start].first - 1)) 
+            R_StoreWallRange (first, last);
+            n = newend_idx;
+            newend_idx++;
+            while (n != s) 
             {
-                R_StoreWallRange (first, last);
-                next = newend;
-                _off_next = 0;
-                newend = _c2v_slice_cliprange_t (newend, 1);
-                while (next[0] != start[0] || _off_next != _off_start) 
-                {
-                    next[_off_next] = next[_off_next - (int) (1)];
-                    _off_next--;
-                    if (c2v_goto_crunch) { break; }
-                }
-                next[_off_next].first = first;
-                next[_off_next].last = last;
-                return;
+                solidsegs[n].first = solidsegs[n - 1].first;
+                solidsegs[n].last = solidsegs[n - 1].last;
+                n--;
             }
-            R_StoreWallRange (first, (start[_off_start].first - 1));
-            start[_off_start].first = first;
-        }
-        if (c2v_goto_crunch) break;
-        if (last <= start[_off_start].last) {
+            solidsegs[n].first = first;
+            solidsegs[n].last = last;
             return;
         }
-        if (c2v_goto_crunch) break;
-        next = start;
-        _off_next = _off_start;
-        while (last >= (next[_off_next + (int) (1)].first - 1)) 
+        R_StoreWallRange (first, (solidsegs[s].first - 1));
+        solidsegs[s].first = first;
+    }
+    if (last <= solidsegs[s].last) {
+        return;
+    }
+    n = s;
+    bool crunch = false;
+    while (last >= (solidsegs[n + 1].first - 1)) 
+    {
+        R_StoreWallRange ((solidsegs[n].last + 1), (solidsegs[n + 1].first - 1));
+        n++;
+        if (last <= solidsegs[n].last) 
         {
-            R_StoreWallRange ((next[_off_next].last + 1), (next[_off_next + (int) (1)].first - 1));
-            _off_next++;
-            if (last <= next[_off_next].last) 
-            {
-                start[_off_start].last = next[_off_next].last;
-                c2v_goto_crunch = true;
-                break;
-            }
-            if (c2v_goto_crunch) { break; }
+            solidsegs[s].last = solidsegs[n].last;
+            crunch = true;
+            break;
         }
-        if (c2v_goto_crunch) break;
-        R_StoreWallRange ((next[_off_next].last + 1), last);
-        start[_off_start].last = last;
-    } while (false);
-    c2v_goto_crunch = false;
-    if (next[0] == start[0] && _off_next == _off_start) 
+    }
+    if (!crunch) {
+        R_StoreWallRange ((solidsegs[n].last + 1), last);
+        solidsegs[s].last = last;
+    }
+    if (n == s) 
     {
         return;
     }
-    while (next[_off_next++] != newend[0]) 
+    while (n++ != newend_idx) 
     {
-        start[++_off_start] = next[_off_next];
-        if (c2v_goto_crunch) { break; }
+        s++;
+        if (s < solidsegs.length && n < solidsegs.length) {
+            solidsegs[s].first = solidsegs[n].first;
+            solidsegs[s].last = solidsegs[n].last;
+        }
     }
-    newend = _c2v_slice_cliprange_t (start, _off_start + (int) (1));
+    newend_idx = s + 1;
 }
 
 // c2vala-ptrs: start_arr[ARITH|DEREF|ARROW]=>T[]
@@ -24086,7 +24066,7 @@ void R_ClearClipSegs () {
     solidsegs[(int) (0)].last = -1;
     solidsegs[(int) (1)].first = viewwidth;
     solidsegs[(int) (1)].last = 0x7fffffff;
-    newend = _c2v_slice_cliprange_t (solidsegs, (int) (2));
+    newend_idx = 2;
 }
 
 // c2vala-ptrs: line_obj[DEREF|ARROW]=>T?
@@ -24103,36 +24083,38 @@ void R_AddLine (seg_t[] line) {
         curline = _c2v_box_seg_t_obj (line);
         angle1 = R_PointToAngle (line[0].v1.x, line[0].v1.y);
         angle2 = R_PointToAngle (line[0].v2.x, line[0].v2.y);
-        span = (angle1 - angle2);
+        span = (angle1 - angle2) & ((uint32) 0xFFFFFFFF);
         if (span >= ((uint32) 0x80000000)) {
             return;
         }
         if (c2v_goto_clipsolid || c2v_goto_clippass) break;
         rw_angle1 = (int) angle1;
-        angle1 -= viewangle;
-        angle2 -= viewangle;
-        tspan = (angle1 + clipangle);
+        angle1 = (angle1 - viewangle) & ((uint32) 0xFFFFFFFF);
+        angle2 = (angle2 - viewangle) & ((uint32) 0xFFFFFFFF);
+        tspan = (angle1 + clipangle) & ((uint32) 0xFFFFFFFF);
         if (tspan > (((uint32) 2) * clipangle)) 
         {
-            tspan -= (((uint32) 2) * clipangle);
+            tspan = (tspan - (((uint32) 2) * clipangle)) & ((uint32) 0xFFFFFFFF);
             if (tspan >= span) {
                 return;
             }
             angle1 = clipangle;
         }
         if (c2v_goto_clipsolid || c2v_goto_clippass) break;
-        tspan = (clipangle - angle2);
+        tspan = (clipangle - angle2) & ((uint32) 0xFFFFFFFF);
         if (tspan > (((uint32) 2) * clipangle)) 
         {
-            tspan -= (((uint32) 2) * clipangle);
+            tspan = (tspan - (((uint32) 2) * clipangle)) & ((uint32) 0xFFFFFFFF);
             if (tspan >= span) {
                 return;
             }
-            angle2 = -clipangle;
+            angle2 = (0 - clipangle) & ((uint32) 0xFFFFFFFF);
         }
         if (c2v_goto_clipsolid || c2v_goto_clippass) break;
-        angle1 = ((angle1 + ((uint32) 0x40000000)) >> ((uint32) 19));
-        angle2 = ((angle2 + ((uint32) 0x40000000)) >> ((uint32) 19));
+        angle1 = (((angle1 + ((uint32) 0x40000000)) & ((uint32) 0xFFFFFFFF)) >> ((uint32) 19));
+        angle2 = (((angle2 + ((uint32) 0x40000000)) & ((uint32) 0xFFFFFFFF)) >> ((uint32) 19));
+        if (angle1 >= 4096) angle1 = 4095;
+        if (angle2 >= 4096) angle2 = 4095;
         x1 = viewangletox[(int) (angle1)];
         x2 = viewangletox[(int) (angle2)];
         if (x1 == x2) {
@@ -24219,32 +24201,34 @@ uint32 R_CheckBBox (int[] bspcoord) {
     y1 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (1)])];
     x2 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (2)])];
     y2 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (3)])];
-    angle1 = (R_PointToAngle (x1, y1) - viewangle);
-    angle2 = (R_PointToAngle (x2, y2) - viewangle);
-    span = (angle1 - angle2);
+    angle1 = (R_PointToAngle (x1, y1) - viewangle) & ((uint32) 0xFFFFFFFF);
+    angle2 = (R_PointToAngle (x2, y2) - viewangle) & ((uint32) 0xFFFFFFFF);
+    span = (angle1 - angle2) & ((uint32) 0xFFFFFFFF);
     if (span >= ((uint32) 0x80000000)) {
         return (uint32) 1;
     }
-    tspan = (angle1 + clipangle);
+    tspan = (angle1 + clipangle) & ((uint32) 0xFFFFFFFF);
     if (tspan > (((uint32) 2) * clipangle)) 
     {
-        tspan -= (((uint32) 2) * clipangle);
+        tspan = (tspan - (((uint32) 2) * clipangle)) & ((uint32) 0xFFFFFFFF);
         if (tspan >= span) {
             return (uint32) 0;
         }
         angle1 = clipangle;
     }
-    tspan = (clipangle - angle2);
+    tspan = (clipangle - angle2) & ((uint32) 0xFFFFFFFF);
     if (tspan > (((uint32) 2) * clipangle)) 
     {
-        tspan -= (((uint32) 2) * clipangle);
+        tspan = (tspan - (((uint32) 2) * clipangle)) & ((uint32) 0xFFFFFFFF);
         if (tspan >= span) {
             return (uint32) 0;
         }
-        angle2 = -clipangle;
+        angle2 = (0 - clipangle) & ((uint32) 0xFFFFFFFF);
     }
-    angle1 = ((angle1 + ((uint32) 0x40000000)) >> ((uint32) 19));
-    angle2 = ((angle2 + ((uint32) 0x40000000)) >> ((uint32) 19));
+    angle1 = (((angle1 + ((uint32) 0x40000000)) & ((uint32) 0xFFFFFFFF)) >> ((uint32) 19));
+    angle2 = (((angle2 + ((uint32) 0x40000000)) & ((uint32) 0xFFFFFFFF)) >> ((uint32) 19));
+    if (angle1 >= 4096) angle1 = 4095;
+    if (angle2 >= 4096) angle2 = 4095;
     sx1 = viewangletox[(int) (angle1)];
     sx2 = viewangletox[(int) (angle2)];
     if (sx1 == sx2) {
@@ -24865,8 +24849,8 @@ void R_PrecacheLevel () {
     c_memset (spritepresent, 0, numsprites);
     for (th = thinkercap.next; th != thinkercap; th = th.next) 
     {
-        if (th.tag == 1) {
-            spritepresent[(int) (((mobj_s?) th).sprite)] = (uint8) 1;
+        if (th.tag == 1 && th.owner != null) {
+            spritepresent[(int) (((mobj_s?) th.owner).sprite)] = (uint8) 1;
         }
     }
     spritememory = 0;
@@ -24905,7 +24889,7 @@ public int dccount;
 // c2vala-ptrs: dest_buf[ARITH|DEREF|WR]=>uint8[]
 void R_DrawColumn () {
     int count = 0;
-    uint8[] dest = new uint8[0];
+    uint8[] dest = I_VideoBuffer;
     int _off_dest = 0;
     int frac = 0;
     int fracstep = 0;
@@ -24916,12 +24900,15 @@ void R_DrawColumn () {
     if (((((uint32) dc_x) >= ((uint32) 320)) || (dc_yl < 0)) || (dc_yh >= 200)) {
         I_Error (c_str_to_bytes ("R_DrawColumn: %i to %i at %i"), dc_yl, dc_yh, dc_x);
     }
-    dest = I_VideoBuffer;
+    if (dc_source.length == 0 || dc_colormap.length == 0) return;
     _off_dest = ylookup_off[(int) (dc_yl)] + (int) (columnofs[(int) (dc_x)]);
     fracstep = dc_iscale;
     frac = (dc_texturemid + ((dc_yl - centery) * fracstep));
+    int slen = dc_source.length;
     do {
-        dest[_off_dest] = dc_colormap[(int) (dc_source[_off_dc_source + (int) (((frac >> 16) & 127))])];
+        int sidx = _off_dc_source + (int) (((frac >> 16) & 127));
+        if (sidx >= slen) sidx = slen - 1;
+        dest[_off_dest] = dc_colormap[(int) (dc_source[sidx])];
         _off_dest += (int) (320);
         frac += fracstep;
     } while (count-- != 0);
@@ -25129,7 +25116,7 @@ public int dscount;
 void R_DrawSpan () {
     uint32 position = 0;
     uint32 step = 0;
-    uint8[] dest = new uint8[0];
+    uint8[] dest = I_VideoBuffer;
     int _off_dest = 0;
     int count = 0;
     int spot = 0;
@@ -25141,7 +25128,6 @@ void R_DrawSpan () {
     }
     position = (uint32) ((((ds_xfrac << 10) & 0xffff0000) | ((ds_yfrac >> 6) & 0x0000ffff)));
     step = (uint32) ((((ds_xstep << 10) & 0xffff0000) | ((ds_ystep >> 6) & 0x0000ffff)));
-    dest = I_VideoBuffer;
     _off_dest = ylookup_off[(int) (ds_y)] + (int) (columnofs[(int) (ds_x1)]);
     count = (ds_x2 - ds_x1);
     do {
@@ -25734,11 +25720,11 @@ subsector_s? R_PointInSubsector (int x, int y) {
     nodenum = (numnodes - 1);
     while (!((nodenum & 0x8000) != 0)) 
     {
-        node = _c2v_box_node_t_obj (_c2v_slice_node_t (nodes, (int) (nodenum)));
+        node = nodes[(int) (nodenum)];
         side = R_PointOnSide (x, y, node);
         nodenum = (int) (node.children[(int) (side)]);
     }
-    return _c2v_box_subsector_s_obj (_c2v_slice_subsector_s (subsectors, (int) ((nodenum & ~0x8000))));
+    return subsectors[(int) ((nodenum & ~0x8000))];
 }
 
 // c2vala-ptrs: player_obj[DEREF|ARROW]=>T?
@@ -25789,6 +25775,7 @@ public _c2v_del_planefunction_t_6fa8baaa? ceilingfunc;
 public visplane_t[] visplanes;
 
 public visplane_t[] lastvisplane = new visplane_t[0];
+public int numvisplanes = 0;
 
 public int16[] openings;
 
@@ -25844,7 +25831,7 @@ void R_MapPlane (int y, int x1, int x2) {
     angle = ((viewangle + xtoviewangle[(int) (x1)]) >> ((uint32) 19));
     ds_xfrac = (viewx + FixedMul (finecosine[(int) (angle)], length));
     ds_yfrac = (-viewy - FixedMul (finesine[(int) (angle)], length));
-    if (fixedcolormap != null) {
+    if (fixedcolormap != null && fixedcolormap.length > 0) {
         ds_colormap = fixedcolormap;
     }
     else 
@@ -25870,6 +25857,7 @@ void R_ClearPlanes () {
         ceilingclip[(int) (i)] = (int16) (-1);
     }
     lastvisplane = visplanes;
+    numvisplanes = 0;
     lastopening = openings;
     for (int _c2v_mi = 0; _c2v_mi < (((int) (((int) (200) * (int) (4)))) / (int) (4)) && _c2v_mi < cachedheight.length; _c2v_mi++) { cachedheight[_c2v_mi] = 0; }
     angle = ((viewangle - ((uint32) 0x40000000)) >> ((uint32) 19));
@@ -25889,7 +25877,7 @@ visplane_t[] R_FindPlane (int height, int picnum, int lightlevel) {
     {
         check = visplanes;
         _off_check = 0;
-        for (; (check[0] == lastvisplane[0]) ? (_off_check < 0) : (uintptr.from_pointer ((void*) (check)) < uintptr.from_pointer ((void*) (lastvisplane))); _off_check++) 
+        for (; _off_check < numvisplanes; _off_check++) 
         {
             if (((height == check[_off_check].height) && (picnum == check[_off_check].picnum)) && (lightlevel == check[_off_check].lightlevel)) 
             {
@@ -25897,13 +25885,13 @@ visplane_t[] R_FindPlane (int height, int picnum, int lightlevel) {
             }
         }
     }
-    if ((check[0] == lastvisplane[0]) ? (_off_check < 0) : (uintptr.from_pointer ((void*) (check)) < uintptr.from_pointer ((void*) (lastvisplane)))) {
+    if (_off_check < numvisplanes) {
         return _c2v_slice_visplane_t (check, _off_check);
     }
-    if ((0 - 0) == ((int64) 128)) {
+    if (numvisplanes == 128) {
         I_Error (c_str_to_bytes ("R_FindPlane: no more visplanes"));
     }
-    lastvisplane = _c2v_slice_visplane_t (lastvisplane, 1);
+    numvisplanes++;
     check[_off_check].height = height;
     check[_off_check].picnum = picnum;
     check[_off_check].lightlevel = lightlevel;
@@ -25951,10 +25939,10 @@ visplane_t? R_CheckPlane (visplane_t? pl, int start, int stop) {
         pl.maxx = unionh;
         return pl;
     }
-    lastvisplane[0].height = pl.height;
-    lastvisplane[0].picnum = pl.picnum;
-    lastvisplane[0].lightlevel = pl.lightlevel;
-    pl = _c2v_box_visplane_t_obj (lastvisplane); lastvisplane = _c2v_slice_visplane_t (lastvisplane, 1);
+    visplanes[numvisplanes].height = pl.height;
+    visplanes[numvisplanes].picnum = pl.picnum;
+    visplanes[numvisplanes].lightlevel = pl.lightlevel;
+    pl = visplanes[numvisplanes]; numvisplanes++;
     pl.minx = start;
     pl.maxx = stop;
     c_memset (pl.top, 0xff, ((int) (320) * (int) (1)));
@@ -26005,7 +25993,7 @@ void R_DrawPlanes () {
     {
         pl = visplanes;
         _off_pl = 0;
-        for (; (pl[0] == lastvisplane[0]) ? (_off_pl < 0) : (uintptr.from_pointer ((void*) (pl)) < uintptr.from_pointer ((void*) (lastvisplane))); _off_pl++) 
+        for (; _off_pl < numvisplanes; _off_pl++) 
         {
             if (pl[_off_pl].minx > pl[_off_pl].maxx) {
                 continue;
@@ -26041,12 +26029,20 @@ void R_DrawPlanes () {
                 light = 0;
             }
             planezlight = zlight[(int) (light)];
-            pl[_off_pl].top[(int) ((pl[_off_pl].maxx + 1))] = (uint8) 0xff;
-            pl[_off_pl].top[(int) ((pl[_off_pl].minx - 1))] = (uint8) 0xff;
-            stop = (pl[_off_pl].maxx + 1);
-            for (x = pl[_off_pl].minx; x <= stop; x++) 
+            int minx = pl[_off_pl].minx;
+            int maxx = pl[_off_pl].maxx;
+            if (maxx + 1 < pl[_off_pl].top.length)
+                pl[_off_pl].top[maxx + 1] = (uint8) 0xff;
+            if (minx - 1 >= 0)
+                pl[_off_pl].top[minx - 1] = (uint8) 0xff;
+            stop = (maxx + 1);
+            for (x = minx; x <= stop; x++) 
             {
-                R_MakeSpans (x, (int) (pl[_off_pl].top[(int) ((x - 1))]), (int) (pl[_off_pl].bottom[(int) ((x - 1))]), (int) (pl[_off_pl].top[(int) (x)]), (int) (pl[_off_pl].bottom[(int) (x)]));
+                int t1 = (x - 1 >= 0 && x - 1 < pl[_off_pl].top.length) ? (int) pl[_off_pl].top[x - 1] : 0xff;
+                int b1 = (x - 1 >= 0 && x - 1 < pl[_off_pl].bottom.length) ? (int) pl[_off_pl].bottom[x - 1] : 0;
+                int t2 = (x >= 0 && x < pl[_off_pl].top.length) ? (int) pl[_off_pl].top[x] : 0xff;
+                int b2 = (x >= 0 && x < pl[_off_pl].bottom.length) ? (int) pl[_off_pl].bottom[x] : 0;
+                R_MakeSpans (x, t1, b1, t2, b2);
             }
             W_ReleaseLumpNum (lumpnum);
         }
@@ -26145,14 +26141,14 @@ void R_RenderMaskedSegRange (drawseg_s[] ds, int x1, int x2) {
         dc_texturemid = (dc_texturemid - viewz);
     }
     dc_texturemid += curline.sidedef.rowoffset;
-    if (fixedcolormap != null) {
+    if (fixedcolormap != null && fixedcolormap.length > 0) {
         dc_colormap = fixedcolormap;
     }
     for (dc_x = x1; dc_x <= x2; dc_x++) 
     {
         if (((int) maskedtexturecol[(int) (dc_x)]) != 32767) 
         {
-            if (!(fixedcolormap != null)) 
+            if (!(fixedcolormap != null && fixedcolormap.length > 0)) 
             {
                 index = (uint32) ((spryscale >> 12));
                 if (index >= ((uint32) 48)) {
@@ -26218,7 +26214,7 @@ void R_RenderSegLoop () {
         }
         if (segtextured != 0) 
         {
-            angle = ((rw_centerangle + xtoviewangle[(int) (rw_x)]) >> ((uint32) 19));
+            angle = ((((rw_centerangle + xtoviewangle[(int) (rw_x)]) & ((uint32) 0xFFFFFFFF)) >> ((uint32) 19)) & ((uint32) 4095));
             texturecolumn = (rw_offset - FixedMul (finetangent[(int) (angle)], rw_distance));
             texturecolumn >>= 16;
             index = (uint32) ((rw_scale >> 12));
@@ -26318,7 +26314,7 @@ void R_StoreWallRange (int start, int stop) {
     uint32 offsetangle = 0;
     int vtop = 0;
     int lightnum = 0;
-    if (ds_p[0] == drawsegs[256]) {
+    if (ds_p.length == 0) {
         return;
     }
     if ((start >= viewwidth) || (start > stop)) {
@@ -26476,9 +26472,8 @@ void R_StoreWallRange (int start, int stop) {
         if (sidedef.midtexture != 0) 
         {
             maskedtexture = (uint32) 1;
-            maskedtexturecol = _c2v_slice_int16 (lastopening, (int) (-rw_x));
+            maskedtexturecol = new int16[320];
             ds_p[0].maskedtexturecol = maskedtexturecol;
-            lastopening = _c2v_slice_int16 (lastopening, (rw_stopx - rw_x));
         }
     }
     segtextured = (((uint32) ((midtexture | toptexture) | bottomtexture)) | maskedtexture);
@@ -26498,7 +26493,7 @@ void R_StoreWallRange (int start, int stop) {
         }
         rw_offset += (sidedef.textureoffset + curline.offset);
         rw_centerangle = ((((uint32) 0x40000000) + viewangle) - rw_normalangle);
-        if (!(fixedcolormap != null)) 
+        if (!(fixedcolormap != null && fixedcolormap.length > 0)) 
         {
             lightnum = ((((int) frontsector.lightlevel) >> 4) + extralight);
             if (curline.v1.y == curline.v2.y) {
@@ -26556,23 +26551,21 @@ void R_StoreWallRange (int start, int stop) {
         floorplane = R_CheckPlane (floorplane, rw_x, (rw_stopx - 1));
     }
     R_RenderSegLoop ();
-    if ((((ds_p[0].silhouette & 2) != 0) || (maskedtexture != 0)) && (!(ds_p[0].sprtopclip != null))) 
+    if ((((ds_p[0].silhouette & 2) != 0) || (maskedtexture != 0)) && (ds_p[0].sprtopclip.length == 0)) 
     {
-        int ci = 0;
-        for (ci = 0; ci < (rw_stopx - start); ci++) {
-            lastopening[(int) (ci)] = ceilingclip[(int) ((start + ci))];
+        var clip = new int16[320];
+        for (int ci = start; ci < rw_stopx; ci++) {
+            clip[ci] = ceilingclip[ci];
         }
-        ds_p[0].sprtopclip = _c2v_slice_int16 (lastopening, (int) (-start));
-        lastopening = _c2v_slice_int16 (lastopening, (rw_stopx - start));
+        ds_p[0].sprtopclip = clip;
     }
-    if ((((ds_p[0].silhouette & 1) != 0) || (maskedtexture != 0)) && (!(ds_p[0].sprbottomclip != null))) 
+    if ((((ds_p[0].silhouette & 1) != 0) || (maskedtexture != 0)) && (ds_p[0].sprbottomclip.length == 0)) 
     {
-        int ci = 0;
-        for (ci = 0; ci < (rw_stopx - start); ci++) {
-            lastopening[(int) (ci)] = floorclip[(int) ((start + ci))];
+        var clip = new int16[320];
+        for (int ci = start; ci < rw_stopx; ci++) {
+            clip[ci] = floorclip[ci];
         }
-        ds_p[0].sprbottomclip = _c2v_slice_int16 (lastopening, (int) (-start));
-        lastopening = _c2v_slice_int16 (lastopening, (rw_stopx - start));
+        ds_p[0].sprbottomclip = clip;
     }
     if ((maskedtexture != 0) && (!((ds_p[0].silhouette & 2) != 0))) 
     {
@@ -26907,7 +26900,7 @@ void R_ProjectSprite (mobj_s? thing) {
         vis.colormap = new uint8[0];
     }
     else 
-    if (fixedcolormap != null) 
+    if (fixedcolormap != null && fixedcolormap.length > 0) 
     {
         vis.colormap = fixedcolormap;
     }
@@ -27007,7 +27000,7 @@ void R_DrawPSprite (pspdef_t[] psp) {
         vis.colormap = new uint8[0];
     }
     else 
-    if (fixedcolormap != null) 
+    if (fixedcolormap != null && fixedcolormap.length > 0) 
     {
         vis.colormap = fixedcolormap;
     }
@@ -27118,6 +27111,7 @@ void R_DrawSprite (vissprite_s? spr) {
     int scale = 0;
     int lowscale = 0;
     int silhouette = 0;
+    if (spr == null) return;
     for (x = spr.x1; x <= spr.x2; x++) {
         cliptop[(int) (x)] = -2;
         clipbot[(int) (x)] = cliptop[(int) (x)];
@@ -27125,7 +27119,7 @@ void R_DrawSprite (vissprite_s? spr) {
     {
         ds = ds_p;
         _off_ds = 0 - (int) (1);
-        for (; (ds.length > 0 && drawsegs.length > 0 && ds[0] == drawsegs[0]) ? (_off_ds >= 0) : (uintptr.from_pointer ((void*) (ds)) >= uintptr.from_pointer ((void*) (drawsegs))); _off_ds--) 
+        for (; _off_ds >= 0; _off_ds--) 
         {
             if (((ds[_off_ds].x1 > spr.x2) || (ds[_off_ds].x2 < spr.x1)) || ((!(ds[_off_ds].silhouette != 0)) && (!(ds[_off_ds].maskedtexturecol != null)))) 
             {
@@ -27211,7 +27205,7 @@ void R_DrawMasked () {
     R_SortVisSprites ();
     if (uintptr.from_pointer ((void*) (vissprite_p)) > uintptr.from_pointer ((void*) (vissprites))) 
     {
-        for (spr = vsprsortedhead.next; spr != vsprsortedhead; spr = spr.next) 
+        for (spr = vsprsortedhead.next; spr != null && spr != vsprsortedhead; spr = spr.next) 
         {
             R_DrawSprite (spr);
         }
@@ -27219,7 +27213,7 @@ void R_DrawMasked () {
     {
         ds = ds_p;
         _off_ds = 0 - (int) (1);
-        for (; (ds.length > 0 && drawsegs.length > 0 && ds[0] == drawsegs[0]) ? (_off_ds >= 0) : (uintptr.from_pointer ((void*) (ds)) >= uintptr.from_pointer ((void*) (drawsegs))); _off_ds--) {
+        for (; _off_ds >= 0; _off_ds--) {
             if (ds[_off_ds].maskedtexturecol != null) {
                 R_RenderMaskedSegRange (_c2v_slice_drawseg_s (ds, _off_ds), ds[_off_ds].x1, ds[_off_ds].x2);
             }
@@ -28746,6 +28740,7 @@ void V_DrawPatch (int x, int y, patch_t? patch) {
     uint8[] source = new uint8[0];
     int _off_source = 0;
     int w = 0;
+    if (patch == null) return;
     y -= (int) patch.topoffset;
     x -= (int) patch.leftoffset;
     if (patchclip_callback != null) 
@@ -28799,6 +28794,7 @@ void V_DrawPatchFlipped (int x, int y, patch_t? patch) {
     uint8[] source = new uint8[0];
     int _off_source = 0;
     int w = 0;
+    if (patch == null) return;
     y -= (int) patch.topoffset;
     x -= (int) patch.leftoffset;
     if (patchclip_callback != null) 
@@ -28857,6 +28853,7 @@ void V_DrawTLPatch (int x, int y, patch_t? patch) {
     uint8[] source = new uint8[0];
     int _off_source = 0;
     int w = 0;
+    if (patch == null) return;
     y -= (int) patch.topoffset;
     x -= (int) patch.leftoffset;
     if ((((x < 0) || ((x + ((int) patch.width)) > 320)) || (y < 0)) || ((y + ((int) patch.height)) > 200)) 
@@ -28903,6 +28900,7 @@ void V_DrawXlaPatch (int x, int y, patch_t? patch) {
     uint8[] source = new uint8[0];
     int _off_source = 0;
     int w = 0;
+    if (patch == null) return;
     y -= (int) patch.topoffset;
     x -= (int) patch.leftoffset;
     if (patchclip_callback != null) 
@@ -28952,6 +28950,7 @@ void V_DrawAltTLPatch (int x, int y, patch_t? patch) {
     uint8[] source = new uint8[0];
     int _off_source = 0;
     int w = 0;
+    if (patch == null) return;
     y -= (int) patch.topoffset;
     x -= (int) patch.leftoffset;
     if ((((x < 0) || ((x + ((int) patch.width)) > 320)) || (y < 0)) || ((y + ((int) patch.height)) > 200)) 
@@ -29002,6 +29001,7 @@ void V_DrawShadowedPatch (int x, int y, patch_t? patch) {
     uint8[] dest2 = new uint8[0];
     int _off_dest2 = 0;
     int w = 0;
+    if (patch == null) return;
     y -= (int) patch.topoffset;
     x -= (int) patch.leftoffset;
     if ((((x < 0) || ((x + ((int) patch.width)) > 320)) || (y < 0)) || ((y + ((int) patch.height)) > 200)) 
@@ -29431,7 +29431,7 @@ int W_CheckNumForName (uint8[] name) {
     }
     else 
     {
-        for (i = (int) ((numlumps - ((uint32) 1))); i >= 0; --i) 
+        for (i = (int) (numlumps - 1); i >= 0; --i) 
         {
             if (c_lump_eq (lumpinfo[(int) (i)].name, name) != 0) 
             {

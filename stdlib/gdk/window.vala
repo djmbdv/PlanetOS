@@ -5,6 +5,29 @@ using Planet;
 namespace Gdk {
     using Cairo;
 
+    [AsmBody(@"
+        # __gdk_copy_dwords(dst in rdi, src in rsi, count in rdx)
+        mov %rdx, %rcx
+        test %rcx, %rcx
+        jle _gcd_done
+    _gcd_sse:
+        cmp $4, %rcx
+        jb _gcd_tail
+        .byte 0xf3, 0x0f, 0x6f, 0x06
+        .byte 0xf3, 0x0f, 0x7f, 0x07
+        add $16, %rsi
+        add $16, %rdi
+        sub $4, %rcx
+        jmp _gcd_sse
+    _gcd_tail:
+        test %rcx, %rcx
+        jle _gcd_done
+        .byte 0xf3, 0xa5
+    _gcd_done:
+        ret
+    ")]
+    private extern void __gdk_copy_dwords (int dst, int src, int count);
+
     /**
      * Layout of the compositor shared window block (PLANET_WIN_SHM).
      *
@@ -356,6 +379,30 @@ namespace Gdk {
                 return;
             }
             Sys.sys (22, surface.buf_addr, width, height);
+        }
+
+        /**
+         * Presents an external 32-bit ARGB buffer (`src_w` x `src_h`).
+         * Standalone windows blit directly from `src_addr` (zero copy);
+         * composited windows copy into their shared/file surface and publish.
+         */
+        public void present_argb32 (int src_addr, int src_w, int src_h) {
+            if (!is_valid () || src_addr == 0 || src_w <= 0 || src_h <= 0)
+                return;
+            if (!composited () && width == src_w && height == src_h) {
+                Sys.sys (22, src_addr, src_w, src_h);
+                return;
+            }
+            int dst = surface.buf_addr;
+            if (width == src_w && height == src_h) {
+                __gdk_copy_dwords (dst, src_addr, src_w * src_h);
+            } else {
+                int cw = (width < src_w) ? width : src_w;
+                int ch = (height < src_h) ? height : src_h;
+                for (int y = 0; y < ch; y++)
+                    __gdk_copy_dwords (dst + y * width * 4, src_addr + y * src_w * 4, cw);
+            }
+            present ();
         }
 
         /**

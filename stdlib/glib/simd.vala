@@ -63,4 +63,74 @@ namespace Simd {
         ret
     ")]
     private extern int __sum16 (uint8[] a, int off);
+
+    /**
+     * Portable 4-lane 32-bit unsigned SIMD vector (Simd.u32x4).
+     */
+    public struct u32x4 {
+        public uint32 x;
+        public uint32 y;
+        public uint32 z;
+        public uint32 w;
+
+        public static u32x4 make (uint32 vx = 0, uint32 vy = 0, uint32 vz = 0, uint32 vw = 0) {
+            return u32x4 () { x = vx, y = vy, z = vz, w = vw };
+        }
+
+        public static u32x4 splat (uint32 v) {
+            return u32x4 () { x = v, y = v, z = v, w = v };
+        }
+
+        public u32x4 add (u32x4 o) { return u32x4 () { x = x + o.x, y = y + o.y, z = z + o.z, w = w + o.w }; }
+        public u32x4 sub (u32x4 o) { return u32x4 () { x = x - o.x, y = y - o.y, z = z - o.z, w = w - o.w }; }
+        public u32x4 mul (u32x4 o) { return u32x4 () { x = x * o.x, y = y * o.y, z = z * o.z, w = w * o.w }; }
+        public u32x4 bit_and (u32x4 o) { return u32x4 () { x = x & o.x, y = y & o.y, z = z & o.z, w = w & o.w }; }
+        public u32x4 bit_or (u32x4 o) { return u32x4 () { x = x | o.x, y = y | o.y, z = z | o.z, w = w | o.w }; }
+        public u32x4 bit_xor (u32x4 o) { return u32x4 () { x = x ^ o.x, y = y ^ o.y, z = z ^ o.z, w = w ^ o.w }; }
+    }
+
+    /**
+     * Portable 4-lane 32-bit signed SIMD vector (Simd.i32x4).
+     */
+    public struct i32x4 {
+        public int32 x;
+        public int32 y;
+        public int32 z;
+        public int32 w;
+
+        public static i32x4 make (int32 vx = 0, int32 vy = 0, int32 vz = 0, int32 vw = 0) {
+            return i32x4 () { x = vx, y = vy, z = vz, w = vw };
+        }
+
+        public static i32x4 splat (int32 v) {
+            return i32x4 () { x = v, y = v, z = v, w = v };
+        }
+
+        public i32x4 add (i32x4 o) { return i32x4 () { x = x + o.x, y = y + o.y, z = z + o.z, w = w + o.w }; }
+        public i32x4 sub (i32x4 o) { return i32x4 () { x = x - o.x, y = y - o.y, z = z - o.z, w = w - o.w }; }
+        public i32x4 mul (i32x4 o) { return i32x4 () { x = x * o.x, y = y * o.y, z = z * o.z, w = w * o.w }; }
+    }
+
+    /**
+     * Portable 4-lane 32-bit float SIMD vector (Simd.f32x4).
+     */
+    public struct f32x4 {
+        public float x;
+        public float y;
+        public float z;
+        public float w;
+
+        public static f32x4 make (float vx = 0.0f, float vy = 0.0f, float vz = 0.0f, float vw = 0.0f) {
+            return f32x4 () { x = vx, y = vy, z = vz, w = vw };
+        }
+
+        public static f32x4 splat (float v) {
+            return f32x4 () { x = v, y = v, z = v, w = v };
+        }
+
+        public f32x4 add (f32x4 o) { return f32x4 () { x = x + o.x, y = y + o.y, z = z + o.z, w = w + o.w }; }
+        public f32x4 sub (f32x4 o) { return f32x4 () { x = x - o.x, y = y - o.y, z = z - o.z, w = w - o.w }; }
+        public f32x4 mul (f32x4 o) { return f32x4 () { x = x * o.x, y = y * o.y, z = z * o.z, w = w * o.w }; }
+        public float dot (f32x4 o) { return x * o.x + y * o.y + z * o.z + w * o.w; }
+    }
 }

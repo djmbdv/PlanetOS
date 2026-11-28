@@ -1,8 +1,8 @@
-// Pointer usage analyzer for c2vala: classifies pointers by usage, assigns
-// descriptive suffixes (_obj, _arr, _buf, _ptr), and recommends Vala helpers.
+// Pointer usage analyzer for c2plan: classifies pointers by usage, assigns
+// descriptive suffixes (_obj, _arr, _buf, _ptr), and recommends Plan helpers.
 using Planc;
 
-namespace C2Vala {
+namespace C2Plan {
 
     public enum PtrUsage {
         NONE = 0,

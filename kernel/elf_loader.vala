@@ -426,6 +426,39 @@ namespace Planet.Kernel {
             return read_u8 (addr) | (read_u8 (addr + 1) << 8);
         }
 
+        private static bool load_segment_into (int src_buf, int fsz, int vaddr, int msz, int user_cr3) {
+            if (msz <= 0)
+                return true;
+            if (user_cr3 == 0) {
+                Pmm.reserve_range (vaddr, msz);
+                for (int b = 0; b < fsz; b++)
+                    mmio_write8 (vaddr + b, read_u8 (src_buf + b));
+                for (int b = fsz; b < msz; b++)
+                    mmio_write8 (vaddr + b, 0);
+                return true;
+            }
+            int first = vaddr & ~0xFFF;
+            int last = (vaddr + msz - 1) & ~0xFFF;
+            int num_pages = ((last - first) / 4096) + 1;
+            int phys = Pmm.alloc_contiguous (num_pages);
+            if (phys == 0) {
+                print (@"elf: out of memory for segment ($num_pages pages)\n");
+                return false;
+            }
+            int lead = vaddr - first;
+            for (int b = 0; b < lead; b++)
+                mmio_write8 (phys + b, 0);
+            for (int b = 0; b < fsz; b++)
+                mmio_write8 (phys + lead + b, read_u8 (src_buf + b));
+            int total_bytes = num_pages * 4096;
+            for (int b = lead + fsz; b < total_bytes; b++)
+                mmio_write8 (phys + b, 0);
+            for (int p = 0; p < num_pages; p++)
+                Vmm.map_user_4k_phys (user_cr3, first + p * 4096, phys + p * 4096, 0x07);
+            alloc_track_for (user_cr3, (uint64) phys, (uint32) num_pages);
+            return true;
+        }
+
         private static int load_plan_image (int buf, int size, int user_cr3) {
             if (size < 64)
                 return 0;
@@ -452,13 +485,8 @@ namespace Planet.Kernel {
                     print ("plan: invalid section bounds\n");
                     return 0;
                 }
-                Pmm.reserve_range (vaddr, msz);
-                if (user_cr3 != 0)
-                    Vmm.map_user_range (user_cr3, vaddr, msz);
-                for (int b = 0; b < fsz; b++)
-                    mmio_write8 (vaddr + b, read_u8 (buf + foff + b));
-                for (int b = fsz; b < msz; b++)
-                    mmio_write8 (vaddr + b, 0);
+                if (!load_segment_into (buf + foff, fsz, vaddr, msz, user_cr3))
+                    return 0;
             }
             int exp_count = mmio_read32 (buf + 28) & 0xFFFFFFFF;
             int imp_count = mmio_read32 (buf + 32) & 0xFFFFFFFF;
@@ -477,8 +505,11 @@ namespace Planet.Kernel {
                         if (didx >= 0)
                             last_loaded_dlib_mask = last_loaded_dlib_mask | (1 << didx);
                         int target = resolve_symbol_hash (dh, sh);
-                        if (target != 0 && gv >= 0x800000 && gv < 0x40000000)
-                            mmio_write64 (gv, target);
+                        if (target != 0 && gv >= 0x800000 && gv < 0x40000000) {
+                            int pa = (user_cr3 != 0) ? Vmm.virt_to_phys (user_cr3, gv) : gv;
+                            if (pa != 0)
+                                mmio_write64 (pa, target);
+                        }
                         cur += 24;
                     }
                 }
@@ -511,27 +542,6 @@ namespace Planet.Kernel {
             for (int i = 0; i < phnum; i++) {
                 int ph = buf + phoff + i * phentsize;
                 int p_type = mmio_read32 (ph) & 0xFFFFFFFF;
-                if (p_type == 0x70000001) {
-                    int imp_off = mmio_read64 (ph + 8);
-                    int imp_sz = mmio_read64 (ph + 32);
-                    if (imp_off > 0 && imp_sz >= 24 && imp_off + imp_sz <= size) {
-                        ensure_shared_dlibs ();
-                        int imp_count = imp_sz / 24;
-                        for (int k = 0; k < imp_count; k++) {
-                            int rec = buf + imp_off + k * 24;
-                            int dh = mmio_read64 (rec + 0);
-                            int sh = mmio_read64 (rec + 8);
-                            int gv = mmio_read64 (rec + 16);
-                            int didx = find_dlib_index (dh);
-                            if (didx >= 0)
-                                last_loaded_dlib_mask = last_loaded_dlib_mask | (1 << didx);
-                            int target = resolve_symbol_hash (dh, sh);
-                            if (target != 0 && gv >= 0x800000 && gv < 0x40000000)
-                                mmio_write64 (gv, target);
-                        }
-                    }
-                    continue;
-                }
                 if (p_type != 1)
                     continue;
                 int p_offset = mmio_read64 (ph + 8);
@@ -543,17 +553,35 @@ namespace Planet.Kernel {
                     print ("elf: invalid vaddr (not a PlanetOS binary)\n");
                     return 0;
                 }
+                if (!load_segment_into (buf + p_offset, p_filesz, p_vaddr, p_memsz, user_cr3))
+                    return 0;
+            }
 
-                Pmm.reserve_range (p_vaddr, p_memsz);
-                if (user_cr3 != 0) {
-                    Vmm.map_user_range (user_cr3, p_vaddr, p_memsz);
-                }
-
-                for (int b = 0; b < p_filesz; b++) {
-                    mmio_write8 (p_vaddr + b, read_u8 (buf + p_offset + b));
-                }
-                for (int b = p_filesz; b < p_memsz; b++) {
-                    mmio_write8 (p_vaddr + b, 0);
+            for (int i = 0; i < phnum; i++) {
+                int ph = buf + phoff + i * phentsize;
+                int p_type = mmio_read32 (ph) & 0xFFFFFFFF;
+                if (p_type != 0x70000001)
+                    continue;
+                int imp_off = mmio_read64 (ph + 8);
+                int imp_sz = mmio_read64 (ph + 32);
+                if (imp_off > 0 && imp_sz >= 24 && imp_off + imp_sz <= size) {
+                    ensure_shared_dlibs ();
+                    int imp_count = imp_sz / 24;
+                    for (int k = 0; k < imp_count; k++) {
+                        int rec = buf + imp_off + k * 24;
+                        int dh = mmio_read64 (rec + 0);
+                        int sh = mmio_read64 (rec + 8);
+                        int gv = mmio_read64 (rec + 16);
+                        int didx = find_dlib_index (dh);
+                        if (didx >= 0)
+                            last_loaded_dlib_mask = last_loaded_dlib_mask | (1 << didx);
+                        int target = resolve_symbol_hash (dh, sh);
+                        if (target != 0 && gv >= 0x800000 && gv < 0x40000000) {
+                            int pa = (user_cr3 != 0) ? Vmm.virt_to_phys (user_cr3, gv) : gv;
+                            if (pa != 0)
+                                mmio_write64 (pa, target);
+                        }
+                    }
                 }
             }
             return entry;
@@ -631,6 +659,7 @@ namespace Planet.Kernel {
                 Pmm.free_frame (ebuf + p * 4096);
             }
             if (entry == 0) {
+                release_allocs (user_cr3);
                 Vmm.destroy_user_space (user_cr3);
                 if (saved_cr3 != KernelLayout.PAGE_TABLES)
                     vmm_write_cr3 (saved_cr3);
@@ -641,6 +670,7 @@ namespace Planet.Kernel {
             int stack_pages = USER_STACK_PAGES;
             int child_stack = Pmm.alloc_contiguous (stack_pages);
             if (child_stack == 0) {
+                release_allocs (user_cr3);
                 Vmm.destroy_user_space (user_cr3);
                 if (saved_cr3 != KernelLayout.PAGE_TABLES)
                     vmm_write_cr3 (saved_cr3);

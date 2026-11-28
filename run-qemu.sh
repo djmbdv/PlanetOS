@@ -56,7 +56,7 @@ CAIRO_SRCS=("$ROOT/stdlib/cairo/surface.vala" "$ROOT/stdlib/cairo/context.vala")
 GDK_SRCS=("$ROOT/stdlib/gdk/rgba.vala" "$ROOT/stdlib/gdk/event.vala" "$ROOT/stdlib/gdk/window.vala" "$ROOT/stdlib/gdk/display.vala")
 GSK_SRCS=("$ROOT/stdlib/gsk/path.vala" "$ROOT/stdlib/gsk/types.vala" "$ROOT/stdlib/gsk/nodes.vala" "$ROOT/stdlib/gsk/renderer.vala")
 GTK_SRCS=("$ROOT/stdlib/gtk/text.vala" "$ROOT/stdlib/gtk/widget.vala" "$ROOT/stdlib/gtk/widgets.vala" "$ROOT/stdlib/gtk/container.vala" "$ROOT/stdlib/gtk/scrolled.vala" "$ROOT/stdlib/gtk/listview.vala" "$ROOT/stdlib/gtk/image.vala" "$ROOT/stdlib/gtk/window.vala")
-COMPOSITOR_SRCS=("$ROOT/tools/c2vala_rt.vala" "$ROOT/stdlib/gdk/stb_image.vala" "$ROOT/user/compositor/apps.vala" "$ROOT/user/compositor/win.vala" "$ROOT/user/compositor/wm.vala" "$ROOT/user/compositor/main.vala")
+COMPOSITOR_SRCS=("$ROOT/tools/c2plan_rt.plan" "$ROOT/stdlib/gdk/stb_image.vala" "$ROOT/user/compositor/apps.vala" "$ROOT/user/compositor/win.vala" "$ROOT/user/compositor/wm.vala" "$ROOT/user/compositor/main.vala")
 
 LIBDIR="$OUT/library"
 mkdir -p "$LIBDIR"/{glib,gee,gio,cairo,gdk,pango,spirv,venus,gsk,gtk,gobject,gmodule,unsafe}
@@ -76,9 +76,9 @@ LIB_FLAGS="--library-dir=$LIBDIR"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --format=dlib --image-base=0x1A40000 "$ROOT/stdlib/gobject_compat.vala" -o "$LIBDIR/gobject/gobject.dlib"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --format=dlib --image-base=0x1A60000 "$ROOT/stdlib/gmodule_compat.vala" -o "$LIBDIR/gmodule/gmodule.dlib"
 
-# In-guest compiles need the GLib declarations (c2vala_sdk.vala),
+# In-guest compiles need the GLib declarations (c2plan_sdk.plan),
 # packed into one file because the guest shell line buffer is only 480 bytes.
-python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
+python3 "$ROOT/tools/make_sdk.py" "$OUT/c2plan_sdk.plan"
 "$PLANC" $OPT --target=planetos --nostdlib "$ROOT/user/init.vala" -o "$OUT/init.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --image-base=0x900000 "$ROOT/user/worker.vala" -o "$OUT/worker.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS "$ROOT/user/banner.vala" -o "$OUT/banner.elf"
@@ -88,7 +88,7 @@ python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gobject "$ROOT/user/gobject_demo.vala" -o "$OUT/gobject_demo.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gmodule "$ROOT/user/gmodule_demo.vala" -o "$OUT/gmodule_demo.elf"
 "$PLANC" $OPT --target=planetos --nostdlib "$ROOT/stdlib/planet_math_kernels.vala" "$ROOT/user/mathlib.vala" -o "$OUT/mathlib.dlib"
-"$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --import-lib=gmodule "$ROOT/user/plan_demo.vala" -o "$OUT/plan_demo.plan"
+"$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --import-lib=gmodule "$ROOT/user/plan_demo.plan" -o "$OUT/plan_demo.plan"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gio "$ROOT/user/mainloop_demo.vala" -o "$OUT/mainloop_demo.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=cairo --import-lib=gdk "$ROOT/user/cairo_demo.vala" -o "$OUT/cairo_demo.elf"
 "$PLANC" --target=spirv "$ROOT/user/frag_planet.vala" -o "$OUT/frag.spv"
@@ -100,12 +100,12 @@ python3 "$ROOT/tools/make_sdk.py" "$OUT/c2vala_sdk.vala"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gee --import-lib=gio --import-lib=spirv --import-lib=venus --import-lib=cairo --import-lib=gdk --import-lib=gsk --import-lib=pango --import-lib=gtk "$ROOT/user/pcm4.vala" -o "$OUT/pcm4.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS "$ROOT/user/pluto.vala" -o "$OUT/pluto.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe --import-lib=gee --import-lib=gio --import-lib=spirv --import-lib=venus --import-lib=cairo --import-lib=gdk --import-lib=gsk --import-lib=pango --import-lib=gtk "$ROOT/user/saturn.vala" -o "$OUT/saturn.elf"
-"$PLANC" $OPT --target=planetos $LIB_FLAGS "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2vala_rt.vala" -o "$OUT/jsmn_demo.elf"
+"$PLANC" $OPT --target=planetos $LIB_FLAGS "$ROOT/user/jsmn_demo.vala" "$ROOT/tools/c2plan_rt.plan" -o "$OUT/jsmn_demo.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=unsafe "$ROOT/user/sys_demo.vala" -o "$OUT/sys_demo.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --import-lib=gio "$ROOT/user/mercury.vala" -o "$OUT/mercury.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS "$ROOT/planc/src/buffer.vala" "$ROOT/planc/src/host_planetos.vala" \
-    "$ROOT/tools/c2vala/ast.vala" "$ROOT/tools/c2vala/preproc.vala" "$ROOT/tools/c2vala/lexer.vala" \
-    "$ROOT/tools/c2vala/parser.vala" "$ROOT/tools/c2vala/ptr_analyzer.vala" "$ROOT/tools/c2vala/translator_models.vala" "$ROOT/tools/c2vala/translator.vala" "$ROOT/tools/c2vala/main.vala" -o "$OUT/c2vala.elf"
+    "$ROOT/tools/c2plan/ast.vala" "$ROOT/tools/c2plan/preproc.vala" "$ROOT/tools/c2plan/lexer.vala" \
+    "$ROOT/tools/c2plan/parser.vala" "$ROOT/tools/c2plan/ptr_analyzer.vala" "$ROOT/tools/c2plan/translator_models.vala" "$ROOT/tools/c2plan/translator.vala" "$ROOT/tools/c2plan/main.vala" -o "$OUT/c2plan.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --image-base=0xA00000 --import-lib=gee "$ROOT/user/shell.vala" -o "$OUT/shell.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --image-base=0xB00000 --import-lib=gee "$ROOT/user/shell.vala" -o "$OUT/vte_sh.elf"
 "$PLANC" $OPT --target=planetos $LIB_FLAGS --image-base=0xC00000 \
@@ -172,7 +172,7 @@ python3 "$ROOT/tools/mkdisk.py" "$OUT/disk.img" \
     "$OUT/worker.elf" "$OUT/wc.elf" "$OUT/cairo_demo.elf" "$OUT/frag.spv" \
     "$OUT/spv_demo.elf" "$OUT/gio_demo.elf" \
     "$ROOT/planc/tests/valid/utf8.vala" "$ROOT/planc/tests/valid/class_basic.vala" \
-    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/vk_demo.elf" "$OUT/c2vala.elf" "$ROOT/tools/c2vala_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$ROOT/assets/Tahoma.ttf" "$ROOT/assets/Consolas-Regular.ttf" "$ROOT/cursor.svg" "$OUT/pcm4.elf" "$OUT/mathlib.dlib" "$OUT/plan_demo.plan" "$OUT/vte_sh.elf" "$OUT/pluto.elf" "$OUT/saturn.elf" "$OUT/jsmn_demo.elf" "$OUT/c2vala_sdk.vala" "$OUT/sys_demo.elf" "$OUT/mercury.elf" "$OUT/curl.elf" "$ROOT/assets/winxp.jpg" \
+    "$OUT/gobject_demo.elf" "$OUT/gmodule_demo.elf" "$OUT/mainloop_demo.elf" "$OUT/compositor.elf" "$OUT/pango_demo.elf" "$OUT/vk_demo.elf" "$OUT/c2plan.elf" "$ROOT/tools/c2plan_tests/cases/arith/main.c" "$OUT/frag_pattern.spv" "$ROOT/assets/Tahoma.ttf" "$ROOT/assets/Consolas-Regular.ttf" "$ROOT/cursor.svg" "$OUT/pcm4.elf" "$OUT/mathlib.dlib" "$OUT/plan_demo.plan" "$OUT/vte_sh.elf" "$OUT/pluto.elf" "$OUT/saturn.elf" "$OUT/jsmn_demo.elf" "$OUT/c2plan_sdk.plan" "$OUT/sys_demo.elf" "$OUT/mercury.elf" "$OUT/curl.elf" "$ROOT/assets/winxp.jpg" \
     --lib "$LIBDIR/glib/glib.dlib" --lib "$LIBDIR/glib/glib.hlib" \
     --lib "$LIBDIR/gee/gee.dlib" --lib "$LIBDIR/gee/gee.hlib" \
     --lib "$LIBDIR/gio/gio.dlib" --lib "$LIBDIR/gio/gio.hlib" \

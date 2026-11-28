@@ -1,4 +1,4 @@
-~c2vala: wrote test/c2vala/arith\.vala
+~c2plan: wrote test/c2plan/arith\.plan
 =gcd=21
 =collatz(1)=0
 =collatz(2)=1

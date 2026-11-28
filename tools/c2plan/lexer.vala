@@ -1,8 +1,8 @@
-// C99 lexer for c2vala.
+// C99 lexer for c2plan.
 
 using Planc;
 
-namespace C2Vala {
+namespace C2Plan {
 
     public enum TokKind {
         EOF,

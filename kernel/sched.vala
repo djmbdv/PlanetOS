@@ -223,11 +223,22 @@ namespace Planet.Kernel {
 
         // Parks the current task until SYS_WAKE_ADDR matches `addr` or the
         // absolute tick deadline (0 = none) is reached by the timer.
+        public static bool has_ready_other () {
+            int cur = current_tid ();
+            for (int t = 0; t < MAX_TASKS; t++) {
+                if (t == cur)
+                    continue;
+                if (mmio_read64 (KernelLayout.TCB_TABLE + t * TCB_SIZE) == TASK_READY)
+                    return true;
+            }
+            return false;
+        }
+
         public static void block_on (int addr, int deadline_tick) {
             if (wait_word == null)
                 return;
             int cur = current_tid ();
-            if (cur <= 0 || cur >= MAX_TASKS)
+            if (cur < 0 || cur >= MAX_TASKS)
                 return;
             wait_word[cur] = addr;
             wait_deadline[cur] = deadline_tick;
@@ -239,7 +250,7 @@ namespace Planet.Kernel {
             if (wait_word == null)
                 return;
             int cur = current_tid ();
-            if (cur <= 0 || cur >= MAX_TASKS)
+            if (cur < 0 || cur >= MAX_TASKS)
                 return;
             wait_word[cur] = 0;
             wait_deadline[cur] = 0;
@@ -250,7 +261,7 @@ namespace Planet.Kernel {
             if (wait_deadline == null)
                 return;
             int now = mmio_read64 (KernelLayout.TICK);
-            for (int w = 1; w < MAX_TASKS; w++) {
+            for (int w = 0; w < MAX_TASKS; w++) {
                 int wtcb = KernelLayout.TCB_TABLE + w * TCB_SIZE;
                 if (mmio_read64 (wtcb) != TASK_BLOCKED)
                     continue;

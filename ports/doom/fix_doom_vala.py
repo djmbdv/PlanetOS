@@ -1164,6 +1164,73 @@ src = src.replace(
     "        col = new post_t.at (_rc_tmp, _off_rget + (-(int) (3)));")
 src = src.replace("public int _off_rget = 0;\n", "public int _off_rget = 0;\npublic uint8[] _rc_tmp;\n", 1)
 
+# 44. Bypass the 64,000-pixel Vala loop in I_FinishUpdate and let
+# DG_FinishUpdate scale I_VideoBuffer 2x straight into the window surface.
+src = re.sub(
+    r"void I_FinishUpdate \(\) \{.*?\n\}\n",
+    "void I_FinishUpdate () {\n    DG_FinishUpdate ();\n}\n",
+    src, count=1, flags=re.S)
+
+# 45. Map lump loaders in p_setup.c boxed a single `T.at (data, 0)` into a
+# 1-element array and then indexed past 0; populate the full view array.
+for _old_ml, _new_ml in [
+    ("ml = _c2v_box_mapvertex_t_arr (new mapvertex_t.at (data, 0));",
+     "ml = new mapvertex_t[numvertexes]; for (int _k = 0; _k < numvertexes; _k++) ml[_k] = new mapvertex_t.at (data, _k * 4);"),
+    ("ml = _c2v_box_mapseg_t_arr (new mapseg_t.at (data, 0));",
+     "ml = new mapseg_t[numsegs]; for (int _k = 0; _k < numsegs; _k++) ml[_k] = new mapseg_t.at (data, _k * 12);"),
+    ("ms = _c2v_box_mapsubsector_t_arr (new mapsubsector_t.at (data, 0));",
+     "ms = new mapsubsector_t[numsubsectors]; for (int _k = 0; _k < numsubsectors; _k++) ms[_k] = new mapsubsector_t.at (data, _k * 4);"),
+    ("ms = _c2v_box_mapsector_t_arr (new mapsector_t.at (data, 0));",
+     "ms = new mapsector_t[numsectors]; for (int _k = 0; _k < numsectors; _k++) ms[_k] = new mapsector_t.at (data, _k * 26);"),
+    ("mn = _c2v_box_mapnode_t_arr (new mapnode_t.at (data, 0));",
+     "mn = new mapnode_t[numnodes]; for (int _k = 0; _k < numnodes; _k++) mn[_k] = new mapnode_t.at (data, _k * 28);"),
+    ("mt = _c2v_box_mapthing_t_arr (new mapthing_t.at (data, 0));",
+     "mt = new mapthing_t[numthings]; for (int _k = 0; _k < numthings; _k++) mt[_k] = new mapthing_t.at (data, _k * 10);"),
+    ("mld = _c2v_box_maplinedef_t_arr (new maplinedef_t.at (data, 0));",
+     "mld = new maplinedef_t[numlines]; for (int _k = 0; _k < numlines; _k++) mld[_k] = new maplinedef_t.at (data, _k * 14);"),
+    ("msd = _c2v_box_mapsidedef_t_arr (new mapsidedef_t.at (data, 0));",
+     "msd = new mapsidedef_t[numsides]; for (int _k = 0; _k < numsides; _k++) msd[_k] = new mapsidedef_t.at (data, _k * 30);"),
+]:
+    src = src.replace(_old_ml, _new_ml, 1)
+
+src = src.replace(
+    "no[_off_no].bbox[(int) (j)][(int) (k)] = (((int) mn[_off_mn].bbox[(int) (j)][(int) (k)]) << 16);",
+    "no[_off_no].bbox[(int) (j)][(int) (k)] = (((int) ((int16) c_u_get_u16_at (data, _off_mn * 28 + 8 + (j * 4 + k) * 2))) << 16);",
+    1)
+
+src = src.replace(
+    'I_Error (c_str_to_bytes ("P_SpawnMapThing: Unknown type %i at (%i, %i)"), mthing[0].type, mthing[0].x, mthing[0].y);',
+    'return;',
+    1)
+
+src = src.replace(
+    "no[_off_no].children[(int) (j)] = (uint16) (((int16) (mn[_off_mn].children[(int) (j)])));",
+    "no[_off_no].children[(int) (j)] = c_u_get_u16_at (data, _off_mn * 28 + 24 + j * 2);",
+    1)
+src = src.replace(
+    "node = _c2v_box_node_t_obj (_c2v_slice_node_t (nodes, (int) (nodenum)));",
+    "node = nodes[(int) (nodenum)];",
+    1)
+src = src.replace(
+    "return _c2v_box_subsector_s_obj (_c2v_slice_subsector_s (subsectors, (int) ((nodenum & ~0x8000))));",
+    "return subsectors[(int) ((nodenum & ~0x8000))];",
+    1)
+
+src = src.replace(
+    "p[0].psprites = new pspdef_t[(int) psprnum_t.NUMPSPRITES];",
+    "p[0].psprites = new pspdef_t[(int) psprnum_t.NUMPSPRITES]; for (int _pi = 0; _pi < p[0].psprites.length; _pi++) p[0].psprites[_pi] = new pspdef_t ();",
+    1)
+
+src = src.replace(
+    "spritepresent[(int) (((mobj_s?) th).sprite)] = (uint8) 1;",
+    "if (th.owner != null) spritepresent[(int) (((mobj_s?) th.owner).sprite)] = (uint8) 1;",
+    1)
+
+src = src.replace(
+    "for (; (anim[0] == lastanim[0]) ? (_off_anim < 0) : (uintptr.from_pointer ((void*) (anim)) < uintptr.from_pointer ((void*) (lastanim))); _off_anim++)",
+    "for (; _off_anim < anims.length && anim[_off_anim].numpics > 0; _off_anim++)",
+    1)
+
 with open(path, "w", encoding="utf-8") as f:
     f.write(src)
 print("Applied fix_doom_vala.py")

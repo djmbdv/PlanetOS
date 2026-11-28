@@ -127,6 +127,29 @@ namespace Planet.Kernel {
             Pmm.free_frame (cr3);
         }
 
+        public static int virt_to_phys (int cr3, int vaddr) {
+            if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
+                return vaddr;
+            if (vaddr < 0 || vaddr >= MAX_SPLIT_ADDR)
+                return 0;
+            int pdpt = mmio_read64 (cr3) & ~0xFFF;
+            if (pdpt == 0)
+                return 0;
+            int pd = mmio_read64 (pdpt) & ~0xFFF;
+            if (pd == 0)
+                return 0;
+            int pde = mmio_read64 (pd + (vaddr >> 21) * 8);
+            if ((pde & 0x01) == 0)
+                return 0;
+            if ((pde & 0x80) != 0)
+                return (pde & ~0x1FFFFF) | (vaddr & 0x1FFFFF);
+            int pt = pde & ~0xFFF;
+            int pte = mmio_read64 (pt + ((vaddr >> 12) & 0x1FF) * 8);
+            if ((pte & 0x01) == 0)
+                return 0;
+            return (pte & ~0xFFF) | (vaddr & 0xFFF);
+        }
+
         public static void map_user_4k_phys (int cr3, int vaddr, int paddr, int flags = 0x07) {
             if (cr3 == 0 || cr3 == KernelLayout.PAGE_TABLES)
                 return;
@@ -174,7 +197,9 @@ namespace Planet.Kernel {
             if (!ensure_pt_in_pd (pd, aligned, true, out pt_base))
                 return;
             int pt_idx = (aligned >> 12) & 0x1FF;
-            mmio_write64 (pt_base + pt_idx * 8, 0);
+            // Revoke user access while keeping the kernel's supervisor identity map
+            // intact so PMM/VMM can reuse the frame while this CR3 is active.
+            mmio_write64 (pt_base + pt_idx * 8, (aligned == 0) ? 0 : (aligned | 0x03));
             if (vmm_read_cr3 () == cr3)
                 vmm_invlpg (aligned);
         }

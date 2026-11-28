@@ -1,7 +1,7 @@
 #!/bin/sh
-# Build c2vala for the *host* (Windows .exe / Linux .so) with valac.
+# Build c2plan for the *host* (Windows .exe / Linux .so) with valac.
 #
-# tools/c2vala/build.sh builds the same sources with planc for the guest, which
+# tools/c2plan/build.sh builds the same sources with planc for the guest, which
 # emits ELF; that binary cannot run on Windows. This build swaps the two host
 # primitives (Planc.Host and Planc.StrBuilder) for GLib implementations and
 # leaves every other file untouched, so the translator can be tested natively.
@@ -10,7 +10,7 @@
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-OUT="${1:-$HERE/build/c2vala.exe}"
+OUT="${1:-$HERE/build/c2plan.exe}"
 
 mkdir -p "$(dirname "$OUT")"
 

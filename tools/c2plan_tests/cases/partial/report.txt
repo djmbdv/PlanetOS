@@ -1,4 +1,4 @@
-c2vala report: 2 function(s)
+c2plan report: 2 function(s)
   ok       square
   refused  jump_test
 computed gotos

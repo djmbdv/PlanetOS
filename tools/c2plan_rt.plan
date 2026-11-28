@@ -79,12 +79,58 @@ private int __c2v_arr_addr (uint8[] a) {
     return (int) c_ptr_u64 (a);
 }
 
-public void c_memcpy (uint8[] dst, uint8[] src, size_t n) {
-    c_memcpy_off (dst, 0, src, 0, n);
+public string c_bytes_to_str (uint8[]? buf, int off = 0) {
+    if (buf == null)
+        return "";
+#if PLANC
+    return GLib.Memory.c_str_to_string (buf, (size_t) (off < 0 ? 0 : off));
+#else
+    var sb = new StringBuilder ();
+    int start = (off < 0) ? 0 : off;
+    for (int i = start; i < ((!) buf).length && ((!) buf)[i] != 0; i++)
+        sb.append_c ((char) ((!) buf)[i]);
+    return sb.str;
+#endif
 }
 
-public void c_memmove (uint8[] dst, uint8[] src, size_t n) {
-    c_memmove_off (dst, 0, src, 0, n);
+public int c_strlen_bytes (uint8[]? buf, int off = 0) {
+    if (buf == null || off >= ((!) buf).length)
+        return 0;
+    int start = (off < 0) ? 0 : off;
+    int i = start;
+    while (i < ((!) buf).length && ((!) buf)[i] != 0)
+        i++;
+    return i - start;
+}
+
+public int c_strcmp_bytes (uint8[]? a, int a_off, uint8[]? b, int b_off) {
+#if PLANC
+    return GLib.Memory.c_strcmp (a, (size_t) (a_off < 0 ? 0 : a_off), b, (size_t) (b_off < 0 ? 0 : b_off));
+#else
+    int la = c_strlen_bytes (a, a_off);
+    int lb = c_strlen_bytes (b, b_off);
+    int n = (la < lb) ? la : lb;
+    int sa = (a_off < 0) ? 0 : a_off;
+    int sb = (b_off < 0) ? 0 : b_off;
+    for (int i = 0; i < n; i++) {
+        uint8 ca = ((!) a)[sa + i];
+        uint8 cb = ((!) b)[sb + i];
+        if (ca != cb)
+            return (ca < cb) ? -1 : 1;
+    }
+    if (la == lb) return 0;
+    return (la < lb) ? -1 : 1;
+#endif
+}
+
+public void c_memcpy (uint8[]? dst, uint8[]? src, size_t n) {
+    if (dst == null || src == null) return;
+    c_memcpy_off ((!) dst, 0, (!) src, 0, n);
+}
+
+public void c_memmove (uint8[]? dst, uint8[]? src, size_t n) {
+    if (dst == null || src == null) return;
+    c_memmove_off ((!) dst, 0, (!) src, 0, n);
 }
 
 // Offset forms: copying from `buf + off` must not slice the buffer, which
@@ -252,16 +298,6 @@ public int c_isnan (double x) {
 
 public int c_isfinite (double x) {
     return ((x == x) && (x - x == 0.0)) ? 1 : 0;
-}
-
-public string c_bytes_to_str (uint8[]? b) {
-    if (b == null) return "";
-    string res = "";
-    for (int i = 0; i < b.length; i++) {
-        if (b[i] == 0) break;
-        res = res + c_chr ((int) b[i]);
-    }
-    return res;
 }
 
 public double c_fabs (double x) {

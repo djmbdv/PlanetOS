@@ -127,6 +127,7 @@ namespace Planc {
                 || text == "owned" || text == "unowned"
                 || text == "ref" || text == "out"
                 || text == "errordomain" || text == "throws" || text == "throw"
+                || text == "defer" || text == "errdefer"
                 || text == "try" || text == "catch" || text == "finally"
                 || text == "namespace" || text == "using"
                 || text == "true" || text == "false"
@@ -422,6 +423,11 @@ namespace Planc {
                 if (text == "GenericArray" || text == "Channel" || text == "Mutex" || text == "Node") {
                     t = ValaType.CLASS;
                     tname = text;
+                    return true;
+                }
+                if (text == "view") {
+                    t = ValaType.CLASS;
+                    tname = "View";
                     return true;
                 }
             }
@@ -859,9 +865,11 @@ namespace Planc {
 
         private int brace_depth = 0;
         private bool have_current = false;
+        private int last_token_line = 1;
 
         private void advance () throws ParseError, LexError {
             if (have_current) {
+                last_token_line = current.line;
                 if (current.kind == TokenKind.LBRACE)
                     brace_depth++;
                 else if (current.kind == TokenKind.RBRACE && brace_depth > 0)
@@ -877,6 +885,69 @@ namespace Planc {
                     @"expected $what at $(current.line):$(current.column)");
             advance ();
         }
+
+        private void expect_semi () throws ParseError, LexError {
+            if (current.kind == TokenKind.SEMICOLON) {
+                advance ();
+                return;
+            }
+            if (current.line > last_token_line || current.kind == TokenKind.RBRACE || current.kind == TokenKind.EOF)
+                return;
+            throw new ParseError.UNEXPECTED_TOKEN (
+                @"expected ';' at $(current.line):$(current.column)");
+        }
+
+        private string parse_tuple_type () throws ParseError, LexError {
+            int l = current.line;
+            int c = current.column;
+            expect (TokenKind.LPAREN, "'('");
+            var ftypes = new GenericArray<ValaType> ();
+            var ftnames = new GenericArray<string> ();
+            var sb = new StrBuilder ("__tuple");
+            while (true) {
+                ValaType ft = ValaType.VOID;
+                string ftn = "";
+                if (!parse_type_with_ns (out ft, out ftn))
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"expected type in tuple at $(current.line):$(current.column)");
+                parse_type_suffix (ref ft, ref ftn);
+                ftypes.add (ft);
+                ftnames.add (ftn);
+                string lbl = (ftn != "") ? ftn : ft.label ();
+                for (int k = 0; k < lbl.length; k++) {
+                    char ch = lbl[k];
+                    if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
+                        sb.append (lbl.substring (k, 1));
+                    else
+                        sb.append ("_");
+                }
+                if (current.kind == TokenKind.COMMA) {
+                    advance ();
+                    sb.append ("__");
+                    continue;
+                }
+                break;
+            }
+            expect (TokenKind.RPAREN, "')'");
+            string tname = sb.str;
+            if (types_prog.find_struct (tname) == null) {
+                var sd = new StructDecl () { name = tname, line = l, column = c };
+                for (int fi = 0; fi < ftypes.length; fi++) {
+                    sd.fields.add (new StructField () {
+                        field_type = ftypes[fi],
+                        type_name = ftnames[fi],
+                        name = @"_$fi",
+                        line = l,
+                        column = c
+                    });
+                }
+                types_prog.structs.add (sd);
+                program.structs.add (sd);
+            }
+            return tname;
+        }
+
+        private int loop_counter = 0;
 
         public bool recover { get; set; default = true; }
         private bool at_least_one_error = false;
@@ -1133,7 +1204,7 @@ namespace Planc {
                     throw new ParseError.UNEXPECTED_TOKEN (@"unknown enum member '$(ename).$(mname)' at $el:$ec");
                 cd.int_value = mem.value;
             }
-            expect (TokenKind.SEMICOLON, "';'");
+            expect_semi ();
             if (program.find_const (owner_type, cname) != null
                 || (owner_type == "" && has_top_name (cname))) {
                 throw new ParseError.DUPLICATE_FUNCTION (@"duplicate constant name '$cname' at $cl:$cc");
@@ -1145,6 +1216,8 @@ namespace Planc {
         private bool last_inline_attr = false;
         private bool last_checked_ov_attr = false;
         private bool last_wrap_attr = false;
+
+        private bool last_packed_attr = false;
 
         private void parse_attributes (out string? asm_body, out int asm_line, out int asm_col,
                                        out bool compact_attr, out bool simple_type_attr,
@@ -1160,6 +1233,7 @@ namespace Planc {
             last_inline_attr = false;
             last_checked_ov_attr = false;
             last_wrap_attr = false;
+            last_packed_attr = false;
             while (current.kind == TokenKind.LBRACKET) {
                 advance (); // '['
                 if (current.kind != TokenKind.IDENTIFIER)
@@ -1183,6 +1257,8 @@ namespace Planc {
                     last_checked_ov_attr = true;
                 else if (attr_name == "Wrap")
                     last_wrap_attr = true;
+                else if (attr_name == "Packed")
+                    last_packed_attr = true;
                 if (attr_name == "AsmBody") {
                     expect (TokenKind.LPAREN, "'('");
                     if (current.kind != TokenKind.STRING && current.kind != TokenKind.TEMPLATE_STRING)
@@ -1217,7 +1293,7 @@ namespace Planc {
             bool arena_attr = false;
             parse_attributes (out asm_body, out asm_line, out asm_col, out compact_attr, out simple_type_attr, out arena_attr);
 
-            if (current.kind != TokenKind.IDENTIFIER)
+            if (current.kind != TokenKind.IDENTIFIER && current.kind != TokenKind.LPAREN)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"expected a declaration at $(current.line):$(current.column)");
 
@@ -1239,7 +1315,7 @@ namespace Planc {
                     u_name = @"$u_name.$(current.text)";
                     advance ();
                 }
-                expect (TokenKind.SEMICOLON, "';'");
+                expect_semi ();
                 program.register_namespace (u_name);
                 unit_usings.add (u_name);
                 return;
@@ -1312,7 +1388,7 @@ namespace Planc {
                         @"unknown target type '$(current.text)' at $(current.line):$(current.column)");
                 advance ();
                 parse_type_suffix (ref at, ref at_name);
-                expect (TokenKind.SEMICOLON, "';'");
+                expect_semi ();
                 int prev_ai = find_type_alias (aname);
                 if (prev_ai >= 0) {
                     alias_types[prev_ai] = at;
@@ -1342,7 +1418,7 @@ namespace Planc {
                 advance ();
             }
 
-            if (current.kind != TokenKind.IDENTIFIER)
+            if (current.kind != TokenKind.IDENTIFIER && current.kind != TokenKind.LPAREN)
                 throw new ParseError.UNEXPECTED_TOKEN (
                     @"expected a declaration at $(current.line):$(current.column)");
 
@@ -1403,15 +1479,19 @@ namespace Planc {
 
             ValaType decl_type = ValaType.VOID;
             string type_name = "";
-            if (!parse_type (current.text, out decl_type, out type_name, current.is_escaped)) {
-                throw new ParseError.UNEXPECTED_TOKEN (
-                    @"unknown type '$(current.text)' at $(current.line):$(current.column)");
-            }
-
             var type_line = current.line;
             var type_column = current.column;
-            advance ();
-            parse_type_suffix (ref decl_type, ref type_name);
+            if (current.kind == TokenKind.LPAREN) {
+                type_name = parse_tuple_type ();
+                decl_type = ValaType.STRUCT;
+            } else {
+                if (!parse_type (current.text, out decl_type, out type_name, current.is_escaped)) {
+                    throw new ParseError.UNEXPECTED_TOKEN (
+                        @"unknown type '$(current.text)' at $(current.line):$(current.column)");
+                }
+                advance ();
+                parse_type_suffix (ref decl_type, ref type_name);
+            }
 
             if (current.kind != TokenKind.IDENTIFIER)
                 throw new ParseError.UNEXPECTED_TOKEN (
@@ -1421,6 +1501,11 @@ namespace Planc {
                     @"'$(current.text)' is a keyword and cannot be used as a name at $(current.line):$(current.column)");
             var name = current.text;
             advance ();
+            bool is_bang = false;
+            if (current.kind == TokenKind.NOT) {
+                is_bang = true;
+                advance ();
+            }
 
             if (current.kind == TokenKind.LPAREN
                 || (current.kind == TokenKind.LT && current_type_params.length > saved_type_params.length)) {
@@ -1428,6 +1513,7 @@ namespace Planc {
                     throw new ParseError.UNEXPECTED_TOKEN (
                         @"'async' is not valid on extern, [AsmBody], or 'main' function '$name' at $(type_line):$(type_column)");
                 var f = parse_function_rest (decl_type, type_name, name, type_line, type_column, asm_body, asm_line, asm_col, is_extern);
+                f.is_bang_err = is_bang;
                 current_type_params = saved_type_params;
                 f.is_static = is_static;
                 f.is_async = is_async;
@@ -1520,7 +1606,7 @@ namespace Planc {
                         @"global $(decl_type.label ()) initializers are not supported at $(current.line):$(current.column)");
                 }
             }
-            expect (TokenKind.SEMICOLON, "';'");
+            expect_semi ();
             if (has_top_name (name))
                 throw new ParseError.DUPLICATE_FUNCTION (
                     @"duplicate name: $name at $(g.line):$(g.column)");
@@ -1873,7 +1959,7 @@ namespace Planc {
                         throw new ParseError.DUPLICATE_FUNCTION (
                             @"duplicate signal '$sname' in interface '$name' at $sl:$sc");
                     var plist = parse_param_list ();
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     var del_name = @"__sig_del_$(name)_$(sname)";
                     var sd = new SignalDecl () {
                         name = sname,
@@ -1935,6 +2021,11 @@ namespace Planc {
                 var mem_c = current.column;
                 advance ();
 
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
                 if (current.kind == TokenKind.LPAREN) {
                     var plist = parse_param_list ();
                     var mfn = new Function () {
@@ -2103,7 +2194,7 @@ namespace Planc {
                 existing.params.add (p);
             parse_throws_clause (existing.throws_domains);
             current_type_params = saved_tp;
-            expect (TokenKind.SEMICOLON, "';'");
+            expect_semi ();
             program.register_delegate_struct (name);
         }
 
@@ -2407,7 +2498,7 @@ namespace Planc {
                     advance ();
                     expect (TokenKind.ASSIGN, "'='");
                     default_init = parse_expr ();
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                 } else if (is_tok_kw (current, "get")) {
                     if (has_get)
                         throw new ParseError.UNEXPECTED_TOKEN (@"duplicate 'get' in property '$mname' at $(current.line):$(current.column)");
@@ -2417,7 +2508,7 @@ namespace Planc {
                         custom_get = true;
                         parse_block_into (get_body);
                     } else {
-                        expect (TokenKind.SEMICOLON, "';'");
+                        expect_semi ();
                     }
                 } else if (current.kind == TokenKind.IDENTIFIER && !current.is_escaped
                            && (current.text == "set" || current.text == "construct")) {
@@ -2429,7 +2520,7 @@ namespace Planc {
                         custom_set = true;
                         parse_block_into (set_body);
                     } else {
-                        expect (TokenKind.SEMICOLON, "';'");
+                        expect_semi ();
                     }
                 } else {
                     throw new ParseError.UNEXPECTED_TOKEN (
@@ -2536,13 +2627,15 @@ namespace Planc {
                 }
             }
             if (sd_existing == null) {
-                sd_existing = new StructDecl () { name = name, is_union = is_union_kw, is_simple_type = is_simple_type };
+                sd_existing = new StructDecl () { name = name, is_union = is_union_kw, is_simple_type = is_simple_type, is_packed = last_packed_attr };
                 program.structs.add (sd_existing);
             } else {
                 if (is_union_kw)
                     sd_existing.is_union = true;
                 if (is_simple_type)
                     sd_existing.is_simple_type = true;
+                if (last_packed_attr)
+                    sd_existing.is_packed = true;
             }
             if (current.kind == TokenKind.LT) {
                 advance ();
@@ -2603,6 +2696,11 @@ namespace Planc {
                         @"'$(current.text)' is a keyword and cannot name a member at $(current.line):$(current.column)");
                 var fname = current.text;
                 advance ();
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
                 if (current.kind == TokenKind.LPAREN) {
                     var plist = parse_param_list ();
                     var mfn = new Function () {
@@ -2662,7 +2760,7 @@ namespace Planc {
                     if (sd.find_field (fname) != null || sd.find_method (fname) != null)
                         throw new ParseError.DUPLICATE_FUNCTION (
                             @"duplicate field '$fname' in struct '$name' at $fl:$fc");
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     sd.fields.add (new StructField () {
                         field_type = ft,
                         type_name = ft_name,
@@ -3310,6 +3408,11 @@ namespace Planc {
                     consume_gt ();
                 }
 
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
                 if (current.kind == TokenKind.LPAREN) {
                     if (is_abstract_m && !cd.is_abstract)
                         throw new ParseError.UNEXPECTED_TOKEN (
@@ -3364,7 +3467,7 @@ namespace Planc {
                         }
                     } else if (is_abstract_m || is_extern_m) {
                         mfn.has_body = false;
-                        expect (TokenKind.SEMICOLON, "';'");
+                        expect_semi ();
                     } else {
                         parse_block_into (mfn.body);
                     }
@@ -3425,7 +3528,7 @@ namespace Planc {
                         advance ();
                         finit = parse_expr ();
                     }
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     if (cd.find_own_field (mname) != null || cd.find_own_method (mname) != null)
                         throw new ParseError.DUPLICATE_FUNCTION (
                             @"duplicate member '$mname' in class '$(cd.name)' at $mem_l:$mem_c");
@@ -3512,7 +3615,7 @@ namespace Planc {
                 }
             } else if (is_extern) {
                 f.has_body = false;
-                expect (TokenKind.SEMICOLON, "';'");
+                expect_semi ();
             } else {
                 parse_block_into (f.body);
             }
@@ -3562,7 +3665,7 @@ namespace Planc {
                     s.line = l;
                     s.column = c;
                     expect (TokenKind.RPAREN, "')'");
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     return s;
                 }
                 if (name == "exit") {
@@ -3573,7 +3676,7 @@ namespace Planc {
                     s.line = l;
                     s.column = c;
                     expect (TokenKind.RPAREN, "')'");
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     return s;
                 }
                 if (name == "assert") {
@@ -3581,7 +3684,7 @@ namespace Planc {
                     expect (TokenKind.LPAREN, "'('");
                     var cond = parse_expr ();
                     expect (TokenKind.RPAREN, "')'");
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     var not_cond = new UnaryExpr ();
                     not_cond.op = "!";
                     not_cond.operand = cond;
@@ -3624,7 +3727,7 @@ namespace Planc {
                     var s = new ReturnStatement () { value = v };
                     s.line = l;
                     s.column = c;
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     return s;
                 }
                 if (name == "break") {
@@ -3632,7 +3735,7 @@ namespace Planc {
                     var s = new BreakStatement ();
                     s.line = l;
                     s.column = c;
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     return s;
                 }
                 if (name == "continue") {
@@ -3640,7 +3743,7 @@ namespace Planc {
                     var s = new ContinueStatement ();
                     s.line = l;
                     s.column = c;
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     return s;
                 }
                 if (name == "yield") {
@@ -3654,7 +3757,7 @@ namespace Planc {
                     var s = new ExprStatement () { expr = ye };
                     s.line = l;
                     s.column = c;
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     return s;
                 }
                 if (name == "if") {
@@ -3698,7 +3801,7 @@ namespace Planc {
                     expect (TokenKind.LPAREN, "'('");
                     var cond = parse_expr ();
                     expect (TokenKind.RPAREN, "')'");
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     var dw = new DoWhileStatement () { body = body, condition = cond };
                     dw.line = l;
                     dw.column = c;
@@ -3730,7 +3833,83 @@ namespace Planc {
                     fs.column = c;
                     return fs;
                 }
-                if (name == "foreach") {
+                bool is_loop_stmt = false;
+                if (name == "loop") {
+                    var look = lexer.clone_state ();
+                    var nt = look.next ();
+                    is_loop_stmt = (nt.kind == TokenKind.LBRACE || nt.kind == TokenKind.LPAREN);
+                }
+                if (is_loop_stmt) {
+                    advance ();
+                    if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
+                if (current.kind == TokenKind.LPAREN) {
+                        advance ();
+                        var count_expr = parse_expr ();
+                        expect (TokenKind.RPAREN, "')'");
+                        var body = parse_statement ();
+                        int lid = loop_counter++;
+                        string n_var = @"__plan_loop_n_$lid";
+                        string i_var = @"__plan_loop_i_$lid";
+                        var blk = new BlockStatement () { line = l, column = c };
+                        var n_decl = new VarDeclStatement () {
+                            infer_type = true,
+                            name = n_var,
+                            init = count_expr,
+                            line = l,
+                            column = c
+                        };
+                        var i_init = new VarDeclStatement () {
+                            decl_type = ValaType.INT,
+                            name = i_var,
+                            init = new IntLiteral () { value = 0, line = l, column = c },
+                            line = l,
+                            column = c
+                        };
+                        var cond = new BinaryExpr () {
+                            op = "<",
+                            left = new VarRef () { name = i_var, line = l, column = c },
+                            right = new VarRef () { name = n_var, line = l, column = c },
+                            line = l,
+                            column = c
+                        };
+                        var step = new ExprStatement () {
+                            expr = new IncDecExpr () {
+                                op = "++",
+                                is_prefix = false,
+                                target = new VarRef () { name = i_var, line = l, column = c },
+                                line = l,
+                                column = c
+                            },
+                            line = l,
+                            column = c
+                        };
+                        var fs = new ForStatement () {
+                            init = i_init,
+                            condition = cond,
+                            step = step,
+                            body = body,
+                            line = l,
+                            column = c
+                        };
+                        blk.statements.add (n_decl);
+                        blk.statements.add (fs);
+                        return blk;
+                    }
+                    var body = parse_statement ();
+                    var ws = new WhileStatement () {
+                        condition = new BoolLiteral () { value = true, line = l, column = c },
+                        body = body,
+                        line = l,
+                        column = c
+                    };
+                    return ws;
+                }
+                if (name == "foreach" || name == "inverse_foreach") {
+                    bool is_rev = (name == "inverse_foreach");
                     advance ();
                     expect (TokenKind.LPAREN, "'('");
                     bool fe_unowned = false;
@@ -3765,6 +3944,7 @@ namespace Planc {
                         elem_type_name = vt_name,
                         infer_type = infer_v,
                         is_unowned = fe_unowned,
+                        is_reverse = is_rev,
                         var_name = vname,
                         collection = col_expr,
                         body = body
@@ -3842,6 +4022,30 @@ namespace Planc {
                     lk.column = c;
                     return lk;
                 }
+                if (name == "defer" || name == "errdefer") {
+                    bool is_ed = (name == "errdefer");
+                    advance ();
+                    var dbody = parse_statement ();
+                    var ds = new DeferStatement () {
+                        is_errdefer = is_ed,
+                        body = dbody,
+                        line = l,
+                        column = c
+                    };
+                    return ds;
+                }
+                if (name == "throws") {
+                    advance ();
+                    var code_expr = parse_expr ();
+                    expect_semi ();
+                    var ts = new ThrowStatement () {
+                        is_light_code = true,
+                        message = code_expr,
+                        line = l,
+                        column = c
+                    };
+                    return ts;
+                }
                 if (name == "throw") {
                     advance ();
                     if (!is_tok_kw (current, "new"))
@@ -3862,7 +4066,7 @@ namespace Planc {
                     expect (TokenKind.LPAREN, "'('");
                     var msg = parse_expr ();
                     expect (TokenKind.RPAREN, "')'");
-                    expect (TokenKind.SEMICOLON, "';'");
+                    expect_semi ();
                     var ts = new ThrowStatement () {
                         domain_name = dname,
                         code_name = cname,
@@ -3882,18 +4086,32 @@ namespace Planc {
                         var cl = current.line;
                         var cc_col = current.column;
                         advance ();
-                        expect (TokenKind.LPAREN, "'('");
-                        if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
-                            throw new ParseError.UNEXPECTED_TOKEN (
-                                @"expected error domain in 'catch' at $(current.line):$(current.column)");
-                        var dname = current.text;
+                        string dname = "int";
+                        string vname = "__err_unused";
+                        if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
                         advance ();
-                        if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
-                            throw new ParseError.UNEXPECTED_TOKEN (
-                                @"expected variable name in 'catch' at $(current.line):$(current.column)");
-                        var vname = current.text;
-                        advance ();
-                        expect (TokenKind.RPAREN, "')'");
+                }
+                if (current.kind == TokenKind.LPAREN) {
+                            advance ();
+                            if (current.kind == TokenKind.IDENTIFIER && !current.is_escaped && current.text == "int") {
+                                dname = "int";
+                                advance ();
+                            } else {
+                                if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
+                                    throw new ParseError.UNEXPECTED_TOKEN (
+                                        @"expected error domain in 'catch' at $(current.line):$(current.column)");
+                                dname = current.text;
+                                advance ();
+                            }
+                            if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
+                                throw new ParseError.UNEXPECTED_TOKEN (
+                                    @"expected variable name in 'catch' at $(current.line):$(current.column)");
+                            vname = current.text;
+                            advance ();
+                            expect (TokenKind.RPAREN, "')'");
+                        }
                         var clause = new CatchClause () {
                             domain_name = dname,
                             var_name = vname,
@@ -3920,7 +4138,7 @@ namespace Planc {
             }
 
             var s = parse_simple_statement_no_semi ();
-            expect (TokenKind.SEMICOLON, "';'");
+            expect_semi ();
             return s;
         }
 
@@ -4070,6 +4288,50 @@ namespace Planc {
                 } else if (!escaped && name == "string") {
                     dt = ValaType.STRING;
                 }
+                if (!escaped && name == "var" && current.kind == TokenKind.LPAREN) {
+                    advance (); // '('
+                    var vnames = new GenericArray<string> ();
+                    while (true) {
+                        if (current.kind != TokenKind.IDENTIFIER || is_tok_reserved (current))
+                            throw new ParseError.UNEXPECTED_TOKEN (
+                                @"expected variable name in tuple destructuring at $(current.line):$(current.column)");
+                        vnames.add (current.text);
+                        advance ();
+                        if (current.kind == TokenKind.COMMA) {
+                            advance ();
+                            continue;
+                        }
+                        break;
+                    }
+                    expect (TokenKind.RPAREN, "')'");
+                    expect (TokenKind.ASSIGN, "'='");
+                    var rhs = parse_expr ();
+                    int tid = loop_counter++;
+                    string tmp_name = @"__plan_tup_$tid";
+                    var grp = new BlockStatement () { scoped = false, line = l, column = c };
+                    grp.statements.add (new VarDeclStatement () {
+                        infer_type = true,
+                        name = tmp_name,
+                        init = rhs,
+                        line = l,
+                        column = c
+                    });
+                    for (int vi = 0; vi < vnames.length; vi++) {
+                        grp.statements.add (new VarDeclStatement () {
+                            infer_type = true,
+                            name = vnames[vi],
+                            init = new MemberAccessExpr () {
+                                target = new VarRef () { name = tmp_name, line = l, column = c },
+                                member = @"_$vi",
+                                line = l,
+                                column = c
+                            },
+                            line = l,
+                            column = c
+                        });
+                    }
+                    return grp;
+                }
                 if (escaped || name != "var")
                     parse_type_suffix (ref dt, ref dt_name);
                 if (current.kind != TokenKind.IDENTIFIER)
@@ -4143,6 +4405,11 @@ namespace Planc {
 
             Expr atom;
             if (!escaped && name == "this") {
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
                 if (current.kind == TokenKind.LPAREN) {
                     advance ();
                     var ch = new CtorChainStatement () { is_this = true, line = l, column = c };
@@ -4155,6 +4422,11 @@ namespace Planc {
                 v.column = c;
                 atom = v;
             } else if (!escaped && name == "base") {
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
                 if (current.kind == TokenKind.LPAREN) {
                     advance ();
                     var ch = new CtorChainStatement () { is_this = false, line = l, column = c };
@@ -4227,6 +4499,11 @@ namespace Planc {
                         parse_generic_type_args (ref st, ref sn);
                         name = sn;
                     }
+                }
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
                 }
                 if (current.kind == TokenKind.LPAREN) {
                     if (types_prog.find_struct (name) != null || program.find_instantiation_by_mangled (name) != null)
@@ -4742,7 +5019,12 @@ namespace Planc {
                             @"expected member name after '?.' at $(current.line):$(current.column)");
                     var nc_member = current.text;
                     advance ();
-                    if (current.kind == TokenKind.LPAREN) {
+                    if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
+                if (current.kind == TokenKind.LPAREN) {
                         advance ();
                         var nc_mc = new MethodCallExpr () {
                             target = e, method_name = nc_member, is_null_cond = true
@@ -4788,7 +5070,12 @@ namespace Planc {
                                 e = new VarRef () { name = @"$(vr_ns.name).$member", line = l, column = c };
                                 continue;
                             }
-                            if (current.kind == TokenKind.LPAREN) {
+                            if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
+                if (current.kind == TokenKind.LPAREN) {
                                 advance ();
                                 var ce = new CallExpr () { callee = member, line = l, column = c };
                                 parse_arg_list (ce.args);
@@ -4826,7 +5113,12 @@ namespace Planc {
                         e = va;
                         continue;
                     }
-                    if (current.kind == TokenKind.LPAREN) {
+                    if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
+                }
+                if (current.kind == TokenKind.LPAREN) {
                         advance ();
                         var mc = new MethodCallExpr () { target = e, method_name = member };
                         parse_arg_list (mc.args);
@@ -5109,6 +5401,16 @@ namespace Planc {
                     current = saved_cur;
                 }
                 var e = parse_expr ();
+                if (current.kind == TokenKind.COMMA) {
+                    var tup = new TupleExpr () { line = l, column = c };
+                    tup.elements.add (e);
+                    while (current.kind == TokenKind.COMMA) {
+                        advance ();
+                        tup.elements.add (parse_expr ());
+                    }
+                    expect (TokenKind.RPAREN, "')'");
+                    return tup;
+                }
                 expect (TokenKind.RPAREN, "')'");
                 return e;
             }
@@ -5408,6 +5710,13 @@ namespace Planc {
                         parse_generic_type_args (ref ct, ref cn);
                         name = cn;
                     }
+                }
+                if (current.kind == TokenKind.NOT)
+                    advance ();
+                if (current.kind == TokenKind.NOT) {
+                    var look = lexer.clone_state ();
+                    if (look.next ().kind == TokenKind.LPAREN)
+                        advance ();
                 }
                 if (current.kind == TokenKind.LPAREN) {
                     if (types_prog.find_struct (name) != null || program.find_instantiation_by_mangled (name) != null)

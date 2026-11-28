@@ -1,10 +1,10 @@
-// CLI entry point for the pure-Vala C -> Vala translator.
+// CLI entry point for the pure-Plan C -> Plan translator.
 
 using Planc;
 
-namespace C2Vala {
+namespace C2Plan {
 
-    private const string USAGE = "usage: c2vala <input.c>... [-I dir] [-D NAME[=VAL]] [--namespace Name] [-o out.vala|out.plan] [--plan] [--report]";
+    private const string USAGE = "usage: c2plan <input.c>... [-I dir] [-D NAME[=VAL]] [--namespace Name] [-o out.plan|out.vala] [--plan] [--vala] [--report]";
 
     private static int count_lines (string s) {
         if (s.length == 0)
@@ -26,7 +26,8 @@ namespace C2Vala {
         string output_path = "";
         string ns_name = "";
         bool report_mode = false;
-        bool plan_mode = false;
+        bool plan_mode = true;
+        bool vala_mode = false;
         bool verbose = false;
 
         for (int i = 1; i < args.length; i++) {
@@ -68,13 +69,17 @@ namespace C2Vala {
                 report_mode = true;
             } else if (a == "--plan") {
                 plan_mode = true;
+                vala_mode = false;
+            } else if (a == "--vala") {
+                vala_mode = true;
+                plan_mode = false;
             } else if (a == "-v" || a == "--verbose") {
                 verbose = true;
             } else if (a == "-h" || a == "--help") {
                 Host.println (USAGE);
                 return 0;
             } else if (a.has_prefix ("-")) {
-                Host.eprintln (@"c2vala: unknown option '$a'");
+                Host.eprintln (@"c2plan: unknown option '$a'");
                 return 2;
             } else {
                 inputs.add (a);
@@ -103,40 +108,40 @@ namespace C2Vala {
 
         var all_lines = new GenericArray<PreLine> ();
         try {
-            if (verbose) Host.eprintln ("[c2vala] 1/4 preproc...");
+            if (verbose) Host.eprintln ("[c2plan] 1/4 preproc...");
             for (int i = 0; i < inputs.length; i++) {
                 var lines = pp.process_file (inputs[i]);
                 for (int li = 0; li < lines.length; li++)
                     all_lines.add (lines[li]);
             }
 
-            if (verbose) Host.eprintln (@"[c2vala] 2/4 lex ($(all_lines.length) lines)...");
+            if (verbose) Host.eprintln (@"[c2plan] 2/4 lex ($(all_lines.length) lines)...");
             var toks = CLexer.tokenize (all_lines);
-            if (verbose) Host.eprintln (@"[c2vala] 3/4 parse ($(toks.length) toks)...");
+            if (verbose) Host.eprintln (@"[c2plan] 3/4 parse ($(toks.length) toks)...");
             var parser = new CParser (toks);
             var tu = parser.parse_tu ();
 
-            if (verbose) Host.eprintln (@"[c2vala] 4/4 translate ($(tu.funcs.length) funcs)...");
+            if (verbose) Host.eprintln (@"[c2plan] 4/4 translate ($(tu.funcs.length) funcs)...");
             var tr = new Translator (tu);
-            tr.plan_mode = plan_mode || output_path.has_suffix (".plan");
+            tr.plan_mode = vala_mode ? false : (output_path.has_suffix (".vala") ? false : plan_mode);
             string vala_out = tr.translate (report_mode, ns_name);
 
             if (output_path != "") {
                 try {
                     Host.write_file (output_path, vala_out.data);
                 } catch (FileError e) {
-                    Host.eprintln (@"c2vala: cannot write $output_path: $(e.message)");
+                    Host.eprintln (@"c2plan: cannot write $output_path: $(e.message)");
                     return 2;
                 }
                 int nlines = count_lines (vala_out);
-                Host.println (@"c2vala: wrote $output_path ($nlines lines)");
+                Host.println (@"c2plan: wrote $output_path ($nlines lines)");
             } else {
                 Host.println (vala_out);
             }
 
             if (report_mode) {
                 int total = tr.report_entries.length;
-                Host.println (@"c2vala report: $total function(s)");
+                Host.println (@"c2plan report: $total function(s)");
                 for (int i = 0; i < total; i++) {
                     var r = tr.report_entries[i];
                     if (r.ok) {
@@ -149,12 +154,12 @@ namespace C2Vala {
                 if (tr.refused_count > 0)
                     return 3;
             } else if (tr.refused_count > 0) {
-                Host.eprintln (@"c2vala: $(tr.refused_count) function(s) left as stubs; look for \"c2vala: UNTRANSLATED\" in the output");
+                Host.eprintln (@"c2plan: $(tr.refused_count) function(s) left as stubs; look for \"c2plan: UNTRANSLATED\" in the output");
                 return 3;
             }
             return 0;
         } catch (RefuseError e) {
-            Host.eprintln (@"c2vala: $(e.message)");
+            Host.eprintln (@"c2plan: $(e.message)");
             return 2;
         }
     }

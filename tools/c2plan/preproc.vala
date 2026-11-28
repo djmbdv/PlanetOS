@@ -1,10 +1,10 @@
-// Pure-Vala C preprocessor for c2vala.
+// Pure-Plan C preprocessor for c2plan.
 // Handles comments, line splicing, #include, #define (object & function-like),
 // #undef, #ifdef/#ifndef/#if/#elif/#else/#endif, and tracks file:line provenance.
 
 using Planc;
 
-namespace C2Vala {
+namespace C2Plan {
 
     public class MacroDef : Object {
         public string name;

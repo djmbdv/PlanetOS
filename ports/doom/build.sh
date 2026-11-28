@@ -13,9 +13,9 @@ ROOT="$(cd "$PORT/../.." && pwd)"
 UPSTREAM="$PORT/upstream"
 COMBINED="$PORT/doom_combined2.vala"
 GLUE="$PORT/doom_platform.vala"
-RUNTIME="$ROOT/tools/c2vala_rt.vala"
+RUNTIME="$ROOT/tools/c2plan_rt.plan"
 PLANC="$ROOT/planc/build/planc"
-C2VALA="$ROOT/tools/c2vala/build/c2vala"
+C2VALA="$ROOT/tools/c2plan/build/c2plan"
 
 REGEN=0
 OUT="${PLANETOS_OUT:-$HOME/msys64/tmp/planetos-qemu}"

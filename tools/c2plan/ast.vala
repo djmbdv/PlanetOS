@@ -1,6 +1,6 @@
 // AST and type representation for the pure-Vala C -> Vala translator.
 
-namespace C2Vala {
+namespace C2Plan {
 
     public class NameIndexMap : Object {
 #if PLANC

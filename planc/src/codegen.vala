@@ -1055,6 +1055,13 @@ namespace Planc {
                 var ix = (IndexExpr) e;
                 return scan_expr_heap (ix.target) || scan_expr_heap (ix.index);
             }
+            if (e is TupleExpr) {
+                foreach (var el in ((TupleExpr) e).elements) {
+                    if (scan_expr_heap (el))
+                        return true;
+                }
+                return false;
+            }
             if (e is StructLiteral) {
                 foreach (var fv in ((StructLiteral) e).field_values) {
                     if (scan_expr_heap (fv))
@@ -1446,6 +1453,25 @@ namespace Planc {
 
         private int sizeof_bytes (ValaType t, string tname) {
             return program.sizeof_bytes (t, tname);
+        }
+
+        private int struct_field_byte_offset (StructDecl sd, string fname, out unowned StructField? found) {
+            if (!sd.is_packed) {
+                int s = struct_field_offset_slots (sd, fname, out found);
+                return (s >= 0) ? 8 * s : -1;
+            }
+            int byte_off = 0;
+            foreach (unowned var fld in sd.fields) {
+                if (fld.name == fname) {
+                    found = fld;
+                    return sd.is_union ? 0 : byte_off;
+                }
+                byte_off += (fld.field_type == ValaType.STRUCT)
+                    ? program.sizeof_bytes (ValaType.STRUCT, fld.type_name)
+                    : Program.packed_field_bytes (fld.field_type, fld.type_name);
+            }
+            found = null;
+            return -1;
         }
 
         private int struct_field_offset_slots (StructDecl sd, string fname, out unowned StructField? found) {            int slot_off = 0;
@@ -3778,6 +3804,9 @@ namespace Planc {
             } else if (e is StructLiteral) {
                 foreach (var fv in ((StructLiteral) e).field_values)
                     da_expr (fv);
+            } else if (e is TupleExpr) {
+                foreach (var el in ((TupleExpr) e).elements)
+                    da_expr (el);
             } else if (e is UnaryExpr) {
                 da_expr (((UnaryExpr) e).operand);
             } else if (e is BinaryExpr) {
@@ -4271,6 +4300,17 @@ namespace Planc {
         private GenericArray<string> del_thunk_keys;
         private GenericArray<string> del_thunk_syms;
 
+        private GenericArray<bool> defer_is_err = new GenericArray<bool> ();
+        private GenericArray<Statement> defer_bodies = new GenericArray<Statement> ();
+
+        private void emit_defers_down_to (int target_mark, bool include_errdefer) throws SemanticError {
+            for (int di = defer_bodies.length - 1; di >= target_mark; di--) {
+                if (defer_is_err[di] && !include_errdefer)
+                    continue;
+                gen_statement (defer_bodies[di]);
+            }
+        }
+
         private void emit_error_jump () {
             if (push_depth > 0)
                 emitter.add_rsp (8 * push_depth);
@@ -4284,6 +4324,13 @@ namespace Planc {
                     emitter.mov_rdi_rax ();
                     call_aligned ("__planc_unref");
                     emitter.zero_local (rslot);
+                }
+            }
+
+            if (defer_bodies.length > 0) {
+                try {
+                    emit_defers_down_to (0, true);
+                } catch (SemanticError e) {
                 }
             }
 
@@ -5053,6 +5100,7 @@ namespace Planc {
                 var se = pending_struct_exprs[k];
                 int slot = var_end + pending_struct_rel_slots[k];
                 if (se is StructLiteral) ((StructLiteral) se).temp_slot = slot;
+                if (se is TupleExpr) ((TupleExpr) se).temp_slot = slot;
                 else if (se is CallExpr) ((CallExpr) se).temp_slot = slot;
                 else if (se is MethodCallExpr) ((MethodCallExpr) se).temp_slot = slot;
                 else if (se is MemberAccessExpr) ((MemberAccessExpr) se).temp_slot = slot;
@@ -5463,17 +5511,33 @@ namespace Planc {
                 deactivate_from (sw_mark);
             } else if (s is ThrowStatement) {
                 var ts = (ThrowStatement) s;
-                unowned var ed = program.find_error_domain (ts.domain_name);
-                if (ed == null)
-                    throw new SemanticError.TYPE_MISMATCH (
-                        @"unknown error domain '$(ts.domain_name)' at $(ts.line):$(ts.column)");
-                if (ed.find_code (ts.code_name) == null)
-                    throw new SemanticError.UNKNOWN_MEMBER (
-                        @"error domain '$(ts.domain_name)' has no code '$(ts.code_name)' at $(ts.line):$(ts.column)");
-                var one = new GenericArray<string> ();
-                one.add (ts.domain_name);
-                check_domains_handled (one, ts.line, ts.column);
-                prepare_expr (ts.message, ref struct_temps, ref ref_temps);
+                if (ts.is_light_code) {
+                    bool light_ok = (current != null && current.can_throw);
+                    if (!light_ok) {
+                        foreach (var ad in active_catch_domains) {
+                            if (ad == "int" || ad == "Error") {
+                                light_ok = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!light_ok)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'throws' used outside a throwing ('!') function at $(ts.line):$(ts.column)");
+                    prepare_expr (ts.message, ref struct_temps, ref ref_temps);
+                } else {
+                    unowned var ed = program.find_error_domain (ts.domain_name);
+                    if (ed == null)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"unknown error domain '$(ts.domain_name)' at $(ts.line):$(ts.column)");
+                    if (ed.find_code (ts.code_name) == null)
+                        throw new SemanticError.UNKNOWN_MEMBER (
+                            @"error domain '$(ts.domain_name)' has no code '$(ts.code_name)' at $(ts.line):$(ts.column)");
+                    var one = new GenericArray<string> ();
+                    one.add (ts.domain_name);
+                    check_domains_handled (one, ts.line, ts.column);
+                    prepare_expr (ts.message, ref struct_temps, ref ref_temps);
+                }
             } else if (s is TryStatement) {
                 var tr = (TryStatement) s;
                 if (tr.has_finally) {
@@ -5482,7 +5546,8 @@ namespace Planc {
                 }
                 int saved_dom = active_catch_domains.length;
                 foreach (var cc in tr.catches) {
-                    check_domain_exists (cc.domain_name, cc.line, cc.column);
+                    if (cc.domain_name != "int")
+                        check_domain_exists (cc.domain_name, cc.line, cc.column);
                     active_catch_domains.add (cc.domain_name);
                 }
                 var try_mark = locals.length;
@@ -5498,19 +5563,25 @@ namespace Planc {
                             @"duplicate variable: $(cc.var_name) at $(cc.line):$(cc.column)");
                     var c_mark = locals.length;
                     var cslot = next_var_slot++;
-                    push_local (cc.var_name, ValaType.ERROR,
-                                cc.domain_name == "Error" ? "" : cc.domain_name,
-                                cslot, false);
+                    if (cc.domain_name == "int")
+                        push_local (cc.var_name, ValaType.INT, "", cslot, false);
+                    else
+                        push_local (cc.var_name, ValaType.ERROR,
+                                    cc.domain_name == "Error" ? "" : cc.domain_name,
+                                    cslot, false);
                     foreach (var st in cc.body)
                         prepare_stmt (st, ref struct_temps, ref ref_temps);
                     deactivate_from (c_mark);
                 }
-                if (tr.has_finally) {
+                    if (tr.has_finally) {
                     var fin_mark = locals.length;
                     foreach (var fs in tr.finally_body)
                         prepare_stmt (fs, ref struct_temps, ref ref_temps);
                     deactivate_from (fin_mark);
                 }
+            } else if (s is DeferStatement) {
+                var ds = (DeferStatement) s;
+                prepare_stmt (ds.body, ref struct_temps, ref ref_temps);
             }
         }
 
@@ -5806,6 +5877,44 @@ namespace Planc {
             } else if (e is TemplateExpr) {
                 foreach (var part in ((TemplateExpr) e).parts)
                     prepare_expr (part, ref struct_temps, ref ref_temps);
+            } else if (e is TupleExpr) {
+                var tup = (TupleExpr) e;
+                string tt_name = "";
+                expr_type_full (tup, out tt_name);
+                foreach (var el in tup.elements)
+                    prepare_expr (el, ref struct_temps, ref ref_temps);
+                pending_struct_exprs.add (e);
+                pending_struct_rel_slots.add (struct_temps);
+                struct_temps += type_slots (ValaType.STRUCT, tt_name);
+            } else if (e is TupleExpr) {
+                var tup = (TupleExpr) e;
+                string sname = "";
+                expr_type_full (tup, out sname);
+                unowned var sd = program.find_struct (sname);
+                if (sd == null)
+                    throw new SemanticError.TYPE_MISMATCH (@"unknown tuple struct '$sname' at $(tup.line):$(tup.column)");
+                var nslots = type_slots (ValaType.STRUCT, sname);
+                var base_disp = struct_base_disp (tup.temp_slot, nslots);
+                emitter.lea_rcx_rbp_disp (base_disp);
+                init_struct_at_rcx (sd, 0);
+                for (int i = 0; i < tup.elements.length; i++) {
+                    unowned StructField? fld = null;
+                    var off_slots = struct_field_offset_slots (sd, @"_$i", out fld);
+                    if (fld == null) continue;
+                    gen_expr (tup.elements[i]);
+                    if (fld.field_type == ValaType.STRUCT) {
+                        if (expr_type (tup.elements[i]) != ValaType.NULL) {
+                            var fslots = type_slots (ValaType.STRUCT, fld.type_name);
+                            emitter.lea_rcx_rbp_disp (base_disp + 8 * off_slots);
+                            copy_struct_rax_to_rcx (fslots);
+                        }
+                    } else {
+                        if (fld.field_type == ValaType.INT)
+                            emit_int_narrow (fld.type_name);
+                        emitter.store_rbp_disp (base_disp + 8 * off_slots);
+                    }
+                }
+                emitter.lea_rax_rbp_disp (base_disp);
             } else if (e is StructLiteral) {
                 var lit = (StructLiteral) e;
                 unowned var sd = program.find_struct (lit.struct_name);
@@ -6276,6 +6385,9 @@ namespace Planc {
             } else if (e is StructLiteral) {
                 foreach (var fv in ((StructLiteral) e).field_values)
                     fn (fv);
+            } else if (e is TupleExpr) {
+                foreach (var el in ((TupleExpr) e).elements)
+                    fn (el);
             } else if (e is CallExpr) {
                 foreach (var a in ((CallExpr) e).args)
                     fn (a);
@@ -6336,6 +6448,8 @@ namespace Planc {
             need_func_throw = false;
             unwind_labels = new GenericArray<Label> ();
             unwind_marks = new GenericArray<int> ();
+            defer_bodies = new GenericArray<Statement> ();
+            defer_is_err = new GenericArray<bool> ();
             finally_labels = new GenericArray<Label> ();
             finally_mode_slots = new GenericArray<int> ();
             finally_ret_slots = new GenericArray<int> ();
@@ -6789,6 +6903,13 @@ namespace Planc {
                 }
                 return false;
             }
+            if (e is TupleExpr) {
+                var tup = (TupleExpr) e;
+                for (int i = 0; i < tup.elements.length; i++) {
+                    if (expr_uses_addr_or_lambda (tup.elements[i])) return true;
+                }
+                return false;
+            }
             if (e is StructLiteral) {
                 var sl = (StructLiteral) e;
                 for (int i = 0; i < sl.field_values.length; i++) {
@@ -7015,6 +7136,8 @@ namespace Planc {
             need_func_throw = false;
             unwind_labels = new GenericArray<Label> ();
             unwind_marks = new GenericArray<int> ();
+            defer_bodies = new GenericArray<Statement> ();
+            defer_is_err = new GenericArray<bool> ();
             finally_labels = new GenericArray<Label> ();
             finally_mode_slots = new GenericArray<int> ();
             finally_ret_slots = new GenericArray<int> ();
@@ -7581,6 +7704,13 @@ namespace Planc {
                 case ElemLayout.I16:
                     emitter.load_word_rax_rcx_16 ();
                     emitter.sign_extend_rax (16);
+                    break;
+                case ElemLayout.U32:
+                    emitter.load_dword_rax_rcx_16 ();
+                    break;
+                case ElemLayout.I32:
+                    emitter.load_dword_rax_rcx_16 ();
+                    emitter.sign_extend_rax (32);
                     break;
                 default:
                     emitter.load_qword_rax_rcx_16 ();
@@ -10344,9 +10474,9 @@ namespace Planc {
                 var se = (SliceExpr) e;
                 string tt_name = "";
                 var tt = expr_type_full (se.target, out tt_name);
-                if (tt != ValaType.STRING)
+                if (tt != ValaType.STRING && tt != ValaType.ARRAY)
                     throw new SemanticError.TYPE_MISMATCH (
-                        @"slicing requires string, got $(type_label (tt, tt_name)) at $(se.line):$(se.column)");
+                        @"slicing requires string or array, got $(type_label (tt, tt_name)) at $(se.line):$(se.column)");
                 string st_name = "";
                 var st = expr_type_full (se.start, out st_name);
                 if (!is_int_like (st))
@@ -10357,6 +10487,10 @@ namespace Planc {
                 if (!is_int_like (et))
                     throw new SemanticError.TYPE_MISMATCH (
                         @"slice end index must be int, got $(type_label (et, et_name)) at $(se.end.line):$(se.end.column)");
+                if (tt == ValaType.ARRAY) {
+                    tname = strip_null (tt_name);
+                    return ValaType.ARRAY;
+                }
                 return ValaType.STRING;
             }
             if (e is TernaryExpr) {
@@ -10408,6 +10542,43 @@ namespace Planc {
                 unify_branch_types (lt, lt_name, rt, rt_name, out ut, out uname, ce.line, ce.column);
                 tname = is_nullable_type (rt, rt_name) ? uname : strip_null (uname);
                 return ut;
+            }
+            if (e is TupleExpr) {
+                var tup = (TupleExpr) e;
+                var ftypes = new GenericArray<ValaType> ();
+                var ftnames = new GenericArray<string> ();
+                var sb = new StringBuilder ("__tuple");
+                for (int i = 0; i < tup.elements.length; i++) {
+                    string etn = "";
+                    var et = expr_type_full (tup.elements[i], out etn);
+                    ftypes.add (et);
+                    ftnames.add (etn);
+                    if (i > 0) sb.append ("__");
+                    string lbl = (etn != "") ? etn : et.label ();
+                    for (int k = 0; k < lbl.length; k++) {
+                        char ch = lbl[k];
+                        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9'))
+                            sb.append_c (ch);
+                        else
+                            sb.append_c ('_');
+                    }
+                }
+                string sname = sb.str;
+                if (program.find_struct (sname) == null) {
+                    var sd = new StructDecl () { name = sname, line = tup.line, column = tup.column };
+                    for (int fi = 0; fi < ftypes.length; fi++) {
+                        sd.fields.add (new StructField () {
+                            field_type = ftypes[fi],
+                            type_name = ftnames[fi],
+                            name = @"_$fi",
+                            line = tup.line,
+                            column = tup.column
+                        });
+                    }
+                    program.structs.add (sd);
+                }
+                tname = sname;
+                return ValaType.STRUCT;
             }
             if (e is StructLiteral) {
                 var lit = (StructLiteral) e;
@@ -10767,6 +10938,85 @@ namespace Planc {
                         emitter.branch (BranchKind.JE, null_panic_label);
                     }
                 }
+            }
+        }
+
+        // Materialize an array slice target[start:end] (rdi=arr, rsi=start, rdx=end) -> rax.
+        private void emit_array_slice_at (string arr_tname, int line, int column) {
+            ValaType et = ValaType.INT;
+            string et_name = "";
+            parse_array_elem (arr_tname, out et, out et_name);
+            var ek = packed_kind (arr_tname);
+            int stride = (ek != ElemLayout.SLOT) ? packed_stride (ek)
+                : (is_struct_elem (et, et_name) ? elem_stride_bytes (et, et_name) : 8);
+
+            if (bounds_check) {
+                // rdi=arr, rsi=start, rdx=end: check end <= [rdi+8] and start <= end
+                emitter.mov_rax_rdi ();
+                emitter.mov_rcx_rdx ();
+                emitter.cmp_rcx_rax_len ();
+                emit_bounds_branch_at (BranchKind.JBE, line, column);
+                emitter.mov_rax_rdx ();
+                emitter.code.u8 (0x48); emitter.code.u8 (0x89); emitter.code.u8 (0xF1); // mov rcx, rsi
+                emitter.cmp_rax_rcx ();
+                emit_bounds_branch_at (BranchKind.JAE, line, column);
+            }
+            // rdx = count = end - start
+            emitter.code.u8 (0x48); emitter.code.u8 (0x29); emitter.code.u8 (0xF2); // sub rdx, rsi
+            // Save rdi (src), rsi (start), rdx (count)
+            emitter.push_reg (Reg.RDI);
+            emitter.push_reg (Reg.RSI);
+            emitter.push_reg (Reg.RDX);
+            push_depth += 3;
+            // rdi = count * stride; rsi = 0; call __planc_alloc
+            emitter.mov_rax_rdx ();
+            if (stride > 1) {
+                emitter.code.u8 (0xB9); emitter.code.u32le ((uint32) stride);
+                emitter.imul_rax_rcx ();
+            }
+            emitter.mov_rdi_rax ();
+            emitter.code.u8 (0x31); emitter.code.u8 (0xF6); // xor esi, esi
+            need_alloc = true;
+            call_aligned ("__planc_alloc");
+            emitter.pop_reg (Reg.RCX); // count
+            emitter.pop_reg (Reg.RSI); // start
+            emitter.pop_reg (Reg.RDX); // src arr
+            push_depth -= 3;
+            // [rax + 8] = count
+            emitter.code.u8 (0x48); emitter.code.u8 (0x89); emitter.code.u8 (0x48); emitter.code.u8 (0x08);
+            // Copy count * stride bytes: rdi = rax + 16, rsi = rdx + 16 + start * stride, rcx = count * stride
+            emitter.push_rax ();
+            push_depth++;
+            emitter.code.u8 (0x48); emitter.code.u8 (0x8D); emitter.code.u8 (0x78); emitter.code.u8 (0x10); // lea rdi, [rax + 16]
+            if (stride > 1) {
+                emitter.code.u8 (0x48); emitter.code.u8 (0x89); emitter.code.u8 (0xF0); // mov rax, rsi
+                // mov r8d, stride (41 B8 imm32)
+                emitter.code.u8 (0x41); emitter.code.u8 (0xB8); emitter.code.u32le ((uint32) stride);
+                emitter.code.u8 (0x49); emitter.code.u8 (0x0F); emitter.code.u8 (0xAF); emitter.code.u8 (0xC0); // imul rax, r8
+                emitter.code.u8 (0x48); emitter.code.u8 (0x8D); emitter.code.u8 (0x74); emitter.code.u8 (0x02); emitter.code.u8 (0x10); // lea rsi, [rdx + rax + 16]
+                emitter.mov_rax_rcx ();
+                emitter.code.u8 (0x49); emitter.code.u8 (0x0F); emitter.code.u8 (0xAF); emitter.code.u8 (0xC0); // imul rax, r8
+                emitter.mov_rcx_rax ();
+            } else {
+                emitter.code.u8 (0x48); emitter.code.u8 (0x8D); emitter.code.u8 (0x74); emitter.code.u8 (0x32); emitter.code.u8 (0x10); // lea rsi, [rdx + rsi + 16]
+            }
+            // rep movsb (F3 A4)
+            emitter.code.u8 (0xF3); emitter.code.u8 (0xA4);
+            emitter.pop_rax ();
+            push_depth--;
+        }
+
+        private void emit_bounds_branch_at (BranchKind ok_kind, int line, int column) {
+            if (line > 0) {
+                var l_ok = emitter.new_label ();
+                var msg = @"planc: panic: index out of bounds at $(current_file):$line:$column\n";
+                var msg_off = emitter.add_string (msg);
+                emitter.branch (ok_kind, l_ok);
+                emitter.emit_rt_panic (msg_off, msg.length, freestanding, target_planetos);
+                emitter.bind (l_ok);
+            } else {
+                need_bounds_panic = true;
+                emitter.branch (ok_kind == BranchKind.JB ? BranchKind.JAE : BranchKind.JBE, bounds_panic_label);
             }
         }
 
@@ -11262,9 +11512,8 @@ namespace Planc {
                     throw new SemanticError.TYPE_MISMATCH (
                         @"cannot pass a packed array element ($(strip_null (tt_name))) by ref or out at $(e.line):$(e.column)");
                 if (bounds_check) {
-                    need_bounds_panic = true;
                     emitter.cmp_rcx_rax_len ();
-                    emitter.branch (BranchKind.JAE, bounds_panic_label);
+                    emit_bounds_branch_at (BranchKind.JB, e.line, e.column);
                 }
                 emit_index_elem_addr (is_struct_elem (la_et, la_etn)
                     ? elem_stride_bytes (la_et, la_etn) : 8);
@@ -11543,15 +11792,23 @@ namespace Planc {
             emitter.push_rax ();
             push_depth++;
             gen_expr (val);
-            if (kind != ElemLayout.SLOT)
-                emit_int_narrow (kind == ElemLayout.I8 || kind == ElemLayout.U8 ? "int8" : "int16");
+            if (kind == ElemLayout.I8 || kind == ElemLayout.U8)
+                emit_int_narrow ("int8");
+            else if (kind == ElemLayout.I16 || kind == ElemLayout.U16)
+                emit_int_narrow ("int16");
+            else if (kind == ElemLayout.I32)
+                emit_int_narrow ("int32");
+            else if (kind == ElemLayout.U32)
+                emit_int_narrow ("uint32");
             if (op == "=") {
                 emitter.pop_rcx ();
                 push_depth--;
                 if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                     emitter.store_rcx_disp_byte_al (0);
-                else
+                else if (kind == ElemLayout.U16 || kind == ElemLayout.I16)
                     emitter.store_rcx_disp_word_ax (0);
+                else
+                    emitter.store_rcx_disp_dword_eax (0);
             } else {
                 bool is_signed = packed_is_signed (kind);
                 emitter.mov_rcx_rax ();
@@ -11559,17 +11816,21 @@ namespace Planc {
                 emitter.mov_rdx_rax ();
                 if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                     emitter.load_rdx_byte_to_zx_rax ();
-                else
+                else if (kind == ElemLayout.U16 || kind == ElemLayout.I16)
                     emitter.load_rdx_word_to_zx_rax ();
+                else
+                    emitter.load_rdx_dword_to_zx_rax ();
                 if (is_signed)
-                    emitter.sign_extend_rax (kind == ElemLayout.I8 ? 8 : 16);
+                    emitter.sign_extend_rax ((kind == ElemLayout.I8) ? 8 : ((kind == ElemLayout.I16) ? 16 : 32));
                 emit_compound_alu (op, !is_signed);
                 emitter.pop_rcx ();
                 push_depth--;
                 if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                     emitter.store_rcx_disp_byte_al (0);
-                else
+                else if (kind == ElemLayout.U16 || kind == ElemLayout.I16)
                     emitter.store_rcx_disp_word_ax (0);
+                else
+                    emitter.store_rcx_disp_dword_eax (0);
             }
         }
 
@@ -11772,6 +12033,8 @@ namespace Planc {
                         emitter.push_rax ();
                         push_depth++;
                         cleanup_expr_temps (r.value);
+                        if (defer_bodies.length > 0)
+                            emit_defers_down_to (0, false);
                         if (program_uses_heap)
                             unref_locals_from (0);
                         emitter.pop_rax ();
@@ -11782,6 +12045,8 @@ namespace Planc {
                         if (!current.is_void)
                             throw new SemanticError.RETURN_MISMATCH (
                                 @"$(type_label (current.return_type, current.return_type_name)) function '$(current.name)' must return a value at $(r.line):$(r.column)");
+                        if (defer_bodies.length > 0)
+                            emit_defers_down_to (0, false);
                         if (program_uses_heap)
                             unref_locals_from (0);
                         emitter.xor_eax ();
@@ -12318,7 +12583,8 @@ namespace Planc {
                     ft = fld.field_type;
                     ft_name = fld.type_name;
                     owner_label = base_name;
-                    byte_off = 8 * off_slots;
+                    byte_off = (sd != null && sd.is_packed)
+                        ? struct_field_byte_offset (sd, fa.field_name, out fld) : 8 * off_slots;
                     string vt_name = "";
                     if (fa.op == "=")
                         coerce_byte_array_literal (fa.value, ft, ft_name);
@@ -12341,7 +12607,20 @@ namespace Planc {
                     emitter.add_rax_imm (byte_off);
                 }
 
-                emit_field_store (ft, ft_name, fa.op, fa.value, fa_is_weak);
+                bool used_packed_store = false;
+                if (fa_is_field) {
+                    unowned var psd = program.find_struct (owner_label);
+                    if (psd != null && psd.is_packed && ft != ValaType.STRUCT) {
+                        int fb = Program.packed_field_bytes (ft, ft_name);
+                        if (fb == 1 || fb == 2 || fb == 4) {
+                            int ek = (fb == 1) ? ElemLayout.U8 : ((fb == 2) ? ElemLayout.U16 : ElemLayout.U32);
+                            emit_packed_elem_store (ek, fa.op, fa.value);
+                            used_packed_store = true;
+                        }
+                    }
+                }
+                if (!used_packed_store)
+                    emit_field_store (ft, ft_name, fa.op, fa.value, fa_is_weak);
                 cleanup_expr_temps (fa.target);
                 cleanup_expr_temps (fa.value);
                 if (fa_is_field && fa.op == "=" && fa.target is VarRef) {
@@ -12452,9 +12731,8 @@ namespace Planc {
                     }
                     emitter.load_rax_disp (16);
                 } else if (bounds_check && !cg_bce_is_safe (ia.target, ia.index)) {
-                    need_bounds_panic = true;
                     emitter.cmp_rcx_rax_len ();
-                    emitter.branch (BranchKind.JAE, bounds_panic_label);
+                    emit_bounds_branch_at (BranchKind.JB, ia.line, ia.column);
                 }
                 if (elem_kind != ElemLayout.SLOT) {
                     emit_index_elem_addr (packed_stride (elem_kind));
@@ -12508,6 +12786,7 @@ namespace Planc {
             } else if (s is BlockStatement) {
                 var blk = (BlockStatement) s;
                 var saved = locals.length;
+                int saved_defer = defer_bodies.length;
                 foreach (var inner in blk.statements) {
                     try {
                         gen_statement (inner);
@@ -12519,10 +12798,22 @@ namespace Planc {
                             break;
                     }
                 }
+                emit_defers_down_to (saved_defer, false);
+                while (defer_bodies.length > saved_defer) {
+                    defer_bodies.remove_index (defer_bodies.length - 1);
+                    defer_is_err.remove_index (defer_is_err.length - 1);
+                }
                 if (blk.scoped) {
                     unref_locals_from (saved);
                     deactivate_from (saved);
                 }
+            } else if (s is DeferStatement) {
+                var ds = (DeferStatement) s;
+                if (ds.is_errdefer && !current.is_bang_err && !current.can_throw)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"'errdefer' is only allowed inside a '!' error function at $(ds.line):$(ds.column)");
+                defer_is_err.add (ds.is_errdefer);
+                defer_bodies.add (ds.body);
             } else if (s is IfStatement) {
                 var i = (IfStatement) s;
                 string ct_name = "";
@@ -12715,6 +13006,59 @@ namespace Planc {
                 int idx_slot = -1;
                 int len_slot = -1;
 
+                int start_slot = -1;
+                if (ct == ValaType.ARRAY && fe.collection is SliceExpr) {
+                    // Zero-copy slice iteration: iterate start .. end directly on target array.
+                    var se = (SliceExpr) fe.collection;
+                    string st_name = "";
+                    expr_type_full (se.target, out st_name);
+                    idx_slot = next_var_slot++;
+                    len_slot = next_var_slot++;
+                    gen_expr (se.target);
+                    emit_null_check_if_nullable_at (ValaType.ARRAY, st_name, se.line, se.column);
+                    consume_ref_expr (se.target);
+                    emitter.store_local (col_slot);
+                    cleanup_expr_temps (se.target);
+                    gen_expr (se.start);
+                    emitter.store_local (idx_slot);
+                    cleanup_expr_temps (se.start);
+                    gen_expr (se.end);
+                    emitter.store_local (len_slot);
+                    cleanup_expr_temps (se.end);
+                    if (bounds_check) {
+                        // Check 0 <= start <= end <= target.length
+                        emitter.load_local (idx_slot);
+                        emitter.mov_rcx_rax ();
+                        emitter.load_local (len_slot);
+                        emitter.cmp_rax_rcx ();
+                        emit_bounds_branch_at (BranchKind.JAE, se.line, se.column);
+                        emitter.load_local (col_slot);
+                        emitter.mov_rcx_rax ();
+                        emitter.load_local (len_slot);
+                        emitter.push_rax ();
+                        push_depth++;
+                        emitter.mov_rax_rcx ();
+                        emitter.pop_reg (Reg.RCX);
+                        push_depth--;
+                        emitter.cmp_rcx_rax_len ();
+                        emit_bounds_branch_at (BranchKind.JBE, se.line, se.column);
+                    }
+                    if (fe.is_reverse) {
+                        start_slot = next_var_slot++;
+                        emitter.load_local (idx_slot);
+                        emitter.store_local (start_slot);
+                        push_local (@"#fe_start_$(col_mark)", ValaType.INT, "", start_slot, true);
+                        emitter.load_local (len_slot);
+                        emitter.add_rax_imm (-1);
+                        emitter.store_local (idx_slot);
+                    }
+                    push_local (@"#fe_col_$(col_mark)", ValaType.ARRAY, strip_null (ct_name), col_slot, false);
+                    push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
+                    push_local (@"#fe_len_$(col_mark)", ValaType.INT, "", len_slot, true);
+                } else {
+                if (is_iter && fe.is_reverse)
+                    throw new SemanticError.TYPE_MISMATCH (
+                        @"inverse_foreach requires an array, GenericArray, or ArrayList at $(fe.line):$(fe.column)");
                 gen_expr (fe.collection);
                 emit_null_check_if_nullable (ct, ct_name);
                 if (is_iter) {
@@ -12736,7 +13080,14 @@ namespace Planc {
                     emitter.load_local (al_slot);
                     emitter.load_rax_disp (al_inner_off);
                     emitter.store_local (col_slot);
-                    emitter.zero_local (idx_slot);
+                    if (fe.is_reverse) {
+                        emitter.load_local (col_slot);
+                        emitter.load_rax_disp (24);
+                        emitter.add_rax_imm (-1);
+                        emitter.store_local (idx_slot);
+                    } else {
+                        emitter.zero_local (idx_slot);
+                    }
                     push_local (@"#fe_col_$(col_mark)", ValaType.CLASS, "GenericArray", col_slot, true);
                     push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
                 } else {
@@ -12744,7 +13095,14 @@ namespace Planc {
                     consume_ref_expr (fe.collection);
                     emitter.store_local (col_slot);
                     cleanup_expr_temps (fe.collection);
-                    emitter.zero_local (idx_slot);
+                    if (fe.is_reverse) {
+                        emitter.load_local (col_slot);
+                        emitter.load_rax_disp (is_ga ? 24 : 8);
+                        emitter.add_rax_imm (-1);
+                        emitter.store_local (idx_slot);
+                    } else {
+                        emitter.zero_local (idx_slot);
+                    }
                     push_local (@"#fe_col_$(col_mark)", is_ga ? ValaType.CLASS : ValaType.ARRAY, strip_null (ct_name), col_slot, false);
                     push_local (@"#fe_idx_$(col_mark)", ValaType.INT, "", idx_slot, false);
                     if (!is_ga) {
@@ -12754,6 +13112,7 @@ namespace Planc {
                         emitter.store_local (len_slot);
                         push_local (@"#fe_len_$(col_mark)", ValaType.INT, "", len_slot, true);
                     }
+                }
                 }
 
                 var l_cond = emitter.new_label ();
@@ -12785,16 +13144,28 @@ namespace Planc {
                     emitter.store_local (eslot);
                 } else {
                     bool is_ga_fast = is_ga || is_al;
-                    if (len_slot >= 0) {
-                        emitter.load_local (len_slot);
+                    if (fe.is_reverse) {
+                        if (start_slot >= 0) {
+                            emitter.load_local (start_slot);
+                        } else {
+                            emitter.xor_eax ();
+                        }
+                        emitter.mov_rcx_rax ();
+                        emitter.load_local (idx_slot);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JL, l_end);
                     } else {
-                        emitter.load_local (col_slot);
-                        emitter.load_rax_disp (is_ga_fast ? 24 : 8);
+                        if (len_slot >= 0) {
+                            emitter.load_local (len_slot);
+                        } else {
+                            emitter.load_local (col_slot);
+                            emitter.load_rax_disp (is_ga_fast ? 24 : 8);
+                        }
+                        emitter.mov_rcx_rax ();
+                        emitter.load_local (idx_slot);
+                        emitter.cmp_rax_rcx ();
+                        emitter.branch (BranchKind.JAE, l_end);
                     }
-                    emitter.mov_rcx_rax ();
-                    emitter.load_local (idx_slot);
-                    emitter.cmp_rax_rcx ();
-                    emitter.branch (BranchKind.JAE, l_end);
 
                     emitter.load_local (idx_slot);
                     emitter.mov_rcx_rax ();
@@ -12839,7 +13210,7 @@ namespace Planc {
                 emitter.bind (l_step);
                 if (!is_iter) {
                     emitter.load_local (idx_slot);
-                    emitter.add_rax_imm (1);
+                    emitter.add_rax_imm (fe.is_reverse ? -1 : 1);
                     emitter.store_local (idx_slot);
                 }
                 emitter.branch (BranchKind.JMP, l_cond);
@@ -12961,6 +13332,20 @@ namespace Planc {
                 deactivate_from (sw_mark);
             } else if (s is ThrowStatement) {
                 var ts = (ThrowStatement) s;
+                if (ts.is_light_code) {
+                    if (!current.is_bang_err)
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'throws <code>' is only allowed inside a '!' error function at $(ts.line):$(ts.column)");
+                    string ct_name = "";
+                    var ct = expr_type_full (ts.message, out ct_name);
+                    if (!is_int_like (ct))
+                        throw new SemanticError.TYPE_MISMATCH (
+                            @"'throws' error code must be int, got $(type_label (ct, ct_name)) at $(ts.message.line):$(ts.message.column)");
+                    gen_expr (ts.message);
+                    emitter.store_local (err_prop_slot);
+                    cleanup_expr_temps (ts.message);
+                    emit_error_jump ();
+                } else {
                 unowned var ed = program.find_error_domain (ts.domain_name);
                 unowned var em = (ed != null) ? ed.find_code (ts.code_name) : null;
                 if (ed == null || em == null)
@@ -12994,6 +13379,7 @@ namespace Planc {
                 emitter.store_rcx_disp_rax (16);
                 cleanup_expr_temps (ts.message);
                 emit_error_jump ();
+                }
             } else if (s is TryStatement) {
                 var tr = (TryStatement) s;
                 int fin_mode_slot = -1;
@@ -13016,7 +13402,8 @@ namespace Planc {
 
                 int saved_dom = active_catch_domains.length;
                 foreach (var cc in tr.catches) {
-                    check_domain_exists (cc.domain_name, cc.line, cc.column);
+                    if (cc.domain_name != "int")
+                        check_domain_exists (cc.domain_name, cc.line, cc.column);
                     active_catch_domains.add (cc.domain_name);
                 }
 
@@ -13050,7 +13437,7 @@ namespace Planc {
                 emitter.bind (l_dispatch);
                 for (int ci = 0; ci < tr.catches.length; ci++) {
                     var cc = tr.catches[ci];
-                    if (cc.domain_name == "Error") {
+                    if (cc.domain_name == "Error" || cc.domain_name == "int") {
                         emitter.branch (BranchKind.JMP, catch_labels[ci]);
                     } else {
                         unowned var ed = program.find_error_domain (cc.domain_name);
@@ -13076,9 +13463,12 @@ namespace Planc {
                         throw new SemanticError.DUPLICATE_VARIABLE (
                             @"duplicate variable: $(cc.var_name) at $(cc.line):$(cc.column)");
                     var cslot = next_var_slot++;
-                    push_local (cc.var_name, ValaType.ERROR,
-                                cc.domain_name == "Error" ? "" : cc.domain_name,
-                                cslot, false);
+                    if (cc.domain_name == "int")
+                        push_local (cc.var_name, ValaType.INT, "", cslot, false);
+                    else
+                        push_local (cc.var_name, ValaType.ERROR,
+                                    cc.domain_name == "Error" ? "" : cc.domain_name,
+                                    cslot, false);
                     emitter.load_local (err_prop_slot);
                     emitter.store_local (cslot);
                     foreach (var cs in cc.body)
@@ -14487,8 +14877,10 @@ namespace Planc {
                     emitter.pop_reg (Reg.RCX);
                     if (lit_kind == ElemLayout.U8 || lit_kind == ElemLayout.I8)
                         emitter.store_rcx_disp_byte_al (16 + i);
-                    else if (lit_kind != ElemLayout.SLOT)
+                    else if (lit_kind == ElemLayout.U16 || lit_kind == ElemLayout.I16)
                         emitter.store_rcx_disp_word_ax (16 + 2 * i);
+                    else if (lit_kind == ElemLayout.U32 || lit_kind == ElemLayout.I32)
+                        emitter.store_rcx_disp_dword_eax (16 + 4 * i);
                     else
                         emitter.store_rcx_disp_rax (16 + 8 * i);
                 }
@@ -14722,10 +15114,26 @@ namespace Planc {
                         @"struct '$(tt_name)' has no field or property '$(m.member)' at $(m.line):$(m.column)");
                 }
                 gen_expr (m.target);
-                if (fld.field_type == ValaType.STRUCT)
-                    emitter.add_rax_imm (8 * off_slots);
-                else
-                    emitter.load_rax_disp (8 * off_slots);
+                int byte_off = (sd != null && sd.is_packed)
+                    ? struct_field_byte_offset (sd, m.member, out fld) : 8 * off_slots;
+                if (fld.field_type == ValaType.STRUCT) {
+                    emitter.add_rax_imm (byte_off);
+                } else if (sd != null && sd.is_packed) {
+                    if (byte_off != 0)
+                        emitter.add_rax_imm (byte_off);
+                    int fbytes = Program.packed_field_bytes (fld.field_type, fld.type_name);
+                    if (fbytes == 1) {
+                        emitter.code.u8 (0x0F); emitter.code.u8 (0xB6); emitter.code.u8 (0x00); // movzx eax, byte [rax]
+                    } else if (fbytes == 2) {
+                        emitter.code.u8 (0x0F); emitter.code.u8 (0xB7); emitter.code.u8 (0x00); // movzx eax, word [rax]
+                    } else if (fbytes == 4) {
+                        emitter.code.u8 (0x8B); emitter.code.u8 (0x00); // mov eax, [rax]
+                    } else {
+                        emitter.code.u8 (0x48); emitter.code.u8 (0x8B); emitter.code.u8 (0x00); // mov rax, [rax]
+                    }
+                } else {
+                    emitter.load_rax_disp (byte_off);
+                }
                 if (is_fp_type (fld.field_type))
                     emitter.movq_xmm_rax (0);
             } else if (e is IndexExpr) {
@@ -14780,9 +15188,8 @@ namespace Planc {
                     }
                 } else {
                     if (bounds_check && !cg_bce_is_safe (ix.target, ix.index)) {
-                        need_bounds_panic = true;
                         emitter.cmp_rcx_rax_len ();
-                        emitter.branch (BranchKind.JAE, bounds_panic_label);
+                        emit_bounds_branch_at (BranchKind.JB, ix.line, ix.column);
                     }
                     if (tt == ValaType.ARRAY) {
                         ValaType arr_et = ValaType.INT;
@@ -14823,9 +15230,9 @@ namespace Planc {
             } else if (e is SliceExpr) {
                 var se = (SliceExpr) e;
                 string tt_name = "";
-                expr_type_full (se.target, out tt_name);
+                var tt = expr_type_full (se.target, out tt_name);
                 gen_expr (se.target);
-                emit_null_check_if_nullable_at (ValaType.STRING, tt_name, se.line, se.column);
+                emit_null_check_if_nullable_at (tt, tt_name, se.line, se.column);
                 emitter.push_rax ();
                 push_depth++;
                 gen_expr (se.start);
@@ -14837,8 +15244,12 @@ namespace Planc {
                 push_depth--;
                 emitter.pop_reg (Reg.RDI);
                 push_depth--;
-                need_str_slice = true;
-                call_aligned ("__planc_str_slice");
+                if (tt == ValaType.ARRAY) {
+                    emit_array_slice_at (tt_name, se.line, se.column);
+                } else {
+                    need_str_slice = true;
+                    call_aligned ("__planc_str_slice");
+                }
                 if (program_uses_heap && se.ref_temp_slot >= 0)
                     emitter.store_local (se.ref_temp_slot);
             } else if (e is TernaryExpr) {
@@ -15075,6 +15486,35 @@ namespace Planc {
                 emitter.pop_rax ();
                 push_depth--;
                 emitter.bind (l_end);
+            } else if (e is TupleExpr) {
+                var tup = (TupleExpr) e;
+                string sname = "";
+                expr_type_full (tup, out sname);
+                unowned var sd = program.find_struct (sname);
+                if (sd == null)
+                    throw new SemanticError.TYPE_MISMATCH (@"unknown tuple struct '$sname' at $(tup.line):$(tup.column)");
+                var nslots = type_slots (ValaType.STRUCT, sname);
+                var base_disp = struct_base_disp (tup.temp_slot, nslots);
+                emitter.lea_rcx_rbp_disp (base_disp);
+                init_struct_at_rcx (sd, 0);
+                for (int i = 0; i < tup.elements.length; i++) {
+                    unowned StructField? fld = null;
+                    var off_slots = struct_field_offset_slots (sd, @"_$i", out fld);
+                    if (fld == null) continue;
+                    gen_expr (tup.elements[i]);
+                    if (fld.field_type == ValaType.STRUCT) {
+                        if (expr_type (tup.elements[i]) != ValaType.NULL) {
+                            var fslots = type_slots (ValaType.STRUCT, fld.type_name);
+                            emitter.lea_rcx_rbp_disp (base_disp + 8 * off_slots);
+                            copy_struct_rax_to_rcx (fslots);
+                        }
+                    } else {
+                        if (fld.field_type == ValaType.INT)
+                            emit_int_narrow (fld.type_name);
+                        emitter.store_rbp_disp (base_disp + 8 * off_slots);
+                    }
+                }
+                emitter.lea_rax_rbp_disp (base_disp);
             } else if (e is StructLiteral) {
                 var lit = (StructLiteral) e;
                 unowned var sd = program.find_struct (lit.struct_name);
@@ -15088,17 +15528,27 @@ namespace Planc {
                 for (int i = 0; i < lit.field_names.length; i++) {
                     unowned StructField? fld = null;
                     var off_slots = struct_field_offset_slots (sd, lit.field_names[i], out fld);
+                    int byte_off = sd.is_packed ? struct_field_byte_offset (sd, lit.field_names[i], out fld) : 8 * off_slots;
+                    if (sd.is_packed && fld != null && fld.field_type != ValaType.STRUCT) {
+                        int fb = Program.packed_field_bytes (fld.field_type, fld.type_name);
+                        if (fb == 1 || fb == 2 || fb == 4) {
+                            int ek = (fb == 1) ? ElemLayout.U8 : ((fb == 2) ? ElemLayout.U16 : ElemLayout.U32);
+                            emitter.lea_rax_rbp_disp (base_disp + byte_off);
+                            emit_packed_elem_store (ek, "=", lit.field_values[i]);
+                            continue;
+                        }
+                    }
                     gen_expr (lit.field_values[i]);
                     if (fld.field_type == ValaType.STRUCT) {
                         if (expr_type (lit.field_values[i]) != ValaType.NULL) {
                             var fslots = type_slots (ValaType.STRUCT, fld.type_name);
-                            emitter.lea_rcx_rbp_disp (base_disp + 8 * off_slots);
+                            emitter.lea_rcx_rbp_disp (base_disp + byte_off);
                             copy_struct_rax_to_rcx (fslots);
                         }
                     } else {
                         if (fld.field_type == ValaType.INT)
                             emit_int_narrow (fld.type_name);
-                        emitter.store_rbp_disp (base_disp + 8 * off_slots);
+                        emitter.store_rbp_disp (base_disp + byte_off);
                     }
                 }
                 emitter.lea_rax_rbp_disp (base_disp);
@@ -15428,26 +15878,29 @@ namespace Planc {
                         emitter.pop_rax ();
                         push_depth--;
                         if (bounds_check) {
-                            need_bounds_panic = true;
                             emitter.cmp_rcx_rax_len ();
-                            emitter.branch (BranchKind.JAE, bounds_panic_label);
+                            emit_bounds_branch_at (BranchKind.JB, ix.line, ix.column);
                         }
-                        bool wide = (inc_kind == ElemLayout.U16 || inc_kind == ElemLayout.I16);
-                        emit_index_elem_addr (packed_stride (inc_kind));
+                        int inc_stride = packed_stride (inc_kind);
+                        emit_index_elem_addr (inc_stride);
                         emitter.mov_rdx_rax ();
-                        if (wide)
+                        if (inc_stride == 4)
+                            emitter.load_rdx_dword_to_zx_rax ();
+                        else if (inc_stride == 2)
                             emitter.load_rdx_word_to_zx_rax ();
                         else
                             emitter.load_rdx_byte_to_zx_rax ();
                         if (is_signed_b)
-                            emitter.sign_extend_rax (wide ? 16 : 8);
+                            emitter.sign_extend_rax (inc_stride * 8);
                         if (!inc.is_prefix) {
                             emitter.push_rax ();
                             push_depth++;
                         }
                         emitter.add_rax_imm (delta);
                         emitter.mov_rcx_rdx ();
-                        if (wide)
+                        if (inc_stride == 4)
+                            emitter.store_rcx_disp_dword_eax (0);
+                        else if (inc_stride == 2)
                             emitter.store_rcx_disp_word_ax (0);
                         else
                             emitter.store_rcx_disp_byte_al (0);
@@ -15455,12 +15908,14 @@ namespace Planc {
                             emitter.pop_rax ();
                             push_depth--;
                         } else {
-                            if (wide)
+                            if (inc_stride == 4)
+                                emitter.load_rdx_dword_to_zx_rax ();
+                            else if (inc_stride == 2)
                                 emitter.load_rdx_word_to_zx_rax ();
                             else
                                 emitter.load_rdx_byte_to_zx_rax ();
                             if (is_signed_b)
-                                emitter.sign_extend_rax (wide ? 16 : 8);
+                                emitter.sign_extend_rax (inc_stride * 8);
                         }
                         return;
                     }
@@ -15880,8 +16335,10 @@ namespace Planc {
             push_depth--;
             if (kind == ElemLayout.U8 || kind == ElemLayout.I8)
                 emitter.store_byte_rax_rcx_16_dl ();
-            else if (kind != ElemLayout.SLOT)
+            else if (kind == ElemLayout.U16 || kind == ElemLayout.I16)
                 emitter.store_word_rax_rcx_16_dx ();
+            else if (kind == ElemLayout.U32 || kind == ElemLayout.I32)
+                emitter.store_dword_rax_rcx_16_edx ();
             else
                 emitter.store_qword_rax_rcx_16_rdx ();
         }

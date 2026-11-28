@@ -272,5 +272,121 @@ namespace GLib {
                 copy (p, mem, (size_t) byte_size);
             return p;
         }
+
+        // Bounds-checked byte-array helpers backed by AVX2 primitives.
+
+        private static size_t clamp_span (int arr_len, size_t off, size_t n) {
+            if (off >= (size_t) arr_len || n == 0)
+                return 0;
+            size_t avail = (size_t) arr_len - off;
+            return (n > avail) ? avail : n;
+        }
+
+        public static void set_bytes (uint8[]? dst, size_t off, uint8 val, size_t n) {
+            if (dst == null)
+                return;
+            size_t count = clamp_span (dst.length, off, n);
+            if (count == 0)
+                return;
+            __mem_set_avx2 (Sys.byte_arr_addr (dst) + (int) off, (int) val, count);
+        }
+
+        public static void copy_bytes (uint8[]? dst, size_t dst_off, uint8[]? src, size_t src_off, size_t n) {
+            if (dst == null || src == null || n == 0)
+                return;
+            size_t d_avail = clamp_span (dst.length, dst_off, n);
+            size_t s_avail = clamp_span (src.length, src_off, n);
+            size_t count = (d_avail < s_avail) ? d_avail : s_avail;
+            if (count == 0)
+                return;
+            copy (Sys.byte_arr_addr (dst) + (int) dst_off, Sys.byte_arr_addr (src) + (int) src_off, count);
+        }
+
+        public static void move_bytes (uint8[]? dst, size_t dst_off, uint8[]? src, size_t src_off, size_t n) {
+            if (dst == null || src == null || n == 0)
+                return;
+            size_t d_avail = clamp_span (dst.length, dst_off, n);
+            size_t s_avail = clamp_span (src.length, src_off, n);
+            size_t count = (d_avail < s_avail) ? d_avail : s_avail;
+            if (count == 0)
+                return;
+            move (Sys.byte_arr_addr (dst) + (int) dst_off, Sys.byte_arr_addr (src) + (int) src_off, count);
+        }
+
+        public static int cmp_bytes (uint8[]? a, size_t a_off, uint8[]? b, size_t b_off, size_t n) {
+            if (n == 0)
+                return 0;
+            size_t a_avail = (a == null) ? 0 : clamp_span (a.length, a_off, n);
+            size_t b_avail = (b == null) ? 0 : clamp_span (b.length, b_off, n);
+            size_t count = (a_avail < b_avail) ? a_avail : b_avail;
+            if (count > 0) {
+                int c = cmp (Sys.byte_arr_addr ((!) a) + (int) a_off,
+                             Sys.byte_arr_addr ((!) b) + (int) b_off, count);
+                if (c != 0)
+                    return c;
+            }
+            if (a_avail == b_avail)
+                return 0;
+            return (a_avail < b_avail) ? -1 : 1;
+        }
+
+        public static size_t c_strlen (uint8[]? buf, size_t off = 0) {
+            if (buf == null || off >= (size_t) buf.length)
+                return 0;
+            size_t i = off;
+            while (i < (size_t) buf.length && buf[(int) i] != 0)
+                i++;
+            return i - off;
+        }
+
+        public static int c_strcmp (uint8[]? a, size_t a_off, uint8[]? b, size_t b_off) {
+            size_t la = c_strlen (a, a_off);
+            size_t lb = c_strlen (b, b_off);
+            size_t min_l = (la < lb) ? la : lb;
+            if (min_l > 0) {
+                int c = cmp (Sys.byte_arr_addr ((!) a) + (int) a_off,
+                             Sys.byte_arr_addr ((!) b) + (int) b_off, min_l);
+                if (c != 0)
+                    return c;
+            }
+            if (la == lb)
+                return 0;
+            return (la < lb) ? -1 : 1;
+        }
+
+        public static int c_strncmp (uint8[]? a, size_t a_off, uint8[]? b, size_t b_off, size_t n) {
+            if (n == 0)
+                return 0;
+            size_t la = c_strlen (a, a_off);
+            size_t lb = c_strlen (b, b_off);
+            if (la > n) la = n;
+            if (lb > n) lb = n;
+            size_t min_l = (la < lb) ? la : lb;
+            if (min_l > 0) {
+                int c = cmp (Sys.byte_arr_addr ((!) a) + (int) a_off,
+                             Sys.byte_arr_addr ((!) b) + (int) b_off, min_l);
+                if (c != 0)
+                    return c;
+            }
+            if (la == lb)
+                return 0;
+            return (la < lb) ? -1 : 1;
+        }
+
+        /**
+         * Build a Vala string from a NUL-terminated uint8[] buffer starting at off.
+         */
+        public static string c_str_to_string (uint8[]? buf, size_t off = 0) {
+            if (buf == null)
+                return "";
+            size_t n = c_strlen (buf, off);
+            if (n == 0)
+                return "";
+            if (off == 0)
+                return __planc_host_bytes_to_str (buf, (int) n);
+            var tmp = new uint8[(int) n];
+            copy_bytes (tmp, 0, buf, off, n);
+            return __planc_host_bytes_to_str (tmp, (int) n);
+        }
     }
 }

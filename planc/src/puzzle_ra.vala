@@ -27,6 +27,8 @@ namespace Planc {
         ARR_LEN,
         BOUNDS_PANIC,
         SIMD_ARR_REDUCE,
+        SIMD_ARR_COPY,
+        SIMD_ARR_FILL,
         PRINT_STR,
         PRINT_INT
     }
@@ -1251,15 +1253,15 @@ namespace Planc {
 
             int arr_v = -1;
             string arr_name = "";
+            int arr_stride = 8;
             if (cb.right is MemberAccessExpr) {
                 var ma = (MemberAccessExpr) cb.right;
                 if (ma.member == "length" && ma.target is VarRef) {
                     arr_name = ((VarRef) ma.target).name;
                     int ai = lookup_var (arr_name);
                     if (ai >= 0 && var_types[ai] == ValaType.ARRAY) {
-                        string etn = var_tnames[ai];
-                        if (etn == "" || etn == "int" || etn == "int64" || etn == "int[]" || etn == "int64[]")
-                            arr_v = var_vregs[ai];
+                        arr_v = var_vregs[ai];
+                        arr_stride = ElemLayout.stride (ElemLayout.kind (var_tnames[ai]));
                     }
                 }
             } else if (cb.right is VarRef) {
@@ -1277,9 +1279,7 @@ namespace Planc {
                         for (int vi = var_vregs.length - 1; vi >= 0; vi--) {
                             if (var_vregs[vi] == arr_v) {
                                 arr_name = var_names[vi];
-                                string etn = var_tnames[vi];
-                                if (!(etn == "" || etn == "int" || etn == "int64" || etn == "int[]" || etn == "int64[]"))
-                                    arr_v = -1;
+                                arr_stride = ElemLayout.stride (ElemLayout.kind (var_tnames[vi]));
                                 break;
                             }
                         }
@@ -1287,6 +1287,58 @@ namespace Planc {
                 }
             }
             if (arr_v < 0) return false;
+
+            // Check for SIMD array copy (`dst[i] = src[i]`) or fill (`dst[i] = val`).
+            IndexAssignStatement? ia = null;
+            if (fs.body is IndexAssignStatement) {
+                ia = (IndexAssignStatement) fs.body;
+            } else if (fs.body is BlockStatement) {
+                var blk = (BlockStatement) fs.body;
+                if (blk.statements.length == 1 && blk.statements[0] is IndexAssignStatement)
+                    ia = (IndexAssignStatement) blk.statements[0];
+            }
+            if (ia != null && ia.op == "=" && ia.target is VarRef && ((VarRef) ia.target).name == arr_name
+                && ia.index is VarRef && ((VarRef) ia.index).name == idx_name) {
+                if (ia.value is IndexExpr) {
+                    var ix = (IndexExpr) ia.value;
+                    if (ix.target is VarRef && ix.index is VarRef && ((VarRef) ix.index).name == idx_name) {
+                        int si2 = lookup_var (((VarRef) ix.target).name);
+                        if (si2 >= 0 && var_types[si2] == ValaType.ARRAY) {
+                            int src_stride = ElemLayout.stride (ElemLayout.kind (var_tnames[si2]));
+                            if (src_stride == arr_stride) {
+                                emit_ir (new IRInst () {
+                                    op = IROp.SIMD_ARR_COPY,
+                                    dst = -1,
+                                    lhs = arr_v,
+                                    rhs = var_vregs[si2],
+                                    imm = arr_stride
+                                });
+                                return true;
+                            }
+                        }
+                    }
+                } else if (arr_stride == 4 || arr_stride == 8) {
+                    int val_v = -1;
+                    if (ia.value is IntLiteral) {
+                        val_v = lower_expr (ia.value);
+                    } else if (ia.value is VarRef && ((VarRef) ia.value).name != idx_name) {
+                        int vi2 = lookup_var (((VarRef) ia.value).name);
+                        if (vi2 >= 0 && var_types[vi2] == ValaType.INT)
+                            val_v = var_vregs[vi2];
+                    }
+                    if (val_v >= 0) {
+                        emit_ir (new IRInst () {
+                            op = IROp.SIMD_ARR_FILL,
+                            dst = -1,
+                            lhs = arr_v,
+                            rhs = val_v,
+                            imm = arr_stride
+                        });
+                        return true;
+                    }
+                }
+            }
+            if (arr_stride != 8) return false;
 
             AssignStatement? asg = null;
             string? elem_name = null;
@@ -2349,6 +2401,21 @@ namespace Planc {
             code.u8 ((uint8) disp);
         }
 
+        // movsxd/mov dst, dword [arr + idx*4 + 16]      63 / 8B + SIB (scale 4)
+        private void emit_load_sib_dword (Reg dst, Reg arr_r, Reg idx_r, int8 disp, bool signed_d) {
+            uint8 rex = (uint8) ((Reg.is_extended (dst) ? 4 : 0)
+                | (Reg.is_extended (idx_r) ? 2 : 0)
+                | (Reg.is_extended (arr_r) ? 1 : 0));
+            if (signed_d)
+                code.u8 ((uint8) (0x48 | rex));
+            else if (rex != 0)
+                code.u8 ((uint8) (0x40 | rex));
+            code.u8 (signed_d ? 0x63 : 0x8B);
+            code.u8 ((uint8) (0x44 | (((int) dst & 7) << 3)));
+            code.u8 ((uint8) (0x80 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
+            code.u8 ((uint8) disp);
+        }
+
         private void emit_store_sib_byte (Reg arr_r, Reg idx_r, int8 disp, Reg src) {
             uint8 rex = (uint8) ((Reg.is_extended (src) ? 4 : 0)
                 | (Reg.is_extended (idx_r) ? 2 : 0)
@@ -2369,6 +2436,17 @@ namespace Planc {
             code.u8 (0x89);
             code.u8 ((uint8) (0x44 | (((int) src & 7) << 3)));
             code.u8 ((uint8) (0x40 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
+            code.u8 ((uint8) disp);
+        }
+
+        private void emit_store_sib_dword (Reg arr_r, Reg idx_r, int8 disp, Reg src) {
+            uint8 rex = (uint8) ((Reg.is_extended (src) ? 4 : 0)
+                | (Reg.is_extended (idx_r) ? 2 : 0)
+                | (Reg.is_extended (arr_r) ? 1 : 0));
+            if (rex != 0) code.u8 ((uint8) (rex | 0x40));
+            code.u8 (0x89);
+            code.u8 ((uint8) (0x44 | (((int) src & 7) << 3)));
+            code.u8 ((uint8) (0x80 | (((int) idx_r & 7) << 3) | ((int) arr_r & 7)));
             code.u8 ((uint8) disp);
         }
 
@@ -2953,6 +3031,8 @@ namespace Planc {
                             int new_stride = ElemLayout.stride (vreg_elem_kind[ins.dst]);
                             if (new_stride == 2)
                                 emit_shift_ri (4, Reg.RDI, 1);
+                            else if (new_stride == 4)
+                                emit_shift_ri (4, Reg.RDI, 2);
                             else if (new_stride == 8)
                                 emit_shift_ri (4, Reg.RDI, 3);
                             code.u8 (0x31); code.u8 (0xF6); // xor esi, esi
@@ -2996,6 +3076,96 @@ namespace Planc {
                             Reg d = dst_reg_for (ins.dst, Reg.R10);
                             emit_load_disp8 (d, av, 8);
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
+                            break;
+                        }
+                        case IROp.SIMD_ARR_COPY: {
+                            Reg dv = read_vreg (ins.lhs, Reg.R10);
+                            if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
+                            Reg sv = read_vreg (ins.rhs, Reg.R11);
+                            if (sv != Reg.R11) emit_mov_rr (Reg.R11, sv);
+                            // Check src.length >= dst.length
+                            emit_load_disp8 (Reg.RAX, Reg.R10, 8); // dst.len
+                            emit_load_disp8 (Reg.RCX, Reg.R11, 8); // src.len
+                            // cmp rcx, rax; jb bounds_panic
+                            code.u8 (0x48); code.u8 (0x39); code.u8 (0xC1);
+                            used_bounds_panic = true;
+                            emitter.branch (BranchKind.JB, bounds_panic_label);
+                            // rcx = total bytes = dst.len * stride
+                            emit_mov_rr (Reg.RCX, Reg.RAX);
+                            if (ins.imm == 2) emit_shift_ri (4, Reg.RCX, 1);
+                            else if (ins.imm == 4) emit_shift_ri (4, Reg.RCX, 2);
+                            else if (ins.imm == 8) emit_shift_ri (4, Reg.RCX, 3);
+                            emit_alu_ri (0, Reg.R10, 16); // dst ptr
+                            emit_alu_ri (0, Reg.R11, 16); // src ptr
+                            var l_vec = emitter.new_label ();
+                            var l_tail = emitter.new_label ();
+                            var l_done = emitter.new_label ();
+                            emitter.bind (l_vec);
+                            emit_alu_ri (7, Reg.RCX, 16);
+                            emitter.branch (BranchKind.JB, l_tail);
+                            // movdqu xmm0, [r11]; movdqu [r10], xmm0
+                            code.u8 (0xF3); code.u8 (0x41); code.u8 (0x0F); code.u8 (0x6F); code.u8 (0x03);
+                            code.u8 (0xF3); code.u8 (0x41); code.u8 (0x0F); code.u8 (0x7F); code.u8 (0x02);
+                            emit_alu_ri (0, Reg.R11, 16);
+                            emit_alu_ri (0, Reg.R10, 16);
+                            emit_alu_ri (5, Reg.RCX, 16);
+                            emitter.branch (BranchKind.JMP, l_vec);
+                            emitter.bind (l_tail);
+                            emit_alu_ri (7, Reg.RCX, 0);
+                            emitter.branch (BranchKind.JLE, l_done);
+                            // mov al, [r11]; mov [r10], al
+                            code.u8 (0x41); code.u8 (0x8A); code.u8 (0x03);
+                            code.u8 (0x41); code.u8 (0x88); code.u8 (0x02);
+                            emit_alu_ri (0, Reg.R11, 1);
+                            emit_alu_ri (0, Reg.R10, 1);
+                            emit_alu_ri (5, Reg.RCX, 1);
+                            emitter.branch (BranchKind.JMP, l_tail);
+                            emitter.bind (l_done);
+                            break;
+                        }
+                        case IROp.SIMD_ARR_FILL: {
+                            Reg dv = read_vreg (ins.lhs, Reg.R10);
+                            if (dv != Reg.R10) emit_mov_rr (Reg.R10, dv);
+                            Reg vv = read_vreg (ins.rhs, Reg.RAX);
+                            if (vv != Reg.RAX) emit_mov_rr (Reg.RAX, vv);
+                            emit_load_disp8 (Reg.RCX, Reg.R10, 8); // dst.len
+                            if (ins.imm == 4) emit_shift_ri (4, Reg.RCX, 2);
+                            else if (ins.imm == 8) emit_shift_ri (4, Reg.RCX, 3);
+                            emit_alu_ri (0, Reg.R10, 16); // dst ptr
+                            if (ins.imm == 4) {
+                                // movd xmm0, eax; pshufd xmm0, xmm0, 0
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC0);
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x70); code.u8 (0xC0); code.u8 (0x00);
+                            } else {
+                                // movq xmm0, rax; punpcklqdq xmm0, xmm0
+                                code.u8 (0x66); code.u8 (0x48); code.u8 (0x0F); code.u8 (0x6E); code.u8 (0xC0);
+                                code.u8 (0x66); code.u8 (0x0F); code.u8 (0x6C); code.u8 (0xC0);
+                            }
+                            var l_vec = emitter.new_label ();
+                            var l_tail = emitter.new_label ();
+                            var l_done = emitter.new_label ();
+                            emitter.bind (l_vec);
+                            emit_alu_ri (7, Reg.RCX, 16);
+                            emitter.branch (BranchKind.JB, l_tail);
+                            // movdqu [r10], xmm0
+                            code.u8 (0xF3); code.u8 (0x41); code.u8 (0x0F); code.u8 (0x7F); code.u8 (0x02);
+                            emit_alu_ri (0, Reg.R10, 16);
+                            emit_alu_ri (5, Reg.RCX, 16);
+                            emitter.branch (BranchKind.JMP, l_vec);
+                            emitter.bind (l_tail);
+                            emit_alu_ri (7, Reg.RCX, (int32) ins.imm);
+                            emitter.branch (BranchKind.JB, l_done);
+                            if (ins.imm == 4) {
+                                // mov [r10], eax
+                                code.u8 (0x41); code.u8 (0x89); code.u8 (0x02);
+                            } else {
+                                // mov [r10], rax
+                                code.u8 (0x49); code.u8 (0x89); code.u8 (0x02);
+                            }
+                            emit_alu_ri (0, Reg.R10, (int32) ins.imm);
+                            emit_alu_ri (5, Reg.RCX, (int32) ins.imm);
+                            emitter.branch (BranchKind.JMP, l_tail);
+                            emitter.bind (l_done);
                             break;
                         }
                         case IROp.SIMD_ARR_REDUCE: {
@@ -3084,6 +3254,8 @@ namespace Planc {
                                 emit_load_sib_byte (d, av, iv, 16, ld_kind == ElemLayout.I8);
                             else if (ld_kind == ElemLayout.U16 || ld_kind == ElemLayout.I16)
                                 emit_load_sib_word (d, av, iv, 16, ld_kind == ElemLayout.I16);
+                            else if (ld_kind == ElemLayout.U32 || ld_kind == ElemLayout.I32)
+                                emit_load_sib_dword (d, av, iv, 16, ld_kind == ElemLayout.I32);
                             else
                                 emit_load_sib8 (d, av, iv, 16);
                             if (vreg_phys[ins.dst] < 0) emit_store_rbp (spill_disp (vreg_spill[ins.dst]), d);
@@ -3104,6 +3276,8 @@ namespace Planc {
                                     emit_store_sib_byte (av, iv, 16, vv);
                                 else if (st_kind == ElemLayout.U16 || st_kind == ElemLayout.I16)
                                     emit_store_sib_word (av, iv, 16, vv);
+                                else if (st_kind == ElemLayout.U32 || st_kind == ElemLayout.I32)
+                                    emit_store_sib_dword (av, iv, 16, vv);
                                 else
                                     emit_store_sib8 (av, iv, 16, vv);
                             } else {

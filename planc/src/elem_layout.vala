@@ -12,6 +12,8 @@ namespace Planc {
         public const int I8 = 2;
         public const int U16 = 3;
         public const int I16 = 4;
+        public const int U32 = 5;
+        public const int I32 = 6;
 
         // Type names reach the backends either as the element name ("uint8") or
         // with the nullable marker ("uint8?"); both forms name the same layout.
@@ -28,6 +30,8 @@ namespace Planc {
             if (b == "int8") return I8;
             if (b == "uint16" || b == "ushort") return U16;
             if (b == "int16" || b == "short") return I16;
+            if (b == "uint32" || b == "uint" || b == "unichar") return U32;
+            if (b == "int32") return I32;
             return SLOT;
         }
 
@@ -38,6 +42,7 @@ namespace Planc {
         public static int stride (int kind) {
             if (kind == U8 || kind == I8) return 1;
             if (kind == U16 || kind == I16) return 2;
+            if (kind == U32 || kind == I32) return 4;
             return 8;
         }
 
@@ -46,7 +51,7 @@ namespace Planc {
         [AlwaysInline]
 #endif
         public static bool is_signed (int kind) {
-            return kind == I8 || kind == I16;
+            return kind == I8 || kind == I16 || kind == I32;
         }
 
 #if PLANC

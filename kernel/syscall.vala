@@ -34,7 +34,7 @@ namespace Planet.Kernel {
     private const int RING_MAX_XFER = 16384;
     // A2 frame ownership: one entry per SYS_ALLOC_PAGE block, and up to four
     // task ids allowed to map a grant handle.
-    private const int ALLOC_SLOTS = 512;
+    private const int ALLOC_SLOTS = 4096; // KernelLayout.ALLOC_TABLE_SIZE / 16
     // Set when a block could not be tracked (table full); reported once. A
     // block that is handed out but untracked is never released on exit.
     private static int alloc_track_full = 0;
@@ -411,8 +411,8 @@ namespace Planet.Kernel {
         return KernelLayout.GRANT_ACL + index * 16;
     }
 
-    private static void alloc_track (uint64 phys, uint32 pages) {
-        uint32 owner = (uint32) Sched.current_cr3 ();
+    public static void alloc_track_for (int owner_cr3, uint64 phys, uint32 pages) {
+        uint32 owner = (uint32) owner_cr3;
         if (owner == 0)
             return;
         if (phys == 0 || pages == 0)
@@ -440,6 +440,10 @@ namespace Planet.Kernel {
             alloc_track_full = 1;
             print (@"pmm:alloc_track_full phys=$phys pages=$pages\n");
         }
+    }
+
+    private static void alloc_track (uint64 phys, uint32 pages) {
+        alloc_track_for (Sched.current_cr3 (), phys, pages);
     }
 
     private static void alloc_untrack (int phys) {
@@ -786,11 +790,11 @@ namespace Planet.Kernel {
                 if (range_in_live_grant (a0, 0x1000))
                     return fail (E_ACCES);
                 int ucr3 = Sched.current_cr3 ();
+                alloc_untrack (a0);
+                Pmm.free_frame (a0);
                 if (ucr3 != 0) {
                     Vmm.unmap_user_4k (ucr3, a0);
                 }
-                alloc_untrack (a0);
-                Pmm.free_frame (a0);
                 return 0;
             case 5: // SYS_READ_KEY() -> ASCII char or -1
                 int in_fd = Sched.get_stdio_in ();
@@ -1465,8 +1469,15 @@ namespace Planet.Kernel {
                     return 0;
                 int deadline60 = (int) (mmio_read64 (KernelLayout.TICK) + (a0 + 9) / 10);
                 while ((int) mmio_read64 (KernelLayout.TICK) < deadline60) {
-                    cpu_sti ();
-                    cpu_hlt ();
+                    if (Sched.has_ready_other ()) {
+                        Sched.block_on (1, deadline60);
+                        cpu_sti ();
+                        cpu_hlt ();
+                        Sched.unblock_self ();
+                    } else {
+                        cpu_sti ();
+                        cpu_hlt ();
+                    }
                 }
                 return 0;
             case 61: // SYS_ABI_VERSION() -> integer compared by dlib consumers

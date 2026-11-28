@@ -1,12 +1,12 @@
-// GLib host adapter for c2vala.
+// GLib host adapter for c2plan.
 //
-// The translator is written in the planc dialect, which is a subset of Vala, so
+// The translator is written in the planc dialect, which is a subset of Plan/Vala, so
 // the same sources build twice:
 //
 //   * with planc for the guest (planc/src/host_native.vala + buffer.vala, raw
-//     syscalls, ELF) -- tools/c2vala/build.sh
+//     syscalls, ELF) -- tools/c2plan/build.sh
 //   * with valac for the host (this file, GLib, .exe on Windows) --
-//     tools/c2vala/build_host.sh
+//     tools/c2plan/build_host.sh
 //
 // Only the host primitives are reimplemented; everything above them (preproc,
 // lexer, parser, translator) is the same code. `FileError` here is

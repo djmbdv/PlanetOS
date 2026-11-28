@@ -37,9 +37,9 @@ $Root = Split-Path -Parent (Split-Path -Parent $Port)
 $Upstream = Join-Path $Port 'upstream'
 $Combined = Join-Path $Port 'doom_combined2.vala'
 $Glue = Join-Path $Port 'doom_platform.vala'
-$Runtime = Join-Path $Root 'tools\c2vala_rt.vala'
+$Runtime = Join-Path $Root 'tools\c2plan_rt.plan'
 $Planc = Join-Path $Root 'planc\build\planc.exe'
-$C2Vala = Join-Path $Root 'tools\c2vala\build\c2vala.exe'
+$C2Vala = Join-Path $Root 'tools\c2plan\build\c2plan.exe'
 
 function Fail([string]$Text) {
     Write-Host ('build: ' + $Text) -ForegroundColor Red

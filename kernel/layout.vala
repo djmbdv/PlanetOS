@@ -99,8 +99,6 @@ namespace Planet.Kernel {
         // CR3; a Pmm frame would not be mapped there.
         public const int IO_SCRATCH = 0x10A000;
         public const int IO_SCRATCH_SIZE = 0x4000; // 16 KiB
-        public const int PMM_BITMAP = 0x130000;    // 1 GiB / 4 KiB frames: Fibonacci buddy meta + tables
-        public const int PMM_BITMAP_SIZE = 0x80200;
         public const int RAMFS_TABLE = 0x120000;   // 32 slots x 256 bytes
         public const int RAMFS_TABLE_SIZE = 0x2000;
         public const int SCHED_CUR = 0x123FF0;     // current tid
@@ -110,18 +108,17 @@ namespace Planet.Kernel {
         public const int TCB_TABLE_SIZE = 0x800;
         public const int FXSAVE_AREA = 0x125000;   // 16 tasks x 1024 bytes (XSAVE x87+SSE+AVX)
         public const int FXSAVE_AREA_SIZE = 0x4000;
-        // Blocks handed to userland by SYS_ALLOC_PAGE, so the kernel can tell
-        // who owns a frame (A2, IO-02): 512 blocks x 16 bytes. The table is
-        // global, so it has to hold every live block of every task: 64 slots
-        // overflowed as soon as the compositor grew past a few dozen surfaces,
-        // and an untracked block is never released when its task exits.
+        // Blocks handed to userland by SYS_ALLOC_PAGE and ELF segments, so the
+        // kernel can tell who owns a frame (A2, IO-02): 4096 blocks x 16 bytes.
         public const int ALLOC_TABLE = FXSAVE_AREA + FXSAVE_AREA_SIZE;
-        public const int ALLOC_TABLE_SIZE = 0x2000;
+        public const int ALLOC_TABLE_SIZE = 0x10000;
         // Tasks allowed to map a grant, indexed by handle slot: 64 x 4 tids.
         public const int GRANT_ACL = ALLOC_TABLE + ALLOC_TABLE_SIZE;
         public const int GRANT_ACL_SIZE = 0x400;
         // The PMM metadata is the largest fixed structure (one 16-bit word per
         // 4 KiB frame), so it is placed last: it grows with the RAM cap.
+        public const int PMM_BITMAP = GRANT_ACL + GRANT_ACL_SIZE;    // 1 GiB / 4 KiB frames: Fibonacci buddy meta + tables
+        public const int PMM_BITMAP_SIZE = 0x80200;
         public const int WINDOW_END = PMM_BITMAP + PMM_BITMAP_SIZE;
 
         // --- legacy bootstrap stack used by ElfLoader.load_and_run --------

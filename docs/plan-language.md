@@ -1,16 +1,22 @@
 # The Plan Language (`.plan` / `.vala`)
 
-**Plan** is a systems-oriented evolution of Vala compiled directly by `planc` to native x86-64 machine code (Linux ELF64, PlanetOS ELF, Windows PE32+ `.exe`, and SPIR-V). All Plan extensions are designed to preserve **stage-0 bootstrap compatibility with `valac`** via Vala-compatible syntax (`requires`, `ensures`, `unowned`), attributes (`[...]`), and the preprocessor symbol `PLANC`.
+**Plan** is the primary systems-oriented language of PlanetOS, evolved from Vala and compiled directly by `planc` to native x86-64 machine code (Linux ELF64, PlanetOS ELF, Windows PE32+ `.exe`) and Vulkan SPIR-V. Stage-0 bootstrap compatibility with `valac` is preserved through `tools/plan2vala` (`.plan` -> `.vala`), Vala-compatible attributes (`[...]`), and the preprocessor symbol `PLANC`.
 
 ---
 
-## 1. `.plan` File Extension & Stage-0 Compatibility
+## 1. `.plan` File Extension & Stage-0 Translation (`plan2vala`)
 
 ### Source Extensions
-`planc` accepts both **`.plan`** and **`.vala`** source files interchangeably:
+`.plan` is the canonical extension for Plan source files; `planc` accepts both **`.plan`** and **`.vala`** source files interchangeably:
 ```sh
 planc --target=windows -O2 app.plan -o app.exe
 planc -O2 module.plan helper.vala -o app
+```
+
+### Stage-0 Translator (`tools/plan2vala`)
+`plan2vala` translates Plan-specific syntax (`loop`, `loop (n)`, `inverse_foreach`, `view<T>`, `[Packed]`, etc.) into standard Vala backed by `tools/plan2vala/plan_stage0_rt.vala`, allowing Stage-0 bootstrap builds with `valac`:
+```sh
+plan2vala app.plan -o app.stage0.vala
 ```
 
 ### Automatic `PLANC` Preprocessor Symbol
@@ -117,18 +123,116 @@ int measure (in Animal a) {
 
 ---
 
-## 4. `c2vala` Integration (`--plan`)
+## 4. Modern Plan Dialect Features
 
-The `tools/c2vala` C-to-Vala translator supports emitting Plan code via `--plan` or a `.plan` output filename:
-```sh
-c2vala input.c --plan -o output.plan
-planc --target=windows -O2 output.plan -o output.exe
+### Optional Semicolons
+Statement semicolons (`;`) are optional at end-of-line or before `}`/`EOF` (semicolons remain required inside `for (init; cond; step)` headers):
+```plan
+int acc = 0
+loop (4) {
+    acc += 10
+}
 ```
-When `plan_mode` is active, `c2vala` annotates translated C functions with `[Wrap]` to preserve C modular integer semantics cleanly under `planc`.
+
+### `loop` and `loop (n)`
+- **`loop { ... }`**: infinite loop (contextual keyword — variables/fields named `loop` remain valid).
+- **`loop (n) { ... }`**: executes the body `n` times without boilerplate index variables:
+```plan
+int i = 0
+loop {
+    i++
+    if (i == 3) break
+}
+loop (4) {
+    acc += 10
+}
+```
+
+### `inverse_foreach`
+Iterates in reverse order over arrays, slices, `GenericArray`, and `ArrayList`:
+```plan
+int[] arr = { 1, 2, 3, 4 }
+inverse_foreach (var v in arr) {
+    // visits 4, 3, 2, 1
+}
+```
+
+### Tuples & Destructuring
+Functions can return tuples `(T1, T2, ...)` and callers can unpack them with `var (a, b) = ...`:
+```plan
+(int, string) pair_fn (int x) {
+    return (x * 2, "ok")
+}
+var (dv, ds) = pair_fn (21)
+```
+
+### `view<T>` & Zero-Copy Slices
+- **`arr[start:end]`**: zero-copy array slice expression.
+- **`view<T>`** (`GLib.View<T>`): generic zero-copy array view supporting `vw[i]` indexing and `.slice (start, end)`:
+```plan
+view<int> vw = new view<int> (arr, 1, 3)
+int sum = vw[0] + vw[1] + vw[2]
+```
+
+### `defer` and `errdefer`
+- **`defer <stmt>`**: executes in LIFO order when leaving the enclosing block or returning.
+- **`errdefer <stmt>`**: allowed only inside throwing (`!`) functions; runs in LIFO order only when exiting via an error (`throws` / propagated error):
+```plan
+int fail_fn! (int fail) {
+    int state = 0
+    defer state += 1
+    errdefer state += 10
+    if (fail != 0) throws -42
+    return 77
+}
+```
+
+### Lightweight `!` Errors
+Functions marked with `!` return an `int` error code in `rdx` with zero heap allocation, using `throws <code>` and `try { ... } catch (int e) { ... }` (or bare `catch { ... }`):
+```plan
+int err = 0
+try {
+    int ok = fail_fn! (1)
+} catch (int e) {
+    err = e // -42
+}
+```
+
+### `[Packed]` Struct Layout
+`[Packed]` lays out struct fields with natural byte packing (`uint8` = 1, `uint16` = 2, `uint32`/`float` = 4, `int`/`uint64`/refs = 8) without 8-byte slot padding, reflected in `sizeof(...)`, struct literals, reads, and writes:
+```plan
+[Packed]
+struct PackedHdr {
+    public uint8 magic
+    public uint16 kind
+    public uint32 size
+} // sizeof (PackedHdr) == 7
+```
+
+### Portable SIMD Vectors (`Simd`)
+`GLib`/`Simd` provides 4-lane portable vectors `Simd.u32x4`, `Simd.i32x4`, and `Simd.f32x4` with `splat`, `make`, `add`, `sub`, `mul`, `bit_and`/`bit_or`/`bit_xor`, and `dot`:
+```plan
+using Simd
+var va = u32x4.splat (10u)
+var vb = u32x4.make (1u, 2u, 3u, 4u)
+var vc = va.add (vb)
+var fa = f32x4 () { x = 1.0f, y = 2.0f, z = 3.0f, w = 4.0f }
+float dp = fa.dot (fa) // 30.0f
+```
 
 ---
 
-## 5. Summary of Targets
+## 5. `c2plan` Integration (C -> Plan)
+
+The `tools/c2plan` C-to-Plan translator emits Plan code by default (`.plan` output, `[Wrap]` on translated functions, `loop`/`loop (n)`/`inverse_foreach` optimizations, and optional semicolons), and supports `--vala` for legacy `.vala` compatibility output:
+```sh
+c2plan input.c -o output.plan
+planc --target=windows -O2 output.plan -o output.exe
+```
+
+---
+
+## 6. Summary of Targets
 
 | Target Flag | Output Format | Runtime / Imports |
 |---|---|---|

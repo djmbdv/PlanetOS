@@ -4,7 +4,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 PLANC="${PLANC:-$ROOT/planc/build/planc}"
-OUT="${1:-$HERE/build/c2vala}"
+OUT="${1:-$HERE/build/c2plan}"
 
 mkdir -p "$(dirname "$OUT")"
 

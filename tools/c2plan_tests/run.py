@@ -36,10 +36,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 TOOLS = os.path.join(ROOT, "tools")
 CASES = os.path.join(HERE, "cases")
-RUNTIME = os.path.join(TOOLS, "c2vala_rt.vala")
-RUNTIME_POSIX = os.path.join(TOOLS, "c2vala_rt_posix.vala")
-TRANSLATOR_PY = os.path.join(TOOLS, "c2vala.py")
-TRANSLATOR_VALA = os.path.join(TOOLS, "c2vala", "build", "c2vala")
+RUNTIME = os.path.join(TOOLS, "c2plan_rt.plan")
+RUNTIME_POSIX = os.path.join(TOOLS, "c2plan_rt_posix.plan")
+TRANSLATOR_PY = os.path.join(TOOLS, "c2plan.py")
+TRANSLATOR_VALA = os.path.join(TOOLS, "c2plan", "build", "c2plan")
 TRANSLATOR_VALA_EXE = TRANSLATOR_VALA + ".exe"
 PLANC_BIN = os.path.join(ROOT, "planc", "build", "planc")
 GLIB_MATH = os.path.join(ROOT, "stdlib", "glib", "math.vala")
@@ -152,8 +152,8 @@ def main(argv):
         die("MSYS2 bash not found at %s (set MSYS2_ROOT)" % BASH)
     translator_cmd = [sys.executable, TRANSLATOR_PY] if args.translator == "py" else [find_native()]
     if args.translator == "vala" and find_native() is None:
-        die("native c2vala not built: run tools/c2vala/build_host.sh (host build) "
-            "or tools/c2vala/build.sh (guest build)")
+        die("native c2plan not built: run tools/c2plan/build_host.sh (host build) "
+            "or tools/c2plan/build.sh (guest build)")
     use_planc = (args.translator == "vala") and runs_here(PLANC_BIN)
     valac_available = has_valac()
     names = sorted(d for d in os.listdir(CASES) if os.path.isdir(os.path.join(CASES, d)))
@@ -185,7 +185,7 @@ def main(argv):
 
         sources = sorted(f for f in os.listdir(case_dir) if f.endswith(".c"))
         headers = sorted(f for f in os.listdir(case_dir) if f.endswith(".h"))
-        vala_out = os.path.join(case_work, "translated.vala")
+        vala_out = os.path.join(case_work, "translated.plan" if use_planc else "translated.vala")
         translate = subprocess.run(
             translator_cmd + [os.path.join(case_dir, s) for s in sources + headers]
             + ["-I", case_dir, "-o", vala_out],
@@ -249,8 +249,11 @@ def main(argv):
             build = subprocess.run([PLANC_BIN, PLANET_SYS, GLIB_CORE, GLIB_UTILS, GLIB_MATH, GLIB_PROCESS, GLIB_TIME, GLIB_THREAD, GLIB_QUEUE, GLIB_ATOMIC, GLIB_MEMORY, vala_out, RUNTIME, RUNTIME_POSIX, "-o", vala_exe],
                                    capture_output=True, text=True)
         else:
+            import shutil
+            rt_vala = os.path.join(case_work, "c2plan_rt.vala")
+            shutil.copyfile(RUNTIME, rt_vala)
             build = sh('valac --pkg=glib-2.0 "%s" "%s" -o "%s"'
-                       % (posix(vala_out), posix(RUNTIME), posix(vala_exe)))
+                       % (posix(vala_out), posix(rt_vala), posix(vala_exe)))
         if build.returncode != 0:
             print("   FAIL: %s rejected the generated code" % ("planc" if use_planc else "valac"))
             print(build.stderr[-4000:])

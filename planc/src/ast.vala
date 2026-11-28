@@ -160,6 +160,15 @@ namespace Planc {
         }
     }
 
+    public class TupleExpr : Expr {
+        public GenericArray<Expr> elements { get; private set; }
+        public int temp_slot { get; set; default = -1; }
+
+        public TupleExpr () {
+            elements = new GenericArray<Expr> ();
+        }
+    }
+
     public class VarRef : Expr {
         public string name { get; set; }
         public int temp_slot { get; set; default = -1; }
@@ -432,6 +441,7 @@ namespace Planc {
         public bool is_varargs_pack { get; set; default = false; }
         public bool infer_type { get; set; default = false; }
         public bool is_unowned { get; set; default = false; }
+        public bool is_reverse { get; set; default = false; }
         public string var_name { get; set; }
         public Expr collection { get; set; }
         public Statement body { get; set; }
@@ -517,6 +527,7 @@ namespace Planc {
         public string file { get; set; default = ""; }
         public bool is_defined { get; set; default = false; }
         public bool is_union { get; set; default = false; }
+        public bool is_packed { get; set; default = false; }
         public bool is_simple_type { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
         public bool is_delegate { get; set; default = false; }
@@ -609,9 +620,10 @@ namespace Planc {
         public int asm_line { get; set; default = 0; }
         public int asm_column { get; set; default = 0; }
         public LambdaExpr? from_lambda { get; set; default = null; }
+        public bool is_bang_err { get; set; default = false; }
         public GenericArray<string> throws_domains { get; private set; }
         public bool can_throw {
-            get { return throws_domains.length > 0; }
+            get { return throws_domains.length > 0 || is_bang_err; }
         }
         public GenericArray<Param> params { get; private set; }
         public GenericArray<Expr> requires_exprs { get; private set; }
@@ -676,6 +688,7 @@ namespace Planc {
         public bool is_compact { get; set; default = false; }
         public bool is_defined { get; set; default = false; }
         public bool is_union { get; set; default = false; }
+        public bool is_packed { get; set; default = false; }
         public bool is_simple_type { get; set; default = false; }
         public bool is_generic_template { get; set; default = false; }
         public GenericArray<string> type_params { get; private set; }
@@ -754,9 +767,15 @@ namespace Planc {
         public int column { get; set; }
     }
 
+    public class DeferStatement : Statement {
+        public bool is_errdefer { get; set; default = false; }
+        public Statement body { get; set; }
+    }
+
     public class ThrowStatement : Statement {
-        public string domain_name { get; set; }
-        public string code_name { get; set; }
+        public bool is_light_code { get; set; default = false; }
+        public string domain_name { get; set; default = ""; }
+        public string code_name { get; set; default = ""; }
         public Expr message { get; set; }
     }
 
@@ -1127,11 +1146,43 @@ namespace Planc {
 
         // sizeof: every scalar and reference occupies one 8-byte slot in this
         // ABI, and a struct occupies `type_slots` of them.
+        public static int packed_field_bytes (ValaType t, string tname) {
+            if (t == ValaType.BOOL)
+                return 1;
+            if (t == ValaType.FLOAT)
+                return 4;
+            if (t == ValaType.INT) {
+                if (tname == "uint8" || tname == "int8" || tname == "char" || tname == "uchar")
+                    return 1;
+                if (tname == "uint16" || tname == "int16" || tname == "short" || tname == "ushort")
+                    return 2;
+                if (tname == "uint32" || tname == "int32" || tname == "uint" || tname == "unichar")
+                    return 4;
+            }
+            return 8;
+        }
+
         public int sizeof_bytes (ValaType t, string tname) {
             if (t == ValaType.VOID)
                 return 0;
-            if (t == ValaType.STRUCT)
+            if (t == ValaType.STRUCT) {
+                unowned var sd = find_struct (tname);
+                if (sd != null && sd.is_packed) {
+                    int total = 0;
+                    foreach (var fld in sd.fields) {
+                        int fb = (fld.field_type == ValaType.STRUCT)
+                            ? sizeof_bytes (ValaType.STRUCT, fld.type_name)
+                            : packed_field_bytes (fld.field_type, fld.type_name);
+                        if (sd.is_union) {
+                            if (fb > total) total = fb;
+                        } else {
+                            total += fb;
+                        }
+                    }
+                    return total;
+                }
                 return 8 * type_slots (ValaType.STRUCT, tname);
+            }
             return 8;
         }
 
@@ -1944,6 +1995,7 @@ namespace Planc {
                     elem_type = et,
                     elem_type_name = en,
                     infer_type = o.infer_type,
+                    is_reverse = o.is_reverse,
                     var_name = o.var_name,
                     collection = clone_expr (o.collection, tparams, targs, targ_names),
                     body = clone_stmt (o.body, tparams, targs, targ_names),

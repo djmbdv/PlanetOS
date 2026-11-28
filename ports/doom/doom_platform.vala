@@ -5,24 +5,39 @@
 // refcounted. Sound, music and wipes are stubbed: the port builds with
 // -D PLANETOS_NOSOUND and runs without them.
 using GLib;
-using Cairo;
+using Planet;
 using Gdk;
 
 private Window? _doom_win = null;
-private Context? _doom_cr = null;
-private ImageSurface? _doom_surf = null;
+private int _doom_src_addr = 0;
+private uint32[]? _doom_pal = null;
+private int _doom_pal_addr = 0;
 private int _doom_t0 = 0;
+private int _last_present_tick = -10;
+private uint8 _held_key = 0;
+private int _held_deadline_ms = 0;
 
 public void DG_Init () {
     _doom_t0 = Sys.ticks () * 10;
     _doom_win = Display.open_window (640, 400);
-    if (_doom_win != null) {
-        _doom_cr = ((!) _doom_win).create_cairo_context ();
-        // Wrap the frame buffer the game already owns: presenting then needs no
-        // 1 MB copy per frame. planc arrays keep their elements at +16.
-        int addr = (int) (uintptr.from_pointer ((void*) DG_ScreenBuffer) + (uintptr) 16);
-        _doom_surf = new ImageSurface.wrap (addr, 640, 400);
+    if (_doom_win == null) {
+        print ("[doom] failed to open window\n");
+        return;
     }
+    var win = (!) _doom_win;
+    if (!win.is_valid () || win.surface.buf_addr == 0) {
+        print ("[doom] invalid window surface\n");
+        _doom_win = null;
+        return;
+    }
+    if (DG_ScreenBuffer == null || DG_ScreenBuffer.length < 640 * 400) {
+        print ("[doom] invalid screen buffer\n");
+        return;
+    }
+    // planc arrays keep their elements at +16.
+    _doom_src_addr = (int) (uintptr.from_pointer ((void*) DG_ScreenBuffer) + (uintptr) 16);
+    _doom_pal = new uint32[256];
+    _doom_pal_addr = (int) (uintptr.from_pointer ((void*) _doom_pal) + (uintptr) 16);
 }
 
 public int _doom_frames = 0;
@@ -31,13 +46,43 @@ public void DG_DrawFrame () {
     _doom_frames++;
     if (_doom_frames % 25 == 0)
         print (@"[doom] frame $(_doom_frames) tic=$(gametic) free=$((int) (Sys.free_pages ()))\n");
-    if (_doom_win == null || _doom_cr == null || _doom_surf == null)
+    if (_doom_win == null || _doom_src_addr == 0)
         return;
-    var surf = (!) _doom_surf;
-    var cr = (!) _doom_cr;
-    var win = (!) _doom_win;
-    cr.blit_surface (surf, 0, 0, 640, 400);
-    win.present ();
+    ((!) _doom_win).present_argb32 (_doom_src_addr, 640, 400);
+}
+
+public void DG_FinishUpdate () {
+    int now_tick = Sys.ticks ();
+    if (now_tick - _last_present_tick < 2 && _doom_frames > 0) {
+        return;
+    }
+    _last_present_tick = now_tick;
+    _doom_frames++;
+    if (_doom_frames % 25 == 0)
+        print (@"[doom] frame $(_doom_frames) tic=$(gametic) free=$((int) (Sys.free_pages ()))\n");
+    if (_doom_win == null || _doom_pal == null || I_VideoBuffer == null || DG_ScreenBuffer == null)
+        return;
+    var pal = (!) _doom_pal;
+    for (int i = 0; i < 256; i++) {
+        var c = colors[i];
+        pal[i] = ((uint32) 0xFF << 24) | (c.r << 16) | (c.g << 8) | c.b;
+    }
+    var src = I_VideoBuffer;
+    var dst = DG_ScreenBuffer;
+    for (int y = 0; y < 200; y++) {
+        int sr = y * 320;
+        int dr0 = y * 1280;
+        int dr1 = dr0 + 640;
+        for (int x = 0; x < 320; x++) {
+            uint32 col = pal[src[sr + x]];
+            int dx = x << 1;
+            dst[dr0 + dx] = col;
+            dst[dr0 + dx + 1] = col;
+            dst[dr1 + dx] = col;
+            dst[dr1 + dx + 1] = col;
+        }
+    }
+    ((!) _doom_win).present_argb32 (_doom_src_addr, 640, 400);
 }
 
 public void DG_SleepMs (uint32 ms) {
@@ -49,15 +94,15 @@ public uint32 DG_GetTicksMs () {
 }
 
 private uint8 map_doom_key (uint kv) {
-    if (kv == 0xFF53 || kv == 0x1B5B43) return 0xae; // Right
-    if (kv == 0xFF51 || kv == 0x1B5B44) return 0xac; // Left
-    if (kv == 0xFF52 || kv == 0x1B5B41) return 0xad; // Up
-    if (kv == 0xFF54 || kv == 0x1B5B42) return 0xaf; // Down
+    if (kv == 0xFF53 || kv == 0x1B5B43 || kv == 0x84) return 0xae; // Right
+    if (kv == 0xFF51 || kv == 0x1B5B44 || kv == 0x83) return 0xac; // Left
+    if (kv == 0xFF52 || kv == 0x1B5B41 || kv == 0x81) return 0xad; // Up
+    if (kv == 0xFF54 || kv == 0x1B5B42 || kv == 0x82) return 0xaf; // Down
     if (kv == 0xFF0D || kv == '\n' || kv == '\r') return 13; // Enter
     if (kv == 0xFF1B || kv == 27) return 27; // Esc
     if (kv == 0xFF09 || kv == '\t') return 9; // Tab
     if (kv == ' ') return 0xa2; // Use
-    if (kv == 0xFFE3 || kv == 0xFFE4) return 0xa3; // Ctrl -> Fire
+    if (kv == 0xFFE3 || kv == 0xFFE4 || kv == 'f' || kv == 'F') return 0xa3; // Ctrl / F -> Fire
     if (kv == 0xFFE1 || kv == 0xFFE2) return 0xb6; // Shift -> Run
     return (uint8) (kv & 0xFF);
 }
@@ -65,10 +110,24 @@ private uint8 map_doom_key (uint kv) {
 public int DG_GetKey (int[] pressed, uint8[] key) {
     if (_doom_win == null)
         return 0;
-    var ev = ((!) _doom_win).poll_event ();
-    if (ev.type == EventType.KEY_PRESS) {
-        pressed[0] = 1;
-        key[0] = map_doom_key (ev.keyval);
+    var win = (!) _doom_win;
+    while (true) {
+        var ev = win.poll_event ();
+        if (ev.type == EventType.NONE)
+            break;
+        if (ev.type == EventType.KEY_PRESS) {
+            uint8 k = map_doom_key (ev.keyval);
+            _held_key = k;
+            _held_deadline_ms = (int) DG_GetTicksMs () + 120;
+            pressed[0] = 1;
+            key[0] = k;
+            return 1;
+        }
+    }
+    if (_held_key != 0 && (int) DG_GetTicksMs () >= _held_deadline_ms) {
+        pressed[0] = 0;
+        key[0] = _held_key;
+        _held_key = 0;
         return 1;
     }
     return 0;

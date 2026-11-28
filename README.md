@@ -4,7 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/arch-x86__64%20Long%20Mode-38bdf8?style=flat-square" alt="x86-64 Long Mode">
-  <img src="https://img.shields.io/badge/language-100%25%20Vala-6366f1?style=flat-square" alt="100% Vala">
+  <img src="https://img.shields.io/badge/language-100%25%20Plan-6366f1?style=flat-square" alt="100% Plan">
   <img src="https://img.shields.io/badge/toolchain-self--hosted%20planc-8b5cf6?style=flat-square" alt="Self-hosted planc">
   <img src="https://img.shields.io/badge/C%20%2F%20libc-none-10b981?style=flat-square" alt="Zero C / Zero libc">
   <img src="https://img.shields.io/badge/planc%20tests-226%2F228%20passing-22c55e?style=flat-square" alt="226/228 passing">
@@ -12,9 +12,7 @@
 
 # PlanetOS
 
-**An operating system and its toolchain, entirely in Vala, compiled straight to
-native x86-64 machine code and SPIR-V — with zero C, zero libc, and no external
-assembler or linker.**
+**An operating system and its toolchain, written in [Plan](docs/plan-language.md) (our systems-oriented evolution of Vala, `.plan` / `.vala`), compiled straight to native x86-64 machine code and SPIR-V — with zero C, zero libc, and no external assembler or linker.**
 
 Status: **working self-hosted compiler (`planc`, slices 0–45) + freestanding
 x86-64 Long Mode kernel + pure-Vala userland & desktop running in QEMU (0 build warnings).**
@@ -41,9 +39,9 @@ elementary OS-inspired Granite light palette.
 
 | Artifact | What it is | The constraint that defines it |
 |---|---|---|
-| **`planc`** | Vala → x86_64 machine code compiler. Own frontend, IR, backend, assembler and linker. Written in Vala. Second backend target: **SPIR-V** bytecode for Vulkan shaders, from the same IR. | Emits no C. Needs no `cc`, `ld` or `as` to produce binaries, and no glslang/glslc to produce SPIR-V. |
-| **`planetrt`** | Runtime and standard library: object model, strings, arrays, closures, signals, coroutines, errors, allocator. Written in Vala. | Does not wrap libc. Does not reimplement the GLib ABI. |
-| **`planetos`** | Kernel and userland. Written in Vala, compiled by `planc`, linked with `planetrt`. | No libc, no POSIX, no Linux. |
+| **`planc`** | Plan/Vala → x86_64 machine code compiler. Own frontend, IR, backend, assembler and linker. Written in Plan/Vala (Stage-0 translatable via `plan2vala`). Second backend target: **SPIR-V** bytecode for Vulkan shaders, from the same IR. | Emits no C. Needs no `cc`, `ld` or `as` to produce binaries, and no glslang/glslc to produce SPIR-V. |
+| **`planetrt`** | Runtime and standard library: object model, strings, arrays, `View<T>`, `Simd`, closures, signals, coroutines, errors, allocator. Written in Plan/Vala. | Does not wrap libc. Does not reimplement the GLib ABI. |
+| **`planetos`** | Kernel and userland. Written in Plan/Vala, compiled by `planc`, linked with `planetrt`. | No libc, no POSIX, no Linux. |
 
 The difference from the previous revision of this plan is structural: the
 compiler used to be `valac` (which emits C) and the runtime used to be a GLib

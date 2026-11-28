@@ -112,6 +112,7 @@ namespace Planet.Kernel {
                 case 0x9D: kb_ctrl = 0; return 0;
                 case 0x38: kb_alt = 1; return 0;
                 case 0xB8: kb_alt = 0; return 0;
+                case 0x01: return 27;
                 case 0x1C: return '\n';
                 case 0x39: return ' ';
                 case 0x0E: return 8;
