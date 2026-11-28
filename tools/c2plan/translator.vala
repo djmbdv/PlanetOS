@@ -5588,10 +5588,74 @@ namespace C2Plan {
             return "";
         }
 
+        // If `value` is `&arr[idx]` or `arr + idx` over a struct array/pointer,
+        // return `arr[idx]` directly so `coerce_ptr` does not slice-copy the
+        // tail of `arr` just to unbox element 0.
+        private string? direct_struct_elem_expr (CExpr value, CType inner_struct) throws RefuseError {
+            if (value is ExprUnary && ((ExprUnary) value).op == "&"
+                && ((ExprUnary) value).operand is ExprIndex) {
+                var ix = (ExprIndex) ((ExprUnary) value).operand;
+                var at = infer_type (ix.array);
+                if (at != null && (at.kind == CTypeKind.ARRAY || at.kind == CTypeKind.PTR)
+                    && at.inner != null && at.inner.kind == CTypeKind.STRUCT
+                    && at.inner.name == inner_struct.name) {
+                    if (ix.array is ExprIdent) {
+                        var pli = find_local (cur_locals, ((ExprIdent) ix.array).name);
+                        if (pli != null && pli.has_ptr_arith)
+                            return @"$(esc_ident (pli.name))[_off_$(pli.name) + (int) ($(emit_expr (ix.index)))]";
+                    }
+                    return @"$(emit_expr (ix.array))[(int) ($(emit_expr (ix.index)))]";
+                }
+            }
+            if (value is ExprBinary) {
+                var b = (ExprBinary) value;
+                if (b.op == "+" || b.op == "-") {
+                    var lt = infer_type (b.left);
+                    var rt2 = infer_type (b.right);
+                    if (lt != null && (lt.kind == CTypeKind.PTR || lt.kind == CTypeKind.ARRAY)
+                        && (rt2 == null || (rt2.kind != CTypeKind.PTR && rt2.kind != CTypeKind.ARRAY))
+                        && lt.inner != null && lt.inner.kind == CTypeKind.STRUCT
+                        && lt.inner.name == inner_struct.name) {
+                        if (b.left is ExprIdent) {
+                            var pli = find_local (cur_locals, ((ExprIdent) b.left).name);
+                            if (pli != null && pli.has_ptr_arith)
+                                return @"$(esc_ident (pli.name))[_off_$(pli.name) $(b.op) (int) ($(emit_expr (b.right)))]";
+                        }
+                        if (b.op == "+")
+                            return @"$(emit_expr (b.left))[(int) ($(emit_expr (b.right)))]";
+                    }
+                    if (b.op == "+" && rt2 != null && (rt2.kind == CTypeKind.PTR || rt2.kind == CTypeKind.ARRAY)
+                        && (lt == null || (lt.kind != CTypeKind.PTR && lt.kind != CTypeKind.ARRAY))
+                        && rt2.inner != null && rt2.inner.kind == CTypeKind.STRUCT
+                        && rt2.inner.name == inner_struct.name) {
+                        if (b.right is ExprIdent) {
+                            var pli = find_local (cur_locals, ((ExprIdent) b.right).name);
+                            if (pli != null && pli.has_ptr_arith)
+                                return @"$(esc_ident (pli.name))[_off_$(pli.name) + (int) ($(emit_expr (b.left)))]";
+                        }
+                        return @"$(emit_expr (b.right))[(int) ($(emit_expr (b.left)))]";
+                    }
+                }
+            }
+            return null;
+        }
+
         // `target_view` forces the Vala view of the destination: 1 = string,
         // 2 = array, 0 = derive it (from `target_expr` or the C type).
         private string coerce_ptr (CExpr value, CType? target, CExpr? target_expr = null,
                                    int target_view = 0) throws RefuseError {
+            if (target != null && target.kind == CTypeKind.PTR && target.inner != null) {
+                var vt0 = infer_type (value);
+                int vv0 = ptr_view (value, vt0);
+                int tv0 = target_view;
+                if (tv0 == 0)
+                    tv0 = target_expr != null ? ptr_view (target_expr, target) : 1;
+                if (vv0 == 2 && tv0 == 1 && target.inner.kind == CTypeKind.STRUCT) {
+                    string? direct = direct_struct_elem_expr (value, (CType) target.inner);
+                    if (direct != null)
+                        return direct;
+                }
+            }
             string rt = emit_expr (value);
             if (target == null || target.kind != CTypeKind.PTR || target.inner == null)
                 return rt;

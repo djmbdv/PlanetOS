@@ -6229,16 +6229,16 @@ void AM_initVariables () {
     m_h = FixedMul ((f_h << 16), scale_ftom);
     if (playeringame[(int) (consoleplayer)] != 0) 
     {
-        plr = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (consoleplayer)));
+        plr = players[(int) (consoleplayer)];
     }
     else 
     {
-        plr = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (0)));
+        plr = players[0];
         for (pnum = 0; pnum < 4; pnum++) 
         {
             if (playeringame[(int) (pnum)] != 0) 
             {
-                plr = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (pnum)));
+                plr = players[(int) (pnum)];
                 break;
             }
         }
@@ -6908,7 +6908,7 @@ void AM_drawPlayers () {
     for (i = 0; i < 4; i++) 
     {
         their_color++;
-        p = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (i)));
+        p = players[(int) (i)];
         if (((deathmatch != 0) && (!(singledemo != 0))) && (p != plr)) {
             continue;
         }
@@ -7002,7 +7002,7 @@ event_t? D_PopEvent () {
     {
         return null;
     }
-    result = _c2v_box_event_t_obj (_c2v_slice_event_t (events, (int) (eventtail)));
+    result = events[(int) (eventtail)];
     eventtail = ((eventtail + 1) % 64);
     return result;
 }
@@ -7203,7 +7203,7 @@ iwad_t?[] D_FindAllIWADs (int mask) {
         filename = D_FindWADByName (c_str_to_bytes (iwads[(int) (i)].name));
         if (filename != null) 
         {
-            result[(int) (result_len)] = _c2v_box_iwad_t_obj (_c2v_slice_iwad_t (iwads, (int) (i)));
+            result[(int) (result_len)] = iwads[(int) (i)];
             ++result_len;
         }
     }
@@ -7421,7 +7421,7 @@ void D_StartGameLoop () {
 void D_StartNetGame (net_gamesettings_t? settings, _c2v_del_netgame_startup_callback_t_dcb2f807? callback) {
     settings.consoleplayer = 0;
     settings.num_players = 1;
-    settings.player_classes[(int) (0)] = player_class;
+    settings.player_classes[0] = player_class;
     settings.new_sync = 0;
     settings.extratics = 1;
     settings.ticdup = 1;
@@ -7479,7 +7479,7 @@ void OldNetSync () {
         }
         frameskip[(int) ((frameon & 3))] = (int) (((oldnettics > recvtic)) ? 1 : 0);
         oldnettics = maketic;
-        if ((((frameskip[(int) (0)] != 0) && (frameskip[(int) (1)] != 0)) && (frameskip[(int) (2)] != 0)) && (frameskip[(int) (3)] != 0)) 
+        if ((((frameskip[0] != 0) && (frameskip[1] != 0)) && (frameskip[2] != 0)) && (frameskip[3] != 0)) 
         {
             skiptics = 1;
         }
@@ -7509,7 +7509,7 @@ void TicdupSquash (ticcmd_set_t? @set) {
     uint32 i = 0;
     for (i = (uint32) 0; i < ((uint32) 8); ++i) 
     {
-        cmd = _c2v_box_ticcmd_t_obj (_c2v_slice_ticcmd_t (@set.cmds, (int) (i)));
+        cmd = @set.cmds[(int) (i)];
         cmd.chatchar = (uint8) 0;
         if ((cmd.buttons & ((int) buttoncode_t.BT_SPECIAL)) != 0) {
             cmd.buttons = (uint8) 0;
@@ -7598,7 +7598,7 @@ void TryRunTics () {
         {
             return;
         }
-        @set = _c2v_box_ticcmd_set_t_obj (_c2v_slice_ticcmd_set_t (ticdata, (int) (((gametic / ticdup) % 128))));
+        @set = ticdata[(int) (((gametic / ticdup) % 128))];
         if (!(net_client_connected != 0)) 
         {
             SinglePlayerClear (@set);
@@ -8261,7 +8261,7 @@ void D_Endoom () {
     }
     endoom = W_CacheLumpName (c_str_to_bytes ("ENDOOM"), (int) __anon_enum_1.PU_STATIC);
     I_Endoom (endoom);
-    Process.exit ((int) (0));
+    Process.exit (0);
 }
 
 // c2vala-ptrs: file_buf[WR]=>uint8[] demolumpname_buf[PLAIN]=>uint8[](ro) forwardmove_arr[IDX|WR]=>T[] sidemove_arr[IDX|WR]=>T[] name_arr[IDX]=>T[]
@@ -8303,10 +8303,10 @@ void D_DoomMain () {
             scale = 400;
         }
         print (@"turbo scale: $(scale)%\n");
-        forwardmove[(int) (0)] = ((forwardmove[(int) (0)] * scale) / 100);
-        forwardmove[(int) (1)] = ((forwardmove[(int) (1)] * scale) / 100);
-        sidemove[(int) (0)] = ((sidemove[(int) (0)] * scale) / 100);
-        sidemove[(int) (1)] = ((sidemove[(int) (1)] * scale) / 100);
+        forwardmove[0] = ((forwardmove[0] * scale) / 100);
+        forwardmove[1] = ((forwardmove[1] * scale) / 100);
+        sidemove[0] = ((sidemove[0] * scale) / 100);
+        sidemove[1] = ((sidemove[1] * scale) / 100);
     }
     print (@"V_Init: allocate screens.\n");
     V_Init ();
@@ -8437,13 +8437,13 @@ void D_DoomMain () {
     p = M_CheckParmWithArgs (c_str_to_bytes ("-skill"), 1);
     if (p != 0) 
     {
-        startskill = (skill_t) ((myargv[(int) ((p + 1))][(int) (0)] - '1'));
+        startskill = (skill_t) ((myargv[(int) ((p + 1))][0] - '1'));
         autostart = (uint32) 1;
     }
     p = M_CheckParmWithArgs (c_str_to_bytes ("-episode"), 1);
     if (p != 0) 
     {
-        startepisode = (myargv[(int) ((p + 1))][(int) (0)] - '0');
+        startepisode = (myargv[(int) ((p + 1))][0] - '0');
         startmap = 1;
         autostart = (uint32) 1;
     }
@@ -8466,10 +8466,10 @@ void D_DoomMain () {
         }
         else 
         {
-            startepisode = (myargv[(int) ((p + 1))][(int) (0)] - '0');
+            startepisode = (myargv[(int) ((p + 1))][0] - '0');
             if ((p + 2) < myargc) 
             {
-                startmap = (myargv[(int) ((p + 2))][(int) (0)] - '0');
+                startmap = (myargv[(int) ((p + 2))][0] - '0');
             }
             else 
             {
@@ -8679,7 +8679,7 @@ void PlayerQuitGame (player_s[] player) {
     uint32 player_num = 0;
     player_num = (uint32) ((_off_player - 0));
     M_StringCopy (exitmsg, c_str_to_bytes ("Player 1 left the game"), ((int) (80) * (int) (1)));
-    exitmsg[(int) (7)] += (uint8) player_num;
+    exitmsg[7] += (uint8) player_num;
     playeringame[(int) (player_num)] = (uint32) 0;
     players[(int) (consoleplayer)].message = (string) exitmsg;
     if (demorecording != 0) 
@@ -8840,7 +8840,7 @@ void F_StartFinale () {
     }
     for (i = (size_t) 0; ((uint64) i) < ((textscreens.length * (int) (32)) / 32); ++i) 
     {
-        textscreen_t? screen = _c2v_box_textscreen_t_obj (_c2v_slice_textscreen_t (textscreens, (int) (i)));
+        textscreen_t? screen = textscreens[(int) (i)];
         if ((gameversion == GameVersion_t.exe_chex) && (screen.mission == GameMission_t.doom)) 
         {
             screen.level = 5;
@@ -8993,7 +8993,7 @@ public uint32 castattacking;
 void F_StartCast () {
     wipegamestate = (gamestate_t) (-1);
     castnum = 0;
-    caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].seestate)));
+    caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].seestate)];
     casttics = caststate.tics;
     castdeath = (uint32) 0;
     finalestage = finalestage_t.F_STAGE_CAST;
@@ -9022,7 +9022,7 @@ void F_CastTicker () {
             if (mobjinfo[(int) (castorder[(int) (castnum)].type)].seesound != 0) {
                 0;
             }
-            caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].seestate)));
+            caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].seestate)];
             castframes = 0;
         }
         else 
@@ -9032,7 +9032,7 @@ void F_CastTicker () {
                 break;
             }
             st = (int) caststate.nextstate;
-            caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (st)));
+            caststate = states[(int) (st)];
             castframes++;
             switch (st) {
                 case statenum_t.S_PLAY_ATK1:
@@ -9108,19 +9108,19 @@ void F_CastTicker () {
         {
             castattacking = (uint32) 1;
             if (castonmelee != 0) {
-                caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].meleestate)));
+                caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].meleestate)];
             }
             else {
-                caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].missilestate)));
+                caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].missilestate)];
             }
             castonmelee ^= 1;
             if (caststate == states[(int) (statenum_t.S_NULL)]) 
             {
                 if (castonmelee != 0) {
-                    caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].meleestate)));
+                    caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].meleestate)];
                 }
                 else {
-                    caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].missilestate)));
+                    caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].missilestate)];
                 }
             }
         }
@@ -9133,7 +9133,7 @@ void F_CastTicker () {
             c2v_goto_stopattack = false;
             castattacking = (uint32) 0;
             castframes = 0;
-            caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].seestate)));
+            caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].seestate)];
         }
     }
     casttics = caststate.tics;
@@ -9151,7 +9151,7 @@ uint32 F_CastResponder (event_t? ev) {
         return (uint32) 1;
     }
     castdeath = (uint32) 1;
-    caststate = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].deathstate)));
+    caststate = states[(int) (mobjinfo[(int) (castorder[(int) (castnum)].type)].deathstate)];
     casttics = caststate.tics;
     castframes = 0;
     castattacking = (uint32) 0;
@@ -9217,10 +9217,10 @@ void F_CastDrawer () {
     patch_t? patch = null;
     V_DrawPatch (0, 0, new patch_t.at (W_CacheLumpName (c_str_to_bytes ("BOSSBACK"), (int) __anon_enum_1.PU_CACHE), 0));
     F_CastPrint (c_str_to_bytes (castorder[(int) (castnum)].name));
-    sprdef = _c2v_box_spritedef_t_obj (_c2v_slice_spritedef_t (sprites, (int) (caststate.sprite)));
-    sprframe = _c2v_box_spriteframe_t_obj (_c2v_slice_spriteframe_t (sprdef.spriteframes, (int) ((caststate.frame & 0x7fff))));
-    lump = (int) (sprframe.lump[(int) (0)]);
-    flip = ((uint32) (sprframe.flip[(int) (0)]));
+    sprdef = sprites[(int) (caststate.sprite)];
+    sprframe = sprdef.spriteframes[(int) ((caststate.frame & 0x7fff))];
+    lump = (int) (sprframe.lump[0]);
+    flip = ((uint32) (sprframe.flip[0]));
     patch = new patch_t.at (W_CacheLumpNum ((lump + firstspritelump), (int) __anon_enum_1.PU_CACHE), 0);
     if (flip != 0) {
         V_DrawPatchFlipped (160, 170, patch);
@@ -9689,19 +9689,19 @@ void G_BuildTiccmd (ticcmd_t[] cmd, int maketic) {
     }
     mousey = 0;
     mousex = mousey;
-    if (forward > forwardmove[(int) (1)]) {
-        forward = forwardmove[(int) (1)];
+    if (forward > forwardmove[1]) {
+        forward = forwardmove[1];
     }
     else 
-    if (forward < -forwardmove[(int) (1)]) {
-        forward = -forwardmove[(int) (1)];
+    if (forward < -forwardmove[1]) {
+        forward = -forwardmove[1];
     }
-    if (side > forwardmove[(int) (1)]) {
-        side = forwardmove[(int) (1)];
+    if (side > forwardmove[1]) {
+        side = forwardmove[1];
     }
     else 
-    if (side < -forwardmove[(int) (1)]) {
-        side = -forwardmove[(int) (1)];
+    if (side < -forwardmove[1]) {
+        side = -forwardmove[1];
     }
     cmd[0].forwardmove += (int8) forward;
     cmd[0].sidemove += (int8) side;
@@ -10012,7 +10012,7 @@ void G_Ticker () {
                         }
                         break;
                     case buttoncode_t.BTS_SAVEGAME:
-                        if (!(savedescription[(int) (0)] != 0)) 
+                        if (!(savedescription[0] != 0)) 
                         {
                             M_StringCopy (savedescription, c_str_to_bytes ("NET GAME"), ((int) (32) * (int) (1)));
                         }
@@ -10054,7 +10054,7 @@ void G_InitPlayer (int player) {
 // c2vala-ptrs: p_obj[DEREF|WR|ARROW]=>T?
 void G_PlayerFinishLevel (int player) {
     player_s? p = null;
-    p = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (player)));
+    p = players[(int) (player)];
     for (int _c2v_mi = 0; _c2v_mi < (((int) (((int) (powertype_t.NUMPOWERS) * (int) (4)))) / (int) (4)) && _c2v_mi < p.powers.length; _c2v_mi++) { p.powers[_c2v_mi] = 0; }
     for (int _c2v_mi = 0; _c2v_mi < (((int) (((int) (card_t.NUMCARDS) * (int) (4)))) / (int) (4)) && _c2v_mi < p.cards.length; _c2v_mi++) { p.cards[_c2v_mi] = 0; }
     p.mo.flags &= (int) ((~(int) (mobjflag_t.MF_SHADOW)));
@@ -10165,20 +10165,20 @@ uint32 G_CheckSpot (int playernum, mapthing_t? mthing) {
         an = ((0x20000000 >> 19) * (((int) mthing.angle) / 45));
         switch (an) {
             case 4096:
-                xa = finetangent[(int) (2048)];
-                ya = finetangent[(int) (0)];
+                xa = finetangent[2048];
+                ya = finetangent[0];
                 break;
             case 5120:
-                xa = finetangent[(int) (3072)];
-                ya = finetangent[(int) (1024)];
+                xa = finetangent[3072];
+                ya = finetangent[1024];
                 break;
             case 6144:
-                xa = finesine[(int) (0)];
-                ya = finetangent[(int) (2048)];
+                xa = finesine[0];
+                ya = finetangent[2048];
                 break;
             case 7168:
-                xa = finesine[(int) (1024)];
-                ya = finetangent[(int) (3072)];
+                xa = finesine[1024];
+                ya = finetangent[3072];
                 break;
             case 0:
             case 1024:
@@ -10212,7 +10212,7 @@ void G_DeathMatchSpawnPlayer (int playernum) {
     for (j = 0; j < 20; j++) 
     {
         i = (P_Random () % selections);
-        if (G_CheckSpot (playernum, _c2v_box_mapthing_t_obj (_c2v_slice_mapthing_t (deathmatchstarts, (int) (i)))) != 0) 
+        if (G_CheckSpot (playernum, deathmatchstarts[(int) (i)]) != 0) 
         {
             deathmatchstarts[(int) (i)].type = (int16) ((playernum + 1));
             P_SpawnPlayer (_c2v_slice_mapthing_t (deathmatchstarts, (int) (i)));
@@ -10236,14 +10236,14 @@ void G_DoReborn (int playernum) {
             G_DeathMatchSpawnPlayer (playernum);
             return;
         }
-        if (G_CheckSpot (playernum, _c2v_box_mapthing_t_obj (_c2v_slice_mapthing_t (playerstarts, (int) (playernum)))) != 0) 
+        if (G_CheckSpot (playernum, playerstarts[(int) (playernum)]) != 0) 
         {
             P_SpawnPlayer (_c2v_slice_mapthing_t (playerstarts, (int) (playernum)));
             return;
         }
         for (i = 0; i < 4; i++) 
         {
-            if (G_CheckSpot (playernum, _c2v_box_mapthing_t_obj (_c2v_slice_mapthing_t (playerstarts, (int) (i)))) != 0) 
+            if (G_CheckSpot (playernum, playerstarts[(int) (i)]) != 0) 
             {
                 playerstarts[(int) (i)].type = (int16) ((playernum + 1));
                 P_SpawnPlayer (_c2v_slice_mapthing_t (playerstarts, (int) (i)));
@@ -10550,9 +10550,9 @@ void G_DoNewGame () {
     netdemo = (uint32) 0;
     netgame = (uint32) 0;
     deathmatch = 0;
-    playeringame[(int) (3)] = 0;
-    playeringame[(int) (2)] = playeringame[(int) (3)];
-    playeringame[(int) (1)] = playeringame[(int) (2)];
+    playeringame[3] = 0;
+    playeringame[2] = playeringame[3];
+    playeringame[1] = playeringame[2];
     respawnparm = (uint32) 0;
     fastparm = (uint32) 0;
     nomonsters = (uint32) 0;
@@ -10716,9 +10716,30 @@ void IncreaseDemoBuffer () {
     demoend = _c2v_slice_uint8 (demobuffer, (int) (new_length));
 }
 
-// c2vala: UNTRANSLATED G_WriteDemoTiccmd (g_game.c:1956) -- g_game.c:1985: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void G_WriteDemoTiccmd (ticcmd_t[] cmd) {
+    if (gamekeydown[(int) (key_demo_quit)] != 0)
+        G_CheckDemoStatus ();
+    int demo_start = _off_demo_p;
+    if (demobuffer != null && _off_demo_p + 8 < demobuffer.length) {
+        demobuffer[_off_demo_p++] = (uint8) cmd[0].forwardmove;
+        demobuffer[_off_demo_p++] = (uint8) cmd[0].sidemove;
+        if (longtics != 0) {
+            demobuffer[_off_demo_p++] = (uint8) (cmd[0].angleturn & 0xff);
+            demobuffer[_off_demo_p++] = (uint8) ((cmd[0].angleturn >> 8) & 0xff);
+        } else {
+            demobuffer[_off_demo_p++] = (uint8) ((cmd[0].angleturn >> 8) & 0xff);
+        }
+        demobuffer[_off_demo_p++] = cmd[0].buttons;
+    }
+    _off_demo_p = demo_start;
+    if (demobuffer != null && _off_demo_p > demobuffer.length - 16) {
+        if (vanilla_demo_limit != 0) {
+            G_CheckDemoStatus ();
+            return;
+        }
+        IncreaseDemoBuffer ();
+    }
+    G_ReadDemoTiccmd (cmd);
 }
 
 // c2vala-ptrs: name_obj[PLAIN]=>T?
@@ -10923,9 +10944,9 @@ uint32 G_CheckDemoStatus () {
         netdemo = (uint32) 0;
         netgame = (uint32) 0;
         deathmatch = 0;
-        playeringame[(int) (3)] = 0;
-        playeringame[(int) (2)] = playeringame[(int) (3)];
-        playeringame[(int) (1)] = playeringame[(int) (2)];
+        playeringame[3] = 0;
+        playeringame[2] = playeringame[3];
+        playeringame[1] = playeringame[2];
         respawnparm = (uint32) 0;
         fastparm = (uint32) 0;
         nomonsters = (uint32) 0;
@@ -10956,7 +10977,7 @@ void HUlib_init () {
 // c2vala-ptrs: t_obj[DEREF|WR|ARROW]=>T?
 void HUlib_clearTextLine (hu_textline_t? t) {
     t.len = 0;
-    t.l[(int) (0)] = (uint8) 0;
+    t.l[0] = (uint8) 0;
     t.needsupdate = 1;
 }
 
@@ -11036,7 +11057,7 @@ void HUlib_eraseTextLine (hu_textline_t? l) {
     int yoffset = 0;
     if (((!(automapactive != 0)) && (viewwindowx != 0)) && (l.needsupdate != 0)) 
     {
-        lh = (((int) l.f[(int) (0)].height) + 1);
+        lh = (((int) l.f[0].height) + 1);
         {
             y = l.y;
             yoffset = (y * 320);
@@ -11069,7 +11090,7 @@ void HUlib_initSText (hu_stext_t? s, int x, int y, int h, patch_t?[] font, int s
     s.laston = (uint32) 1;
     s.cl = 0;
     for (i = 0; i < h; i++) {
-        HUlib_initTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (i))), x, (y - (i * (((int) font[(int) (0)].height) + 1))), font, startchar);
+        HUlib_initTextLine (s.l[(int) (i)], x, (y - (i * (((int) font[0].height) + 1))), font, startchar);
     }
 }
 
@@ -11079,7 +11100,7 @@ void HUlib_addLineToSText (hu_stext_t? s) {
     if (++s.cl == s.h) {
         s.cl = 0;
     }
-    HUlib_clearTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (s.cl))));
+    HUlib_clearTextLine (s.l[(int) (s.cl)]);
     for (i = 0; i < s.h; i++) {
         s.l[(int) (i)].needsupdate = 4;
     }
@@ -11092,12 +11113,12 @@ void HUlib_addMessageToSText (hu_stext_t? s, uint8[] prefix, uint8[] msg) {
     HUlib_addLineToSText (s);
     if (prefix != null && prefix.length > 0) {
         while (_off_prefix < prefix.length && prefix[_off_prefix] != 0) {
-            HUlib_addCharToTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (s.cl))), prefix[_off_prefix++]);
+            HUlib_addCharToTextLine (s.l[(int) (s.cl)], prefix[_off_prefix++]);
         }
     }
     if (msg != null && msg.length > 0) {
         while (_off_msg < msg.length && msg[_off_msg] != 0) {
-            HUlib_addCharToTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (s.cl))), msg[_off_msg++]);
+            HUlib_addCharToTextLine (s.l[(int) (s.cl)], msg[_off_msg++]);
         }
     }
 }
@@ -11116,7 +11137,7 @@ void HUlib_drawSText (hu_stext_t? s) {
         if (idx < 0) {
             idx += s.h;
         }
-        l = _c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (idx)));
+        l = s.l[(int) (idx)];
         HUlib_drawTextLine (l, (uint32) 0);
     }
 }
@@ -11129,7 +11150,7 @@ void HUlib_eraseSText (hu_stext_t? s) {
         if ((s.laston != 0) && (!(s.on[0] != 0))) {
             s.l[(int) (i)].needsupdate = 4;
         }
-        HUlib_eraseTextLine (_c2v_box_hu_textline_t_obj (_c2v_slice_hu_textline_t (s.l, (int) (i))));
+        HUlib_eraseTextLine (s.l[(int) (i)]);
     }
     s.laston = s.on[0];
 }
@@ -11263,7 +11284,7 @@ void HU_Start () {
     if (headsupactive != 0) {
         HU_Stop ();
     }
-    plr = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (consoleplayer)));
+    plr = players[(int) (consoleplayer)];
     message_on = (uint32) 0;
     message_dontfuckwithme = (uint32) 0;
     message_nottobefuckedwith = (uint32) 0;
@@ -11271,7 +11292,7 @@ void HU_Start () {
     uint32[] _c2v_ref_0 = { message_on };
     HUlib_initSText (w_message, 0, 0, 1, hu_font, (int) ('!'), _c2v_ref_0);
     message_on = _c2v_ref_0[0];
-    HUlib_initTextLine (w_title, 0, (167 - ((int) hu_font[(int) (0)].height)), hu_font, (int) ('!'));
+    HUlib_initTextLine (w_title, 0, (167 - ((int) hu_font[0].height)), hu_font, (int) ('!'));
     switch (((gamemission == GameMission_t.pack_chex) ? GameMission_t.doom : ((gamemission == GameMission_t.pack_hacx) ? GameMission_t.doom2 : gamemission))) {
         case GameMission_t.doom:
             s = c_str_to_bytes (mapnames[(int) (((((gameepisode - 1) * 9) + gamemap) - 1))]);
@@ -11305,11 +11326,11 @@ void HU_Start () {
         HUlib_addCharToTextLine (w_title, s[_off_s++]);
     }
     uint32[] _c2v_ref_1 = { chat_on };
-    HUlib_initIText (w_chat, 0, (0 + (1 * (((int) hu_font[(int) (0)].height) + 1))), hu_font, (int) ('!'), _c2v_ref_1);
+    HUlib_initIText (w_chat, 0, (0 + (1 * (((int) hu_font[0].height) + 1))), hu_font, (int) ('!'), _c2v_ref_1);
     chat_on = _c2v_ref_1[0];
     for (i = 0; i < 4; i++) {
         uint32[] _c2v_ref_2 = { always_off };
-        HUlib_initIText (_c2v_box_hu_itext_t_obj (_c2v_slice_hu_itext_t (w_inputbuffer, (int) (i))), 0, 0, null, 0, _c2v_ref_2);
+        HUlib_initIText (w_inputbuffer[(int) (i)], 0, 0, null, 0, _c2v_ref_2);
         always_off = _c2v_ref_2[0];
     }
     headsupactive = (uint32) 1;
@@ -11364,7 +11385,7 @@ void HU_Ticker () {
                 }
                 else 
                 {
-                    rc = (int) (HUlib_keyInIText (_c2v_box_hu_itext_t_obj (_c2v_slice_hu_itext_t (w_inputbuffer, (int) (i))), (uchar) c));
+                    rc = (int) (HUlib_keyInIText (w_inputbuffer[(int) (i)], (uchar) c));
                     if ((rc != 0) && (((int) c) == 13)) 
                     {
                         if ((w_inputbuffer[(int) (i)].l.len != 0) && ((((int) chat_dest[(int) (i)]) == (consoleplayer + 1)) || (((int) chat_dest[(int) (i)]) == 5))) 
@@ -11380,7 +11401,7 @@ void HU_Ticker () {
                                 0;
                             }
                         }
-                        HUlib_resetIText (_c2v_box_hu_itext_t_obj (_c2v_slice_hu_itext_t (w_inputbuffer, (int) (i))));
+                        HUlib_resetIText (w_inputbuffer[(int) (i)]);
                     }
                 }
                 players[(int) (i)].cmd.chatchar = (uint8) 0;
@@ -11857,7 +11878,7 @@ uint32 I_GetMemoryValue (uint32 offset, uint8[] @value, int size) {
                 for (i = 0; i < 10; ++i) 
                 {
                     ++p;
-                    if ((p >= myargc) || (myargv[(int) (p)][(int) (0)] == '-')) 
+                    if ((p >= myargc) || (myargv[(int) (p)][0] == '-')) 
                     {
                         break;
                     }
@@ -12192,7 +12213,7 @@ void M_FindResponseFile () {
     int i = 0;
     for (i = 1; i < myargc; i++) 
     {
-        if (myargv[(int) (i)][(int) (0)] == '@') 
+        if (myargv[(int) (i)][0] == '@') 
         {
             LoadResponseFile (i);
         }
@@ -12203,11 +12224,11 @@ void M_FindResponseFile () {
 string M_GetExecutableName () {
     uint8[] sep = new uint8[0];
     int _off_sep = 0;
-    sep = c_str_to_bytes (c_strrchr (myargv[(int) (0)], (int) ('/')));
+    sep = c_str_to_bytes (c_strrchr (myargv[0], (int) ('/')));
     _off_sep = 0;
     if (sep == null) 
     {
-        return myargv[(int) (0)];
+        return myargv[0];
     }
     else 
     {
@@ -12309,10 +12330,33 @@ public int[] scantokey;
 void SaveDefaultCollection (default_collection_t? collection) {
 }
 
-// c2vala: UNTRANSLATED ParseIntParameter (m_config.c:1716) -- m_config.c:1721: call to unknown function 'sscanf'
-// TODO: port this function by hand.
 int ParseIntParameter (uint8[] strparm) {
-    return 0;
+    string s = ((string) strparm).strip ();
+    if (s.length == 0)
+        return 0;
+    if (s.length >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        int val = 0;
+        for (int i = 2; i < s.length; i++) {
+            char c = s[i];
+            int d = -1;
+            if (c >= '0' && c <= '9') d = (int) (c - '0');
+            else if (c >= 'a' && c <= 'f') d = 10 + (int) (c - 'a');
+            else if (c >= 'A' && c <= 'F') d = 10 + (int) (c - 'A');
+            else break;
+            val = (val << 4) | d;
+        }
+        return val;
+    }
+    int sign = 1;
+    int idx = 0;
+    if (s[0] == '-') { sign = -1; idx = 1; }
+    else if (s[0] == '+') { idx = 1; }
+    int res = 0;
+    while (idx < s.length && s[idx] >= '0' && s[idx] <= '9') {
+        res = res * 10 + (int) (s[idx] - '0');
+        idx++;
+    }
+    return res * sign;
 }
 
 // c2vala-ptrs: def_obj[DEREF|WR|ARROW]=>T? value_obj[PLAIN]=>T?
@@ -12445,10 +12489,8 @@ string M_GetStrVariable (uint8[] name) { return ""; }
 // c2vala-ptrs: name_obj[PLAIN]=>T? variable_obj[DEREF|NULL|ARROW]=>T?
 float M_GetFloatVariable (uint8[] name) { return 0.0f; }
 
-// c2vala: UNTRANSLATED GetDefaultConfigDir (m_config.c:2043) -- m_config.c:2045: malloc is only supported in a local declaration
-// TODO: port this function by hand.
 uint8[] GetDefaultConfigDir () {
-    return new uint8[0];
+    return c_str_to_bytes ("/");
 }
 
 // c2vala-ptrs: dir_obj[NULL]=>T?
@@ -12527,10 +12569,14 @@ void M_BindChatControls (uint32 num_players) {
 void M_ApplyPlatformDefaults () {
 }
 
+[NoAlloc]
+[AlwaysInline]
 int FixedMul (int a, int b) {
     return (int) (((((int64) a) * ((int64) b)) >> ((int64) 16)));
 }
 
+[NoAlloc]
+[AlwaysInline]
 int FixedDiv (int a, int b) {
     if ((int.abs ((int) (a)) >> 14) >= int.abs ((int) (b))) 
     {
@@ -12730,7 +12776,7 @@ void M_SaveSelect (int choice) {
     saveSlot = choice;
     M_StringCopy (saveOldString, savegamestrings[(int) (choice)], (size_t) 24);
     if (!(c_strcmp ((string) savegamestrings[(int) (choice)], "empty slot") != 0)) {
-        savegamestrings[(int) (choice)][(int) (0)] = (uint8) 0;
+        savegamestrings[(int) (choice)][0] = (uint8) 0;
     }
     saveCharIndex = c_strlen ((string) savegamestrings[(int) (choice)]);
 }
@@ -13184,7 +13230,7 @@ int M_StringWidth (uint8[] @string) {
 int M_StringHeight (uint8[] @string) {
     size_t i = 0;
     int h = 0;
-    int height = (int) (hu_font[(int) (0)].height);
+    int height = (int) (hu_font[0].height);
     h = height;
     for (i = (size_t) 0; i < ((size_t) c_strlen ((string) @string)); i++) {
         if (@string[(int) (i)] == '\n') {
@@ -13387,7 +13433,7 @@ uint32 M_Responder (event_t? ev) {
                 break;
             case 13:
                 saveStringEnter = 0;
-                if (savegamestrings[(int) (saveSlot)][(int) (0)] != 0) {
+                if (savegamestrings[(int) (saveSlot)][0] != 0) {
                     M_DoSave (saveSlot);
                 }
                 break;
@@ -13727,7 +13773,7 @@ void M_Drawer () {
             }
             x = (int16) (((320 / 2) - (M_StringWidth (@string) / 2)));
             M_WriteText ((int) x, (int) y, @string);
-            y += hu_font[(int) (0)].height;
+            y += hu_font[0].height;
         }
         return;
     }
@@ -13743,7 +13789,7 @@ void M_Drawer () {
     for (i = (uint32) 0; i < max; i++) 
     {
         name = currentMenu.menuitems[(int) (i)].name;
-        if (name[(int) (0)] != 0) 
+        if (name[0] != 0) 
         {
             V_DrawPatchDirect ((int) x, (int) y, new patch_t.at (W_CacheLumpName (name, (int) __anon_enum_1.PU_CACHE), 0));
         }
@@ -13893,7 +13939,7 @@ void M_ExtractFileBase (uint8[] path, uint8[] dest) {
     string filename = "";
     int length = 0;
     src = path;
-    _off_src = _off_path + (int) (c_strlen ((string) path)) + (-((int) (1)));
+    _off_src = _off_path + (int) (c_strlen ((string) path)) + (-1);
     while ((c_ptr_u64 (src) != c_ptr_u64 (path) || _off_src != _off_path) && (src[_off_src - (int) (1)] != '/')) 
     {
         _off_src--;
@@ -14909,11 +14955,11 @@ void P_RecursiveSound (sector_t? sec, int soundblocks) {
         if (openrange <= 0) {
             continue;
         }
-        if (sides[(int) (check[0].sidenum[(int) (0)])].sector == sec) {
-            other = sides[(int) (check[0].sidenum[(int) (1)])].sector;
+        if (sides[(int) (check[0].sidenum[0])].sector == sec) {
+            other = sides[(int) (check[0].sidenum[1])].sector;
         }
         else {
-            other = sides[(int) (check[0].sidenum[(int) (0)])].sector;
+            other = sides[(int) (check[0].sidenum[0])].sector;
         }
         if ((((int) check[0].flags) & 64) != 0) 
         {
@@ -15083,26 +15129,26 @@ void P_NewChaseDir (mobj_s[] actor) {
     deltax = (actor[0].target.x - actor[0].x);
     deltay = (actor[0].target.y - actor[0].y);
     if (deltax > (10 * (1 << 16))) {
-        d[(int) (1)] = dirtype_t.DI_EAST;
+        d[1] = dirtype_t.DI_EAST;
     }
     else 
     if (deltax < (-10 * (1 << 16))) {
-        d[(int) (1)] = dirtype_t.DI_WEST;
+        d[1] = dirtype_t.DI_WEST;
     }
     else {
-        d[(int) (1)] = dirtype_t.DI_NODIR;
+        d[1] = dirtype_t.DI_NODIR;
     }
     if (deltay < (-10 * (1 << 16))) {
-        d[(int) (2)] = dirtype_t.DI_SOUTH;
+        d[2] = dirtype_t.DI_SOUTH;
     }
     else 
     if (deltay > (10 * (1 << 16))) {
-        d[(int) (2)] = dirtype_t.DI_NORTH;
+        d[2] = dirtype_t.DI_NORTH;
     }
     else {
-        d[(int) (2)] = dirtype_t.DI_NODIR;
+        d[2] = dirtype_t.DI_NODIR;
     }
-    if ((d[(int) (1)] != dirtype_t.DI_NODIR) && (d[(int) (2)] != dirtype_t.DI_NODIR)) 
+    if ((d[1] != dirtype_t.DI_NODIR) && (d[2] != dirtype_t.DI_NODIR)) 
     {
         actor[0].movedir = (int) (diags[(int) ((((deltay < 0) << 1) + (deltax > 0)))]);
         if ((actor[0].movedir != ((int) turnaround)) && (P_TryWalk (actor) != 0)) {
@@ -15111,27 +15157,27 @@ void P_NewChaseDir (mobj_s[] actor) {
     }
     if ((P_Random () > 200) || (int.abs ((int) (deltay)) > int.abs ((int) (deltax)))) 
     {
-        tdir = (int) (d[(int) (1)]);
-        d[(int) (1)] = d[(int) (2)];
-        d[(int) (2)] = tdir;
+        tdir = (int) (d[1]);
+        d[1] = d[2];
+        d[2] = tdir;
     }
-    if (d[(int) (1)] == turnaround) {
-        d[(int) (1)] = dirtype_t.DI_NODIR;
+    if (d[1] == turnaround) {
+        d[1] = dirtype_t.DI_NODIR;
     }
-    if (d[(int) (2)] == turnaround) {
-        d[(int) (2)] = dirtype_t.DI_NODIR;
+    if (d[2] == turnaround) {
+        d[2] = dirtype_t.DI_NODIR;
     }
-    if (d[(int) (1)] != dirtype_t.DI_NODIR) 
+    if (d[1] != dirtype_t.DI_NODIR) 
     {
-        actor[0].movedir = (int) (d[(int) (1)]);
+        actor[0].movedir = (int) (d[1]);
         if (P_TryWalk (actor) != 0) 
         {
             return;
         }
     }
-    if (d[(int) (2)] != dirtype_t.DI_NODIR) 
+    if (d[2] != dirtype_t.DI_NODIR) 
     {
-        actor[0].movedir = (int) (d[(int) (2)]);
+        actor[0].movedir = (int) (d[2]);
         if (P_TryWalk (actor) != 0) {
             return;
         }
@@ -15197,7 +15243,7 @@ uint32 P_LookForPlayers (mobj_s[] actor, uint32 allaround) {
         {
             return (uint32) 0;
         }
-        player = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (actor[0].lastlook)));
+        player = players[(int) (actor[0].lastlook)];
         if (player.health <= 0) {
             continue;
         }
@@ -16702,7 +16748,7 @@ int EV_BuildStairs (line_s[] line, stair_e type) {
     rtn = 0;
     while (c_assign_i (P_FindSectorFromLineTag (line, secnum), ref secnum) >= 0) 
     {
-        sec = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (secnum)));
+        sec = sectors[(int) (secnum)];
         if (sec.specialdata != null) {
             continue;
         }
@@ -17317,7 +17363,7 @@ void P_KillMobj (mobj_s[]? source, mobj_s[] target) {
     else 
     if ((!(netgame != 0)) && ((target[0].flags & ((int) mobjflag_t.MF_COUNTKILL)) != 0)) 
     {
-        players[(int) (0)].killcount++;
+        players[0].killcount++;
     }
     if (target[0].player != null) 
     {
@@ -18770,7 +18816,7 @@ int P_InterceptVector (divline_t? v2, divline_t? v1) {
 void P_LineOpening (line_s[] linedef) {
     sector_t? front = null;
     sector_t? back = null;
-    if (((int) linedef[0].sidenum[(int) (1)]) == -1) 
+    if (((int) linedef[0].sidenum[1]) == -1) 
     {
         openrange = 0;
         return;
@@ -18894,7 +18940,7 @@ uint32 P_BlockLinesIterator (int x, int y, _c2v_del_func_8f4d563c? func) {
         _off_list = 0 + (int) (offset);
         for (; ((int) list[_off_list]) != -1; _off_list++) 
         {
-            ld = _c2v_box_line_s_obj (_c2v_slice_line_s (lines, (int) (list[_off_list])));
+            ld = lines[(int) (list[_off_list])];
             if (ld.validcount == validcount) {
                 continue;
             }
@@ -19219,7 +19265,7 @@ uint32 P_SetMobjState (mobj_s[] mobj, statenum_t state) {
             P_RemoveMobj (mobj);
             return (uint32) 0;
         }
-        st = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (state)));
+        st = states[(int) (state)];
         mobj[0].state = st;
         mobj[0].tics = st.tics;
         mobj[0].sprite = st.sprite;
@@ -19561,7 +19607,7 @@ mobj_s[] P_SpawnMobj (int x, int y, int z, mobjtype_t type) {
     mobj[0].lastlook = 0;
     mobj[0].spawnpoint = new mapthing_t ();
     mobj[0].tracer = null;
-    info = _c2v_box_mobjinfo_t_obj (_c2v_slice_mobjinfo_t (mobjinfo, (int) (type)));
+    info = mobjinfo[(int) (type)];
     mobj[0].type = type;
     mobj[0].info = info;
     mobj[0].x = x;
@@ -19574,7 +19620,7 @@ mobj_s[] P_SpawnMobj (int x, int y, int z, mobjtype_t type) {
         mobj[0].reactiontime = info.reactiontime;
     }
     mobj[0].lastlook = (P_Random () % 4);
-    st = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (info.spawnstate)));
+    st = states[(int) (info.spawnstate)];
     mobj[0].state = st;
     mobj[0].tics = st.tics;
     mobj[0].sprite = st.sprite;
@@ -19610,7 +19656,12 @@ void P_RemoveMobj (mobj_s[] mobj) {
         }
     }
     P_UnsetThingPosition (mobj);
-    0;
+    mobj[0].snext = null;
+    mobj[0].sprev = null;
+    mobj[0].bnext = null;
+    mobj[0].bprev = null;
+    mobj[0].target = null;
+    mobj[0].tracer = null;
     P_RemoveThinker (mobj[0].thinker);
 }
 
@@ -19671,7 +19722,7 @@ void P_SpawnPlayer (mapthing_t[] mthing) {
     if (!(playeringame[(int) ((((int) mthing[0].type) - 1))] != 0)) {
         return;
     }
-    p = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) ((((int) mthing[0].type) - 1))));
+    p = players[(int) ((((int) mthing[0].type) - 1))];
     if (p.playerstate == playerstate_t.PST_REBORN) {
         G_PlayerReborn ((((int) mthing[0].type) - 1));
     }
@@ -20031,7 +20082,7 @@ int EV_DoPlat (line_s[] line, plattype_e type, int amount) {
         switch (type) {
             case plattype_e.raiseToNearestAndChange:
                 plat.speed = ((1 << 16) / 2);
-                sec[0].floorpic = sides[(int) (line[0].sidenum[(int) (0)])].sector.floorpic;
+                sec[0].floorpic = sides[(int) (line[0].sidenum[0])].sector.floorpic;
                 plat.high = P_FindNextHighestFloor (sec, sec[0].floorheight);
                 plat.wait = 0;
                 plat.status = plat_e.up;
@@ -20040,7 +20091,7 @@ int EV_DoPlat (line_s[] line, plattype_e type, int amount) {
                 break;
             case plattype_e.raiseAndChange:
                 plat.speed = ((1 << 16) / 2);
-                sec[0].floorpic = sides[(int) (line[0].sidenum[(int) (0)])].sector.floorpic;
+                sec[0].floorpic = sides[(int) (line[0].sidenum[0])].sector.floorpic;
                 plat.high = (sec[0].floorheight + (amount * (1 << 16)));
                 plat.wait = 0;
                 plat.status = plat_e.up;
@@ -20145,14 +20196,14 @@ void P_RemoveActivePlat (plat_t? plat) {
 void P_SetPsprite (player_s? player, int position, statenum_t stnum) {
     pspdef_t? psp = null;
     state_t? state = null;
-    psp = _c2v_box_pspdef_t_obj (_c2v_slice_pspdef_t (player.psprites, (int) (position)));
+    psp = player.psprites[(int) (position)];
     do {
         if (!(stnum != 0)) 
         {
             psp.state = null;
             break;
         }
-        state = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (stnum)));
+        state = states[(int) (stnum)];
         psp.state = state;
         psp.tics = state.tics;
         if (state.misc1 != 0) 
@@ -20812,7 +20863,7 @@ void saveg_read_mobj_t (mobj_s[] str) {
     str[0].type = (mobjtype_t) (saveg_read32 ());
     str[0].info = null;
     str[0].tics = saveg_read32 ();
-    str[0].state = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (saveg_read32 ())));
+    str[0].state = states[(int) (saveg_read32 ())];
     str[0].flags = saveg_read32 ();
     str[0].health = saveg_read32 ();
     str[0].movedir = saveg_read32 ();
@@ -20823,7 +20874,7 @@ void saveg_read_mobj_t (mobj_s[] str) {
     pl = saveg_read32 ();
     if (pl > 0) 
     {
-        str[0].player = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) ((pl - 1))));
+        str[0].player = players[(int) ((pl - 1))];
         str[0].player.mo = _c2v_box_mobj_s_obj (str);
     }
     else 
@@ -20835,9 +20886,59 @@ void saveg_read_mobj_t (mobj_s[] str) {
     str[0].tracer = new mobj_s.at (saveg_readp (), 0);
 }
 
-// c2vala: UNTRANSLATED saveg_write_mobj_t (p_saveg.c:421) -- p_saveg.c:493: pointer arithmetic is not supported
-// TODO: port this function by hand.
+int saveg_sector_index (sector_t? s) {
+    if (s == null || sectors == null) return 0;
+    for (int i = 0; i < sectors.length; i++) {
+        if (sectors[i] == s) return i;
+    }
+    return 0;
+}
+
+int saveg_state_index (state_t? st) {
+    if (st == null || states == null) return 0;
+    for (int i = 0; i < states.length; i++) {
+        if (states[i] == st) return i;
+    }
+    return 0;
+}
+
+int saveg_player_index (player_s? p) {
+    if (p == null || players == null) return 0;
+    for (int i = 0; i < players.length; i++) {
+        if (players[i] == p) return i;
+    }
+    return 0;
+}
+
 void saveg_write_mobj_t (mobj_s? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 (str.x);
+    saveg_write32 (str.y);
+    saveg_write32 (str.z);
+    saveg_write32 ((int) str.angle);
+    saveg_write32 ((int) str.sprite);
+    saveg_write32 (str.frame);
+    saveg_write32 (str.floorz);
+    saveg_write32 (str.ceilingz);
+    saveg_write32 (str.radius);
+    saveg_write32 (str.height);
+    saveg_write32 (str.momx);
+    saveg_write32 (str.momy);
+    saveg_write32 (str.momz);
+    saveg_write32 (str.validcount);
+    saveg_write32 ((int) str.type);
+    saveg_write32 (str.tics);
+    saveg_write32 (saveg_state_index (str.state));
+    saveg_write32 (str.flags);
+    saveg_write32 (str.health);
+    saveg_write32 (str.movedir);
+    saveg_write32 (str.movecount);
+    saveg_write32 (str.reactiontime);
+    saveg_write32 (str.threshold);
+    saveg_write32 (str.player != null ? saveg_player_index (str.player) + 1 : 0);
+    saveg_write32 (str.lastlook);
+    saveg_write_mapthing_t (str.spawnpoint);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -20866,7 +20967,7 @@ void saveg_read_pspdef_t (pspdef_t? str) {
     state = saveg_read32 ();
     if (state > 0) 
     {
-        str.state = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (state)));
+        str.state = states[(int) (state)];
     }
     else 
     {
@@ -20877,9 +20978,12 @@ void saveg_read_pspdef_t (pspdef_t? str) {
     str.sy = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_pspdef_t (p_saveg.c:615) -- p_saveg.c:620: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_pspdef_t (pspdef_t? str) {
+    if (str == null) return;
+    saveg_write32 (str.state != null ? saveg_state_index (str.state) : 0);
+    saveg_write32 (str.tics);
+    saveg_write32 (str.sx);
+    saveg_write32 (str.sy);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -20938,7 +21042,7 @@ void saveg_read_player_t (player_s? str) {
     str.colormap = saveg_read32 ();
     for (i = 0; i < ((int) psprnum_t.NUMPSPRITES); ++i) 
     {
-        saveg_read_pspdef_t (_c2v_box_pspdef_t_obj (_c2v_slice_pspdef_t (str.psprites, (int) (i))));
+        saveg_read_pspdef_t (str.psprites[(int) (i)]);
     }
     str.didsecret = (uint32) (saveg_read32 ());
 }
@@ -20999,7 +21103,7 @@ void saveg_write_player_t (player_s? str) {
     saveg_write32 (str.colormap);
     for (i = 0; i < ((int) psprnum_t.NUMPSPRITES); ++i) 
     {
-        saveg_write_pspdef_t (_c2v_box_pspdef_t_obj (_c2v_slice_pspdef_t (str.psprites, (int) (i))));
+        saveg_write_pspdef_t (str.psprites[(int) (i)]);
     }
     saveg_write32 ((int) str.didsecret);
 }
@@ -21010,7 +21114,7 @@ void saveg_read_ceiling_t (ceiling_t? str) {
     saveg_read_thinker_t (str.thinker);
     str.type = (ceiling_e) (saveg_read32 ());
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.bottomheight = saveg_read32 ();
     str.topheight = saveg_read32 ();
     str.speed = saveg_read32 ();
@@ -21020,9 +21124,18 @@ void saveg_read_ceiling_t (ceiling_t? str) {
     str.olddirection = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_ceiling_t (p_saveg.c:944) -- p_saveg.c:953: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_ceiling_t (ceiling_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 ((int) str.type);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.bottomheight);
+    saveg_write32 (str.topheight);
+    saveg_write32 (str.speed);
+    saveg_write32 ((int) str.crush);
+    saveg_write32 (str.direction);
+    saveg_write32 (str.tag);
+    saveg_write32 (str.olddirection);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -21031,7 +21144,7 @@ void saveg_read_vldoor_t (vldoor_t? str) {
     saveg_read_thinker_t (str.thinker);
     str.type = (vldoor_e) (saveg_read32 ());
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.topheight = saveg_read32 ();
     str.speed = saveg_read32 ();
     str.direction = saveg_read32 ();
@@ -21039,9 +21152,16 @@ void saveg_read_vldoor_t (vldoor_t? str) {
     str.topcountdown = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_vldoor_t (p_saveg.c:1011) -- p_saveg.c:1020: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_vldoor_t (vldoor_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 ((int) str.type);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.topheight);
+    saveg_write32 (str.speed);
+    saveg_write32 (str.direction);
+    saveg_write32 (str.topwait);
+    saveg_write32 (str.topcountdown);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -21051,7 +21171,7 @@ void saveg_read_floormove_t (floormove_t? str) {
     str.type = (floor_e) (saveg_read32 ());
     str.crush = (uint32) (saveg_read32 ());
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.direction = saveg_read32 ();
     str.newspecial = saveg_read32 ();
     str.texture = saveg_read16 ();
@@ -21059,9 +21179,17 @@ void saveg_read_floormove_t (floormove_t? str) {
     str.speed = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_floormove_t (p_saveg.c:1075) -- p_saveg.c:1087: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_floormove_t (floormove_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 ((int) str.type);
+    saveg_write32 ((int) str.crush);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.direction);
+    saveg_write32 (str.newspecial);
+    saveg_write16 (str.texture);
+    saveg_write32 (str.floordestheight);
+    saveg_write32 (str.speed);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -21069,7 +21197,7 @@ void saveg_read_plat_t (plat_t? str) {
     int sector = 0;
     saveg_read_thinker_t (str.thinker);
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.speed = saveg_read32 ();
     str.low = saveg_read32 ();
     str.high = saveg_read32 ();
@@ -21082,9 +21210,20 @@ void saveg_read_plat_t (plat_t? str) {
     str.type = (plattype_e) (saveg_read32 ());
 }
 
-// c2vala: UNTRANSLATED saveg_write_plat_t (p_saveg.c:1151) -- p_saveg.c:1157: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_plat_t (plat_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.speed);
+    saveg_write32 (str.low);
+    saveg_write32 (str.high);
+    saveg_write32 (str.wait);
+    saveg_write32 (str.count);
+    saveg_write32 ((int) str.status);
+    saveg_write32 ((int) str.oldstatus);
+    saveg_write32 ((int) str.crush);
+    saveg_write32 (str.tag);
+    saveg_write32 ((int) str.type);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -21092,7 +21231,7 @@ void saveg_read_lightflash_t (lightflash_t? str) {
     int sector = 0;
     saveg_read_thinker_t (str.thinker);
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.count = saveg_read32 ();
     str.maxlight = saveg_read32 ();
     str.minlight = saveg_read32 ();
@@ -21100,9 +21239,15 @@ void saveg_read_lightflash_t (lightflash_t? str) {
     str.mintime = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_lightflash_t (p_saveg.c:1221) -- p_saveg.c:1227: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_lightflash_t (lightflash_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.count);
+    saveg_write32 (str.maxlight);
+    saveg_write32 (str.minlight);
+    saveg_write32 (str.maxtime);
+    saveg_write32 (str.mintime);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -21110,7 +21255,7 @@ void saveg_read_strobe_t (strobe_t? str) {
     int sector = 0;
     saveg_read_thinker_t (str.thinker);
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.count = saveg_read32 ();
     str.minlight = saveg_read32 ();
     str.maxlight = saveg_read32 ();
@@ -21118,9 +21263,15 @@ void saveg_read_strobe_t (strobe_t? str) {
     str.brighttime = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_strobe_t (p_saveg.c:1276) -- p_saveg.c:1282: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_strobe_t (strobe_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.count);
+    saveg_write32 (str.minlight);
+    saveg_write32 (str.maxlight);
+    saveg_write32 (str.darktime);
+    saveg_write32 (str.brighttime);
 }
 
 // c2vala-ptrs: str_obj[DEREF|WR|ARROW]=>T?
@@ -21128,15 +21279,19 @@ void saveg_read_glow_t (glow_t? str) {
     int sector = 0;
     saveg_read_thinker_t (str.thinker);
     sector = saveg_read32 ();
-    str.sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (sector)));
+    str.sector = sectors[(int) (sector)];
     str.minlight = saveg_read32 ();
     str.maxlight = saveg_read32 ();
     str.direction = saveg_read32 ();
 }
 
-// c2vala: UNTRANSLATED saveg_write_glow_t (p_saveg.c:1325) -- p_saveg.c:1331: pointer arithmetic is not supported
-// TODO: port this function by hand.
 void saveg_write_glow_t (glow_t? str) {
+    if (str == null) return;
+    saveg_write_thinker_t (str.thinker);
+    saveg_write32 (saveg_sector_index (str.sector));
+    saveg_write32 (str.minlight);
+    saveg_write32 (str.maxlight);
+    saveg_write32 (str.direction);
 }
 
 // c2vala-ptrs: description_buf[IDX|NULL]=>uint8[](ro) name_buf[IDX|WR]=>uint8[]
@@ -21215,7 +21370,7 @@ void P_ArchivePlayers () {
             continue;
         }
         saveg_write_pad ();
-        saveg_write_player_t (_c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (i))));
+        saveg_write_player_t (players[(int) (i)]);
     }
 }
 
@@ -21227,7 +21382,7 @@ void P_UnArchivePlayers () {
             continue;
         }
         saveg_read_pad ();
-        saveg_read_player_t (_c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (i))));
+        saveg_read_player_t (players[(int) (i)]);
         players[(int) (i)].mo = null;
         players[(int) (i)].message = "";
         players[(int) (i)].attacker = null;
@@ -21275,7 +21430,7 @@ void P_ArchiveWorld () {
                     if (((int) li[_off_li].sidenum[(int) (j)]) == -1) {
                         continue;
                     }
-                    si = _c2v_box_side_t_obj (_c2v_slice_side_t (sides, (int) (li[_off_li].sidenum[(int) (j)])));
+                    si = sides[(int) (li[_off_li].sidenum[(int) (j)])];
                     saveg_write16 ((int16) ((si.textureoffset >> 16)));
                     saveg_write16 ((int16) ((si.rowoffset >> 16)));
                     saveg_write16 (si.toptexture);
@@ -21332,7 +21487,7 @@ void P_UnArchiveWorld () {
                     if (((int) li[_off_li].sidenum[(int) (j)]) == -1) {
                         continue;
                     }
-                    si = _c2v_box_side_t_obj (_c2v_slice_side_t (sides, (int) (li[_off_li].sidenum[(int) (j)])));
+                    si = sides[(int) (li[_off_li].sidenum[(int) (j)])];
                     si.textureoffset = (((int) saveg_read16 ()) << 16);
                     si.rowoffset = (((int) saveg_read16 ()) << 16);
                     si.toptexture = saveg_read16 ();
@@ -21394,7 +21549,7 @@ void P_UnArchiveThinkers () {
                 mobj[0].target = null;
                 mobj[0].tracer = null;
                 P_SetThingPosition (mobj);
-                mobj[0].info = _c2v_box_mobjinfo_t_obj (_c2v_slice_mobjinfo_t (mobjinfo, (int) (mobj[0].type)));
+                mobj[0].info = mobjinfo[(int) (mobj[0].type)];
                 mobj[0].floorz = mobj[0].subsector.sector.floorheight;
                 mobj[0].ceilingz = mobj[0].subsector.sector.ceilingheight;
                 mobj[0].thinker.tag = 1;
@@ -21629,15 +21784,15 @@ void P_LoadSegs (int lump) {
     _off_li = 0;
     for (i = 0; i < numsegs; ) {
         {
-            li[_off_li].v1 = _c2v_box_vertex_t_obj (_c2v_slice_vertex_t (vertexes, (int) (ml[_off_ml].v1)));
-            li[_off_li].v2 = _c2v_box_vertex_t_obj (_c2v_slice_vertex_t (vertexes, (int) (ml[_off_ml].v2)));
+            li[_off_li].v1 = vertexes[(int) (ml[_off_ml].v1)];
+            li[_off_li].v2 = vertexes[(int) (ml[_off_ml].v2)];
             li[_off_li].angle = (uint32) ((((int) ml[_off_ml].angle) << 16));
             li[_off_li].offset = (((int) ml[_off_ml].offset) << 16);
             linedef = (int) (ml[_off_ml].linedef);
-            ldef = _c2v_box_line_s_obj (_c2v_slice_line_s (lines, (int) (linedef)));
+            ldef = lines[(int) (linedef)];
             li[_off_li].linedef = ldef;
             side = (int) (ml[_off_ml].side);
-            li[_off_li].sidedef = _c2v_box_side_t_obj (_c2v_slice_side_t (sides, (int) (ldef.sidenum[(int) (side)])));
+            li[_off_li].sidedef = sides[(int) (ldef.sidenum[(int) (side)])];
             li[_off_li].frontsector = sides[(int) (ldef.sidenum[(int) (side)])].sector;
             if ((((int) ldef.flags) & 4) != 0) 
             {
@@ -21874,16 +22029,16 @@ void P_LoadLineDefs (int lump) {
                 ld[_off_ld].bbox[(int) (__anon_enum_116.BOXBOTTOM)] = v2.y;
                 ld[_off_ld].bbox[(int) (__anon_enum_116.BOXTOP)] = v1.y;
             }
-            ld[_off_ld].sidenum[(int) (0)] = mld[_off_mld].sidenum[(int) (0)];
-            ld[_off_ld].sidenum[(int) (1)] = mld[_off_mld].sidenum[(int) (1)];
-            if (((int) ld[_off_ld].sidenum[(int) (0)]) != -1) {
-                ld[_off_ld].frontsector = sides[(int) (ld[_off_ld].sidenum[(int) (0)])].sector;
+            ld[_off_ld].sidenum[0] = mld[_off_mld].sidenum[0];
+            ld[_off_ld].sidenum[1] = mld[_off_mld].sidenum[1];
+            if (((int) ld[_off_ld].sidenum[0]) != -1) {
+                ld[_off_ld].frontsector = sides[(int) (ld[_off_ld].sidenum[0])].sector;
             }
             else {
                 ld[_off_ld].frontsector = null;
             }
-            if (((int) ld[_off_ld].sidenum[(int) (1)]) != -1) {
-                ld[_off_ld].backsector = sides[(int) (ld[_off_ld].sidenum[(int) (1)])].sector;
+            if (((int) ld[_off_ld].sidenum[1]) != -1) {
+                ld[_off_ld].backsector = sides[(int) (ld[_off_ld].sidenum[1])].sector;
             }
             else {
                 ld[_off_ld].backsector = null;
@@ -21918,7 +22073,7 @@ void P_LoadSideDefs (int lump) {
             sd[_off_sd].toptexture = (int16) (R_TextureNumForName (msd[_off_msd].toptexture));
             sd[_off_sd].bottomtexture = (int16) (R_TextureNumForName (msd[_off_msd].bottomtexture));
             sd[_off_sd].midtexture = (int16) (R_TextureNumForName (msd[_off_msd].midtexture));
-            sd[_off_sd].sector = _c2v_box_sector_t_obj (_c2v_slice_sector_t (sectors, (int) (msd[_off_msd].sector)));
+            sd[_off_sd].sector = sectors[(int) (msd[_off_msd].sector)];
         }
         i++;
         _off_msd++;
@@ -21943,10 +22098,10 @@ void P_LoadBlockMap (int lump) {
         blockmaplump[(int) (i)] = ((int16) ((((int) (rawbm[(int) ((2 * i))])) | (((int) (((int8) (rawbm[(int) (((2 * i) + 1))])))) << 8))));
     }
     blockmap = _c2v_slice_int16 (blockmaplump, (int) (4));
-    bmaporgx = (((int) blockmaplump[(int) (0)]) << 16);
-    bmaporgy = (((int) blockmaplump[(int) (1)]) << 16);
-    bmapwidth = (int) (blockmaplump[(int) (2)]);
-    bmapheight = (int) (blockmaplump[(int) (3)]);
+    bmaporgx = (((int) blockmaplump[0]) << 16);
+    bmaporgy = (((int) blockmaplump[1]) << 16);
+    bmapwidth = (int) (blockmaplump[2]);
+    bmapheight = (int) (blockmaplump[3]);
     count = (int) (((8 * ((size_t) bmapwidth)) * ((size_t) bmapheight)));
     blocklinks = new mobj_s?[bmapwidth * bmapheight];
     
@@ -22101,6 +22256,62 @@ void P_LoadReject (int lumpnum) {
     }
 }
 
+void P_CleanupLevel () {
+    if (sectors != null) {
+        for (int i = 0; i < sectors.length; i++) {
+            sectors[i].lines = new line_s?[0];
+            sectors[i].specialdata = null;
+            sectors[i].soundtarget = null;
+        }
+    }
+    if (lines != null) {
+        for (int i = 0; i < lines.length; i++) {
+            lines[i].frontsector = null;
+            lines[i].backsector = null;
+            lines[i].specialdata = null;
+        }
+    }
+    if (sides != null) {
+        for (int i = 0; i < sides.length; i++) {
+            sides[i].sector = null;
+        }
+    }
+    if (segs != null) {
+        for (int i = 0; i < segs.length; i++) {
+            segs[i].frontsector = null;
+            segs[i].backsector = null;
+            segs[i].linedef = null;
+            segs[i].sidedef = null;
+        }
+    }
+    if (subsectors != null) {
+        for (int i = 0; i < subsectors.length; i++) {
+            subsectors[i].sector = null;
+        }
+    }
+    if (blocklinks != null) {
+        for (int i = 0; i < blocklinks.length; i++) {
+            mobj_s? m = blocklinks[i];
+            while (m != null) {
+                mobj_s? nxt = m.bnext;
+                m.bnext = null;
+                m.bprev = null;
+                m = nxt;
+            }
+        }
+        blocklinks = new mobj_s?[0];
+    }
+    activeceilings = new ceiling_t?[30];
+    activeplats = new plat_t?[30];
+    linespeciallist = new line_s?[64];
+    if (buttonlist != null) {
+        for (int i = 0; i < buttonlist.length; i++) {
+            buttonlist[i].line = null;
+            buttonlist[i].soundorg = null;
+        }
+    }
+}
+
 // c2vala-ptrs: lumpname_buf[IDX|WR]=>uint8[]
 void P_SetupLevel (int episode, int map, int playermask, skill_t skill) {
     int i = 0;
@@ -22118,8 +22329,8 @@ void P_SetupLevel (int episode, int map, int playermask, skill_t skill) {
         players[(int) (i)].killcount = players[(int) (i)].secretcount;
     }
     players[(int) (consoleplayer)].viewz = 1;
-    0;
     Z_FreeTags ((int) __anon_enum_1.PU_LEVEL, (int) ((((int) __anon_enum_1.PU_PURGELEVEL) - 1)));
+    P_CleanupLevel ();
     P_InitThinkers ();
     if (gamemode == GameMode_t.commercial) 
     {
@@ -22132,11 +22343,11 @@ void P_SetupLevel (int episode, int map, int playermask, skill_t skill) {
     }
     else 
     {
-        lumpname[(int) (0)] = (uint8) ('E');
-        lumpname[(int) (1)] = (uint8) ((((int) '0') + episode));
-        lumpname[(int) (2)] = (uint8) ('M');
-        lumpname[(int) (3)] = (uint8) ((((int) '0') + map));
-        lumpname[(int) (4)] = (uint8) 0;
+        lumpname[0] = (uint8) ('E');
+        lumpname[1] = (uint8) ((((int) '0') + episode));
+        lumpname[2] = (uint8) ('M');
+        lumpname[3] = (uint8) ((((int) '0') + map));
+        lumpname[4] = (uint8) 0;
     }
     lumpnum = W_GetNumForName (lumpname);
     leveltime = 0;
@@ -22405,10 +22616,10 @@ uint32 P_CheckSight (mobj_s[] t1, mobj_s? t2) {
     bitnum = (1 << (pnum & 7));
     if ((((int) rejectmatrix[(int) (bytenum)]) & bitnum) != 0) 
     {
-        sightcounts[(int) (0)]++;
+        sightcounts[0]++;
         return (uint32) 0;
     }
-    sightcounts[(int) (1)]++;
+    sightcounts[1]++;
     validcount++;
     sightzstart = ((t1[0].z + t1[0].height) - (t1[0].height >> 2));
     topslope = ((t2.z + t2.height) - sightzstart);
@@ -22469,7 +22680,7 @@ void P_InitPicAnims () {
 }
 
 side_t? getSide (int currentSector, int line, int side) {
-    return _c2v_box_side_t_obj (_c2v_slice_side_t (sides, (int) (sectors[(int) (currentSector)].lines[(int) (line)].sidenum[(int) (side)])));
+    return sides[(int) (sectors[(int) (currentSector)].lines[(int) (line)].sidenum[(int) (side)])];
 }
 
 sector_t? getSector (int currentSector, int line, int side) {
@@ -22569,7 +22780,7 @@ int P_FindNextHighestFloor (sector_t[] sec, int currentheight) {
     {
         return currentheight;
     }
-    min = heightlist[(int) (0)];
+    min = heightlist[0];
     for (i = 1; i < h; i++) 
     {
         if (heightlist[(int) (i)] < min) 
@@ -23070,7 +23281,7 @@ void P_UpdateSpecials () {
         line = linespeciallist[(int) (i)];
         switch (line.special) {
             case 48:
-                sides[(int) (line.sidenum[(int) (0)])].textureoffset += (1 << 16);
+                sides[(int) (line.sidenum[0])].textureoffset += (1 << 16);
                 break;
         }
     }
@@ -23082,13 +23293,13 @@ void P_UpdateSpecials () {
             {
                 switch (buttonlist[(int) (i)].where) {
                     case bwhere_e.top:
-                        sides[(int) (buttonlist[(int) (i)].line.sidenum[(int) (0)])].toptexture = (int16) (buttonlist[(int) (i)].btexture);
+                        sides[(int) (buttonlist[(int) (i)].line.sidenum[0])].toptexture = (int16) (buttonlist[(int) (i)].btexture);
                         break;
                     case bwhere_e.middle:
-                        sides[(int) (buttonlist[(int) (i)].line.sidenum[(int) (0)])].midtexture = (int16) (buttonlist[(int) (i)].btexture);
+                        sides[(int) (buttonlist[(int) (i)].line.sidenum[0])].midtexture = (int16) (buttonlist[(int) (i)].btexture);
                         break;
                     case bwhere_e.bottom:
-                        sides[(int) (buttonlist[(int) (i)].line.sidenum[(int) (0)])].bottomtexture = (int16) (buttonlist[(int) (i)].btexture);
+                        sides[(int) (buttonlist[(int) (i)].line.sidenum[0])].bottomtexture = (int16) (buttonlist[(int) (i)].btexture);
                         break;
                 }
                 0;
@@ -23149,7 +23360,7 @@ int EV_DoDonut (line_s[] line) {
             continue;
         }
         rtn = 1;
-        s2 = getNextSector (s1[0].lines[(int) (0)], s1);
+        s2 = getNextSector (s1[0].lines[0], s1);
         if (s2 == null) 
         {
             stderr.puts (@"EV_DoDonut: linedef had no second sidedef! Unexpected behavior may occur in Vanilla Doom. \n");
@@ -23275,7 +23486,7 @@ void P_SpawnSpecials () {
                 {
                     I_Error (c_str_to_bytes ("Too many scrolling wall linedefs! (Vanilla limit is 64)"));
                 }
-                linespeciallist[(int) (numlinespecials)] = _c2v_box_line_s_obj (_c2v_slice_line_s (lines, (int) (i)));
+                linespeciallist[(int) (numlinespecials)] = lines[(int) (i)];
                 numlinespecials++;
                 break;
         }
@@ -23368,9 +23579,9 @@ void P_ChangeSwitchTexture (line_s[] line, int useAgain) {
     if (!(useAgain != 0)) {
         line[0].special = (int16) 0;
     }
-    texTop = (int) (sides[(int) (line[0].sidenum[(int) (0)])].toptexture);
-    texMid = (int) (sides[(int) (line[0].sidenum[(int) (0)])].midtexture);
-    texBot = (int) (sides[(int) (line[0].sidenum[(int) (0)])].bottomtexture);
+    texTop = (int) (sides[(int) (line[0].sidenum[0])].toptexture);
+    texMid = (int) (sides[(int) (line[0].sidenum[0])].midtexture);
+    texBot = (int) (sides[(int) (line[0].sidenum[0])].bottomtexture);
     sound = (int) sfxenum_t.sfx_swtchn;
     if (((int) line[0].special) == 11) {
         sound = (int) sfxenum_t.sfx_swtchx;
@@ -23380,7 +23591,7 @@ void P_ChangeSwitchTexture (line_s[] line, int useAgain) {
         if (switchlist[(int) (i)] == texTop) 
         {
             0;
-            sides[(int) (line[0].sidenum[(int) (0)])].toptexture = (int16) (switchlist[(int) ((i ^ 1))]);
+            sides[(int) (line[0].sidenum[0])].toptexture = (int16) (switchlist[(int) ((i ^ 1))]);
             if (useAgain != 0) {
                 P_StartButton (line, bwhere_e.top, switchlist[(int) (i)], 35);
             }
@@ -23391,7 +23602,7 @@ void P_ChangeSwitchTexture (line_s[] line, int useAgain) {
             if (switchlist[(int) (i)] == texMid) 
             {
                 0;
-                sides[(int) (line[0].sidenum[(int) (0)])].midtexture = (int16) (switchlist[(int) ((i ^ 1))]);
+                sides[(int) (line[0].sidenum[0])].midtexture = (int16) (switchlist[(int) ((i ^ 1))]);
                 if (useAgain != 0) {
                     P_StartButton (line, bwhere_e.middle, switchlist[(int) (i)], 35);
                 }
@@ -23402,7 +23613,7 @@ void P_ChangeSwitchTexture (line_s[] line, int useAgain) {
                 if (switchlist[(int) (i)] == texBot) 
                 {
                     0;
-                    sides[(int) (line[0].sidenum[(int) (0)])].bottomtexture = (int16) (switchlist[(int) ((i ^ 1))]);
+                    sides[(int) (line[0].sidenum[0])].bottomtexture = (int16) (switchlist[(int) ((i ^ 1))]);
                     if (useAgain != 0) {
                         P_StartButton (line, bwhere_e.bottom, switchlist[(int) (i)], 35);
                     }
@@ -23774,6 +23985,15 @@ int EV_Teleport (line_s[] line, int side, mobj_s[] thing) {
 }
 
 void P_InitThinkers () {
+    thinker_s? cur = thinkercap.next;
+    while (cur != null && cur != thinkercap) {
+        thinker_s? nxt = cur.next;
+        cur.next = null;
+        cur.prev = null;
+        cur.owner = null;
+        cur.owner_mobj = null;
+        cur = nxt;
+    }
     thinkercap.next = thinkercap;
     thinkercap.prev = thinkercap.next;
 }
@@ -24206,10 +24426,10 @@ void R_ClipPassWallSegment (int first, int last) {
 }
 
 void R_ClearClipSegs () {
-    solidsegs[(int) (0)].first = -0x7fffffff;
-    solidsegs[(int) (0)].last = -1;
-    solidsegs[(int) (1)].first = viewwidth;
-    solidsegs[(int) (1)].last = 0x7fffffff;
+    solidsegs[0].first = -0x7fffffff;
+    solidsegs[0].last = -1;
+    solidsegs[1].first = viewwidth;
+    solidsegs[1].last = 0x7fffffff;
     newend_idx = 2;
 }
 
@@ -24341,10 +24561,10 @@ uint32 R_CheckBBox (int[] bspcoord) {
     if (boxpos == 5) {
         return (uint32) 1;
     }
-    x1 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (0)])];
-    y1 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (1)])];
-    x2 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (2)])];
-    y2 = bspcoord[(int) (checkcoord[(int) (boxpos)][(int) (3)])];
+    x1 = bspcoord[(int) (checkcoord[(int) (boxpos)][0])];
+    y1 = bspcoord[(int) (checkcoord[(int) (boxpos)][1])];
+    x2 = bspcoord[(int) (checkcoord[(int) (boxpos)][2])];
+    y2 = bspcoord[(int) (checkcoord[(int) (boxpos)][3])];
     angle1 = (R_PointToAngle (x1, y1) - viewangle) & ((uint32) 0xFFFFFFFF);
     angle2 = (R_PointToAngle (x2, y2) - viewangle) & ((uint32) 0xFFFFFFFF);
     span = (angle1 - angle2) & ((uint32) 0xFFFFFFFF);
@@ -24406,14 +24626,14 @@ void R_Subsector (int num) {
     _off_line = (int) (sub.firstline);
     if (frontsector.floorheight < viewz) 
     {
-        floorplane = _c2v_box_visplane_t_obj (R_FindPlane (frontsector.floorheight, (int) frontsector.floorpic, (int) frontsector.lightlevel));
+        floorplane = R_FindPlane (frontsector.floorheight, (int) frontsector.floorpic, (int) frontsector.lightlevel);
     }
     else {
         floorplane = null;
     }
     if ((frontsector.ceilingheight > viewz) || (((int) frontsector.ceilingpic) == skyflatnum)) 
     {
-        ceilingplane = _c2v_box_visplane_t_obj (R_FindPlane (frontsector.ceilingheight, (int) frontsector.ceilingpic, (int) frontsector.lightlevel));
+        ceilingplane = R_FindPlane (frontsector.ceilingheight, (int) frontsector.ceilingpic, (int) frontsector.lightlevel);
     }
     else {
         ceilingplane = null;
@@ -24705,7 +24925,7 @@ void R_InitTextures () {
     int temp1 = 0;
     int temp2 = 0;
     int temp3 = 0;
-    name[(int) (8)] = (uint8) 0;
+    name[8] = (uint8) 0;
     print ("[tex] calling PNAMES\n");
     names = W_CacheLumpName (c_str_to_bytes ("PNAMES"), (int) __anon_enum_1.PU_STATIC);
     _off_names = 0;
@@ -24887,7 +25107,7 @@ int R_FlatNumForName (uint8[] name) {
     i = W_CheckNumForName (name);
     if (i == -1) 
     {
-        namet[(int) (8)] = (uint8) 0;
+        namet[8] = (uint8) 0;
         c_memcpy_off (namet, 0, name, 0, (size_t) (8));
         I_Error (c_str_to_bytes ("R_FlatNumForName: %s not found"), namet);
     }
@@ -24898,7 +25118,7 @@ int R_FlatNumForName (uint8[] name) {
 int R_CheckTextureNumForName (uint8[] name) {
     texture_s? texture = null;
     int key = 0;
-    if (name[(int) (0)] == '-') {
+    if (name[0] == '-') {
         return 0;
     }
     key = (int) ((W_LumpNameHash (name) % ((uint32) numtextures)));
@@ -25003,7 +25223,7 @@ void R_PrecacheLevel () {
         }
         for (j = 0; j < sprites[(int) (i)].numframes; j++) 
         {
-            sf = _c2v_box_spriteframe_t_obj (_c2v_slice_spriteframe_t (sprites[(int) (i)].spriteframes, (int) (j)));
+            sf = sprites[(int) (i)].spriteframes[(int) (j)];
             for (k = 0; k < 8; k++) 
             {
                 lump = (firstspritelump + ((int) sf.lump[(int) (k)]));
@@ -25719,7 +25939,7 @@ void R_InitTextureMapping () {
             viewangletox[(int) (i)] = viewwidth;
         }
     }
-    clipangle = xtoviewangle[(int) (0)];
+    clipangle = xtoviewangle[0];
 }
 
 void R_InitLightTables () {
@@ -26008,7 +26228,7 @@ void R_ClearPlanes () {
 }
 
 // c2vala-ptrs: check_arr[ARITH|DEREF|WR|ARROW]=>T[]
-visplane_t[] R_FindPlane (int height, int picnum, int lightlevel) {
+visplane_t? R_FindPlane (int height, int picnum, int lightlevel) {
     visplane_t[] check = new visplane_t[0];
     int _off_check = 0;
     if (picnum == skyflatnum) 
@@ -26028,7 +26248,7 @@ visplane_t[] R_FindPlane (int height, int picnum, int lightlevel) {
         }
     }
     if (_off_check < numvisplanes) {
-        return _c2v_slice_visplane_t (check, _off_check);
+        return check[_off_check];
     }
     if (numvisplanes == 128) {
         I_Error (c_str_to_bytes ("R_FindPlane: no more visplanes"));
@@ -26040,7 +26260,7 @@ visplane_t[] R_FindPlane (int height, int picnum, int lightlevel) {
     check[_off_check].minx = 320;
     check[_off_check].maxx = -1;
     c_memset (check[_off_check].top, 0xff, ((int) (320) * (int) (1)));
-    return _c2v_slice_visplane_t (check, _off_check);
+    return check[_off_check];
 }
 
 // c2vala-ptrs: pl_obj[DEREF|WR|ARROW]=>T?
@@ -26123,14 +26343,8 @@ void R_DrawPlanes () {
     int stop = 0;
     int angle = 0;
     int lumpnum = 0;
-    if ((0 - 0) > ((int64) 256)) {
-        I_Error (c_str_to_bytes ("R_DrawPlanes: drawsegs overflow (%i)"), (0 - 0));
-    }
-    if ((0 - 0) > ((int64) 128)) {
-        I_Error (c_str_to_bytes ("R_DrawPlanes: visplane overflow (%i)"), (0 - 0));
-    }
-    if ((0 - 0) > ((int64) (320 * 64))) {
-        I_Error (c_str_to_bytes ("R_DrawPlanes: opening overflow (%i)"), (0 - 0));
+    if (numvisplanes > 128) {
+        I_Error (c_str_to_bytes ("R_DrawPlanes: visplane overflow (%i)"), numvisplanes);
     }
     {
         pl = visplanes;
@@ -26258,7 +26472,7 @@ void R_RenderMaskedSegRange (drawseg_s[] ds, int x1, int x2) {
         lightnum++;
     }
     if (lightnum < 0) {
-        walllights = scalelight[(int) (0)];
+        walllights = scalelight[0];
     }
     else 
     if (lightnum >= 16) {
@@ -26646,7 +26860,7 @@ void R_StoreWallRange (int start, int stop) {
                 lightnum++;
             }
             if (lightnum < 0) {
-                walllights = scalelight[(int) (0)];
+                walllights = scalelight[0];
             }
             else 
             if (lightnum >= 16) {
@@ -26798,8 +27012,8 @@ void R_InitSpriteDefs (string[] namelist) {
         {
             if (!(GLib.ascii_strncasecmp ((string) lumpinfo[(int) (l)].name, spritename, 4) != 0)) 
             {
-                frame = (lumpinfo[(int) (l)].name[(int) (4)] - 'A');
-                rotation = (lumpinfo[(int) (l)].name[(int) (5)] - '0');
+                frame = (lumpinfo[(int) (l)].name[4] - 'A');
+                rotation = (lumpinfo[(int) (l)].name[5] - '0');
                 if (modifiedgame != 0) {
                     patched = W_GetNumForName (lumpinfo[(int) (l)].name);
                 }
@@ -26807,10 +27021,10 @@ void R_InitSpriteDefs (string[] namelist) {
                     patched = l;
                 }
                 R_InstallSpriteLump (patched, (uint32) frame, (uint32) rotation, (uint32) 0);
-                if (lumpinfo[(int) (l)].name[(int) (6)] != 0) 
+                if (lumpinfo[(int) (l)].name[6] != 0) 
                 {
-                    frame = (lumpinfo[(int) (l)].name[(int) (6)] - 'A');
-                    rotation = (lumpinfo[(int) (l)].name[(int) (7)] - '0');
+                    frame = (lumpinfo[(int) (l)].name[6] - 'A');
+                    rotation = (lumpinfo[(int) (l)].name[7] - '0');
                     R_InstallSpriteLump (l, (uint32) frame, (uint32) rotation, (uint32) 1);
                 }
             }
@@ -26874,9 +27088,10 @@ vissprite_s? R_NewVisSprite () {
     if (numvissprites >= 128) {
         return overflowsprite;
     }
+    int idx = numvissprites;
     numvissprites++;
-    vissprite_p = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) (numvissprites)));
-    return _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((numvissprites - 1))));
+    vissprite_p = (numvissprites < 128) ? vissprites[numvissprites] : overflowsprite;
+    return vissprites[idx];
 }
 
 // c2vala-ptrs: column_ptr[ARITH|DEREF|CAST|ARROW->post_t]=>post_t.at
@@ -26925,7 +27140,7 @@ void R_DrawVisSprite (vissprite_s? vis, int x1, int x2) {
     if ((vis.mobjflags & ((int) mobjflag_t.MF_TRANSLATION)) != 0) 
     {
         colfunc = transcolfunc;
-        dc_translation = _c2v_slice_uint8 (translationtables, (-((int) (256))) + (int) (((vis.mobjflags & ((int) mobjflag_t.MF_TRANSLATION)) >> ((int) (((int) mobjflag_t.MF_TRANSSHIFT) - 8)))));
+        dc_translation = _c2v_slice_uint8 (translationtables, (-256) + (int) (((vis.mobjflags & ((int) mobjflag_t.MF_TRANSLATION)) >> ((int) (((int) mobjflag_t.MF_TRANSSHIFT) - 8)))));
     }
     dc_iscale = (int.abs ((int) (vis.xiscale)) >> detailshift);
     dc_texturemid = vis.texturemid;
@@ -26985,11 +27200,11 @@ void R_ProjectSprite (mobj_s? thing) {
     if (((uint32) thing.sprite) >= ((uint32) numsprites)) {
         I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite number %i "), thing.sprite);
     }
-    sprdef = _c2v_box_spritedef_t_obj (_c2v_slice_spritedef_t (sprites, (int) (thing.sprite)));
+    sprdef = sprites[(int) (thing.sprite)];
     if ((thing.frame & 0x7fff) >= sprdef.numframes) {
         I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite frame %i : %i "), thing.sprite, thing.frame);
     }
-    sprframe = _c2v_box_spriteframe_t_obj (_c2v_slice_spriteframe_t (sprdef.spriteframes, (int) ((thing.frame & 0x7fff))));
+    sprframe = sprdef.spriteframes[(int) ((thing.frame & 0x7fff))];
     if (sprframe.rotate != 0) 
     {
         ang = R_PointToAngle (thing.x, thing.y);
@@ -26999,8 +27214,8 @@ void R_ProjectSprite (mobj_s? thing) {
     }
     else 
     {
-        lump = (int) (sprframe.lump[(int) (0)]);
-        flip = ((uint32) (sprframe.flip[(int) (0)]));
+        lump = (int) (sprframe.lump[0]);
+        flip = ((uint32) (sprframe.flip[0]));
     }
     tx -= spriteoffset[(int) (lump)];
     x1 = ((centerxfrac + FixedMul (tx, xscale)) >> 16);
@@ -27071,7 +27286,7 @@ void R_AddSprites (sector_t? sec) {
     sec.validcount = validcount;
     lightnum = ((((int) sec.lightlevel) >> 4) + extralight);
     if (lightnum < 0) {
-        spritelights = scalelight[(int) (0)];
+        spritelights = scalelight[0];
     }
     else 
     if (lightnum >= 16) {
@@ -27099,13 +27314,13 @@ void R_DrawPSprite (pspdef_t[] psp) {
     if (((uint32) (psp[0].state.sprite)) >= ((uint32) numsprites)) {
         I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite number %i "), psp[0].state.sprite);
     }
-    sprdef = _c2v_box_spritedef_t_obj (_c2v_slice_spritedef_t (sprites, (int) (psp[0].state.sprite)));
+    sprdef = sprites[(int) (psp[0].state.sprite)];
     if ((psp[0].state.frame & 0x7fff) >= sprdef.numframes) {
         I_Error (c_str_to_bytes ("R_ProjectSprite: invalid sprite frame %i : %i "), psp[0].state.sprite, psp[0].state.frame);
     }
-    sprframe = _c2v_box_spriteframe_t_obj (_c2v_slice_spriteframe_t (sprdef.spriteframes, (int) ((psp[0].state.frame & 0x7fff))));
-    lump = (int) (sprframe.lump[(int) (0)]);
-    flip = ((uint32) (sprframe.flip[(int) (0)]));
+    sprframe = sprdef.spriteframes[(int) ((psp[0].state.frame & 0x7fff))];
+    lump = (int) (sprframe.lump[0]);
+    flip = ((uint32) (sprframe.flip[0]));
     tx = (psp[0].sx - (160 * (1 << 16)));
     tx -= spriteoffset[(int) (lump)];
     x1 = ((centerxfrac + FixedMul (tx, pspritescale)) >> 16);
@@ -27166,7 +27381,7 @@ void R_DrawPlayerSprites () {
     int _off_psp = 0;
     lightnum = ((((int) viewplayer.mo.subsector.sector.lightlevel) >> 4) + extralight);
     if (lightnum < 0) {
-        spritelights = scalelight[(int) (0)];
+        spritelights = scalelight[0];
     }
     else 
     if (lightnum >= 16) {
@@ -27202,20 +27417,22 @@ void R_SortVisSprites () {
     vissprite_s unsorted = new vissprite_s ();
     int bestscale = 0;
     count = numvissprites;
-    unsorted.prev = unsorted;
-    unsorted.next = unsorted.prev;
     if (!(count != 0)) {
+        vsprsortedhead.prev = vsprsortedhead;
+        vsprsortedhead.next = vsprsortedhead.prev;
         return;
     }
+    unsorted.prev = unsorted;
+    unsorted.next = unsorted.prev;
     for (i = 0; i < count; i++) 
     {
-        vissprites[(int) (i)].next = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((i + 1))));
-        vissprites[(int) (i)].prev = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((i - 1))));
+        vissprites[(int) (i)].next = (i + 1 < count) ? vissprites[(int) (i + 1)] : null;
+        vissprites[(int) (i)].prev = (i > 0) ? vissprites[(int) (i - 1)] : null;
     }
-    vissprites[(int) (0)].prev = unsorted;
-    unsorted.next = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) (0)));
+    vissprites[0].prev = unsorted;
+    unsorted.next = vissprites[0];
     vissprites[(int) ((count - 1))].next = unsorted;
-    unsorted.prev = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((count - 1))));
+    unsorted.prev = vissprites[(int) ((count - 1))];
     vsprsortedhead.prev = vsprsortedhead;
     vsprsortedhead.next = vsprsortedhead.prev;
     for (i = 0; i < count; i++) 
@@ -27237,6 +27454,8 @@ void R_SortVisSprites () {
         vsprsortedhead.prev.next = best;
         vsprsortedhead.prev = best;
     }
+    unsorted.next = null;
+    unsorted.prev = null;
 }
 
 public int16[] clipbot;
@@ -27402,67 +27621,67 @@ void Transform (sha1_context_s? hd, uint8[] data) {
         }
     }
     do {
-        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (0)])));
+        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[0])));
         b = ((b << ((uint32) 30)) | (b >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        d += (uint32) (((((int64) (((e << ((uint32) 5)) | (e >> ((uint32) (32 - 5)))) + (c ^ (a & (b ^ c))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (1)])));
+        d += (uint32) (((((int64) (((e << ((uint32) 5)) | (e >> ((uint32) (32 - 5)))) + (c ^ (a & (b ^ c))))) + ((int64) 0x5A827999)) + ((int64) x[1])));
         a = ((a << ((uint32) 30)) | (a >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        c += (uint32) (((((int64) (((d << ((uint32) 5)) | (d >> ((uint32) (32 - 5)))) + (b ^ (e & (a ^ b))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (2)])));
+        c += (uint32) (((((int64) (((d << ((uint32) 5)) | (d >> ((uint32) (32 - 5)))) + (b ^ (e & (a ^ b))))) + ((int64) 0x5A827999)) + ((int64) x[2])));
         e = ((e << ((uint32) 30)) | (e >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        b += (uint32) (((((int64) (((c << ((uint32) 5)) | (c >> ((uint32) (32 - 5)))) + (a ^ (d & (e ^ a))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (3)])));
+        b += (uint32) (((((int64) (((c << ((uint32) 5)) | (c >> ((uint32) (32 - 5)))) + (a ^ (d & (e ^ a))))) + ((int64) 0x5A827999)) + ((int64) x[3])));
         d = ((d << ((uint32) 30)) | (d >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        a += (uint32) (((((int64) (((b << ((uint32) 5)) | (b >> ((uint32) (32 - 5)))) + (e ^ (c & (d ^ e))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (4)])));
+        a += (uint32) (((((int64) (((b << ((uint32) 5)) | (b >> ((uint32) (32 - 5)))) + (e ^ (c & (d ^ e))))) + ((int64) 0x5A827999)) + ((int64) x[4])));
         c = ((c << ((uint32) 30)) | (c >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (5)])));
+        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[5])));
         b = ((b << ((uint32) 30)) | (b >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        d += (uint32) (((((int64) (((e << ((uint32) 5)) | (e >> ((uint32) (32 - 5)))) + (c ^ (a & (b ^ c))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (6)])));
+        d += (uint32) (((((int64) (((e << ((uint32) 5)) | (e >> ((uint32) (32 - 5)))) + (c ^ (a & (b ^ c))))) + ((int64) 0x5A827999)) + ((int64) x[6])));
         a = ((a << ((uint32) 30)) | (a >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        c += (uint32) (((((int64) (((d << ((uint32) 5)) | (d >> ((uint32) (32 - 5)))) + (b ^ (e & (a ^ b))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (7)])));
+        c += (uint32) (((((int64) (((d << ((uint32) 5)) | (d >> ((uint32) (32 - 5)))) + (b ^ (e & (a ^ b))))) + ((int64) 0x5A827999)) + ((int64) x[7])));
         e = ((e << ((uint32) 30)) | (e >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        b += (uint32) (((((int64) (((c << ((uint32) 5)) | (c >> ((uint32) (32 - 5)))) + (a ^ (d & (e ^ a))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (8)])));
+        b += (uint32) (((((int64) (((c << ((uint32) 5)) | (c >> ((uint32) (32 - 5)))) + (a ^ (d & (e ^ a))))) + ((int64) 0x5A827999)) + ((int64) x[8])));
         d = ((d << ((uint32) 30)) | (d >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        a += (uint32) (((((int64) (((b << ((uint32) 5)) | (b >> ((uint32) (32 - 5)))) + (e ^ (c & (d ^ e))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (9)])));
+        a += (uint32) (((((int64) (((b << ((uint32) 5)) | (b >> ((uint32) (32 - 5)))) + (e ^ (c & (d ^ e))))) + ((int64) 0x5A827999)) + ((int64) x[9])));
         c = ((c << ((uint32) 30)) | (c >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (10)])));
+        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[10])));
         b = ((b << ((uint32) 30)) | (b >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        d += (uint32) (((((int64) (((e << ((uint32) 5)) | (e >> ((uint32) (32 - 5)))) + (c ^ (a & (b ^ c))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (11)])));
+        d += (uint32) (((((int64) (((e << ((uint32) 5)) | (e >> ((uint32) (32 - 5)))) + (c ^ (a & (b ^ c))))) + ((int64) 0x5A827999)) + ((int64) x[11])));
         a = ((a << ((uint32) 30)) | (a >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        c += (uint32) (((((int64) (((d << ((uint32) 5)) | (d >> ((uint32) (32 - 5)))) + (b ^ (e & (a ^ b))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (12)])));
+        c += (uint32) (((((int64) (((d << ((uint32) 5)) | (d >> ((uint32) (32 - 5)))) + (b ^ (e & (a ^ b))))) + ((int64) 0x5A827999)) + ((int64) x[12])));
         e = ((e << ((uint32) 30)) | (e >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        b += (uint32) (((((int64) (((c << ((uint32) 5)) | (c >> ((uint32) (32 - 5)))) + (a ^ (d & (e ^ a))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (13)])));
+        b += (uint32) (((((int64) (((c << ((uint32) 5)) | (c >> ((uint32) (32 - 5)))) + (a ^ (d & (e ^ a))))) + ((int64) 0x5A827999)) + ((int64) x[13])));
         d = ((d << ((uint32) 30)) | (d >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        a += (uint32) (((((int64) (((b << ((uint32) 5)) | (b >> ((uint32) (32 - 5)))) + (e ^ (c & (d ^ e))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (14)])));
+        a += (uint32) (((((int64) (((b << ((uint32) 5)) | (b >> ((uint32) (32 - 5)))) + (e ^ (c & (d ^ e))))) + ((int64) 0x5A827999)) + ((int64) x[14])));
         c = ((c << ((uint32) 30)) | (c >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
-        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[(int) (15)])));
+        e += (uint32) (((((int64) (((a << ((uint32) 5)) | (a >> ((uint32) (32 - 5)))) + (d ^ (b & (c ^ d))))) + ((int64) 0x5A827999)) + ((int64) x[15])));
         b = ((b << ((uint32) 30)) | (b >> ((uint32) (32 - 30))));
     } while (0 != 0);
     do {
@@ -27798,14 +28017,14 @@ void SHA1_Final (uint8[] digest, sha1_context_s? hd) {
         SHA1_Update (hd, new uint8[0], (size_t) 0);
         c_memset (hd.buf, 0, 56);
     }
-    hd.buf[(int) (56)] = (uint8) ((msb >> ((uint32) 24)));
-    hd.buf[(int) (57)] = (uint8) ((msb >> ((uint32) 16)));
-    hd.buf[(int) (58)] = (uint8) ((msb >> ((uint32) 8)));
-    hd.buf[(int) (59)] = (uint8) msb;
-    hd.buf[(int) (60)] = (uint8) ((lsb >> ((uint32) 24)));
-    hd.buf[(int) (61)] = (uint8) ((lsb >> ((uint32) 16)));
-    hd.buf[(int) (62)] = (uint8) ((lsb >> ((uint32) 8)));
-    hd.buf[(int) (63)] = (uint8) lsb;
+    hd.buf[56] = (uint8) ((msb >> ((uint32) 24)));
+    hd.buf[57] = (uint8) ((msb >> ((uint32) 16)));
+    hd.buf[58] = (uint8) ((msb >> ((uint32) 8)));
+    hd.buf[59] = (uint8) msb;
+    hd.buf[60] = (uint8) ((lsb >> ((uint32) 24)));
+    hd.buf[61] = (uint8) ((lsb >> ((uint32) 16)));
+    hd.buf[62] = (uint8) ((lsb >> ((uint32) 8)));
+    hd.buf[63] = (uint8) lsb;
     Transform (hd, hd.buf);
     p = hd.buf;
     _off_p = 0;
@@ -27845,10 +28064,10 @@ void SHA1_Final (uint8[] digest, sha1_context_s? hd) {
 // c2vala-ptrs: context_obj[PLAIN]=>T? buf_buf[IDX|WR]=>uint8[]
 void SHA1_UpdateInt32 (sha1_context_s? context, uint32 val) {
     uint8[] buf = new uint8[4];
-    buf[(int) (0)] = (uint8) (((val >> ((uint32) 24)) & ((uint32) 0xff)));
-    buf[(int) (1)] = (uint8) (((val >> ((uint32) 16)) & ((uint32) 0xff)));
-    buf[(int) (2)] = (uint8) (((val >> ((uint32) 8)) & ((uint32) 0xff)));
-    buf[(int) (3)] = (uint8) ((val & ((uint32) 0xff)));
+    buf[0] = (uint8) (((val >> ((uint32) 24)) & ((uint32) 0xff)));
+    buf[1] = (uint8) (((val >> ((uint32) 16)) & ((uint32) 0xff)));
+    buf[2] = (uint8) (((val >> ((uint32) 8)) & ((uint32) 0xff)));
+    buf[3] = (uint8) ((val & ((uint32) 0xff)));
     SHA1_Update (context, buf, (size_t) 4);
 }
 
@@ -27878,8 +28097,8 @@ void STlib_initNum (st_number_t? n, int x, int y, patch_t?[] pl, int[] num, uint
 void STlib_drawNum (st_number_t? n, uint32 refresh) {
     int numdigits = n.width;
     int num = n.num[0];
-    int w = (int) (n.p[(int) (0)].width);
-    int h = (int) (n.p[(int) (0)].height);
+    int w = (int) (n.p[0].width);
+    int h = (int) (n.p[0].height);
     int x = n.x;
     int neg = 0;
     n.oldnum = n.num[0];
@@ -27905,7 +28124,7 @@ void STlib_drawNum (st_number_t? n, uint32 refresh) {
     }
     x = n.x;
     if (!(num != 0)) {
-        V_DrawPatch ((x - w), n.y, n.p[(int) (0)]);
+        V_DrawPatch ((x - w), n.y, n.p[0]);
     }
     while ((num != 0) && (numdigits-- != 0)) 
     {
@@ -28174,8 +28393,8 @@ uint32 ST_Responder (event_t? ev) {
                 cht_GetParam (cheat_mus, buf);
                 if ((gamemode == GameMode_t.commercial) || (gameversion < GameVersion_t.exe_ultimate)) 
                 {
-                    musnum = (int) ((((int) (((int) (((int) (((int) musicenum_t.mus_runnin) + ((buf[(int) (0)] - '0') * 10))) + buf[(int) (1)])) - '0')) - 1));
-                    if (((((buf[(int) (0)] - '0') * 10) + ((int) buf[(int) (1)])) - ((int) '0')) > 35) {
+                    musnum = (int) ((((int) (((int) (((int) (((int) musicenum_t.mus_runnin) + ((buf[0] - '0') * 10))) + buf[1])) - '0')) - 1));
+                    if (((((buf[0] - '0') * 10) + ((int) buf[1])) - ((int) '0')) > 35) {
                         plyr.message = "IMPOSSIBLE SELECTION";
                     }
                     else {
@@ -28184,8 +28403,8 @@ uint32 ST_Responder (event_t? ev) {
                 }
                 else 
                 {
-                    musnum = (int) ((((int) (((int) musicenum_t.mus_e1m1) + ((buf[(int) (0)] - '1') * 9))) + (buf[(int) (1)] - '1')));
-                    if (((((buf[(int) (0)] - '1') * 9) + ((int) buf[(int) (1)])) - ((int) '1')) > 31) {
+                    musnum = (int) ((((int) (((int) musicenum_t.mus_e1m1) + ((buf[0] - '1') * 9))) + (buf[1] - '1')));
+                    if (((((buf[0] - '1') * 9) + ((int) buf[1])) - ((int) '1')) > 31) {
                         plyr.message = "IMPOSSIBLE SELECTION";
                     }
                     else {
@@ -28206,7 +28425,7 @@ uint32 ST_Responder (event_t? ev) {
             }
             for (i = 0; i < 6; i++) 
             {
-                if (cht_CheckCheat (_c2v_box_cheatseq_t_obj (_c2v_slice_cheatseq_t (cheat_powerup, (int) (i))), (char) ev.data2) != 0) 
+                if (cht_CheckCheat (cheat_powerup[(int) (i)], (char) ev.data2) != 0) 
                 {
                     if (!(plyr.powers[(int) (i)] != 0)) {
                         P_GivePower (plyr, i);
@@ -28221,7 +28440,7 @@ uint32 ST_Responder (event_t? ev) {
                     plyr.message = "Power-up Toggled";
                 }
             }
-            if (cht_CheckCheat (_c2v_box_cheatseq_t_obj (_c2v_slice_cheatseq_t (cheat_powerup, (int) (6))), (char) ev.data2) != 0) 
+            if (cht_CheckCheat (cheat_powerup[6], (char) ev.data2) != 0) 
             {
                 plyr.message = "inVuln, Str, Inviso, Rad, Allmap, or Lite-amp";
             }
@@ -28249,12 +28468,12 @@ uint32 ST_Responder (event_t? ev) {
             if (gamemode == GameMode_t.commercial) 
             {
                 epsd = 1;
-                map = ((((buf[(int) (0)] - '0') * 10) + ((int) buf[(int) (1)])) - ((int) '0'));
+                map = ((((buf[0] - '0') * 10) + ((int) buf[1])) - ((int) '0'));
             }
             else 
             {
-                epsd = (buf[(int) (0)] - '0');
-                map = (buf[(int) (1)] - '0');
+                epsd = (buf[0] - '0');
+                map = (buf[1] - '0');
             }
             if (gameversion == GameVersion_t.exe_chex) 
             {
@@ -28535,18 +28754,18 @@ void ST_drawWidgets (uint32 refresh) {
     STlib_updateNum (w_ready, refresh);
     for (i = 0; i < 4; i++) 
     {
-        STlib_updateNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_ammo, (int) (i))), refresh);
-        STlib_updateNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_maxammo, (int) (i))), refresh);
+        STlib_updateNum (w_ammo[(int) (i)], refresh);
+        STlib_updateNum (w_maxammo[(int) (i)], refresh);
     }
     STlib_updatePercent (w_health, (int) refresh);
     STlib_updatePercent (w_armor, (int) refresh);
     STlib_updateBinIcon (w_armsbg, refresh);
     for (i = 0; i < 6; i++) {
-        STlib_updateMultIcon (_c2v_box_st_multicon_t_obj (_c2v_slice_st_multicon_t (w_arms, (int) (i))), refresh);
+        STlib_updateMultIcon (w_arms[(int) (i)], refresh);
     }
     STlib_updateMultIcon (w_faces, refresh);
     for (i = 0; i < 3; i++) {
-        STlib_updateMultIcon (_c2v_box_st_multicon_t_obj (_c2v_slice_st_multicon_t (w_keyboxes, (int) (i))), refresh);
+        STlib_updateMultIcon (w_keyboxes[(int) (i)], refresh);
     }
     STlib_updateNum (w_frags, refresh);
 }
@@ -28601,7 +28820,7 @@ void ST_loadUnloadGraphics (_c2v_del_load_callback_t_dd780739? callback) {
     {
         c_snprintf_buf (namebuf, (size_t) (9), ("STGNUM%d").printf ((i + 2)));
         ((!) callback) (namebuf, _c2v_slice_patch_t_ (arms[(int) (i)], (int) (0)));
-        arms[(int) (i)][(int) (1)] = shortnum[(int) ((i + 2))];
+        arms[(int) (i)][1] = shortnum[(int) ((i + 2))];
     }
     c_snprintf_buf (namebuf, (size_t) (9), ("STFB%d").printf (consoleplayer));
     patch_t?[] _c2v_ref_2 = { faceback };
@@ -28672,7 +28891,7 @@ void ST_unloadData () {
 void ST_initData () {
     int i = 0;
     st_firsttime = (uint32) 1;
-    plyr = _c2v_box_player_s_obj (_c2v_slice_player_s (players, (int) (consoleplayer)));
+    plyr = players[(int) (consoleplayer)];
     st_clock = (uint32) 0;
     st_chatstate = st_chatstateenum_t.StartChatState;
     st_gamestate = st_stateenum_t.FirstPersonState;
@@ -28711,7 +28930,7 @@ void ST_createWidgets () {
     for (i = 0; i < 6; i++) 
     {
         uint32[] _c2v_ref_5 = { st_armson };
-        STlib_initMultIcon (_c2v_box_st_multicon_t_obj (_c2v_slice_st_multicon_t (w_arms, (int) (i))), (111 + ((i % 3) * 12)), (172 + ((i / 3) * 10)), arms[(int) (i)], new int[1], _c2v_ref_5);
+        STlib_initMultIcon (w_arms[(int) (i)], (111 + ((i % 3) * 12)), (172 + ((i / 3) * 10)), arms[(int) (i)], new int[1], _c2v_ref_5);
         st_armson = _c2v_ref_5[0];
     }
     int[] _c2v_ref_6 = { st_fragscount };
@@ -28730,37 +28949,37 @@ void ST_createWidgets () {
     plyr.armorpoints = _c2v_ref_10[0];
     st_statusbaron = _c2v_ref_11[0];
     uint32[] _c2v_ref_12 = { st_statusbaron };
-    STlib_initMultIcon (_c2v_box_st_multicon_t_obj (_c2v_slice_st_multicon_t (w_keyboxes, (int) (0))), 239, 171, keys, _c2v_slice_int (keyboxes, (int) (0)), _c2v_ref_12);
+    STlib_initMultIcon (w_keyboxes[0], 239, 171, keys, _c2v_slice_int (keyboxes, (int) (0)), _c2v_ref_12);
     st_statusbaron = _c2v_ref_12[0];
     uint32[] _c2v_ref_13 = { st_statusbaron };
-    STlib_initMultIcon (_c2v_box_st_multicon_t_obj (_c2v_slice_st_multicon_t (w_keyboxes, (int) (1))), 239, 181, keys, _c2v_slice_int (keyboxes, (int) (1)), _c2v_ref_13);
+    STlib_initMultIcon (w_keyboxes[1], 239, 181, keys, _c2v_slice_int (keyboxes, (int) (1)), _c2v_ref_13);
     st_statusbaron = _c2v_ref_13[0];
     uint32[] _c2v_ref_14 = { st_statusbaron };
-    STlib_initMultIcon (_c2v_box_st_multicon_t_obj (_c2v_slice_st_multicon_t (w_keyboxes, (int) (2))), 239, 191, keys, _c2v_slice_int (keyboxes, (int) (2)), _c2v_ref_14);
+    STlib_initMultIcon (w_keyboxes[2], 239, 191, keys, _c2v_slice_int (keyboxes, (int) (2)), _c2v_ref_14);
     st_statusbaron = _c2v_ref_14[0];
     uint32[] _c2v_ref_15 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_ammo, (int) (0))), 288, 173, shortnum, _c2v_slice_int (plyr.ammo, (int) (0)), _c2v_ref_15, 3);
+    STlib_initNum (w_ammo[0], 288, 173, shortnum, _c2v_slice_int (plyr.ammo, (int) (0)), _c2v_ref_15, 3);
     st_statusbaron = _c2v_ref_15[0];
     uint32[] _c2v_ref_16 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_ammo, (int) (1))), 288, 179, shortnum, _c2v_slice_int (plyr.ammo, (int) (1)), _c2v_ref_16, 3);
+    STlib_initNum (w_ammo[1], 288, 179, shortnum, _c2v_slice_int (plyr.ammo, (int) (1)), _c2v_ref_16, 3);
     st_statusbaron = _c2v_ref_16[0];
     uint32[] _c2v_ref_17 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_ammo, (int) (2))), 288, 191, shortnum, _c2v_slice_int (plyr.ammo, (int) (2)), _c2v_ref_17, 3);
+    STlib_initNum (w_ammo[2], 288, 191, shortnum, _c2v_slice_int (plyr.ammo, (int) (2)), _c2v_ref_17, 3);
     st_statusbaron = _c2v_ref_17[0];
     uint32[] _c2v_ref_18 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_ammo, (int) (3))), 288, 185, shortnum, _c2v_slice_int (plyr.ammo, (int) (3)), _c2v_ref_18, 3);
+    STlib_initNum (w_ammo[3], 288, 185, shortnum, _c2v_slice_int (plyr.ammo, (int) (3)), _c2v_ref_18, 3);
     st_statusbaron = _c2v_ref_18[0];
     uint32[] _c2v_ref_19 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_maxammo, (int) (0))), 314, 173, shortnum, _c2v_slice_int (plyr.maxammo, (int) (0)), _c2v_ref_19, 3);
+    STlib_initNum (w_maxammo[0], 314, 173, shortnum, _c2v_slice_int (plyr.maxammo, (int) (0)), _c2v_ref_19, 3);
     st_statusbaron = _c2v_ref_19[0];
     uint32[] _c2v_ref_20 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_maxammo, (int) (1))), 314, 179, shortnum, _c2v_slice_int (plyr.maxammo, (int) (1)), _c2v_ref_20, 3);
+    STlib_initNum (w_maxammo[1], 314, 179, shortnum, _c2v_slice_int (plyr.maxammo, (int) (1)), _c2v_ref_20, 3);
     st_statusbaron = _c2v_ref_20[0];
     uint32[] _c2v_ref_21 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_maxammo, (int) (2))), 314, 191, shortnum, _c2v_slice_int (plyr.maxammo, (int) (2)), _c2v_ref_21, 3);
+    STlib_initNum (w_maxammo[2], 314, 191, shortnum, _c2v_slice_int (plyr.maxammo, (int) (2)), _c2v_ref_21, 3);
     st_statusbaron = _c2v_ref_21[0];
     uint32[] _c2v_ref_22 = { st_statusbaron };
-    STlib_initNum (_c2v_box_st_number_t_obj (_c2v_slice_st_number_t (w_maxammo, (int) (3))), 314, 185, shortnum, _c2v_slice_int (plyr.maxammo, (int) (3)), _c2v_ref_22, 3);
+    STlib_initNum (w_maxammo[3], 314, 185, shortnum, _c2v_slice_int (plyr.maxammo, (int) (3)), _c2v_ref_22, 3);
     st_statusbaron = _c2v_ref_22[0];
 }
 
@@ -29286,9 +29505,44 @@ void V_RestoreBuffer () {
     dest_screen = I_VideoBuffer;
 }
 
-// c2vala: UNTRANSLATED WritePCXfile (v_video.c:653) -- v_video.c:681: address-of a non-lvalue
-// TODO: port this function by hand.
 void WritePCXfile (uint8[] filename, uint8[] data, int width, int height, uint8[] palette) {
+    uint8[] buf = new uint8[width * height * 2 + 1000];
+    GLib.Memory.set_bytes (buf, 0, 0, 128);
+    buf[0] = 0x0a;
+    buf[1] = 5;
+    buf[2] = 1;
+    buf[3] = 8;
+    int xmax = width - 1;
+    int ymax = height - 1;
+    buf[8] = (uint8) (xmax & 0xff);
+    buf[9] = (uint8) ((xmax >> 8) & 0xff);
+    buf[10] = (uint8) (ymax & 0xff);
+    buf[11] = (uint8) ((ymax >> 8) & 0xff);
+    buf[12] = (uint8) (width & 0xff);
+    buf[13] = (uint8) ((width >> 8) & 0xff);
+    buf[14] = (uint8) (height & 0xff);
+    buf[15] = (uint8) ((height >> 8) & 0xff);
+    buf[65] = 1;
+    buf[66] = (uint8) (width & 0xff);
+    buf[67] = (uint8) ((width >> 8) & 0xff);
+    buf[68] = 2;
+    buf[69] = 0;
+    int pos = 128;
+    int total = width * height;
+    for (int i = 0; i < total && i < data.length; i++) {
+        uint8 px = data[i];
+        if ((px & 0xc0) != 0xc0) {
+            buf[pos++] = px;
+        } else {
+            buf[pos++] = 0xc1;
+            buf[pos++] = px;
+        }
+    }
+    buf[pos++] = 0x0c;
+    int pal_n = palette.length < 768 ? palette.length : 768;
+    GLib.Memory.copy_bytes (buf, pos, palette, 0, pal_n);
+    pos += pal_n;
+    M_WriteFile (filename, buf, pos);
 }
 
 // c2vala-ptrs: format_obj[PLAIN]=>T? lbmname_buf[PLAIN]=>uint8[](ro) ext_obj[PLAIN]=>T?
@@ -29375,10 +29629,24 @@ public _wad_file_s?[] open_wadfiles;
 
 public int num_open_wadfiles = 0;
 
-// c2vala: UNTRANSLATED GetFileNumber (w_checksum.c:31) -- w_checksum.c:47: realloc is only supported on byte/char buffers
-// TODO: port this function by hand.
 int GetFileNumber (_wad_file_s? handle) {
-    return 0;
+    if (handle == null) return 0;
+    if (open_wadfiles != null) {
+        for (int i = 0; i < num_open_wadfiles && i < open_wadfiles.length; i++) {
+            if (open_wadfiles[i] == handle) return i;
+        }
+    }
+    int cur_len = (open_wadfiles != null) ? open_wadfiles.length : 0;
+    if (num_open_wadfiles >= cur_len) {
+        int new_cap = (cur_len > 0) ? cur_len * 2 : 8;
+        var next = new _wad_file_s?[new_cap];
+        for (int i = 0; i < cur_len; i++) next[i] = open_wadfiles[i];
+        open_wadfiles = next;
+    }
+    open_wadfiles[num_open_wadfiles] = handle;
+    int result = num_open_wadfiles;
+    num_open_wadfiles++;
+    return result;
 }
 
 // c2vala-ptrs: sha1_context_obj[PLAIN]=>T? lump_obj[DEREF|ARROW]=>T? buf_buf[PLAIN]=>uint8[](ro)
@@ -29436,7 +29704,7 @@ uint32 W_ParseCommandLine () {
     if (p != 0) 
     {
         modifiedgame = (uint32) 1;
-        while ((++p != myargc) && (myargv[(int) (p)][(int) (0)] != '-')) 
+        while ((++p != myargc) && (myargv[(int) (p)][0] != '-')) 
         {
             uint8[] filename = new uint8[0];
             filename = D_TryFindWADByName (c_str_to_bytes (myargv[(int) (p)]));
@@ -29469,6 +29737,12 @@ void ExtendLumpInfo (int newnumlumps) {
     }
     lumpinfo = lumpinfo_pool;
     numlumps = (uint32) newnumlumps;
+}
+
+[NoAlloc]
+[AlwaysInline]
+private int read_le32 (uint8[] buf, int off) {
+    return buf[off] | (buf[off + 1] << 8) | (buf[off + 2] << 16) | (buf[off + 3] << 24);
 }
 
 // c2vala-ptrs: filename_buf[ARITH]=>uint8[](ro) lump_p_obj[PLAIN]=>T? wad_file_obj[DEREF|NULL|ARROW]=>T? fileinfo_obj[DEREF|WR|ARROW]=>T? filerover_obj[PLAIN]=>T? hdrbuf_buf[IDX|NULL]=>uint8[](ro) rawinfo_buf[IDX]=>uint8[](ro)
@@ -29507,40 +29781,38 @@ _wad_file_s? W_AddFile (uint8[] filename) {
         print (@"[wad] read hdr len=$(wad_file.length)\n");
     W_Read (wad_file, (uint32) 0, hdrbuf, (size_t) 12);
     print (@"[wad] hdr=$(hdrbuf[0]) $(hdrbuf[1]) $(hdrbuf[2]) $(hdrbuf[3])\n");
-        if ((((((int) hdrbuf[(int) (0)]) != ((int) 'I')) || (((int) hdrbuf[(int) (1)]) != ((int) 'W'))) || (((int) hdrbuf[(int) (2)]) != ((int) 'A'))) || (((int) hdrbuf[(int) (3)]) != ((int) 'D'))) 
+        if ((((((int) hdrbuf[0]) != ((int) 'I')) || (((int) hdrbuf[1]) != ((int) 'W'))) || (((int) hdrbuf[2]) != ((int) 'A'))) || (((int) hdrbuf[3]) != ((int) 'D'))) 
         {
-            if ((((((int) hdrbuf[(int) (0)]) != ((int) 'P')) || (((int) hdrbuf[(int) (1)]) != ((int) 'W'))) || (((int) hdrbuf[(int) (2)]) != ((int) 'A'))) || (((int) hdrbuf[(int) (3)]) != ((int) 'D'))) 
+            if ((((((int) hdrbuf[0]) != ((int) 'P')) || (((int) hdrbuf[1]) != ((int) 'W'))) || (((int) hdrbuf[2]) != ((int) 'A'))) || (((int) hdrbuf[3]) != ((int) 'D'))) 
             {
                 I_Error (c_str_to_bytes ("Wad file %s doesn't have IWAD or PWAD id\n"), filename);
             }
         }
-        h_numlumps = (((((int) (hdrbuf[(int) (4)])) | (((int) (hdrbuf[(int) (5)])) << 8)) | (((int) (hdrbuf[(int) (6)])) << 16)) | (((int) (hdrbuf[(int) (7)])) << 24));
-        h_infotableofs = (((((int) (hdrbuf[(int) (8)])) | (((int) (hdrbuf[(int) (9)])) << 8)) | (((int) (hdrbuf[(int) (10)])) << 16)) | (((int) (hdrbuf[(int) (11)])) << 24));
-        length = (h_numlumps * 16);
+        h_numlumps = read_le32 (hdrbuf, 4);
+        h_infotableofs = read_le32 (hdrbuf, 8);
+        length = h_numlumps * 16;
         rawinfo = Z_Malloc (length, (int) __anon_enum_1.PU_STATIC, new uint8[0]);
         print (@"[wad] numlumps=$(h_numlumps) ofs=$(h_infotableofs) len=$(length)\n");
-    W_Read (wad_file, (uint32) h_infotableofs, rawinfo, (size_t) length);
-    print ("[wad] dir read ok\n");
+        W_Read (wad_file, (uint32) h_infotableofs, rawinfo, (size_t) length);
+        print ("[wad] dir read ok\n");
         newnumlumps += h_numlumps;
         startlump = (int) numlumps;
         ExtendLumpInfo (newnumlumps);
         for (i = (uint32) startlump; i < numlumps; ++i) 
         {
-            int roff = (int) (((i - ((uint32) startlump)) * ((uint32) 16)));
-            int k = 0;
-            lumpinfo[(int) (i)].wad_file = wad_file;
-            lumpinfo[(int) (i)].position = (((((int) (rawinfo[(int) ((roff + 0))])) | (((int) (rawinfo[(int) ((roff + 1))])) << 8)) | (((int) (rawinfo[(int) ((roff + 2))])) << 16)) | (((int) (rawinfo[(int) ((roff + 3))])) << 24));
-            lumpinfo[(int) (i)].size = (((((int) (rawinfo[(int) ((roff + 4))])) | (((int) (rawinfo[(int) ((roff + 5))])) << 8)) | (((int) (rawinfo[(int) ((roff + 6))])) << 16)) | (((int) (rawinfo[(int) ((roff + 7))])) << 24));
-            lumpinfo[(int) (i)].cache = new uint8[0];
-            for (k = 0; k < 8; k++) {
-                lumpinfo[(int) (i)].name[(int) (k)] = (uint8) (((char) (rawinfo[(int) (((roff + 8) + k))])));
-            }
+            int roff = (int) (i - (uint32) startlump) * 16;
+            lumpinfo[(int) i].wad_file = wad_file;
+            lumpinfo[(int) i].position = read_le32 (rawinfo, roff);
+            lumpinfo[(int) i].size = read_le32 (rawinfo, roff + 4);
+            lumpinfo[(int) i].cache = new uint8[0];
+            GLib.Memory.copy_bytes (lumpinfo[(int) i].name, 0, rawinfo, roff + 8, 8);
         }
         Z_Free (rawinfo);
         if (lumphash != null) 
         {
             lumphash = null;
         }
+        _lump_hash_head = new int[0];
         print ("[wad] W_AddFile done\n");
     return wad_file;
     }
@@ -29550,35 +29822,21 @@ int W_NumLumps () {
     return (int) numlumps;
 }
 
-// c2vala-ptrs: name_obj[PLAIN]=>T? lump_p_cur[ARITH|DEREF|NULL|ARROW]=>(T[],int)
+private int[]? _lump_hash_head = null;
+private int[]? _lump_hash_next = null;
+
 int W_CheckNumForName (uint8[] name) {
-    lumpinfo_s[] lump_p = new lumpinfo_s[0];
-    int _off_lump_p = 0;
-    int i = 0;
-    if (lumphash != null) 
-    {
-        int hash = 0;
-        hash = (int) ((W_LumpNameHash (name) % numlumps));
-        {
-            lump_p = _c2v_box_lumpinfo_s_arr (lumphash[(int) (hash)]);
-            _off_lump_p = 0;
-            for (; lump_p != null; lump_p = _c2v_box_lumpinfo_s_arr (lump_p[_off_lump_p].next)) 
-            {
-                if (c_lump_eq (lump_p[_off_lump_p].name, name) != 0) 
-                {
-                    return (int) ((_off_lump_p - 0));
-                }
-            }
+    if (_lump_hash_head != null && _lump_hash_next != null && numlumps > 0 && _lump_hash_head.length == (int) numlumps) {
+        int h = (int) (W_LumpNameHash (name) % numlumps);
+        for (int idx = _lump_hash_head[h]; idx >= 0; idx = _lump_hash_next[idx]) {
+            if (c_lump_eq (lumpinfo[idx].name, name) != 0)
+                return idx;
         }
+        return -1;
     }
-    else 
-    {
-        for (i = (int) (numlumps - 1); i >= 0; --i) 
-        {
-            if (c_lump_eq (lumpinfo[(int) (i)].name, name) != 0) 
-            {
-                return i;
-            }
+    for (int i = (int) (numlumps - 1); i >= 0; --i) {
+        if (c_lump_eq (lumpinfo[i].name, name) != 0) {
+            return i;
         }
     }
     return -1;
@@ -29681,7 +29939,28 @@ void W_ReleaseLumpName (uint8[] name) {
     W_ReleaseLumpNum (W_GetNumForName (name));
 }
 
-void W_GenerateHashTable () { lumphash = null; }
+void W_GenerateHashTable () {
+    lumphash = null;
+    if (numlumps == 0) {
+        _lump_hash_head = new int[0];
+        _lump_hash_next = new int[0];
+        return;
+    }
+    int n = (int) numlumps;
+    var head = new int[n];
+    var next = new int[n];
+    for (int i = 0; i < n; i++) {
+        head[i] = -1;
+        next[i] = -1;
+    }
+    for (int i = 0; i < n; i++) {
+        int h = (int) (W_LumpNameHash (lumpinfo[i].name) % numlumps);
+        next[i] = head[h];
+        head[h] = i;
+    }
+    _lump_hash_head = head;
+    _lump_hash_next = next;
+}
 
 public __anon_struct_150[] unique_lumps;
 
@@ -29950,7 +30229,7 @@ void WI_drawAnimatedBack () {
 }
 
 int WI_drawNum (int x, int y, int n, int digits) {
-    int fontwidth = (int) (num[(int) (0)].width);
+    int fontwidth = (int) (num[0].width);
     int neg = 0;
     int temp = 0;
     if (digits < 0) 
@@ -30258,7 +30537,7 @@ void WI_drawDeathmatchStats () {
         y += 33;
     }
     y = (68 + 10);
-    w = (int) (num[(int) (0)].width);
+    w = (int) (num[0].width);
     for (i = 0; i < 4; i++) 
     {
         x = (42 + 40);
@@ -30500,9 +30779,9 @@ void WI_initStats () {
     state = stateenum_t.StatCount;
     acceleratestage = 0;
     sp_state = 1;
-    cnt_secret[(int) (0)] = -1;
-    cnt_items[(int) (0)] = cnt_secret[(int) (0)];
-    cnt_kills[(int) (0)] = cnt_items[(int) (0)];
+    cnt_secret[0] = -1;
+    cnt_items[0] = cnt_secret[0];
+    cnt_kills[0] = cnt_items[0];
     cnt_par = -1;
     cnt_time = cnt_par;
     cnt_pause = 35;
@@ -30514,9 +30793,9 @@ void WI_updateStats () {
     if ((acceleratestage != 0) && (sp_state != 10)) 
     {
         acceleratestage = 0;
-        cnt_kills[(int) (0)] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].skills * 100) / wbs.maxkills);
-        cnt_items[(int) (0)] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].sitems * 100) / wbs.maxitems);
-        cnt_secret[(int) (0)] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].ssecret * 100) / wbs.maxsecret);
+        cnt_kills[0] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].skills * 100) / wbs.maxkills);
+        cnt_items[0] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].sitems * 100) / wbs.maxitems);
+        cnt_secret[0] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].ssecret * 100) / wbs.maxsecret);
         cnt_time = (_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].stime / 35);
         cnt_par = (wbs.partime / 35);
         0;
@@ -30524,13 +30803,13 @@ void WI_updateStats () {
     }
     if (sp_state == 2) 
     {
-        cnt_kills[(int) (0)] += 2;
+        cnt_kills[0] += 2;
         if (!((bcnt & 3) != 0)) {
             0;
         }
-        if (cnt_kills[(int) (0)] >= ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].skills * 100) / wbs.maxkills)) 
+        if (cnt_kills[0] >= ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].skills * 100) / wbs.maxkills)) 
         {
-            cnt_kills[(int) (0)] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].skills * 100) / wbs.maxkills);
+            cnt_kills[0] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].skills * 100) / wbs.maxkills);
             0;
             sp_state++;
         }
@@ -30538,13 +30817,13 @@ void WI_updateStats () {
     else 
     if (sp_state == 4) 
     {
-        cnt_items[(int) (0)] += 2;
+        cnt_items[0] += 2;
         if (!((bcnt & 3) != 0)) {
             0;
         }
-        if (cnt_items[(int) (0)] >= ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].sitems * 100) / wbs.maxitems)) 
+        if (cnt_items[0] >= ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].sitems * 100) / wbs.maxitems)) 
         {
-            cnt_items[(int) (0)] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].sitems * 100) / wbs.maxitems);
+            cnt_items[0] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].sitems * 100) / wbs.maxitems);
             0;
             sp_state++;
         }
@@ -30552,13 +30831,13 @@ void WI_updateStats () {
     else 
     if (sp_state == 6) 
     {
-        cnt_secret[(int) (0)] += 2;
+        cnt_secret[0] += 2;
         if (!((bcnt & 3) != 0)) {
             0;
         }
-        if (cnt_secret[(int) (0)] >= ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].ssecret * 100) / wbs.maxsecret)) 
+        if (cnt_secret[0] >= ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].ssecret * 100) / wbs.maxsecret)) 
         {
-            cnt_secret[(int) (0)] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].ssecret * 100) / wbs.maxsecret);
+            cnt_secret[0] = ((_c2v_box_wbplayerstruct_t_arr (plrs)[(int) (me)].ssecret * 100) / wbs.maxsecret);
             0;
             sp_state++;
         }
@@ -30611,16 +30890,16 @@ void WI_updateStats () {
 
 void WI_drawStats () {
     int lh = 0;
-    lh = ((3 * ((int) num[(int) (0)].height)) / 2);
+    lh = ((3 * ((int) num[0].height)) / 2);
     WI_slamBackground ();
     WI_drawAnimatedBack ();
     WI_drawLF ();
     V_DrawPatch (50, 50, kills);
-    WI_drawPercent ((320 - 50), 50, cnt_kills[(int) (0)]);
+    WI_drawPercent ((320 - 50), 50, cnt_kills[0]);
     V_DrawPatch (50, (50 + lh), items);
-    WI_drawPercent ((320 - 50), (50 + lh), cnt_items[(int) (0)]);
+    WI_drawPercent ((320 - 50), (50 + lh), cnt_items[0]);
     V_DrawPatch (50, (50 + (2 * lh)), sp_secret);
-    WI_drawPercent ((320 - 50), (50 + (2 * lh)), cnt_secret[(int) (0)]);
+    WI_drawPercent ((320 - 50), (50 + (2 * lh)), cnt_secret[0]);
     V_DrawPatch (16, (200 - 32), timepatch);
     WI_drawTime (((320 / 2) - 16), (200 - 32), cnt_time);
     if (wbs.epsd < 3) 

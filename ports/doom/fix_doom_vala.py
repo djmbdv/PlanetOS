@@ -1548,6 +1548,149 @@ void G_ReadDemoTiccmd (ticcmd_t[] cmd) {
 }""",
     1)
 
+# Eliminate hot-path slice tail-copies and break R_SortVisSprites unsorted self-cycle.
+src = src.replace(
+    "    result = _c2v_box_event_t_obj (_c2v_slice_event_t (events, (int) (eventtail)));",
+    "    result = events[(int) (eventtail)];",
+    1)
+src = src.replace(
+    "        cmd = _c2v_box_ticcmd_t_obj (_c2v_slice_ticcmd_t (@set.cmds, (int) (i)));",
+    "        cmd = @set.cmds[(int) (i)];",
+    1)
+src = src.replace(
+    "        @set = _c2v_box_ticcmd_set_t_obj (_c2v_slice_ticcmd_set_t (ticdata, (int) (((gametic / ticdup) % 128))));",
+    "        @set = ticdata[(int) (((gametic / ticdup) % 128))];",
+    1)
+src = src.replace(
+    "            ld = _c2v_box_line_s_obj (_c2v_slice_line_s (lines, (int) (list[_off_list])));",
+    "            ld = lines[(int) (list[_off_list])];",
+    1)
+src = src.replace(
+    "        st = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (state)));",
+    "        st = states[(int) (state)];",
+    1)
+src = src.replace(
+    "    psp = _c2v_box_pspdef_t_obj (_c2v_slice_pspdef_t (player.psprites, (int) (position)));",
+    "    psp = player.psprites[(int) (position)];",
+    1)
+src = src.replace(
+    "        state = _c2v_box_state_t_obj (_c2v_slice_state_t (states, (int) (stnum)));",
+    "        state = states[(int) (stnum)];",
+    1)
+src = src.replace(
+    """vissprite_s? R_NewVisSprite () {
+    if (numvissprites >= 128) {
+        return overflowsprite;
+    }
+    numvissprites++;
+    vissprite_p = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) (numvissprites)));
+    return _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((numvissprites - 1))));
+}""",
+    """vissprite_s? R_NewVisSprite () {
+    if (numvissprites >= 128) {
+        return overflowsprite;
+    }
+    int idx = numvissprites;
+    numvissprites++;
+    vissprite_p = (numvissprites < 128) ? vissprites[numvissprites] : overflowsprite;
+    return vissprites[idx];
+}""",
+    1)
+src = src.replace(
+    "    sprdef = _c2v_box_spritedef_t_obj (_c2v_slice_spritedef_t (sprites, (int) (thing.sprite)));",
+    "    sprdef = sprites[(int) (thing.sprite)];",
+    1)
+src = src.replace(
+    "    sprframe = _c2v_box_spriteframe_t_obj (_c2v_slice_spriteframe_t (sprdef.spriteframes, (int) ((thing.frame & 0x7fff))));",
+    "    sprframe = sprdef.spriteframes[(int) ((thing.frame & 0x7fff))];",
+    1)
+src = src.replace(
+    "    sprdef = _c2v_box_spritedef_t_obj (_c2v_slice_spritedef_t (sprites, (int) (psp[0].state.sprite)));",
+    "    sprdef = sprites[(int) (psp[0].state.sprite)];",
+    1)
+src = src.replace(
+    "    sprframe = _c2v_box_spriteframe_t_obj (_c2v_slice_spriteframe_t (sprdef.spriteframes, (int) ((psp[0].state.frame & 0x7fff))));",
+    "    sprframe = sprdef.spriteframes[(int) ((psp[0].state.frame & 0x7fff))];",
+    1)
+src = src.replace(
+    """    count = numvissprites;
+    unsorted.prev = unsorted;
+    unsorted.next = unsorted.prev;
+    if (!(count != 0)) {
+        return;
+    }
+    for (i = 0; i < count; i++) 
+    {
+        vissprites[(int) (i)].next = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((i + 1))));
+        vissprites[(int) (i)].prev = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((i - 1))));
+    }
+    vissprites[(int) (0)].prev = unsorted;
+    unsorted.next = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) (0)));
+    vissprites[(int) ((count - 1))].next = unsorted;
+    unsorted.prev = _c2v_box_vissprite_s_obj (_c2v_slice_vissprite_s (vissprites, (int) ((count - 1))));
+    vsprsortedhead.prev = vsprsortedhead;
+    vsprsortedhead.next = vsprsortedhead.prev;
+    for (i = 0; i < count; i++) 
+    {
+        bestscale = 2147483647;
+        best = unsorted.next;
+        for (ds = unsorted.next; ds != unsorted; ds = ds.next) 
+        {
+            if (ds.scale < bestscale) 
+            {
+                bestscale = ds.scale;
+                best = ds;
+            }
+        }
+        best.next.prev = best.prev;
+        best.prev.next = best.next;
+        best.next = vsprsortedhead;
+        best.prev = vsprsortedhead.prev;
+        vsprsortedhead.prev.next = best;
+        vsprsortedhead.prev = best;
+    }""",
+    """    count = numvissprites;
+    if (!(count != 0)) {
+        vsprsortedhead.prev = vsprsortedhead;
+        vsprsortedhead.next = vsprsortedhead.prev;
+        return;
+    }
+    unsorted.prev = unsorted;
+    unsorted.next = unsorted.prev;
+    for (i = 0; i < count; i++) 
+    {
+        vissprites[(int) (i)].next = (i + 1 < count) ? vissprites[(int) (i + 1)] : null;
+        vissprites[(int) (i)].prev = (i > 0) ? vissprites[(int) (i - 1)] : null;
+    }
+    vissprites[(int) (0)].prev = unsorted;
+    unsorted.next = vissprites[(int) (0)];
+    vissprites[(int) ((count - 1))].next = unsorted;
+    unsorted.prev = vissprites[(int) ((count - 1))];
+    vsprsortedhead.prev = vsprsortedhead;
+    vsprsortedhead.next = vsprsortedhead.prev;
+    for (i = 0; i < count; i++) 
+    {
+        bestscale = 2147483647;
+        best = unsorted.next;
+        for (ds = unsorted.next; ds != unsorted; ds = ds.next) 
+        {
+            if (ds.scale < bestscale) 
+            {
+                bestscale = ds.scale;
+                best = ds;
+            }
+        }
+        best.next.prev = best.prev;
+        best.prev.next = best.next;
+        best.next = vsprsortedhead;
+        best.prev = vsprsortedhead.prev;
+        vsprsortedhead.prev.next = best;
+        vsprsortedhead.prev = best;
+    }
+    unsorted.next = null;
+    unsorted.prev = null;""",
+    1)
+
 with open(path, "w", encoding="utf-8") as f:
     f.write(src)
 print("Applied fix_doom_vala.py")

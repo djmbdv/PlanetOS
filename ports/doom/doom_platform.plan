@@ -52,7 +52,7 @@ public int _doom_frames = 0;
 public void DG_DrawFrame () {
     _doom_frames++;
     if (_doom_frames % 25 == 0)
-        print (@"[doom] frame $(_doom_frames) tic=$(gametic) free=$((int) (Sys.free_pages ()))\n");
+        print (@"[doom] frame $(_doom_frames) tic=$(gametic) free=$(Sys.free_pages ())\n");
     if (_doom_win == null || _doom_src_addr == 0)
         return;
     ((!) _doom_win).present_argb32 (_doom_src_addr, 640, 400);
@@ -66,7 +66,7 @@ public void DG_FinishUpdate () {
     _last_present_tick = now_tick;
     _doom_frames++;
     if (_doom_frames % 25 == 0)
-        print (@"[doom] frame $(_doom_frames) tic=$(gametic) free=$((int) (Sys.free_pages ()))\n");
+        print (@"[doom] frame $(_doom_frames) tic=$(gametic) free=$(Sys.free_pages ())\n");
     if (_doom_win == null || _doom_pal == null || I_VideoBuffer == null || DG_ScreenBuffer == null)
         return;
     var pal = (!) _doom_pal;
@@ -96,10 +96,13 @@ public void DG_SleepMs (uint32 ms) {
     Sys.sleep_ms ((int) ms);
 }
 
+[NoAlloc]
+[AlwaysInline]
 public uint32 DG_GetTicksMs () {
     return (uint32) (Sys.ticks () * 10 - _doom_t0);
 }
 
+[NoAlloc]
 private uint8 map_doom_key (uint kv) {
     if (kv == 0xFF53 || kv == 0x1B5B43 || kv == 0x84) return 0xae; // Right
     if (kv == 0xFF51 || kv == 0x1B5B44 || kv == 0x83) return 0xac; // Left
@@ -195,6 +198,8 @@ public void I_InitMusic () {}
 
 // Lump names are eight bytes, NUL padded and case-insensitive. GLib's
 // ascii_strncasecmp takes (string) casts that lose the byte view.
+[NoAlloc]
+[AlwaysInline]
 public int c_lump_eq (uint8[] a, uint8[] b) {
     for (int i = 0; i < 8; i++) {
         uint8 ca = (i < a.length) ? a[i] : 0;
@@ -209,8 +214,11 @@ public int c_lump_eq (uint8[] a, uint8[] b) {
 
 // The zone allocator becomes plain planc arrays: Z_Free is a no-op because the
 // runtime frees by refcount, and W_CacheLumpNum keeps its own cache.
+[NoAlloc]
+[AlwaysInline]
 public int mem_free () { return Sys.free_pages (); }
 public void Z_Init () {}
+[NoAlloc]
 public void Z_Free (uint8[]? ptr) {}
 public int z_total = 0;
 public int z_mb = 0;
@@ -229,9 +237,13 @@ public void Z_FileDumpHeap (FileStream? f) {}
 public void Z_CheckHeap () {}
 public void Z_ChangeTag2 (uint8[]? ptr, int tag, uint8[]? file, int line) {}
 public void Z_ChangeUser (uint8[]? ptr, _c2v_abox_uint8? user) {}
+[NoAlloc]
 public int Z_FreeMemory () { return 64 * 1024 * 1024; }
+[NoAlloc]
 public int wipe_StartScreen (int x, int y, int w, int h) { return 0; }
+[NoAlloc]
 public int wipe_EndScreen (int x, int y, int w, int h) { return 0; }
+[NoAlloc]
 public int wipe_ScreenWipe (int wipeno, int x, int y, int w, int h, int ticks) { return 1; }
 
 public void c_memcpy_i32 (int[] dst, int[] src, size_t n) {
