@@ -283,7 +283,9 @@ namespace Gtk {
                 th = measured_h;
                 return;
             }
-            TextHelper.measure_text (text, size_px, out measured_w, out measured_h);
+            var (mw, mh) = TextHelper.measure_text_size (text, size_px);
+            measured_w = mw;
+            measured_h = mh;
             measured_text = text;
             measured_size_px = size_px;
             tw = measured_w;

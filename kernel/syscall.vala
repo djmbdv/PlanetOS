@@ -446,14 +446,32 @@ namespace Planet.Kernel {
         alloc_track_for (Sched.current_cr3 (), phys, pages);
     }
 
-    private static void alloc_untrack (int phys) {
+    private static void alloc_untrack_page (int addr, int owner_cr3) {
         int i = 0;
         while (i < ALLOC_SLOTS) {
             int a = alloc_slot (i);
-            if (mmio_read64 (a) == phys) {
-                mmio_write64 (a, 0);
-                mmio_write32 (a + 8, 0);
-                mmio_write32 (a + 12, 0);
+            int phys = mmio_read64 (a);
+            if (phys != 0 && mmio_read32 (a + 12) == owner_cr3) {
+                int npages = mmio_read32 (a + 8);
+                if (addr >= phys && addr < phys + npages * 0x1000) {
+                    if (npages <= 1) {
+                        mmio_write64 (a, 0);
+                        mmio_write32 (a + 8, 0);
+                        mmio_write32 (a + 12, 0);
+                    } else if (addr == phys) {
+                        mmio_write64 (a, phys + 0x1000);
+                        mmio_write32 (a + 8, npages - 1);
+                    } else if (addr == phys + (npages - 1) * 0x1000) {
+                        mmio_write32 (a + 8, npages - 1);
+                    } else {
+                        int left_pages = (addr - phys) / 0x1000;
+                        int right_phys = addr + 0x1000;
+                        int right_pages = npages - left_pages - 1;
+                        mmio_write32 (a + 8, left_pages);
+                        alloc_track_for (owner_cr3, (uint64) right_phys, (uint32) right_pages);
+                    }
+                    return;
+                }
             }
             i = i + 1;
         }
@@ -790,7 +808,7 @@ namespace Planet.Kernel {
                 if (range_in_live_grant (a0, 0x1000))
                     return fail (E_ACCES);
                 int ucr3 = Sched.current_cr3 ();
-                alloc_untrack (a0);
+                alloc_untrack_page (a0, ucr3);
                 Pmm.free_frame (a0);
                 if (ucr3 != 0) {
                     Vmm.unmap_user_4k (ucr3, a0);

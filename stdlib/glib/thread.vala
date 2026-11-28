@@ -25,13 +25,13 @@ namespace GLib {
     }
 
     public class _ThreadSlots : Object {
-        private static _ThreadBase[] _slots;
+        private static _ThreadBase?[] _slots;
         private static bool[] _used;
         private static int[] _lock;
 
         private static void ensure_init () {
             if (_slots == null) {
-                _slots = new _ThreadBase[256];
+                _slots = new _ThreadBase?[256];
                 _used = new bool[256];
                 _lock = new int[1];
             }
@@ -58,6 +58,7 @@ namespace GLib {
             __planc_host_spin_lock (_lock);
             if (_used != null && slot >= 0 && slot < _used.length && _used[slot]) {
                 t = _slots[slot];
+                _slots[slot] = null;
                 _used[slot] = false;
             }
             __planc_host_spin_unlock (_lock);
@@ -298,12 +299,20 @@ namespace GLib {
         public ThreadPool (ThreadPoolFunc func, int max_threads = 4, bool exclusive = false) {
             this.func = func;
             int count = (max_threads <= 0) ? 1 : max_threads;
+            weak ThreadPool? self_weak = this;
             ThreadFunc body = () => {
-                worker ();
+                var p = self_weak;
+                if (p != null)
+                    ((!) p).worker ();
                 return null;
             };
             for (int i = 0; i < count; i++)
                 workers.add (new Thread ("thread-pool", body));
+        }
+
+        ~ThreadPool () {
+            if (!stopping)
+                stop ();
         }
 
         private void worker () {

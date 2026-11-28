@@ -81,8 +81,14 @@ namespace Planet.Kernel {
             if (v_ptr == 0) {
                 for (int i = 0; i < env_count; i++) {
                     if (env_keys[i] == k) {
-                        env_keys[i] = "";
-                        env_vals[i] = "";
+                        int last = env_count - 1;
+                        if (i != last) {
+                            env_keys[i] = env_keys[last];
+                            env_vals[i] = env_vals[last];
+                        }
+                        env_keys[last] = "";
+                        env_vals[last] = "";
+                        env_count = last;
                         return 0;
                     }
                 }

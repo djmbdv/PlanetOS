@@ -193,7 +193,8 @@ namespace Gio {
             int len = pages * 4096;
             int gh = Sys.grant (addr, len);
             if (gh < 0) {
-                Sys.free_page (addr);
+                for (int p = 0; p < pages; p++)
+                    Sys.free_page (addr + p * 4096);
                 throw_io_error ("PlanetGrant.allocate(grant)");
             }
             return new PlanetGrant (addr, len, gh, true);
@@ -307,7 +308,11 @@ namespace Gio {
                 handle = -1;
             }
             if (owns_pages && base_addr > 0) {
-                Sys.free_page (base_addr);
+                int pages = byte_len / 4096;
+                if (pages < 1)
+                    pages = 1;
+                for (int p = 0; p < pages; p++)
+                    Sys.free_page (base_addr + p * 4096);
                 base_addr = 0;
                 owns_pages = false;
             }

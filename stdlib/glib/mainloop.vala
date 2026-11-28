@@ -30,7 +30,7 @@ namespace GLib {
         public SourceFunc? check_func;
         public int fd = -1;
         public uint32 condition = 0; // 1 = readable, 2 = writable
-        public MainContext? context;
+        public weak MainContext? context;
 
         public Source (uint32 id, uint8 kind, uint32 interval, int due, SourceFunc? func) {
             this.id = id;

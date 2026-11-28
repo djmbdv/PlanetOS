@@ -398,6 +398,7 @@ namespace Planet.Kernel {
                     mmio_write8 (priv + off_in_page + b, read_u8 (data_tmpl + b));
                 for (int i = 0; i < dpages; i++)
                     Vmm.map_user_4k_phys (user_cr3, first + i * 4096, priv + i * 4096, 0x07);
+                alloc_track_for (user_cr3, (uint64) priv, (uint32) dpages);
             }
         }
 
@@ -604,15 +605,11 @@ namespace Planet.Kernel {
             return true;
         }
 
-        private static int prepare_process (int name_ptr, int name_len, int cmdline_ptr,
-                                            out int out_stack_base, out int out_arg_sp, out int out_user_cr3) {
-            out_stack_base = 0;
-            out_arg_sp = 0;
-            out_user_cr3 = 0;
+        private static (int, int, int, int) prepare_process! (int name_ptr, int name_len, int cmdline_ptr) {
             int id = -1;
             int kind = Vfs.resolve (name_ptr, name_len, out id);
             if (kind != Vfs.KIND_FILE && kind != Vfs.KIND_XFS)
-                return 0;
+                throws -1;
             // Stage cmdline in IO_SCRATCH and run under kernel CR3 so ebuf and
             // child_stack are always identity-mapped regardless of caller CR3.
             int cmd_scratch = 0;
@@ -631,51 +628,41 @@ namespace Planet.Kernel {
             int saved_cr3 = vmm_read_cr3 ();
             if (saved_cr3 != KernelLayout.PAGE_TABLES)
                 vmm_write_cr3 (KernelLayout.PAGE_TABLES);
+            defer {
+                if (saved_cr3 != KernelLayout.PAGE_TABLES)
+                    vmm_write_cr3 (saved_cr3);
+            }
 
             int esz = (kind == Vfs.KIND_FILE) ? Ramfs.file_size (id) : Xfs.file_size (id);
-            if (esz < 64) {
-                if (saved_cr3 != KernelLayout.PAGE_TABLES)
-                    vmm_write_cr3 (saved_cr3);
-                return 0;
-            }
+            if (esz < 64)
+                throws -1;
             int pages = (esz + 4095) / 4096;
             int ebuf = Pmm.alloc_contiguous (pages);
-            if (ebuf == 0) {
-                if (saved_cr3 != KernelLayout.PAGE_TABLES)
-                    vmm_write_cr3 (saved_cr3);
-                return 0;
-            }
+            if (ebuf == 0)
+                throws -1;
             int user_cr3 = Vmm.create_user_space ();
             if (user_cr3 == 0) {
                 for (int p = 0; p < pages; p++)
                     Pmm.free_frame (ebuf + p * 4096);
-                if (saved_cr3 != KernelLayout.PAGE_TABLES)
-                    vmm_write_cr3 (saved_cr3);
-                return 0;
+                throws -1;
+            }
+            errdefer {
+                release_allocs (user_cr3);
+                Vmm.destroy_user_space (user_cr3);
             }
             int got = (kind == Vfs.KIND_FILE) ? Ramfs.read (id, 0, ebuf, esz) : Xfs.read_file (id, 0, ebuf, esz);
             int entry = (got == esz) ? load_image (ebuf, esz, user_cr3) : 0;
             for (int p = 0; p < pages; p++) {
                 Pmm.free_frame (ebuf + p * 4096);
             }
-            if (entry == 0) {
-                release_allocs (user_cr3);
-                Vmm.destroy_user_space (user_cr3);
-                if (saved_cr3 != KernelLayout.PAGE_TABLES)
-                    vmm_write_cr3 (saved_cr3);
-                return 0;
-            }
+            if (entry == 0)
+                throws -1;
             map_shared_dlibs_into (user_cr3, last_loaded_dlib_mask);
 
             int stack_pages = USER_STACK_PAGES;
             int child_stack = Pmm.alloc_contiguous (stack_pages);
-            if (child_stack == 0) {
-                release_allocs (user_cr3);
-                Vmm.destroy_user_space (user_cr3);
-                if (saved_cr3 != KernelLayout.PAGE_TABLES)
-                    vmm_write_cr3 (saved_cr3);
-                return 0;
-            }
+            if (child_stack == 0)
+                throws -1;
             Vmm.map_user_range (user_cr3, child_stack + 4096, (stack_pages - 1) * 4096);
             Vmm.unmap_user_4k (user_cr3, child_stack);
 
@@ -721,25 +708,28 @@ namespace Planet.Kernel {
             }
             mmio_write64 (ptr_base + 0, argc);
             mmio_write64 (ptr_base + 8 + argc * 8, 0);
-            if (saved_cr3 != KernelLayout.PAGE_TABLES)
-                vmm_write_cr3 (saved_cr3);
-            out_stack_base = child_stack;
-            out_arg_sp = ptr_base;
-            out_user_cr3 = user_cr3;
-            return entry;
+            return (entry, child_stack, ptr_base, user_cr3);
         }
 
         public static int exec_from_xfs (int name_ptr, int name_len, int cmdline_ptr) {
+            int entry = 0;
             int child_stack = 0;
             int ptr_base = 0;
             int user_cr3 = 0;
-            int entry = prepare_process (name_ptr, name_len, cmdline_ptr, out child_stack, out ptr_base, out user_cr3);
-            if (entry == 0)
+            try {
+                var (e, cs, pb, cr3) = prepare_process! (name_ptr, name_len, cmdline_ptr);
+                entry = e;
+                child_stack = cs;
+                ptr_base = pb;
+                user_cr3 = cr3;
+            } catch {
                 return -1;
+            }
             if (exec_depth >= KernelLayout.EXEC_MAX_DEPTH) {
                 // The saved-context slots are a fixed window: nesting deeper
                 // would run past EXEC_SLOTS into the mouse ring, so refuse the
                 // exec instead of overwriting it.
+                release_allocs (user_cr3);
                 Vmm.destroy_user_space (user_cr3);
                 for (int p = 0; p < USER_STACK_PAGES; p++) {
                     Pmm.free_frame (child_stack + p * 4096);
@@ -751,8 +741,12 @@ namespace Planet.Kernel {
             exec_depth = exec_depth + 1;
             int slot = KernelLayout.EXEC_SLOTS + (exec_depth - 1) * KernelLayout.EXEC_SLOT_SIZE;
             Sched.set_current_exec_ctx (user_cr3, 0);
+            if (Sched.current_tid () > 0)
+                Sched.replace_current_user_stack (child_stack, USER_STACK_PAGES);
             int code = exec_trampoline (entry, ptr_base, user_cr3, slot);
             Sched.set_current_exec_ctx (prev_cr3, prev_rsp0);
+            if (Sched.current_tid () > 0)
+                VirtioGpu.release_task (Sched.current_tid ());
             release_allocs (user_cr3);
             Vmm.destroy_user_space (user_cr3);
             for (int p = 0; p < USER_STACK_PAGES; p++) {
@@ -765,14 +759,22 @@ namespace Planet.Kernel {
         }
 
         public static int spawn_from_xfs (int name_ptr, int name_len, int cmdline_ptr) {
+            int entry = 0;
             int child_stack = 0;
             int ptr_base = 0;
             int user_cr3 = 0;
-            int entry = prepare_process (name_ptr, name_len, cmdline_ptr, out child_stack, out ptr_base, out user_cr3);
-            if (entry == 0)
+            try {
+                var (e, cs, pb, cr3) = prepare_process! (name_ptr, name_len, cmdline_ptr);
+                entry = e;
+                child_stack = cs;
+                ptr_base = pb;
+                user_cr3 = cr3;
+            } catch {
                 return -1;
+            }
             int tid = Sched.spawn_user_ready (entry, ptr_base, child_stack, USER_STACK_PAGES, user_cr3, name_ptr, name_len);
             if (tid < 0) {
+                release_allocs (user_cr3);
                 Vmm.destroy_user_space (user_cr3);
                 for (int p = 0; p < USER_STACK_PAGES; p++) {
                     Pmm.free_frame (child_stack + p * 4096);

@@ -245,6 +245,7 @@ namespace Planc {
         private GenericArray<Expr> pending_struct_exprs;
         private GenericArray<int> pending_struct_rel_slots;
         private GenericArray<Expr> pending_ref_exprs;
+        private int cur_struct_temp_start;
         private int cur_ref_temp_start;
         private int cur_total_slots;
         private int err_prop_slot;
@@ -258,6 +259,7 @@ namespace Planc {
         private GenericArray<int> finally_mode_slots;
         private GenericArray<int> finally_ret_slots;
         private GenericArray<int> finally_marks;
+        private GenericArray<int> active_finally_mode_slots = new GenericArray<int> ();
         private GenericArray<int> live_stmt_ref_slots;
         private int push_depth;
 
@@ -4984,7 +4986,7 @@ namespace Planc {
             unowned var cd = program.find_class (cn.class_name);
             if (cd == null || cd.is_compact || cd.is_abstract || !cd.has_trivial_init || cd.base_name != "")
                 return false;
-            if (cd.dtor != null && !cd.dtor.name.has_prefix ("__planc_dtor_"))
+            if (cd.dtor != null || cd.needs_finalizer)
                 return false;
             if (!d.infer_type && (d.decl_type != ValaType.CLASS || strip_null (d.decl_type_name) != cd.name))
                 return false;
@@ -5102,6 +5104,7 @@ namespace Planc {
             in_check_pass = false;
 
             int var_end = next_var_slot;
+            cur_struct_temp_start = var_end;
             for (int k = 0; k < pending_struct_exprs.length; k++) {
                 var se = pending_struct_exprs[k];
                 int slot = var_end + pending_struct_rel_slots[k];
@@ -6461,6 +6464,7 @@ namespace Planc {
             finally_mode_slots = new GenericArray<int> ();
             finally_ret_slots = new GenericArray<int> ();
             finally_marks = new GenericArray<int> ();
+            active_finally_mode_slots = new GenericArray<int> ();
             live_stmt_ref_slots = new GenericArray<int> ();
             active_catch_domains = new GenericArray<string> ();
             non_null_vars = new GenericArray<string> ();
@@ -7152,6 +7156,7 @@ namespace Planc {
             finally_mode_slots = new GenericArray<int> ();
             finally_ret_slots = new GenericArray<int> ();
             finally_marks = new GenericArray<int> ();
+            active_finally_mode_slots = new GenericArray<int> ();
             live_stmt_ref_slots = new GenericArray<int> ();
             active_catch_domains = new GenericArray<string> ();
             non_null_vars = new GenericArray<string> ();
@@ -7172,9 +7177,9 @@ namespace Planc {
             int frame_bytes = align16 (8 * total_slots);
             emitter.sub_rsp (frame_bytes);
 
-            // Zero all ref temp slots in the prologue so unevaluated
+            // Zero all struct and ref temp slots in the prologue so unevaluated
             // short-circuit branches never leave stack garbage in them.
-            emitter.zero_local_batch (ref_temp_start, total_slots);
+            emitter.zero_local_batch (cur_struct_temp_start, total_slots);
 
             reg_alloc_func = (opt_level >= 2 && !f.is_async && !f.is_dtor && !f.is_compact_free && f.from_lambda == null && !stmt_list_uses_addr_or_lambda (f.body));
             if (reg_alloc_func) {
@@ -11097,6 +11102,26 @@ namespace Planc {
             }
         }
 
+        private void emit_clear_pending_finally_err () {
+            if (!program_uses_heap || active_finally_mode_slots.length == 0)
+                return;
+            for (int fi = 0; fi < active_finally_mode_slots.length; fi++) {
+                int m_slot = active_finally_mode_slots[fi];
+                var l_skip = emitter.new_label ();
+                emitter.load_local (m_slot);
+                emitter.mov_rcx_rax ();
+                emitter.mov_rax_imm (1);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JNE, l_skip);
+                emitter.load_local (err_prop_slot);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_unref");
+                emitter.zero_local (err_prop_slot);
+                emitter.zero_local (m_slot);
+                emitter.bind (l_skip);
+            }
+        }
+
         private void cleanup_expr_temps (Expr? e) {
             if (!program_uses_heap || e == null)
                 return;
@@ -11107,6 +11132,27 @@ namespace Planc {
                 call_aligned ("__planc_unref");
                 emitter.zero_local (e.ref_temp_slot);
                 remove_live_ref_slot (e.ref_temp_slot);
+            } else if (e is CallExpr || e is MethodCallExpr) {
+                int st_slot = (e is CallExpr) ? ((CallExpr) e).temp_slot : ((MethodCallExpr) e).temp_slot;
+                if (st_slot >= 0) {
+                    string tn = "";
+                    ValaType t = ValaType.VOID;
+                    try {
+                        t = expr_type_full (e, out tn);
+                    } catch (SemanticError err) {
+                        t = ValaType.VOID;
+                    }
+                    if (t == ValaType.STRUCT && !is_delegate_type (program, t, tn)) {
+                        unowned var sd = program.find_struct (tn);
+                        if (sd != null && struct_has_string (sd)) {
+                            var nslots = type_slots (ValaType.STRUCT, tn);
+                            emitter.lea_rcx_rbp_disp (struct_base_disp (st_slot, nslots));
+                            unref_struct_at_rcx (sd, 0);
+                            for (int k = 0; k < nslots; k++)
+                                emitter.zero_local (st_slot + k);
+                        }
+                    }
+                }
             }
         }
 
@@ -12033,6 +12079,7 @@ namespace Planc {
                         unref_locals_from (finally_marks[fin_idx]);
                     emitter.mov_rax_imm (2);
                     emitter.store_local (finally_mode_slots[fin_idx]);
+                    emit_clear_pending_finally_err ();
                     emitter.branch (BranchKind.JMP, finally_labels[fin_idx]);
                 } else {
                     if (r.value != null) {
@@ -12091,6 +12138,7 @@ namespace Planc {
                             emit_defers_down_to (0, false);
                         if (program_uses_heap)
                             unref_locals_from (0);
+                        emit_clear_pending_finally_err ();
                         emitter.pop_rax ();
                         push_depth--;
                         if (is_fp_type (current.return_type) && !in_async_resume)
@@ -12103,6 +12151,7 @@ namespace Planc {
                             emit_defers_down_to (0, false);
                         if (program_uses_heap)
                             unref_locals_from (0);
+                        emit_clear_pending_finally_err ();
                         emitter.xor_eax ();
                     }
                     if (in_async_resume) {
@@ -12729,6 +12778,8 @@ namespace Planc {
                         s_args.add (ia.value);
                         emit_instance_call (ia.target, false, false, sm, s_args, -1, -1);
                         cleanup_expr_temps (ia.value);
+                        cleanup_expr_temps (ia.index);
+                        cleanup_expr_temps (ia.target);
                         return;
                     }
                 }
@@ -13548,8 +13599,10 @@ namespace Planc {
 
                     emitter.bind (l_finally);
                     var fin_mark = locals.length;
+                    active_finally_mode_slots.add (fin_mode_slot);
                     foreach (var fs in tr.finally_body)
                         gen_statement (fs);
+                    active_finally_mode_slots.remove_index (active_finally_mode_slots.length - 1);
                     unref_locals_from (fin_mark);
                     deactivate_from (fin_mark);
 
@@ -13635,6 +13688,7 @@ namespace Planc {
                 if (break_labels.length == 0)
                     throw new SemanticError.BAD_LOOP_CONTROL (
                         @"'break' outside of loop at $(s.line):$(s.column)");
+                emit_clear_pending_finally_err ();
                 if (finally_labels.length > 0
                     && finally_marks[finally_labels.length - 1] > break_scope_marks[break_scope_marks.length - 1]) {
                     int fin_idx = finally_labels.length - 1;
@@ -13651,6 +13705,7 @@ namespace Planc {
                 if (continue_labels.length == 0)
                     throw new SemanticError.BAD_LOOP_CONTROL (
                         @"'continue' outside of loop at $(s.line):$(s.column)");
+                emit_clear_pending_finally_err ();
                 if (finally_labels.length > 0
                     && finally_marks[finally_labels.length - 1] > continue_scope_marks[continue_scope_marks.length - 1]) {
                     int fin_idx = finally_labels.length - 1;
@@ -13737,6 +13792,8 @@ namespace Planc {
         private bool expr_has_ref_temp (Expr? e) {
             if (e == null) return false;
             if (e.ref_temp_slot >= 0) return true;
+            if (e is CallExpr && ((CallExpr) e).temp_slot >= 0) return true;
+            if (e is MethodCallExpr && ((MethodCallExpr) e).temp_slot >= 0) return true;
             if (e is BinaryExpr) {
                 var b = (BinaryExpr) e;
                 return expr_has_ref_temp (b.left) || expr_has_ref_temp (b.right);
@@ -16567,6 +16624,77 @@ namespace Planc {
             emitter.load_local_to_rcx (mc.bi_slot8);
             emitter.cmp_rax_rcx ();
             emitter.branch (BranchKind.JB, bounds_panic_label);
+            // Reference elements: unref overwritten destination slots that are
+            // not in the source range before moving.
+            if (is_ref_type (et)) {
+                var l_u_done = emitter.new_label ();
+                var l_u_after = emitter.new_label ();
+                var l_u_go = emitter.new_label ();
+                emitter.load_local (mc.bi_slot3);
+                emitter.load_local_to_rcx (mc.bi_slot2);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JE, l_u_done);
+                emitter.branch (BranchKind.JA, l_u_after);
+                // dst < src: overwritten = [dst, min(dst + len, src))
+                emitter.load_local (mc.bi_slot3);
+                emitter.store_local (mc.bi_slot10);
+                emitter.load_local (mc.bi_slot2);
+                emitter.load_local_to_rcx (mc.bi_slot3);
+                emitter.sub_rax_rcx (); // src - dst
+                emitter.mov_rcx_rax ();
+                emitter.load_local (mc.bi_slot4);
+                emitter.cmp_rax_rcx ();
+                var l_ucnt_ok = emitter.new_label ();
+                emitter.branch (BranchKind.JBE, l_ucnt_ok);
+                emitter.mov_rax_rcx ();
+                emitter.bind (l_ucnt_ok);
+                emitter.store_local (mc.bi_slot11);
+                emitter.branch (BranchKind.JMP, l_u_go);
+                // dst > src: overwritten = [max(dst, src + len), dst + len)
+                emitter.bind (l_u_after);
+                emitter.load_local (mc.bi_slot2);
+                emitter.load_local_to_rcx (mc.bi_slot4);
+                emitter.add_rax_rcx ();
+                emitter.store_local (mc.bi_slot10);
+                emitter.load_local (mc.bi_slot10);
+                emitter.load_local_to_rcx (mc.bi_slot3);
+                emitter.cmp_rax_rcx ();
+                var l_ustart_ok = emitter.new_label ();
+                emitter.branch (BranchKind.JAE, l_ustart_ok);
+                emitter.load_local (mc.bi_slot3);
+                emitter.store_local (mc.bi_slot10);
+                emitter.bind (l_ustart_ok);
+                emitter.load_local (mc.bi_slot3);
+                emitter.load_local_to_rcx (mc.bi_slot4);
+                emitter.add_rax_rcx ();
+                emitter.load_local_to_rcx (mc.bi_slot10);
+                emitter.sub_rax_rcx ();
+                emitter.store_local (mc.bi_slot11);
+                emitter.bind (l_u_go);
+                emitter.zero_local (mc.bi_slot5);
+                var l_uloop = emitter.new_label ();
+                var l_uloop_done = emitter.new_label ();
+                emitter.bind (l_uloop);
+                emitter.load_local (mc.bi_slot11);
+                emitter.mov_rcx_rax ();
+                emitter.load_local (mc.bi_slot5);
+                emitter.cmp_rax_rcx ();
+                emitter.branch (BranchKind.JAE, l_uloop_done);
+                emitter.load_local (mc.bi_slot10);
+                emitter.load_local_to_rcx (mc.bi_slot5);
+                emitter.add_rax_rcx ();
+                emitter.store_local (mc.bi_slot8);
+                emit_arr_elem_load (mc.bi_slot1, mc.bi_slot8, elem_kind, mc.bi_slot6);
+                emitter.load_local (mc.bi_slot6);
+                emitter.mov_rdi_rax ();
+                call_aligned ("__planc_unref");
+                emitter.load_local (mc.bi_slot5);
+                emitter.add_rax_imm (1);
+                emitter.store_local (mc.bi_slot5);
+                emitter.branch (BranchKind.JMP, l_uloop);
+                emitter.bind (l_uloop_done);
+                emitter.bind (l_u_done);
+            }
             emitter.load_local (mc.bi_slot3);
             emitter.load_local_to_rcx (mc.bi_slot2);
             emitter.cmp_rax_rcx ();
@@ -16997,6 +17125,8 @@ namespace Planc {
                 call_aligned ("__planc_ref");
                 emitter.pop_rax ();
                 push_depth--;
+                if (program_uses_heap && mc.ref_temp_slot >= 0)
+                    emitter.store_local (mc.ref_temp_slot);
                 return;
             }
             if (kind == "err_matches") {

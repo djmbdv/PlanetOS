@@ -752,36 +752,49 @@ namespace Planet.Kernel {
             vgpu_scanout_active = 0;
         }
 
+        private static void ensure_cursor_resource! () {
+            if (vgpu_cursor_pa != 0)
+                return;
+            vgpu_cursor_pa = Pmm.alloc_contiguous (4); // 64x64x4 = 16 KiB
+            if (vgpu_cursor_pa == 0) {
+                Klog.warn (Klog.CAT_GPU, "cursor: no frame for the 64x64 resource");
+                throws -1;
+            }
+            errdefer {
+                for (int p = 0; p < 4; p++)
+                    Pmm.free_frame (vgpu_cursor_pa + p * 4096);
+                vgpu_cursor_pa = 0;
+            }
+            clear_cmd (40);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_CREATE_2D);
+            mmio_write32 (vgpu_cmd_page + 24, RES_CURSOR);
+            mmio_write32 (vgpu_cmd_page + 28, FMT_B8G8R8A8_UNORM);
+            mmio_write32 (vgpu_cmd_page + 32, 64);
+            mmio_write32 (vgpu_cmd_page + 36, 64);
+            if (!send_cmd (40, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"cursor: create_2d failed resp=$(resp_type ())");
+                throws -1;
+            }
+
+            clear_cmd (48);
+            mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_ATTACH_BACKING);
+            mmio_write32 (vgpu_cmd_page + 24, RES_CURSOR);
+            mmio_write32 (vgpu_cmd_page + 28, 1);
+            mmio_write64 (vgpu_cmd_page + 32, vgpu_cursor_pa);
+            mmio_write32 (vgpu_cmd_page + 40, 16384);
+            if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
+                Klog.warn (Klog.CAT_GPU, @"cursor: attach_backing failed resp=$(resp_type ())");
+                throws -1;
+            }
+        }
+
         public static bool set_cursor (int rgba_buf, int hot_x, int hot_y) {
             if (vgpu_found == 0 || rgba_buf == 0 || vgpu_cq_page == 0)
                 return false;
-            if (vgpu_cursor_pa == 0) {
-                vgpu_cursor_pa = Pmm.alloc_contiguous (4); // 64x64x4 = 16 KiB
-                if (vgpu_cursor_pa == 0) {
-                    Klog.warn (Klog.CAT_GPU, "cursor: no frame for the 64x64 resource");
-                    return false;
-                }
-                clear_cmd (40);
-                mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_CREATE_2D);
-                mmio_write32 (vgpu_cmd_page + 24, RES_CURSOR);
-                mmio_write32 (vgpu_cmd_page + 28, FMT_B8G8R8A8_UNORM);
-                mmio_write32 (vgpu_cmd_page + 32, 64);
-                mmio_write32 (vgpu_cmd_page + 36, 64);
-                if (!send_cmd (40, 24) || resp_type () != RESP_OK_NODATA) {
-                    Klog.warn (Klog.CAT_GPU, @"cursor: create_2d failed resp=$(resp_type ())");
-                    return false;
-                }
-
-                clear_cmd (48);
-                mmio_write32 (vgpu_cmd_page + 0, CMD_RESOURCE_ATTACH_BACKING);
-                mmio_write32 (vgpu_cmd_page + 24, RES_CURSOR);
-                mmio_write32 (vgpu_cmd_page + 28, 1);
-                mmio_write64 (vgpu_cmd_page + 32, vgpu_cursor_pa);
-                mmio_write32 (vgpu_cmd_page + 40, 16384);
-                if (!send_cmd (48, 24) || resp_type () != RESP_OK_NODATA) {
-                    Klog.warn (Klog.CAT_GPU, @"cursor: attach_backing failed resp=$(resp_type ())");
-                    return false;
-                }
+            try {
+                ensure_cursor_resource! ();
+            } catch {
+                return false;
             }
             fb_copy_dwords (vgpu_cursor_pa, rgba_buf, 4096);
 

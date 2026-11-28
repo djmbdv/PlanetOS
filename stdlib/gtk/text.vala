@@ -18,12 +18,26 @@ namespace Gtk {
             FontRegistry.measure_slot (FontRegistry.slot_for_family ("sans"), text, size_px, out out_w, out out_h);
         }
 
+        public static (int, int) measure_text_size (string text, double size_px) {
+            int w = 0;
+            int h = 0;
+            FontRegistry.measure_slot (FontRegistry.slot_for_family ("sans"), text, size_px, out w, out h);
+            return (w, h);
+        }
+
         public static void draw_text (Context cr, string text, int x, int y, double size_px) {
             FontRegistry.draw_slot (FontRegistry.slot_for_family ("sans"), cr, text, x, y, size_px);
         }
 
         public static void measure_mono (string text, double size_px, out int out_w, out int out_h) {
             FontRegistry.measure_slot (FontRegistry.slot_for_family ("mono"), text, size_px, out out_w, out out_h);
+        }
+
+        public static (int, int) measure_mono_size (string text, double size_px) {
+            int w = 0;
+            int h = 0;
+            FontRegistry.measure_slot (FontRegistry.slot_for_family ("mono"), text, size_px, out w, out h);
+            return (w, h);
         }
 
         public static void draw_mono (Context cr, string text, int x, int y, double size_px) {

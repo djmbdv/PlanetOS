@@ -416,6 +416,18 @@ namespace Planet.Kernel {
             }
             mmio_write64 (tcb + 24, code);
             release_fds (cur);
+            for (int ot = 1; ot < MAX_TASKS; ot++) {
+                if (ot == cur)
+                    continue;
+                int otcb = KernelLayout.TCB_TABLE + ot * TCB_SIZE;
+                int ost = mmio_read64 (otcb);
+                if (ost != TASK_FREE && mmio_read64 (otcb + 32) == cur) {
+                    if (ost == TASK_ZOMBIE)
+                        reap_zombie (ot);
+                    else
+                        mmio_write64 (otcb + 32, 0);
+                }
+            }
             mmio_write64 (tcb + 0, TASK_ZOMBIE);
             cpu_sti ();
             while (true) {
@@ -428,6 +440,23 @@ namespace Planet.Kernel {
             int tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
             mmio_write64 (tcb + 88, cr3);
             mmio_write64 (tcb + 104, rsp0);
+        }
+
+        public static void replace_current_user_stack (int new_sbase, int new_spages) {
+            int cur = current_tid ();
+            if (cur <= 0)
+                return;
+            int tcb = KernelLayout.TCB_TABLE + cur * TCB_SIZE;
+            int old_sbase = mmio_read64 (tcb + 16);
+            int old_spages = mmio_read64 (tcb + 80);
+            if (old_spages <= 0)
+                old_spages = 16;
+            if (old_sbase != 0 && old_sbase != new_sbase) {
+                for (int p = 0; p < old_spages; p++)
+                    Pmm.free_frame (old_sbase + p * 4096);
+            }
+            mmio_write64 (tcb + 16, new_sbase);
+            mmio_write64 (tcb + 80, new_spages);
         }
 
         public static int current_cr3 () {
@@ -529,6 +558,7 @@ namespace Planet.Kernel {
                     Pmm.free_frame (kbase + p * 4096);
                 }
             }
+            VirtioGpu.release_task (tid);
             if (ucr3 != 0 && ucr3 != current_cr3 ()) {
                 bool shared = false;
                 for (int ot = 0; ot < MAX_TASKS; ot++) {
@@ -542,7 +572,6 @@ namespace Planet.Kernel {
                 }
                 if (!shared) {
                     Fb.release_for_cr3 (ucr3);
-                    VirtioGpu.release_task (tid);
                     release_allocs (ucr3);
                     Vmm.destroy_user_space (ucr3);
                 }

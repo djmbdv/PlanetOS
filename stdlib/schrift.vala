@@ -447,58 +447,51 @@ namespace Schrift {
             return -1;
         }
 
-        private static int hor_metrics (SftFont f, int glyph, out int adv, out int lsb) {
-            adv = 0;
-            lsb = 0;
+        private static (int, int) hor_metrics! (SftFont f, int glyph) {
             int hmtx = f.gettable ("hmtx");
             if (hmtx < 0)
-                return -1;
+                throws -1;
             if (glyph < f.num_long_hmtx) {
                 int offset = hmtx + 4 * glyph;
                 if (!f.is_safe_offset (offset, 4))
-                    return -1;
-                adv = f.getu16 (offset);
-                lsb = f.geti16 (offset + 2);
-                return 0;
+                    throws -1;
+                return (f.getu16 (offset), f.geti16 (offset + 2));
             } else {
                 int boundary = hmtx + 4 * f.num_long_hmtx;
                 if (boundary < 4)
-                    return -1;
+                    throws -1;
                 int offset = boundary - 4;
                 if (!f.is_safe_offset (offset, 4))
-                    return -1;
-                adv = f.getu16 (offset);
+                    throws -1;
+                int adv = f.getu16 (offset);
                 offset = boundary + 2 * (glyph - f.num_long_hmtx);
                 if (!f.is_safe_offset (offset, 2))
-                    return -1;
-                lsb = f.geti16 (offset);
-                return 0;
+                    throws -1;
+                return (adv, f.geti16 (offset));
             }
         }
 
-        private static int outline_offset (SftFont f, int glyph, out int offset) {
-            offset = 0;
+        private static int outline_offset! (SftFont f, int glyph) {
             int loca = f.gettable ("loca");
             int glyf = f.gettable ("glyf");
             if (loca < 0 || glyf < 0)
-                return -1;
+                throws -1;
             int cur_off = 0;
             int next_off = 0;
             if (f.loca_format == 0) {
                 int b = loca + 2 * glyph;
                 if (!f.is_safe_offset (b, 4))
-                    return -1;
+                    throws -1;
                 cur_off = 2 * f.getu16 (b);
                 next_off = 2 * f.getu16 (b + 2);
             } else {
                 int b = loca + 4 * glyph;
                 if (!f.is_safe_offset (b, 8))
-                    return -1;
+                    throws -1;
                 cur_off = f.getu32 (b);
                 next_off = f.getu32 (b + 4);
             }
-            offset = (cur_off == next_off) ? 0 : (glyf + cur_off);
-            return 0;
+            return (cur_off == next_off) ? 0 : (glyf + cur_off);
         }
 
         private int glyph_bbox (int outline, int[] box) {
@@ -531,14 +524,18 @@ namespace Schrift {
             var f = (SftFont) font;
             int adv = 0;
             int lsb = 0;
-            if (hor_metrics (f, glyph, out adv, out lsb) < 0)
+            int outline = 0;
+            try {
+                var (a, l) = hor_metrics! (f, glyph);
+                adv = a;
+                lsb = l;
+                outline = outline_offset! (f, glyph);
+            } catch {
                 return -1;
+            }
             double xs = x_scale / (double) f.units_per_em;
             metrics.advance_width = (float) ((double) adv * xs);
             metrics.left_side_bearing = (float) ((double) lsb * xs + x_offset);
-            int outline = 0;
-            if (outline_offset (f, glyph, out outline) < 0)
-                return -1;
             if (outline == 0)
                 return 0;
             var box = new int[4];
@@ -821,8 +818,11 @@ namespace Schrift {
                     local[3] = 1.0;
                 }
                 int sub_outline = 0;
-                if (outline_offset (f, glyph, out sub_outline) < 0)
+                try {
+                    sub_outline = outline_offset! (f, glyph);
+                } catch {
                     return false;
+                }
                 if (sub_outline != 0) {
                     int base_pt = outl.num_points;
                     if (!decode_outline (f, sub_outline, rec_depth + 1, outl))
@@ -976,8 +976,11 @@ namespace Schrift {
                 return -1;
             var f = (SftFont) font;
             int outline = 0;
-            if (outline_offset (f, glyph, out outline) < 0)
+            try {
+                outline = outline_offset! (f, glyph);
+            } catch {
                 return -1;
+            }
             if (outline == 0)
                 return 0;
             var box = new int[4];

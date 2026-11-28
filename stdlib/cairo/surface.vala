@@ -66,6 +66,10 @@ namespace Cairo {
             alloc_pages = 0;
         }
 
+        ~ImageSurface () {
+            destroy ();
+        }
+
         public int get_width () { return width; }
         public int get_height () { return height; }
         public void flush () {}

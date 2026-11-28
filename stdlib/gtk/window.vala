@@ -424,7 +424,7 @@ namespace Gtk {
     }
 
     public class GtkApplicationWindow : GtkWindow {
-        public GtkApplication? application = null;
+        public weak GtkApplication? application = null;
 
         public GtkApplicationWindow (GtkApplication app, int w = 800, int h = 520) : base (w, h) {
             application = app;

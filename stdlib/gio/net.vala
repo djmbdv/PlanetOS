@@ -642,7 +642,28 @@ namespace Gio {
                 Sys.close (handle);
                 handle = -1;
             }
+            if (datagram_sockets != null) {
+                var dgs = (!) datagram_sockets;
+                for (int i = dgs.length - 1; i >= 0; i--) {
+                    if (dgs[i] == this)
+                        dgs.remove_index (i);
+                }
+            }
+            if (loopback_listeners != null) {
+                var lbs = (!) loopback_listeners;
+                for (int i = lbs.length - 1; i >= 0; i--) {
+                    if (lbs[i] == this)
+                        lbs.remove_index (i);
+                }
+            }
             return true;
+        }
+
+        ~Socket () {
+            try {
+                close ();
+            } catch (IOError e) {
+            }
         }
     }
 
