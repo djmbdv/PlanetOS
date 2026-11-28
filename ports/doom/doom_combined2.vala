@@ -7699,13 +7699,14 @@ public uint32 setsizeneeded;
 
 public int showMessages = 1;
 
+public uint32 _d_viewactivestate = 0;
+public uint32 _d_menuactivestate = 0;
+public uint32 _d_inhelpscreensstate = 0;
+public uint32 _d_fullscreen = 0;
+public int _d_oldgamestate = -1;
+public int _d_borderdrawcount = 0;
+
 void D_Display () {
-    uint32 viewactivestate = (uint32) 0;
-    uint32 menuactivestate = (uint32) 0;
-    uint32 inhelpscreensstate = (uint32) 0;
-    uint32 fullscreen = (uint32) 0;
-    gamestate_t oldgamestate = (gamestate_t) (-1);
-    int borderdrawcount = 0;
     int nowtime = 0;
     int tics = 0;
     int wipestart = 0;
@@ -7720,8 +7721,8 @@ void D_Display () {
     if (setsizeneeded != 0) 
     {
         R_ExecuteSetViewSize ();
-        oldgamestate = (gamestate_t) (-1);
-        borderdrawcount = 3;
+        _d_oldgamestate = -1;
+        _d_borderdrawcount = 3;
     }
     if (gamestate != wipegamestate) 
     {
@@ -7742,14 +7743,14 @@ void D_Display () {
             if (automapactive != 0) {
                 AM_Drawer ();
             }
-            if ((wipe != 0) || ((viewheight != 200) && (fullscreen != 0))) {
+            if ((wipe != 0) || ((viewheight != 200) && (_d_fullscreen != 0))) {
                 redrawsbar = (uint32) 1;
             }
-            if ((inhelpscreensstate != 0) && (!(inhelpscreens != 0))) {
+            if ((_d_inhelpscreensstate != 0) && (!(inhelpscreens != 0))) {
                 redrawsbar = (uint32) 1;
             }
             ST_Drawer ((uint32) (((viewheight == 200)) ? 1 : 0), redrawsbar);
-            fullscreen = (uint32) (((viewheight == 200)) ? 1 : 0);
+            _d_fullscreen = (uint32) (((viewheight == 200)) ? 1 : 0);
             break;
         case gamestate_t.GS_INTERMISSION:
             WI_Drawer ();
@@ -7768,34 +7769,34 @@ void D_Display () {
     if ((gamestate == gamestate_t.GS_LEVEL) && (gametic != 0)) {
         HU_Drawer ();
     }
-    if ((gamestate != oldgamestate) && (gamestate != gamestate_t.GS_LEVEL)) {
+    if (((int) gamestate != _d_oldgamestate) && (gamestate != gamestate_t.GS_LEVEL)) {
         I_SetPalette (W_CacheLumpName (c_str_to_bytes ("PLAYPAL"), (int) __anon_enum_1.PU_CACHE));
     }
-    if ((gamestate == gamestate_t.GS_LEVEL) && (oldgamestate != gamestate_t.GS_LEVEL)) 
+    if ((gamestate == gamestate_t.GS_LEVEL) && (_d_oldgamestate != (int) gamestate_t.GS_LEVEL)) 
     {
-        viewactivestate = (uint32) 0;
+        _d_viewactivestate = (uint32) 0;
         R_FillBackScreen ();
     }
     if (((gamestate == gamestate_t.GS_LEVEL) && (!(automapactive != 0))) && (scaledviewwidth != 320)) 
     {
-        if (((menuactive != 0) || (menuactivestate != 0)) || (!(viewactivestate != 0))) {
-            borderdrawcount = 3;
+        if (((menuactive != 0) || (_d_menuactivestate != 0)) || (!(_d_viewactivestate != 0))) {
+            _d_borderdrawcount = 3;
         }
-        if (borderdrawcount != 0) 
+        if (_d_borderdrawcount != 0) 
         {
             R_DrawViewBorder ();
-            borderdrawcount--;
+            _d_borderdrawcount--;
         }
     }
     if (testcontrols != 0) 
     {
         V_DrawMouseSpeedBox (testcontrols_mousespeed);
     }
-    menuactivestate = menuactive;
-    viewactivestate = viewactive;
-    inhelpscreensstate = inhelpscreens;
+    _d_menuactivestate = menuactive;
+    _d_viewactivestate = viewactive;
+    _d_inhelpscreensstate = inhelpscreens;
     wipegamestate = gamestate;
-    oldgamestate = wipegamestate;
+    _d_oldgamestate = (int) wipegamestate;
     if (paused != 0) 
     {
         if (automapactive != 0) {
@@ -10674,24 +10675,24 @@ void G_InitNew (skill_t skill, int episode, int map) {
     G_DoLoadLevel ();
 }
 
+public int _off_demo_p = 0;
+
 // c2vala-ptrs: cmd_obj[DEREF|WR|ARROW]=>T?
 void G_ReadDemoTiccmd (ticcmd_t[] cmd) {
-    if (((int) demo_p[0]) == 0x80) 
+    if (_off_demo_p >= demo_p.length || ((int) demo_p[_off_demo_p]) == 0x80) 
     {
         G_CheckDemoStatus ();
         return;
     }
-    int _dp = 0;
-    cmd[0].forwardmove = ((int8) (demo_p[_dp++]));
-    cmd[0].sidemove = ((int8) (demo_p[_dp++]));
+    cmd[0].forwardmove = ((int8) (demo_p[_off_demo_p++]));
+    cmd[0].sidemove = ((int8) (demo_p[_off_demo_p++]));
     if (longtics != 0) {
-        cmd[0].angleturn = (int16) (demo_p[_dp++]);
-        cmd[0].angleturn |= (int16) ((((int) demo_p[_dp++]) << 8));
+        cmd[0].angleturn = (int16) (demo_p[_off_demo_p++]);
+        cmd[0].angleturn |= (int16) ((((int) demo_p[_off_demo_p++]) << 8));
     } else {
-        cmd[0].angleturn = (int16) ((((int) ((uchar) (demo_p[_dp++]))) << 8));
+        cmd[0].angleturn = (int16) ((((int) ((uchar) (demo_p[_off_demo_p++]))) << 8));
     }
-    cmd[0].buttons = (uint8) (((uchar) (demo_p[_dp++])));
-    demo_p = c_bytes_add (demo_p, _dp);
+    cmd[0].buttons = (uint8) (((uchar) (demo_p[_off_demo_p++])));
 }
 
 // c2vala-ptrs: new_demobuffer_buf[ARITH|WR]=>uint8[] new_demop_obj[PLAIN]=>T?
@@ -10841,9 +10842,56 @@ uint8[] DemoVersionDescription (int version) {
     }
 }
 
-// c2vala: UNTRANSLATED G_DoPlayDemo (g_game.c:2152) -- g_game.c:2184: printf requires a literal format string
-// TODO: port this function by hand.
 void G_DoPlayDemo () {
+    skill_t skill = (skill_t) 0;
+    int i = 0;
+    int episode = 0;
+    int map = 0;
+    int demoversion = 0;
+
+    gameaction = gameaction_t.ga_nothing;
+    demobuffer = W_CacheLumpName (c_str_to_bytes (defdemoname), (int) __anon_enum_1.PU_STATIC);
+    demo_p = demobuffer;
+    _off_demo_p = 0;
+
+    demoversion = (int) demo_p[_off_demo_p++];
+    if (demoversion == G_VanillaVersionCode ()) {
+        longtics = (uint32) 0;
+    } else if (demoversion == 111) {
+        longtics = (uint32) 1;
+    } else {
+        print (@"Demo is from a different game version! (read $demoversion, should be $(G_VanillaVersionCode ()))\n");
+        usergame = (uint32) 0;
+        demoplayback = (uint32) 0;
+        D_AdvanceDemo ();
+        return;
+    }
+
+    skill = (skill_t) demo_p[_off_demo_p++];
+    episode = (int) demo_p[_off_demo_p++];
+    map = (int) demo_p[_off_demo_p++];
+    deathmatch = (int) demo_p[_off_demo_p++];
+    respawnparm = (uint32) demo_p[_off_demo_p++];
+    fastparm = (uint32) demo_p[_off_demo_p++];
+    nomonsters = (uint32) demo_p[_off_demo_p++];
+    consoleplayer = (int) demo_p[_off_demo_p++];
+
+    for (i = 0; i < 4; i++)
+        playeringame[(int) (i)] = (uint32) demo_p[_off_demo_p++];
+
+    if ((playeringame[1] != 0) || (M_CheckParm (c_str_to_bytes ("-solo-net")) > 0)
+        || (M_CheckParm (c_str_to_bytes ("-netdemo")) > 0)) {
+        netgame = (uint32) 1;
+        netdemo = (uint32) 1;
+    }
+
+    precache = (uint32) 0;
+    G_InitNew (skill, episode, map);
+    precache = (uint32) 1;
+    starttime = I_GetTime ();
+
+    usergame = (uint32) 0;
+    demoplayback = (uint32) 1;
 }
 
 // c2vala-ptrs: name_obj[PLAIN]=>T?
@@ -18782,6 +18830,10 @@ void P_UnsetThingPosition (mobj_s[] thing) {
             }
         }
     }
+    thing[0].snext = null;
+    thing[0].sprev = null;
+    thing[0].bnext = null;
+    thing[0].bprev = null;
 }
 
 // c2vala-ptrs: thing_obj[DEREF|WR|ARROW]=>T? ss_obj[DEREF|ARROW]=>T? sec_obj[DEREF|WR|ARROW]=>T? link_fref[DEREF|WR|ARROW]=>_c2v_fref<T>
@@ -23751,8 +23803,15 @@ void P_RunThinkers () {
     {
         if (currentthinker.tag == -1) 
         {
+            var nxt = currentthinker.next;
             currentthinker.next.prev = currentthinker.prev;
             currentthinker.prev.next = currentthinker.next;
+            currentthinker.next = null;
+            currentthinker.prev = null;
+            currentthinker.owner = null;
+            currentthinker.owner_mobj = null;
+            currentthinker = nxt;
+            continue;
         }
         else 
         {

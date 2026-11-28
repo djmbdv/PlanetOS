@@ -1400,6 +1400,154 @@ void WI_drawLF () {
 }""",
     1)
 
+src = src.replace(
+    """// c2vala: UNTRANSLATED G_DoPlayDemo (g_game.c:2152) -- g_game.c:2184: printf requires a literal format string
+// TODO: port this function by hand.
+void G_DoPlayDemo () {
+}""",
+    """void G_DoPlayDemo () {
+    skill_t skill = (skill_t) 0;
+    int i = 0;
+    int episode = 0;
+    int map = 0;
+    int demoversion = 0;
+    gameaction = gameaction_t.ga_nothing;
+    demobuffer = W_CacheLumpName (c_str_to_bytes (defdemoname), (int) __anon_enum_1.PU_STATIC);
+    demo_p = demobuffer;
+    _off_demo_p = 0;
+    demoversion = (int) demo_p[_off_demo_p++];
+    if (demoversion == G_VanillaVersionCode ()) {
+        longtics = (uint32) 0;
+    } else if (demoversion == 111) {
+        longtics = (uint32) 1;
+    } else {
+        print (@"Demo is from a different game version! (read $demoversion, should be $(G_VanillaVersionCode ()))\\n");
+        usergame = (uint32) 0;
+        demoplayback = (uint32) 0;
+        D_AdvanceDemo ();
+        return;
+    }
+    skill = (skill_t) demo_p[_off_demo_p++];
+    episode = (int) demo_p[_off_demo_p++];
+    map = (int) demo_p[_off_demo_p++];
+    deathmatch = (int) demo_p[_off_demo_p++];
+    respawnparm = (uint32) demo_p[_off_demo_p++];
+    fastparm = (uint32) demo_p[_off_demo_p++];
+    nomonsters = (uint32) demo_p[_off_demo_p++];
+    consoleplayer = (int) demo_p[_off_demo_p++];
+    for (i = 0; i < 4; i++)
+        playeringame[(int) (i)] = (uint32) demo_p[_off_demo_p++];
+    if ((playeringame[1] != 0) || (M_CheckParm (c_str_to_bytes ("-solo-net")) > 0)
+        || (M_CheckParm (c_str_to_bytes ("-netdemo")) > 0)) {
+        netgame = (uint32) 1;
+        netdemo = (uint32) 1;
+    }
+    precache = (uint32) 0;
+    G_InitNew (skill, episode, map);
+    precache = (uint32) 1;
+    starttime = I_GetTime ();
+    usergame = (uint32) 0;
+    demoplayback = (uint32) 1;
+}""",
+    1)
+src = src.replace(
+    """        if (currentthinker.tag == -1) 
+        {
+            currentthinker.next.prev = currentthinker.prev;
+            currentthinker.prev.next = currentthinker.next;
+        }""",
+    """        if (currentthinker.tag == -1) 
+        {
+            var nxt = currentthinker.next;
+            currentthinker.next.prev = currentthinker.prev;
+            currentthinker.prev.next = currentthinker.next;
+            currentthinker.next = null;
+            currentthinker.prev = null;
+            currentthinker.owner = null;
+            currentthinker.owner_mobj = null;
+            currentthinker = nxt;
+            continue;
+        }""",
+    1)
+src = src.replace(
+    """            if ((((blockx >= 0) && (blockx < bmapwidth)) && (blocky >= 0)) && (blocky < bmapheight)) 
+            {
+                blocklinks[(int) (((blocky * bmapwidth) + blockx))] = thing[0].bnext;
+            }
+        }
+    }
+}""",
+    """            if ((((blockx >= 0) && (blockx < bmapwidth)) && (blocky >= 0)) && (blocky < bmapheight)) 
+            {
+                blocklinks[(int) (((blocky * bmapwidth) + blockx))] = thing[0].bnext;
+            }
+        }
+    }
+    thing[0].snext = null;
+    thing[0].sprev = null;
+    thing[0].bnext = null;
+    thing[0].bprev = null;
+}""",
+    1)
+
+src = src.replace(
+    """void D_Display () {
+    uint32 viewactivestate = (uint32) 0;
+    uint32 menuactivestate = (uint32) 0;
+    uint32 inhelpscreensstate = (uint32) 0;
+    uint32 fullscreen = (uint32) 0;
+    gamestate_t oldgamestate = (gamestate_t) (-1);
+    int borderdrawcount = 0;""",
+    """public uint32 _d_viewactivestate = 0;
+public uint32 _d_menuactivestate = 0;
+public uint32 _d_inhelpscreensstate = 0;
+public uint32 _d_fullscreen = 0;
+public int _d_oldgamestate = -1;
+public int _d_borderdrawcount = 0;
+
+void D_Display () {""",
+    1)
+
+src = src.replace(
+    """// c2vala-ptrs: cmd_obj[DEREF|WR|ARROW]=>T?
+void G_ReadDemoTiccmd (ticcmd_t[] cmd) {
+    if (((int) demo_p[0]) == 0x80) 
+    {
+        G_CheckDemoStatus ();
+        return;
+    }
+    int _dp = 0;
+    cmd[0].forwardmove = ((int8) (demo_p[_dp++]));
+    cmd[0].sidemove = ((int8) (demo_p[_dp++]));
+    if (longtics != 0) {
+        cmd[0].angleturn = (int16) (demo_p[_dp++]);
+        cmd[0].angleturn |= (int16) ((((int) demo_p[_dp++]) << 8));
+    } else {
+        cmd[0].angleturn = (int16) ((((int) ((uchar) (demo_p[_dp++]))) << 8));
+    }
+    cmd[0].buttons = (uint8) (((uchar) (demo_p[_dp++])));
+    demo_p = c_bytes_add (demo_p, _dp);
+}""",
+    """public int _off_demo_p = 0;
+
+void G_ReadDemoTiccmd (ticcmd_t[] cmd) {
+    if (_off_demo_p >= demo_p.length || ((int) demo_p[_off_demo_p]) == 0x80) 
+    {
+        G_CheckDemoStatus ();
+        return;
+    }
+    cmd[0].forwardmove = ((int8) (demo_p[_off_demo_p++]));
+    cmd[0].sidemove = ((int8) (demo_p[_off_demo_p++]));
+    if (longtics != 0) {
+        cmd[0].angleturn = (int16) (demo_p[_off_demo_p++]);
+        cmd[0].angleturn |= (int16) ((((int) demo_p[_off_demo_p++]) << 8));
+    } else {
+        cmd[0].angleturn = (int16) ((((int) ((uchar) (demo_p[_off_demo_p++]))) << 8));
+    }
+    cmd[0].buttons = (uint8) (((uchar) (demo_p[_off_demo_p++])));
+}""",
+    1)
+
 with open(path, "w", encoding="utf-8") as f:
     f.write(src)
 print("Applied fix_doom_vala.py")
